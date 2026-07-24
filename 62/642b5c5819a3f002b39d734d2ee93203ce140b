@@ -1,0 +1,33 @@
+src/ui/GlassPanel.tsx
+  s_e964f86b079420::t_9077cb0fc98443 1-32
+src/ui/Glass.tsx
+  s_e964f86b079420::t_225e1107a251e8 1-31
+src/ui/animations.ts
+  s_e964f86b079420::t_b087eb13adf2c1 1-21
+src/ui/GlassModal.tsx
+  s_e964f86b079420::t_2dcd54c1b677ac 1-36
+src/ui/GlassButton.tsx
+  s_e964f86b079420::t_7241152ac0de6b 1-39
+src/ui/GlassTab.tsx
+  s_e964f86b079420::t_66951979ffa175 1-47
+src/ui/GlassInput.tsx
+  s_e964f86b079420::t_8bc335156adfd0 1-20
+src/ui/index.ts
+  s_e964f86b079420::t_33e08293498c96 1-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "62642b5c5819a3f002b39d734d2ee93203ce140b",
+  "prompts": {},
+  "sessions": {
+    "s_e964f86b079420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "10871589-3461-4e53-a391-5c14aa9b3486",
+        "model": "qwen3.8-max-preview"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

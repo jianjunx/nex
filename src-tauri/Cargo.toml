@@ -28,6 +28,7 @@ serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["compat"] }
 thiserror = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 git2 = "0.19"

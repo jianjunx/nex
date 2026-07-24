@@ -150,6 +150,10 @@ export function onAcpPermissionRequest(cb: (payload: AcpPermissionRequestPayload
   return listen(EVENTS.ACP_PERMISSION_REQUEST, (e) => cb(e.payload as AcpPermissionRequestPayload));
 }
 
+export function onAcpSessionTerminated(cb: (payload: { sessionId: string }) => void): Promise<UnlistenFn> {
+  return listen(EVENTS.ACP_SESSION_TERMINATED, (e) => cb(e.payload as { sessionId: string }));
+}
+
 export function onTerminalOutput(cb: (payload: TerminalOutputPayload) => void): Promise<UnlistenFn> {
   return listen(EVENTS.TERMINAL_OUTPUT, (e) => cb(e.payload as TerminalOutputPayload));
 }

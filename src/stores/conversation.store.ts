@@ -16,6 +16,7 @@ interface ConversationStore {
   closeTab: (id: string) => void;
   loadMessages: (conversationId: string) => Promise<void>;
   appendMessage: (conversationId: string, message: Message) => void;
+  updateMessageContent: (conversationId: string, messageId: string, content: string) => void;
 }
 
 // Backend errors arrive as { type, message }; fall back to String(err).
@@ -95,6 +96,13 @@ export const useConversationStore = create<ConversationStore>()(
       set((s) => {
         if (!s.messagesByConversation[conversationId]) s.messagesByConversation[conversationId] = [];
         s.messagesByConversation[conversationId].push(message);
+      });
+    },
+
+    updateMessageContent: (conversationId: string, messageId: string, content: string) => {
+      set((s) => {
+        const msg = s.messagesByConversation[conversationId]?.find((m) => m.id === messageId);
+        if (msg) msg.content = content;
       });
     },
   }))

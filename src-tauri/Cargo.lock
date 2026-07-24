@@ -2511,6 +2511,7 @@ dependencies = [
  "tauri-plugin-store",
  "thiserror 2.0.19",
  "tokio",
+ "tokio-util",
  "uuid",
  "window-vibrancy 0.5.3",
 ]
@@ -5017,6 +5018,7 @@ checksum = "494815d09bf52b5548659851081238f0ca39ff638363907596da739561c62c52"
 dependencies = [
  "bytes",
  "futures-core",
+ "futures-io",
  "futures-sink",
  "pin-project-lite",
  "tokio",

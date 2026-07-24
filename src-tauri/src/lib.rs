@@ -3,11 +3,13 @@ use tauri::Manager;
 mod error;
 mod state;
 mod commands;
+pub mod acp;
 pub mod db;
 pub mod fs;
 pub mod git;
 pub mod terminal;
 
+use acp::manager::AcpSessionManager;
 use db::Database;
 use state::AppState;
 use std::sync::Arc;
@@ -38,6 +40,10 @@ pub fn run() {
             commands::terminal_cmds::terminal_write,
             commands::terminal_cmds::terminal_resize,
             commands::terminal_cmds::terminal_kill,
+            commands::acp_cmds::acp_create_session,
+            commands::acp_cmds::acp_send_prompt,
+            commands::acp_cmds::acp_cancel,
+            commands::acp_cmds::acp_respond_permission,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -58,7 +64,7 @@ pub fn run() {
             let db_path = app_data_dir.join("nex.db");
             let db = Database::new(&db_path).expect("failed to initialize database");
 
-            app.manage(AppState { db: Arc::new(db), terminal_manager: TerminalManager::new() });
+            app.manage(AppState { db: Arc::new(db), terminal_manager: TerminalManager::new(), acp_manager: AcpSessionManager::new() });
 
             Ok(())
         })

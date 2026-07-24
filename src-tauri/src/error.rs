@@ -35,3 +35,9 @@ impl From<std::io::Error> for NexError {
         NexError::Internal(e.to_string())
     }
 }
+
+impl From<agent_client_protocol::Error> for NexError {
+    fn from(e: agent_client_protocol::Error) -> Self {
+        NexError::Agent(e.to_string())
+    }
+}

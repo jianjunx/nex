@@ -364,7 +364,9 @@ CREATE INDEX idx_msg_conv_seq ON messages(conversation_id, sequence);
   "defaultAgent": "claude-code",
   "agents": {
     "claude-code": { "command": "claude", "args": ["--acp"] },
-    "codex": { "command": "codex", "args": ["--acp"] }
+    "codex": { "command": "codex", "args": ["--acp"] },
+    "cursor-cli": { "command": "cursor", "args": ["--acp"] },
+    "opencode": { "command": "opencode", "args": ["--acp"] }
   },
   "terminal": { "shell": null, "fontSize": 13, "fontFamily": "JetBrains Mono" },
   "layout": { "sidePanelWidth": 320, "terminalHeight": 200, "sidePanelVisible": true, "terminalVisible": false }

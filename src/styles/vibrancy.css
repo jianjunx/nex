@@ -1,0 +1,13 @@
+/* macOS: window is transparent, system vibrancy provides L0 */
+@media (-webkit-appearance: none) {
+  html, body {
+    background: transparent !important;
+  }
+}
+
+/* Fallback for non-macOS: solid dark background */
+@supports not (-webkit-appearance: none) {
+  html, body {
+    background: #1a1a2e;
+  }
+}

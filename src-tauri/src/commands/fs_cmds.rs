@@ -5,7 +5,7 @@ use std::path::Path;
 
 #[tauri::command]
 pub fn fs_read_tree(project_path: String) -> Result<Vec<FsNode>, NexError> {
-    read_tree(Path::new(&project_path), 2)
+    read_tree(Path::new(&project_path), 1)
 }
 
 #[tauri::command]

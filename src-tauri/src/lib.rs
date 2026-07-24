@@ -6,10 +6,12 @@ mod commands;
 pub mod db;
 pub mod fs;
 pub mod git;
+pub mod terminal;
 
 use db::Database;
 use state::AppState;
 use std::sync::Arc;
+use terminal::pty::TerminalManager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -32,6 +34,10 @@ pub fn run() {
             commands::git_cmds::git_stage,
             commands::git_cmds::git_unstage,
             commands::git_cmds::git_commit,
+            commands::terminal_cmds::terminal_create,
+            commands::terminal_cmds::terminal_write,
+            commands::terminal_cmds::terminal_resize,
+            commands::terminal_cmds::terminal_kill,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -52,7 +58,7 @@ pub fn run() {
             let db_path = app_data_dir.join("nex.db");
             let db = Database::new(&db_path).expect("failed to initialize database");
 
-            app.manage(AppState { db: Arc::new(db) });
+            app.manage(AppState { db: Arc::new(db), terminal_manager: TerminalManager::new() });
 
             Ok(())
         })

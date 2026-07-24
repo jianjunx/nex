@@ -1,0 +1,19 @@
+docs/superpowers/specs/2026-07-24-nex-design.md
+  s_e964f86b079420::t_3fd7c739cdbd33 367-369
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "cfcedd08e2aa61e6efa43d104cee72de5f612c43",
+  "prompts": {},
+  "sessions": {
+    "s_e964f86b079420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "10871589-3461-4e53-a391-5c14aa9b3486",
+        "model": "qwen3.8-max-preview"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

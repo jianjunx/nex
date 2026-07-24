@@ -1,0 +1,27 @@
+src/stores/ui.store.ts
+  s_e964f86b079420::t_a45019b2bb876a 1-34
+src/features/layout/IconBar.tsx
+  s_e964f86b079420::t_85f262244a5803 1-36
+src/features/layout/TopBar.tsx
+  s_e964f86b079420::t_bc941a32e56fe8 1-31
+src/App.tsx
+  s_e964f86b079420::t_9ab712de7df522 1-2,5-16
+src/features/layout/MainLayout.tsx
+  s_e964f86b079420::t_d129e7faeb658e 1-40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "3733f52ef41d6518524ed8e4d588210e8f386e12",
+  "prompts": {},
+  "sessions": {
+    "s_e964f86b079420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "10871589-3461-4e53-a391-5c14aa9b3486",
+        "model": "qwen3.8-max-preview"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

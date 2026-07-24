@@ -6,6 +6,9 @@
     "main"
   ],
   "permissions": [
-    "core:default"
+    "core:default",
+    "sql:default",
+    "store:default",
+    "dialog:default"
   ]
 }

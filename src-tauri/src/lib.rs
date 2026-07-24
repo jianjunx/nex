@@ -10,7 +10,7 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             {
                 use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
-                let window = app.get_webview_window("main").unwrap();
+                let window = app.get_webview_window("main").expect("main window not found");
                 let _ = apply_vibrancy(
                     &window,
                     NSVisualEffectMaterial::UnderWindowBackground,

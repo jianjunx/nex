@@ -1,0 +1,33 @@
+pub const SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS projects (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    path        TEXT NOT NULL UNIQUE,
+    created_at  INTEGER NOT NULL,
+    last_opened INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS conversations (
+    id          TEXT PRIMARY KEY,
+    project_id  TEXT NOT NULL REFERENCES projects(id),
+    title       TEXT NOT NULL DEFAULT 'New Chat',
+    agent_type  TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'idle',
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS messages (
+    id              TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id),
+    role            TEXT NOT NULL,
+    content         TEXT NOT NULL,
+    tool_summary    TEXT,
+    timestamp       INTEGER NOT NULL,
+    sequence        INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_conv_project ON conversations(project_id);
+CREATE INDEX IF NOT EXISTS idx_conv_updated ON conversations(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_msg_conv_seq ON messages(conversation_id, sequence);
+"#;

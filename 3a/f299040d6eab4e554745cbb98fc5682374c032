@@ -1,0 +1,31 @@
+src-tauri/src/state.rs
+  s_e964f86b079420::t_f50d3ad8ec7327 1-6
+src-tauri/src/db/conversations.rs
+  s_e964f86b079420::t_1c0cba2623004f 1-105
+src-tauri/src/error.rs
+  s_e964f86b079420::t_0cfa87829d815b 1-37
+src-tauri/src/db/mod.rs
+  s_e964f86b079420::t_b20c7c2e7e2f3b 1-18
+src-tauri/src/db/projects.rs
+  s_e964f86b079420::t_43c5c1cf9a98a9 1-56
+src-tauri/src/lib.rs
+  s_e964f86b079420::t_c82a8ac7c8ef8c 3-10,29-37
+src-tauri/src/db/schema.rs
+  s_e964f86b079420::t_2b2cf0856e0767 1-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "3af299040d6eab4e554745cbb98fc5682374c032",
+  "prompts": {},
+  "sessions": {
+    "s_e964f86b079420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "10871589-3461-4e53-a391-5c14aa9b3486",
+        "model": "qwen3.8-max-preview"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

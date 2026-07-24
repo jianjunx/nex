@@ -1,0 +1,19 @@
+docs/superpowers/plans/2026-07-24-nex-v1-implementation.md
+  s_e964f86b079420::t_4dcd9e996d5adc 1-3561
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "7cfa3e34bbc94a1d1ce91a545259426a72b931b6",
+  "prompts": {},
+  "sessions": {
+    "s_e964f86b079420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "10871589-3461-4e53-a391-5c14aa9b3486",
+        "model": "k3"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

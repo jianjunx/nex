@@ -2964,6 +2964,7 @@ pub fn acp_respond_permission(state: State<AppState>, request_id: String, option
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { acpCreateSession, acpSendPrompt, acpCancel, acpRespondPermission, onAcpNotification, onAcpPermissionRequest, type AcpPermissionRequestPayload } from "../bridge/tauri";
+import { useConversationStore } from "./conversation.store";
 
 interface AgentSession {
   sessionId: string;
@@ -3019,7 +3020,6 @@ export const useAgentStore = create<AgentStore>()(
     initListeners: () => {
       onAcpNotification(({ sessionId, update }) => {
         // Update session status + append message to conversation store
-        const { useConversationStore } = require("./conversation.store");
         const convStore = useConversationStore.getState();
         const msg = {
           id: crypto.randomUUID(),

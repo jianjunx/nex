@@ -5,6 +5,7 @@ mod state;
 mod commands;
 pub mod db;
 pub mod fs;
+pub mod git;
 
 use db::Database;
 use state::AppState;
@@ -25,6 +26,12 @@ pub fn run() {
             commands::fs_cmds::fs_read_tree,
             commands::fs_cmds::fs_expand_dir,
             commands::fs_cmds::fs_read_file,
+            commands::git_cmds::git_status,
+            commands::git_cmds::git_diff,
+            commands::git_cmds::git_log,
+            commands::git_cmds::git_stage,
+            commands::git_cmds::git_unstage,
+            commands::git_cmds::git_commit,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]

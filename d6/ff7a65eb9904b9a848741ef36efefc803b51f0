@@ -1,0 +1,25 @@
+src-tauri/capabilities/default.json
+  s_e964f86b079420::t_e1d90e7bbd5f4c 9-12
+package.json
+  s_e964f86b079420::t_43fb8efc578358 2
+index.html
+  s_e964f86b079420::t_160aa1fc62c739 7
+src-tauri/src/lib.rs
+  s_e964f86b079420::t_3472d7ec709cd6 13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "d6ff7a65eb9904b9a848741ef36efefc803b51f0",
+  "prompts": {},
+  "sessions": {
+    "s_e964f86b079420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "10871589-3461-4e53-a391-5c14aa9b3486",
+        "model": "qwen3.8-max-preview"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

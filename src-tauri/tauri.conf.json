@@ -1,0 +1,33 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nickel-org/nickel.rs/refs/heads/master/docs/schema/tauri.conf.schema.json",
+  "productName": "Nex",
+  "version": "0.1.0",
+  "identifier": "com.nex.app",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Nex",
+        "width": 1400,
+        "height": 900,
+        "minWidth": 900,
+        "minHeight": 600,
+        "transparent": true,
+        "decorations": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": []
+  }
+}

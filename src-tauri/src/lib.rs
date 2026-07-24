@@ -4,6 +4,7 @@ mod error;
 mod state;
 mod commands;
 pub mod db;
+pub mod fs;
 
 use db::Database;
 use state::AppState;
@@ -21,6 +22,9 @@ pub fn run() {
             commands::project_cmds::conversation_create,
             commands::project_cmds::conversation_list,
             commands::project_cmds::conversation_get_messages,
+            commands::fs_cmds::fs_read_tree,
+            commands::fs_cmds::fs_expand_dir,
+            commands::fs_cmds::fs_read_file,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]

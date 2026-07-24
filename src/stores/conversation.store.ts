@@ -7,6 +7,8 @@ interface ConversationStore {
   openTabs: string[];
   activeTabId: string | null;
   messagesByConversation: Record<string, Message[]>;
+  loading: boolean;
+  error: string | null;
 
   loadConversations: (projectId: string) => Promise<void>;
   createConversation: (projectId: string, agentType: string) => Promise<Conversation>;
@@ -16,27 +18,52 @@ interface ConversationStore {
   appendMessage: (conversationId: string, message: Message) => void;
 }
 
+// Backend errors arrive as { type, message }; fall back to String(err).
+function errorMessage(err: unknown): string {
+  if (err && typeof err === "object" && "message" in err && typeof (err as { message: unknown }).message === "string") {
+    return (err as { message: string }).message;
+  }
+  return String(err);
+}
+
 export const useConversationStore = create<ConversationStore>()(
   immer((set) => ({
     conversationsByProject: {},
     openTabs: [],
     activeTabId: null,
     messagesByConversation: {},
+    loading: false,
+    error: null,
 
     loadConversations: async (projectId: string) => {
-      const convs = await conversationList(projectId);
-      set((s) => { s.conversationsByProject[projectId] = convs; });
+      set((s) => { s.loading = true; s.error = null; });
+      try {
+        const convs = await conversationList(projectId);
+        set((s) => { s.conversationsByProject[projectId] = convs; });
+      } catch (err) {
+        set((s) => { s.error = errorMessage(err); });
+      } finally {
+        set((s) => { s.loading = false; });
+      }
     },
 
     createConversation: async (projectId: string, agentType: string) => {
-      const conv = await conversationCreate(projectId, agentType);
-      set((s) => {
-        if (!s.conversationsByProject[projectId]) s.conversationsByProject[projectId] = [];
-        s.conversationsByProject[projectId].unshift(conv);
-        s.openTabs.push(conv.id);
-        s.activeTabId = conv.id;
-      });
-      return conv;
+      set((s) => { s.loading = true; s.error = null; });
+      try {
+        const conv = await conversationCreate(projectId, agentType);
+        set((s) => {
+          if (!s.conversationsByProject[projectId]) s.conversationsByProject[projectId] = [];
+          s.conversationsByProject[projectId].unshift(conv);
+          s.openTabs.push(conv.id);
+          s.activeTabId = conv.id;
+        });
+        return conv;
+      } catch (err) {
+        set((s) => { s.error = errorMessage(err); });
+        throw err;
+      } finally {
+        set((s) => { s.loading = false; });
+      }
     },
 
     switchTab: (id: string) => {
@@ -53,8 +80,15 @@ export const useConversationStore = create<ConversationStore>()(
     },
 
     loadMessages: async (conversationId: string) => {
-      const msgs = await conversationGetMessages(conversationId);
-      set((s) => { s.messagesByConversation[conversationId] = msgs; });
+      set((s) => { s.loading = true; s.error = null; });
+      try {
+        const msgs = await conversationGetMessages(conversationId);
+        set((s) => { s.messagesByConversation[conversationId] = msgs; });
+      } catch (err) {
+        set((s) => { s.error = errorMessage(err); });
+      } finally {
+        set((s) => { s.loading = false; });
+      }
     },
 
     appendMessage: (conversationId: string, message: Message) => {

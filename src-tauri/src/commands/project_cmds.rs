@@ -10,7 +10,7 @@ pub fn project_open(state: State<AppState>, path: String) -> Result<Project, Nex
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| path.clone());
-    state.db.create_project(&name, &path)
+    state.db.open_project(&name, &path)
 }
 
 #[tauri::command]

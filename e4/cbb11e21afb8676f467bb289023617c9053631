@@ -1,0 +1,25 @@
+src/styles/globals.css
+  s_e964f86b079420::t_3918a4124c9483 1-113
+src/main.tsx
+  s_e964f86b079420::t_30f2ca1c7822e3 1-5,7-8,10-11
+src/App.tsx
+  s_e964f86b079420::t_c6af617c140764 3-7,10
+src/styles/vibrancy.css
+  s_e964f86b079420::t_d27b8aafbe4cc8 1-13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "e4cbb11e21afb8676f467bb289023617c9053631",
+  "prompts": {},
+  "sessions": {
+    "s_e964f86b079420": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "10871589-3461-4e53-a391-5c14aa9b3486",
+        "model": "qwen3.8-max-preview"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

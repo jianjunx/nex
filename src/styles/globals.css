@@ -1,41 +1,18 @@
 @import "tailwindcss";
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 @import "tw-animate-css";
 @import "@glinui/tokens/theme.css";
 @source "../../node_modules/@glinui/ui/dist";
 
 :root {
-  /* Glass materials - Dark mode (default) */
-  --glass-base-bg: rgba(255, 255, 255, 0.03);
-  --glass-base-blur: 40px;
-  --glass-base-border: none;
-
-  --glass-elevated-bg: rgba(255, 255, 255, 0.06);
-  --glass-elevated-blur: 24px;
-  --glass-elevated-border: 1px solid rgba(255, 255, 255, 0.08);
-
-  --glass-interactive-bg: rgba(255, 255, 255, 0.10);
-  --glass-interactive-blur: 16px;
-  --glass-interactive-border: 1px solid rgba(255, 255, 255, 0.12);
-
-  --glass-overlay-bg: rgba(255, 255, 255, 0.15);
-  --glass-overlay-blur: 12px;
-  --glass-overlay-border: 1px solid rgba(255, 255, 255, 0.18);
-
   /* Semantic borders / overlays - Dark mode (white tints on dark glass) */
   --border-subtle: rgba(255, 255, 255, 0.06);
   --border-default: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.12);
-  --border-emphasis: rgba(255, 255, 255, 0.18);
-  --border-focus: rgba(255, 255, 255, 0.20);
 
   --overlay-hover: rgba(255, 255, 255, 0.05);
-  --overlay-soft: rgba(255, 255, 255, 0.04);
   --overlay-ghost: rgba(255, 255, 255, 0.06);
   --overlay-active: rgba(255, 255, 255, 0.10);
-  --overlay-active-strong: rgba(255, 255, 255, 0.13);
 
-  --shadow-focus: 0 0 20px rgba(255, 255, 255, 0.05);
-  --highlight-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0) 40%);
   --scrollbar-thumb: rgba(255, 255, 255, 0.15);
   --scrollbar-thumb-hover: rgba(255, 255, 255, 0.25);
 
@@ -59,41 +36,18 @@
   --radius-md: 12px;
   --radius-lg: 16px;
   --radius-xl: 24px;
-
-  /* Spacing */
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-6: 24px;
-  --space-8: 32px;
 }
 
 /* Light mode override */
 [data-theme="light"] {
-  --glass-base-bg: rgba(0, 0, 0, 0.02);
-  --glass-elevated-bg: rgba(0, 0, 0, 0.04);
-  --glass-elevated-border: 1px solid rgba(0, 0, 0, 0.06);
-  --glass-interactive-bg: rgba(0, 0, 0, 0.06);
-  --glass-interactive-border: 1px solid rgba(0, 0, 0, 0.08);
-  --glass-overlay-bg: rgba(0, 0, 0, 0.08);
-  --glass-overlay-border: 1px solid rgba(0, 0, 0, 0.10);
-
   /* Semantic borders / overlays - Light mode (black tints on light glass) */
   --border-subtle: rgba(0, 0, 0, 0.06);
   --border-default: rgba(0, 0, 0, 0.08);
-  --border-strong: rgba(0, 0, 0, 0.12);
-  --border-emphasis: rgba(0, 0, 0, 0.18);
-  --border-focus: rgba(124, 138, 255, 0.50);
 
   --overlay-hover: rgba(0, 0, 0, 0.04);
-  --overlay-soft: rgba(0, 0, 0, 0.03);
   --overlay-ghost: rgba(0, 0, 0, 0.05);
   --overlay-active: rgba(0, 0, 0, 0.08);
-  --overlay-active-strong: rgba(0, 0, 0, 0.10);
 
-  --shadow-focus: 0 0 20px rgba(124, 138, 255, 0.15);
-  --highlight-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.7) 0%, rgba(255, 255, 255, 0) 40%);
   --scrollbar-thumb: rgba(0, 0, 0, 0.15);
   --scrollbar-thumb-hover: rgba(0, 0, 0, 0.25);
 
@@ -124,20 +78,6 @@ html, body {
   height: 100%;
   width: 100%;
   overflow: hidden;
-}
-
-/* Glass highlight pseudo-element utility */
-.glass-highlight {
-  position: relative;
-}
-.glass-highlight::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: var(--highlight-gradient);
-  pointer-events: none;
-  z-index: 1;
 }
 
 /* Scrollbar styling */

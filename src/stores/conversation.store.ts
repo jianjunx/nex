@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
+import { persist } from "zustand/middleware";
 import { conversationCreate, conversationList, conversationGetMessages, type Conversation, type Message } from "../bridge/tauri";
 
 interface ConversationStore {
@@ -17,6 +18,12 @@ interface ConversationStore {
   loadMessages: (conversationId: string) => Promise<void>;
   appendMessage: (conversationId: string, message: Message) => void;
   updateMessageContent: (conversationId: string, messageId: string, content: string) => void;
+  /**
+   * Atomically restore the open tabs and active tab after validating that
+   * every id still exists in `validIds`. Used during startup recovery so the
+   * app reopens with the same conversations the user had when they quit.
+   */
+  restoreTabs: (candidateTabs: string[], candidateActiveId: string | null, validIds: Set<string>) => void;
 }
 
 // Backend errors arrive as { type, message }; fall back to String(err).
@@ -28,13 +35,14 @@ function errorMessage(err: unknown): string {
 }
 
 export const useConversationStore = create<ConversationStore>()(
-  immer((set) => ({
-    conversationsByProject: {},
-    openTabs: [],
-    activeTabId: null,
-    messagesByConversation: {},
-    loading: false,
-    error: null,
+  persist(
+    immer((set) => ({
+      conversationsByProject: {},
+      openTabs: [],
+      activeTabId: null,
+      messagesByConversation: {},
+      loading: false,
+      error: null,
 
     loadConversations: async (projectId: string) => {
       set((s) => { s.loading = true; s.error = null; });
@@ -105,5 +113,25 @@ export const useConversationStore = create<ConversationStore>()(
         if (msg) msg.content = content;
       });
     },
-  }))
+
+    restoreTabs: (candidateTabs: string[], candidateActiveId: string | null, validIds: Set<string>) => {
+      set((s) => {
+        const valid = candidateTabs.filter((id) => validIds.has(id));
+        s.openTabs = valid;
+        s.activeTabId = candidateActiveId && valid.includes(candidateActiveId)
+          ? candidateActiveId
+          : valid[valid.length - 1] ?? null;
+      });
+    },
+    })),
+    {
+      name: "nex-conversations",
+      // Persist only the tab layout so it can be restored on next launch;
+      // messages and conversation lists are always re-fetched from the DB.
+      partialize: (s) => ({
+        openTabs: s.openTabs,
+        activeTabId: s.activeTabId,
+      }),
+    }
+  )
 );

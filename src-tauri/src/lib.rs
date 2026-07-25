@@ -72,6 +72,9 @@ pub fn run() {
                 // achieve. Light tint matches the default light theme; tune the
                 // alpha (4th byte) to adjust opacity.
                 let _ = apply_acrylic(&window, Some((245, 246, 250, 180)));
+                // Hide the native title bar on Windows; we draw our own tab bar
+                // with custom window controls in the frontend.
+                let _ = window.set_decorations(false);
             }
 
             // Initialize database

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
+import { persist } from "zustand/middleware";
 
 export type SidePanelTab = "files" | "git" | "search";
 
@@ -17,18 +18,33 @@ interface UiState {
   setTerminalHeight: (h: number) => void;
 }
 
+// Persist layout state so the window reopens exactly as the user left it
+// (panel visibility/width, terminal toggle/height, active side-panel tab).
 export const useUiStore = create<UiState>()(
-  immer((set) => ({
-    sidePanelVisible: true,
-    sidePanelTab: "files",
-    terminalVisible: false,
-    sidePanelWidth: 320,
-    terminalHeight: 200,
+  persist(
+    immer((set) => ({
+      sidePanelVisible: true,
+      sidePanelTab: "files",
+      terminalVisible: false,
+      sidePanelWidth: 320,
+      terminalHeight: 200,
 
-    toggleSidePanel: () => set((s) => { s.sidePanelVisible = !s.sidePanelVisible; }),
-    setSidePanelTab: (tab) => set((s) => { s.sidePanelTab = tab; s.sidePanelVisible = true; }),
-    toggleTerminal: () => set((s) => { s.terminalVisible = !s.terminalVisible; }),
-    setSidePanelWidth: (w) => set((s) => { s.sidePanelWidth = w; }),
-    setTerminalHeight: (h) => set((s) => { s.terminalHeight = h; }),
-  }))
+      toggleSidePanel: () => set((s) => { s.sidePanelVisible = !s.sidePanelVisible; }),
+      setSidePanelTab: (tab) => set((s) => { s.sidePanelTab = tab; s.sidePanelVisible = true; }),
+      toggleTerminal: () => set((s) => { s.terminalVisible = !s.terminalVisible; }),
+      setSidePanelWidth: (w) => set((s) => { s.sidePanelWidth = w; }),
+      setTerminalHeight: (h) => set((s) => { s.terminalHeight = h; }),
+    })),
+    {
+      name: "nex-ui",
+      // Only persist data fields; actions are re-created from the initializer.
+      partialize: (s) => ({
+        sidePanelVisible: s.sidePanelVisible,
+        sidePanelTab: s.sidePanelTab,
+        terminalVisible: s.terminalVisible,
+        sidePanelWidth: s.sidePanelWidth,
+        terminalHeight: s.terminalHeight,
+      }),
+    }
+  )
 );

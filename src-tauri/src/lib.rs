@@ -46,6 +46,7 @@ pub fn run() {
             commands::terminal_cmds::terminal_write,
             commands::terminal_cmds::terminal_resize,
             commands::terminal_cmds::terminal_kill,
+            commands::appearance_cmds::appearance_set_theme,
             commands::agent_cmds::agent_list_servers,
             commands::agent_cmds::agent_refresh_registry,
             commands::agent_cmds::agent_create_session,

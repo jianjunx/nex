@@ -188,6 +188,10 @@ export async function fsWriteFile(filePath: string, content: string): Promise<vo
   return invoke(COMMANDS.FS_WRITE_FILE, { filePath, content });
 }
 
+export async function appearanceSetTheme(theme: string): Promise<void> {
+  return invoke(COMMANDS.APPEARANCE_SET_THEME, { theme });
+}
+
 export interface SearchMatch {
   path: string;
   name: string;

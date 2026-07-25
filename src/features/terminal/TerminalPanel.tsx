@@ -11,12 +11,20 @@ import { Button } from "@glinui/ui";
 export function TerminalPanel() {
   const termRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
-  const { sessions, activeSessionId, error, create, kill, setActive, clearError } = useTerminalStore();
+  const { sessions, activeSessionId, loading, error, create, kill, setActive, clearError } = useTerminalStore();
   const settingsVersion = useTerminalStore((s) => s.settingsVersion);
   const terminalShell = useSettingsStore((s) => s.terminalShell);
   const projects = useProjectStore((s) => s.projects);
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const project = projects.find((p) => p.id === activeProjectId);
+
+  // Open = usable: the tray mounts only when the terminal is toggled visible
+  // (SidePanel gates it on terminalVisible), so creating a session on mount
+  // makes "open the terminal" immediately yield a live shell instead of an
+  // empty black box that waits for a manual "+". A manual kill of the last
+  // session does NOT respawn (this effect won't re-run); reopening the tray
+  // remounts and respawns, which matches "open = usable".
+  const autoCreatedFor = useRef<string | null>(null);
 
   // Construct the single xterm instance; session switches reuse it via
   // reset + replay (effect below) instead of dispose/reconstruct.
@@ -41,8 +49,13 @@ export function TerminalPanel() {
       fontFamily: terminalFontFamily,
       scrollback: terminalScrollback,
       allowTransparency: true,
-      // No `background` key: xterm 6 silently rejects "transparent"; the DOM renderer + globals.css handle transparency, and a future canvas renderer must not fall back to opaque black.
-      theme: { foreground, cursor },
+      // Transparent background so the glass shows through. NOTE: OMITTING the
+      // background key does NOT give transparency — xterm then paints its
+      // default OPAQUE black, which on the light theme hides the dark
+      // foreground (black-on-black). The CSS keyword "transparent" is rejected
+      // by xterm's color parser; an 8-bit-alpha rgba is accepted and, with
+      // allowTransparency, renders the canvas see-through.
+      theme: { foreground, cursor, background: "rgba(0,0,0,0)" },
       cursorBlink: true,
     });
     const fitAddon = new FitAddon();
@@ -91,6 +104,13 @@ export function TerminalPanel() {
     term.reset();
     term.write(getReplay(activeSessionId));
   }, [activeSessionId, settingsVersion]);
+
+  useEffect(() => {
+    if (project && sessions.length === 0 && !loading && autoCreatedFor.current !== project.id) {
+      autoCreatedFor.current = project.id;
+      void create(project.path, terminalShell || undefined);
+    }
+  }, [project, sessions.length, loading, create, terminalShell]);
 
   const handleCreate = () => {
     // Empty shell = system default ("" -> undefined, the bridge's

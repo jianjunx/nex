@@ -102,7 +102,14 @@ export const useTerminalStore = create<TerminalStore>()(
     create: async (projectPath: string, shell?: string) => {
       set((s) => { s.loading = true; s.error = null; });
       try {
-        const id = await terminalCreate(projectPath, shell);
+        // Race the spawn against a deadline: if the PTY invoke hangs (a blocked
+        // ConPTY never resolving), surface it instead of a forever-loading "+".
+        const id = await Promise.race([
+          terminalCreate(projectPath, shell),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("终端启动超时：底层 PTY 未响应。可能是安全软件拦截了 ConPTY，或指定的 shell 无效。")), 8000)
+          ),
+        ]);
         set((s) => {
           s.sessions.push({ id, title: `Terminal ${s.sessions.length + 1}` });
           s.activeSessionId = id;
@@ -165,12 +172,21 @@ export const useTerminalStore = create<TerminalStore>()(
       // kill() also removes locally, so a late exited event for an
       // already-removed id is a tolerated no-op.
       onTerminalExited(({ terminalId }) => {
+        // A shell that exits having produced no output almost certainly failed
+        // to start (bad/missing shell, ConPTY/AV block, env). A normal `exit`
+        // always prints something first, so its buffer is non-empty and stays
+        // silent. This turns the silent "tab flashes then vanishes" case into
+        // a visible diagnostic.
+        const hadOutput = (outputBuffers.get(terminalId)?.length ?? 0) > 0;
         dropBuffer(terminalId);
         set((s) => {
           const idx = s.sessions.findIndex((t) => t.id === terminalId);
           if (idx === -1) return;
           s.sessions.splice(idx, 1);
           if (s.activeSessionId === terminalId) s.activeSessionId = s.sessions[0]?.id ?? null;
+          if (!hadOutput) {
+            s.error = "终端进程启动后立即退出。请在 设置 → 终端 → Shell 指定一个有效 shell（如 cmd.exe 或 powershell.exe），或检查是否有安全软件拦截终端（ConPTY）。";
+          }
         });
       }).then((fn) => { if (disposed) fn(); else unlistenExited = fn; });
 

@@ -145,6 +145,17 @@ export async function fsReadFile(filePath: string): Promise<{ is_text: boolean; 
   return invoke(COMMANDS.FS_READ_FILE, { filePath });
 }
 
+export interface SearchMatch {
+  path: string;
+  name: string;
+  line: number | null;
+  text: string;
+}
+
+export async function fsSearch(projectPath: string, query: string): Promise<SearchMatch[]> {
+  return invoke(COMMANDS.FS_SEARCH, { projectPath, query });
+}
+
 export async function fsWatchStart(projectPath: string): Promise<void> {
   return invoke(COMMANDS.FS_WATCH_START, { projectPath });
 }

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { enableMapSet } from "immer";
-import { fsReadTree, fsExpandDir, fsReadFile, type FsNode } from "../bridge/tauri";
+import { fsReadTree, fsExpandDir, fsReadFile, fsSearch, type FsNode, type SearchMatch } from "../bridge/tauri";
 
 // Required by immer before a Set can be drafted (expandedDirs).
 enableMapSet();
@@ -10,6 +10,8 @@ interface FsStore {
   nodesByDir: Record<string, FsNode[]>;
   expandedDirs: Set<string>;
   previewFile: { path: string; content: string | null; isText: boolean; size: number } | null;
+  searchResults: SearchMatch[];
+  searching: boolean;
   loading: boolean;
   error: string | null;
 
@@ -18,6 +20,8 @@ interface FsStore {
   collapseDir: (dirPath: string) => void;
   openFile: (filePath: string) => Promise<void>;
   closePreview: () => void;
+  search: (projectPath: string, query: string) => Promise<void>;
+  clearSearch: () => void;
 }
 
 // Backend errors arrive as { type, message }; fall back to String(err).
@@ -33,6 +37,8 @@ export const useFsStore = create<FsStore>()(
     nodesByDir: {},
     expandedDirs: new Set(),
     previewFile: null,
+    searchResults: [],
+    searching: false,
     loading: false,
     error: null,
 
@@ -86,6 +92,26 @@ export const useFsStore = create<FsStore>()(
 
     closePreview: () => {
       set((s) => { s.previewFile = null; });
+    },
+
+    search: async (projectPath: string, query: string) => {
+      if (!query.trim()) {
+        set((s) => { s.searchResults = []; s.searching = false; });
+        return;
+      }
+      set((s) => { s.searching = true; s.error = null; });
+      try {
+        const results = await fsSearch(projectPath, query.trim());
+        set((s) => { s.searchResults = results; });
+      } catch (err) {
+        set((s) => { s.error = errorMessage(err); });
+      } finally {
+        set((s) => { s.searching = false; });
+      }
+    },
+
+    clearSearch: () => {
+      set((s) => { s.searchResults = []; s.searching = false; });
     },
   }))
 );

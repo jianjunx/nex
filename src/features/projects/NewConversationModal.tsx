@@ -80,7 +80,7 @@ export function NewConversationModal({ open, onClose }: Props) {
       {error && (
         <p className="mb-4 text-sm text-[var(--error)] px-1">{error}</p>
       )}
-      <GlassButton variant="accent" className="w-full py-3" disabled={creating} onClick={handleCreate}>
+      <GlassButton variant="accent" className="w-full" disabled={creating} onClick={handleCreate}>
         {creating ? "Creating…" : "Create"}
       </GlassButton>
     </GlassModal>

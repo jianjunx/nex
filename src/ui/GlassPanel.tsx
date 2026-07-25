@@ -23,7 +23,7 @@ export function GlassPanel({ children, visible, width = 320, side: _side = "righ
           className={`h-full overflow-hidden ${className}`}
           style={{ width }}
         >
-          <Card variant="glass" className="h-full w-full overflow-y-auto !rounded-none !border-0">
+          <Card variant="glass" className="h-full w-full overflow-y-auto">
             {children}
           </Card>
         </motion.div>

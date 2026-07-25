@@ -52,10 +52,10 @@ export function TopBar() {
 
       {/* New conversation */}
       <DropdownMenu>
-        <DropdownMenuTrigger variant="ghost" size="sm" className="px-2" aria-label="New conversation">
+        <DropdownMenuTrigger variant="ghost" size="sm" aria-label="New conversation">
           <Plus size={14} />
         </DropdownMenuTrigger>
-        <DropdownMenuContent variant="glass" align="start" className="min-w-[180px]">
+        <DropdownMenuContent variant="glass" align="start">
           <DropdownMenuItem onSelect={() => setShowNewConversation(true)}>
             New Conversation
           </DropdownMenuItem>

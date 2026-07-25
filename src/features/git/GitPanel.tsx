@@ -94,7 +94,7 @@ export function GitPanel() {
           className="w-full bg-[var(--glass-interactive-bg)] border border-[color:var(--border-default)] rounded-[var(--radius-md)] px-4 py-2.5 text-sm text-[var(--text-primary)] outline-none focus:border-[color:var(--border-focus)] transition-colors"
           onKeyDown={(e) => e.key === "Enter" && handleCommit()}
         />
-        <GlassButton variant="accent" className="mt-3 w-full py-2.5" disabled={loading || !commitMsg.trim()} onClick={handleCommit}>
+        <GlassButton variant="accent" className="mt-3 w-full" disabled={loading || !commitMsg.trim()} onClick={handleCommit}>
           <Check size={14} className="mr-2" /> Commit
         </GlassButton>
       </div>

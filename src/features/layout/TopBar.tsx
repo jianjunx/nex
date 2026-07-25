@@ -37,6 +37,7 @@ export function TopBar() {
 
   return (
     <div
+      data-tauri-drag-region
       onMouseDown={handleMouseDown}
       className="flex items-center h-12 px-4 gap-3 border-b border-[color:var(--border-subtle)] bg-[var(--glass-base-bg)] backdrop-blur-[40px]"
     >
@@ -72,7 +73,11 @@ export function TopBar() {
       </GlassButton>
 
       {/* Custom window controls (Windows only) */}
-      {isWindows && <WindowControls />}
+      {isWindows && (
+        <div className="flex items-center" data-tauri-drag-region>
+          <WindowControls />
+        </div>
+      )}
 
       <NewConversationModal open={showNewConversation} onClose={() => setShowNewConversation(false)} />
     </div>

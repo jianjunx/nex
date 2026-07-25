@@ -66,25 +66,27 @@ export function ChatInput() {
 
   return (
     <div className="px-6 py-4 border-t border-[color:var(--border-subtle)]">
-      <div className="flex items-end gap-3 rounded-[var(--radius-lg)] bg-[var(--glass-interactive-bg)] border border-[color:var(--border-strong)] px-4 py-2.5">
+      <div className="flex items-end gap-3 rounded-[var(--radius-lg)] bg-[var(--glass-interactive-bg)] border border-[color:var(--border-strong)] px-5 py-3.5">
         <textarea
           ref={textareaRef}
           value={text}
           onChange={(e) => { setText(e.target.value); adjustHeight(); }}
           onKeyDown={handleKeyDown}
           placeholder={session ? "Send a message..." : "Start an agent session to chat"}
-          className="flex-1 bg-transparent text-sm leading-[21px] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] outline-none resize-none overflow-y-auto"
+          className="flex-1 bg-transparent text-sm leading-[21px] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] outline-none resize-none overflow-y-auto pr-1"
           style={{ minHeight: MIN_HEIGHT, maxHeight: MAX_HEIGHT }}
         />
-        {isRunning ? (
-          <GlassButton size="sm" variant="ghost" onClick={() => session && void cancel(session.sessionId)}>
-            <Square size={14} className="text-[var(--error)]" />
-          </GlassButton>
-        ) : (
-          <GlassButton size="sm" variant="accent" onClick={() => void handleSend()} disabled={!text.trim() || !session}>
-            <Send size={14} />
-          </GlassButton>
-        )}
+        <div className="flex-none flex items-center justify-center">
+          {isRunning ? (
+            <GlassButton size="md" variant="ghost" onClick={() => session && void cancel(session.sessionId)}>
+              <Square size={16} className="text-[var(--error)]" />
+            </GlassButton>
+          ) : (
+            <GlassButton size="md" variant="accent" onClick={() => void handleSend()} disabled={!text.trim() || !session}>
+              <Send size={16} />
+            </GlassButton>
+          )}
+        </div>
       </div>
     </div>
   );

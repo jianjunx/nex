@@ -32,12 +32,12 @@ export function GlassModal({ open, onClose, children, title }: GlassModalProps) 
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
         >
-          <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+          <div className="absolute inset-0 backdrop-blur-[20px] bg-[var(--glass-base-bg)]" onClick={onClose} />
           <motion.div
             {...scaleIn}
-            className="relative z-10 w-full max-w-md rounded-[var(--radius-lg)] backdrop-blur-[12px] bg-[var(--glass-overlay-bg)] border border-[color:var(--border-emphasis)] p-6 glass-highlight"
+            className="relative z-10 w-full max-w-md rounded-[var(--radius-xl)] backdrop-blur-[40px] bg-[var(--glass-elevated-bg)] border border-[color:var(--border-emphasis)] p-8 shadow-2xl glass-highlight"
           >
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-6 -mt-1 -mx-1">
               {title ? (
                 <h2 className="text-lg font-semibold text-[var(--text-primary)]">{title}</h2>
               ) : (
@@ -46,12 +46,14 @@ export function GlassModal({ open, onClose, children, title }: GlassModalProps) 
               <button
                 onClick={onClose}
                 aria-label="Close"
-                className="p-1 rounded-[var(--radius-sm)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--glass-interactive-bg)] transition-colors"
+                className="p-2 rounded-[var(--radius-sm)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--glass-interactive-bg)] transition-colors"
               >
                 <X size={16} />
               </button>
             </div>
-            {children}
+            <div className="px-1">
+              {children}
+            </div>
           </motion.div>
         </motion.div>
       )}

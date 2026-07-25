@@ -53,7 +53,7 @@ export function MainLayout({ mainContent, sidePanel }: MainLayoutProps) {
               className="w-1 flex-none cursor-col-resize hover:bg-[var(--accent)]/40 active:bg-[var(--accent)]/60 transition-colors"
             />
             <div
-              className="flex flex-col border-l border-[color:var(--border-subtle)] overflow-hidden"
+              className="flex flex-col border-l border-[color:var(--border-subtle)] overflow-hidden rounded-l-[var(--radius-md)]"
               style={{ width: sidePanelWidth }}
             >
               <div className="flex-1 overflow-hidden">

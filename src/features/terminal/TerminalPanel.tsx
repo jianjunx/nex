@@ -69,12 +69,12 @@ export function TerminalPanel() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-[color:var(--border-subtle)]">
+      <div className="flex items-center gap-1.5 px-4 py-2 border-b border-[color:var(--border-subtle)]">
         {sessions.map((s) => (
           <button
             key={s.id}
             onClick={() => setActive(s.id)}
-            className={`px-2.5 py-1 text-xs rounded ${s.id === activeSessionId ? "bg-[var(--overlay-active)]" : ""}`}
+            className={`px-3 py-1.5 text-xs rounded-[var(--radius-sm)] transition-colors ${s.id === activeSessionId ? "bg-[var(--overlay-active)] text-[var(--text-primary)]" : "text-[var(--text-tertiary)] hover:bg-[var(--overlay-ghost)]"}`}
           >
             {s.title}
           </button>
@@ -84,7 +84,7 @@ export function TerminalPanel() {
           <GlassButton size="sm" variant="ghost" onClick={() => void kill(activeSessionId)}><X size={12} /></GlassButton>
         )}
       </div>
-      <div ref={termRef} className="flex-1 p-2" />
+      <div ref={termRef} className="flex-1 p-3" />
     </div>
   );
 }

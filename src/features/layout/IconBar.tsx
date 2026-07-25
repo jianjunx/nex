@@ -11,7 +11,7 @@ export function IconBar() {
   const { sidePanelTab, setSidePanelTab, terminalVisible, toggleTerminal } = useUiStore();
 
   return (
-    <div className="flex flex-col items-center py-3 gap-2 w-12 border-l border-[color:var(--border-subtle)] bg-[var(--glass-base-bg)]">
+    <div className="flex flex-col items-center py-3 gap-2 w-12 border-l border-[color:var(--border-subtle)] bg-[var(--glass-base-bg)] mr-1.5 rounded-l-[var(--radius-md)]">
       {tabs.map(({ id, icon: Icon, label }) => (
         <button
           key={id}

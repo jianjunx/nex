@@ -21,7 +21,7 @@ function TreeNode({ node, depth }: { node: { name: string; path: string; is_dir:
     <div>
       <div
         onClick={handleClick}
-        className="flex items-center gap-1.5 px-2 py-1 text-sm cursor-pointer hover:bg-[var(--overlay-hover)] rounded-[var(--radius-sm)]"
+        className="flex items-center gap-2 px-2.5 py-1.5 text-sm cursor-pointer hover:bg-[var(--overlay-hover)] rounded-[var(--radius-sm)]"
         style={{ paddingLeft: depth * 12 + 8 }}
       >
         {node.is_dir ? (
@@ -54,7 +54,7 @@ export function FileTree() {
   const rootNodes = nodesByDir[project.path] || [];
 
   return (
-    <div className="py-3 overflow-y-auto h-full">
+    <div className="py-2 overflow-y-auto h-full pr-1">
       {rootNodes.map((node) => (
         <TreeNode key={node.path} node={node} depth={0} />
       ))}

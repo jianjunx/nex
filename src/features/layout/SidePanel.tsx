@@ -10,7 +10,7 @@ export function SidePanel() {
   return (
     <div className="flex flex-col h-full">
       {/* Upper: active tab content */}
-      <div className="flex-1 overflow-hidden px-4">
+      <div className="flex-1 overflow-hidden px-5 pt-4">
         {sidePanelTab === "files" && <FileTree />}
         {sidePanelTab === "git" && <GitPanel />}
         {sidePanelTab === "search" && <SearchPanel />}
@@ -18,7 +18,7 @@ export function SidePanel() {
 
       {/* Lower: terminal */}
       {terminalVisible && (
-        <div className="border-t border-[color:var(--border-subtle)]" style={{ height: terminalHeight }}>
+        <div className="border-t border-[color:var(--border-subtle)] bg-[var(--glass-base-bg)]" style={{ height: terminalHeight }}>
           <TerminalPanel />
         </div>
       )}

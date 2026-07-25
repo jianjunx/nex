@@ -33,7 +33,7 @@ export function SearchPanel() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="py-3">
+      <div className="py-4 px-1">
         <GlassInput
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -47,28 +47,28 @@ export function SearchPanel() {
         />
       </div>
 
-      <div className="flex-1 overflow-y-auto pb-3">
+      <div className="flex-1 overflow-y-auto pb-4 px-1">
         {!project ? (
-          <p className="text-sm text-[var(--text-tertiary)] px-1">Open a project to search.</p>
+          <p className="text-sm text-[var(--text-tertiary)] px-2 py-1">Open a project to search.</p>
         ) : searching ? (
-          <p className="flex items-center gap-2 text-sm text-[var(--text-tertiary)] px-1">
+          <p className="flex items-center gap-2 text-sm text-[var(--text-tertiary)] px-2 py-1">
             <Loader2 size={14} className="animate-spin" /> Searching…
           </p>
         ) : !query.trim() ? (
-          <p className="flex items-center gap-2 text-sm text-[var(--text-tertiary)] px-1">
+          <p className="flex items-center gap-2 text-sm text-[var(--text-tertiary)] px-2 py-1">
             <Search size={14} /> Type to search file names and text content.
           </p>
         ) : searchResults.length === 0 ? (
-          <p className="text-sm text-[var(--text-tertiary)] px-1">No results.</p>
+          <p className="text-sm text-[var(--text-tertiary)] px-2 py-1">No results.</p>
         ) : (
           <div className="space-y-1">
             {searchResults.map((m, i) => (
               <button
                 key={`${m.path}:${m.line ?? 0}:${i}`}
                 onClick={() => void openFile(m.path)}
-                className="w-full text-left px-2 py-1.5 rounded-[var(--radius-sm)] hover:bg-[var(--glass-interactive-bg)] transition-colors"
+                className="w-full text-left px-3 py-2 rounded-[var(--radius-md)] hover:bg-[var(--glass-interactive-bg)] transition-colors"
               >
-                <div className="flex items-center gap-1.5 text-sm text-[var(--text-primary)]">
+                <div className="flex items-center gap-2 text-sm text-[var(--text-primary)]">
                   <FileCode size={13} className="flex-none text-[var(--text-tertiary)]" />
                   <span className="truncate">{m.name}</span>
                   {m.line != null && (

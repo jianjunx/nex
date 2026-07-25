@@ -147,3 +147,24 @@ html, body, #root {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--scrollbar-thumb-hover);
 }
+
+/* xterm.js Liquid Glass overrides — replace the default black background
+   with a transparent surface so the native vibrancy/acrylic shows through. */
+.xterm {
+  background: transparent !important;
+}
+.xterm .xterm-viewport {
+  background: transparent !important;
+}
+.xterm .xterm-screen {
+  background: transparent !important;
+}
+.xterm .xterm-rows > div {
+  background: transparent !important;
+}
+.xterm .xterm-cursor-layer {
+  background: transparent !important;
+}
+.xterm .xterm-helper-textarea {
+  background: transparent !important;
+}

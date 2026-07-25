@@ -65,22 +65,22 @@ export function NewConversationModal({ open, onClose }: Props) {
 
   return (
     <GlassModal open={open} onClose={onClose} title="New Conversation">
-      <div className="space-y-2 mb-4">
+      <div className="space-y-2 mb-6">
         {AGENTS.map((a) => (
           <button
             key={a.id}
             disabled={creating}
             onClick={() => { setSelectedAgent(a); setError(null); }}
-            className={`w-full text-left px-4 py-2.5 rounded-[var(--radius-sm)] text-sm disabled:opacity-50 ${selectedAgent.id === a.id ? "bg-[var(--accent)]/20 border border-[var(--accent)]/40 text-[var(--text-primary)]" : "bg-[var(--glass-interactive-bg)] border border-[color:var(--border-default)] text-[var(--text-secondary)]"}`}
+            className={`w-full text-left px-5 py-3 rounded-[var(--radius-md)] text-sm disabled:opacity-50 transition-colors ${selectedAgent.id === a.id ? "bg-[var(--accent)]/20 border border-[var(--accent)]/40 text-[var(--text-primary)]" : "bg-[var(--glass-interactive-bg)] border border-[color:var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--overlay-hover)]"}`}
           >
             {a.label}
           </button>
         ))}
       </div>
       {error && (
-        <p className="mb-3 text-sm text-[var(--error)]">{error}</p>
+        <p className="mb-4 text-sm text-[var(--error)] px-1">{error}</p>
       )}
-      <GlassButton variant="accent" className="w-full" disabled={creating} onClick={handleCreate}>
+      <GlassButton variant="accent" className="w-full py-3" disabled={creating} onClick={handleCreate}>
         {creating ? "Creating…" : "Create"}
       </GlassButton>
     </GlassModal>

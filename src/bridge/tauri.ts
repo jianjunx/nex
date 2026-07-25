@@ -184,6 +184,10 @@ export async function fsReadFile(filePath: string): Promise<{ is_text: boolean; 
   return invoke(COMMANDS.FS_READ_FILE, { filePath });
 }
 
+export async function fsWriteFile(filePath: string, content: string): Promise<void> {
+  return invoke(COMMANDS.FS_WRITE_FILE, { filePath, content });
+}
+
 export interface SearchMatch {
   path: string;
   name: string;

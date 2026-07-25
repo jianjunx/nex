@@ -1,6 +1,7 @@
 use crate::error::NexError;
 use crate::fs::tree::{FsNode, read_tree, expand_dir};
 use crate::fs::read::{FileContent, read_file};
+use crate::fs::write::write_file;
 use crate::fs::search::{SearchMatch, search};
 use crate::state::AppState;
 use std::path::Path;
@@ -19,6 +20,11 @@ pub fn fs_expand_dir(dir_path: String) -> Result<Vec<FsNode>, NexError> {
 #[tauri::command]
 pub fn fs_read_file(file_path: String) -> Result<FileContent, NexError> {
     read_file(Path::new(&file_path))
+}
+
+#[tauri::command]
+pub fn fs_write_file(file_path: String, content: String) -> Result<(), NexError> {
+    write_file(Path::new(&file_path), &content)
 }
 
 /// Starts the debounced watcher for a project (no-op if already watching),

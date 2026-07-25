@@ -33,6 +33,7 @@ pub fn run() {
             commands::fs_cmds::fs_read_tree,
             commands::fs_cmds::fs_expand_dir,
             commands::fs_cmds::fs_read_file,
+            commands::fs_cmds::fs_write_file,
             commands::fs_cmds::fs_watch_start,
             commands::fs_cmds::fs_search,
             commands::git_cmds::git_status,

@@ -33,6 +33,7 @@ export const COMMANDS = {
   FS_READ_TREE: "fs_read_tree",
   FS_EXPAND_DIR: "fs_expand_dir",
   FS_READ_FILE: "fs_read_file",
+  FS_WRITE_FILE: "fs_write_file",
   FS_WATCH_START: "fs_watch_start",
   FS_SEARCH: "fs_search",
 } as const;

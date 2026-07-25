@@ -2,9 +2,11 @@ import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { GlassButton } from "../../ui";
 import { useProjectStore } from "../../stores/project.store";
+import { useConversationStore } from "../../stores/conversation.store";
 
 export function ProjectSelector() {
   const { projects, activeProjectId, openProject, switchProject } = useProjectStore();
+  const loadConversations = useConversationStore((s) => s.loadConversations);
   const [showList, setShowList] = useState(false);
   const activeProject = projects.find((p) => p.id === activeProjectId);
 
@@ -12,6 +14,10 @@ export function ProjectSelector() {
     const selected = await open({ directory: true, multiple: false });
     if (selected && typeof selected === "string") {
       await openProject(selected);
+      // openProject returns void and sets activeProjectId on success; read
+      // the resulting id back and load that project's conversations.
+      const activeId = useProjectStore.getState().activeProjectId;
+      if (activeId) loadConversations(activeId);
     }
   };
 
@@ -26,7 +32,7 @@ export function ProjectSelector() {
           {projects.map((p) => (
             <button
               key={p.id}
-              onClick={() => { switchProject(p.id); setShowList(false); }}
+              onClick={() => { switchProject(p.id); loadConversations(p.id); setShowList(false); }}
               className={`w-full text-left px-3 py-1.5 text-sm rounded-[var(--radius-sm)] ${p.id === activeProjectId ? "bg-white/[0.1] text-[var(--text-primary)]" : "text-[var(--text-secondary)] hover:bg-white/[0.05]"}`}
             >
               {p.name}

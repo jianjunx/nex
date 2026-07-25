@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { COMMANDS } from "./commands";
-import { EVENTS, type AcpNotificationPayload, type AcpPermissionRequestPayload, type TerminalOutputPayload, type FsChangedPayload, type GitStatusChangedPayload } from "./events";
+import { EVENTS, type AgentNotificationPayload, type AgentPermissionRequestPayload, type TerminalOutputPayload, type FsChangedPayload, type GitStatusChangedPayload } from "./events";
 
 // --- Projects ---
 export interface Project {
@@ -53,25 +53,64 @@ export async function conversationGetMessages(conversationId: string, limit = 50
   return invoke(COMMANDS.CONVERSATION_GET_MESSAGES, { conversationId, limit, offset });
 }
 
-// --- ACP ---
-export async function acpCreateSession(conversationId: string, agentCommand: string, cwd: string): Promise<string> {
-  return invoke(COMMANDS.ACP_CREATE_SESSION, { conversationId, agentCommand, cwd });
+// --- Agent (open ACP registry + custom servers) ---
+/** One row in the New-Conversation agent dropdown. */
+export interface ServerDescriptor {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  icon: string | null;
+  kind: "registry" | "custom";
 }
 
-export async function acpSendPrompt(sessionId: string, content: string): Promise<void> {
-  return invoke(COMMANDS.ACP_SEND_PROMPT, { sessionId, content });
+/** A user-defined ACP server (persisted on the Rust side). */
+export interface CustomServer {
+  id: string;
+  name: string;
+  command: string;
+  env: Record<string, string>;
 }
 
-export async function acpCancel(sessionId: string): Promise<void> {
-  return invoke(COMMANDS.ACP_CANCEL, { sessionId });
+/** Which agent to start a session against; serialized to Rust's `SessionTarget`. */
+export type SessionTarget =
+  | { type: "registry"; id: string }
+  | { type: "custom"; id: string };
+
+export async function agentListServers(): Promise<ServerDescriptor[]> {
+  return invoke(COMMANDS.AGENT_LIST_SERVERS);
 }
 
-export async function acpRespondPermission(requestId: string, optionId: string | null): Promise<void> {
-  return invoke(COMMANDS.ACP_RESPOND_PERMISSION, { requestId, optionId });
+export async function agentRefreshRegistry(): Promise<void> {
+  return invoke(COMMANDS.AGENT_REFRESH_REGISTRY);
 }
 
-export async function acpCloseSession(sessionId: string): Promise<void> {
-  return invoke(COMMANDS.ACP_CLOSE_SESSION, { sessionId });
+export async function agentCreateSession(conversationId: string, target: SessionTarget, cwd: string): Promise<string> {
+  return invoke(COMMANDS.AGENT_CREATE_SESSION, { conversationId, target, cwd });
+}
+
+export async function agentSendPrompt(sessionId: string, content: string): Promise<void> {
+  return invoke(COMMANDS.AGENT_SEND_PROMPT, { sessionId, content });
+}
+
+export async function agentCancel(sessionId: string): Promise<void> {
+  return invoke(COMMANDS.AGENT_CANCEL, { sessionId });
+}
+
+export async function agentRespondPermission(requestId: string, optionId: string | null): Promise<void> {
+  return invoke(COMMANDS.AGENT_RESPOND_PERMISSION, { requestId, optionId });
+}
+
+export async function agentCloseSession(sessionId: string): Promise<void> {
+  return invoke(COMMANDS.AGENT_CLOSE_SESSION, { sessionId });
+}
+
+export async function agentCustomUpsert(server: CustomServer): Promise<void> {
+  return invoke(COMMANDS.AGENT_CUSTOM_UPSERT, { server });
+}
+
+export async function agentCustomDelete(id: string): Promise<void> {
+  return invoke(COMMANDS.AGENT_CUSTOM_DELETE, { id });
 }
 
 // --- Git ---
@@ -161,16 +200,16 @@ export async function fsWatchStart(projectPath: string): Promise<void> {
 }
 
 // --- Event Listeners ---
-export function onAcpNotification(cb: (payload: AcpNotificationPayload) => void): Promise<UnlistenFn> {
-  return listen(EVENTS.ACP_NOTIFICATION, (e) => cb(e.payload as AcpNotificationPayload));
+export function onAgentNotification(cb: (payload: AgentNotificationPayload) => void): Promise<UnlistenFn> {
+  return listen(EVENTS.AGENT_NOTIFICATION, (e) => cb(e.payload as AgentNotificationPayload));
 }
 
-export function onAcpPermissionRequest(cb: (payload: AcpPermissionRequestPayload) => void): Promise<UnlistenFn> {
-  return listen(EVENTS.ACP_PERMISSION_REQUEST, (e) => cb(e.payload as AcpPermissionRequestPayload));
+export function onAgentPermissionRequest(cb: (payload: AgentPermissionRequestPayload) => void): Promise<UnlistenFn> {
+  return listen(EVENTS.AGENT_PERMISSION_REQUEST, (e) => cb(e.payload as AgentPermissionRequestPayload));
 }
 
-export function onAcpSessionTerminated(cb: (payload: { sessionId: string }) => void): Promise<UnlistenFn> {
-  return listen(EVENTS.ACP_SESSION_TERMINATED, (e) => cb(e.payload as { sessionId: string }));
+export function onAgentSessionTerminated(cb: (payload: { sessionId: string }) => void): Promise<UnlistenFn> {
+  return listen(EVENTS.AGENT_SESSION_TERMINATED, (e) => cb(e.payload as { sessionId: string }));
 }
 
 export function onTerminalOutput(cb: (payload: TerminalOutputPayload) => void): Promise<UnlistenFn> {

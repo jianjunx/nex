@@ -1,16 +1,10 @@
 import { useEffect, useState } from "react";
-import { GlassModal, GlassButton } from "../../ui";
+import { RefreshCw, Plus, X } from "lucide-react";
+import { GlassModal, GlassButton, GlassInput } from "../../ui";
 import { useConversationStore } from "../../stores/conversation.store";
 import { useAgentStore } from "../../stores/agent.store";
 import { useProjectStore } from "../../stores/project.store";
-import type { Conversation } from "../../bridge/tauri";
-
-const AGENTS = [
-  { id: "claude-code", label: "Claude Code", command: "claude --acp" },
-  { id: "codex", label: "Codex", command: "codex --acp" },
-  { id: "cursor-cli", label: "Cursor CLI", command: "cursor --acp" },
-  { id: "opencode", label: "Opencode", command: "opencode --acp" },
-];
+import type { Conversation, ServerDescriptor, SessionTarget } from "../../bridge/tauri";
 
 interface Props { open: boolean; onClose: () => void; }
 
@@ -23,37 +17,62 @@ function errorMessage(err: unknown): string {
 }
 
 export function NewConversationModal({ open, onClose }: Props) {
-  const [selectedAgent, setSelectedAgent] = useState(AGENTS[0]);
-  const [creating, setCreating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const servers = useAgentStore((s) => s.servers);
+  const serversLoading = useAgentStore((s) => s.serversLoading);
+  const refreshRegistry = useAgentStore((s) => s.refreshRegistry);
+  const upsertCustom = useAgentStore((s) => s.upsertCustom);
+  const deleteCustom = useAgentStore((s) => s.deleteCustom);
+  const createSession = useAgentStore((s) => s.createSession);
   const createConversation = useConversationStore((s) => s.createConversation);
   const closeTab = useConversationStore((s) => s.closeTab);
-  const createSession = useAgentStore((s) => s.createSession);
   const projects = useProjectStore((s) => s.projects);
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const project = projects.find((p) => p.id === activeProjectId);
 
-  // Fresh state every time the modal opens (stale errors from a previous
-  // failed attempt must not linger).
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showCustomForm, setShowCustomForm] = useState(false);
+  const [customName, setCustomName] = useState("");
+  const [customCommand, setCustomCommand] = useState("");
+  const [customEnv, setCustomEnv] = useState("");
+
+  // Fresh state + a server-list load every time the modal opens (stale errors
+  // from a previous attempt must not linger). Uses getState() so the effect
+  // only re-runs on `open`.
   useEffect(() => {
     if (open) {
       setCreating(false);
       setError(null);
+      setShowCustomForm(false);
+      void useAgentStore.getState().loadServers();
     }
   }, [open]);
 
+  // Selection falls back to the first server if the stored id is missing
+  // (list just loaded, or the selected custom server was deleted).
+  const selected: ServerDescriptor | null =
+    servers.find((s) => s.id === selectedId) ?? servers[0] ?? null;
+
+  const registryServers = servers.filter((s) => s.kind === "registry");
+  const customServers = servers.filter((s) => s.kind === "custom");
+
   const handleCreate = async () => {
-    if (!project || creating) return;
+    if (!project || creating || !selected) return;
     setCreating(true);
     setError(null);
     let conv: Conversation | null = null;
     try {
-      conv = await createConversation(project.id, selectedAgent.id);
-      await createSession(conv.id, selectedAgent.command, project.path);
+      conv = await createConversation(project.id, selected.id);
+      const target: SessionTarget =
+        selected.kind === "registry"
+          ? { type: "registry", id: selected.id }
+          : { type: "custom", id: selected.id };
+      await createSession(conv.id, target, project.path);
     } catch (err) {
-      // If the conversation (and its tab) was created before the agent
-      // session failed to start, drop the orphan tab; show the error so the
-      // user can retry or pick another agent.
+      // If the conversation (and its tab) was created before the agent session
+      // failed to start, drop the orphan tab; show the error so the user can
+      // retry or pick another agent.
       if (conv) closeTab(conv.id);
       setError(errorMessage(err));
       setCreating(false);
@@ -63,24 +82,140 @@ export function NewConversationModal({ open, onClose }: Props) {
     onClose();
   };
 
+  const handleAddCustom = async () => {
+    const name = customName.trim();
+    const command = customCommand.trim();
+    if (!name || !command) {
+      setError("A name and a command are required for a custom server.");
+      return;
+    }
+    // Parse "KEY=VALUE" lines into an env map; blank/malformed lines ignored.
+    const env: Record<string, string> = {};
+    for (const line of customEnv.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const eq = trimmed.indexOf("=");
+      if (eq > 0) env[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim();
+    }
+    setCreating(true);
+    setError(null);
+    try {
+      const id = crypto.randomUUID();
+      await upsertCustom({ id, name, command, env });
+      setSelectedId(id);
+      setShowCustomForm(false);
+      setCustomName("");
+      setCustomCommand("");
+      setCustomEnv("");
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const renderServer = (s: ServerDescriptor) => {
+    const isSelected = selected?.id === s.id;
+    return (
+      <div key={s.id} className="relative">
+        <button
+          disabled={creating}
+          onClick={() => { setSelectedId(s.id); setError(null); }}
+          className={`w-full text-left px-5 py-3 rounded-[var(--radius-md)] text-sm disabled:opacity-50 transition-colors ${isSelected ? "bg-[var(--accent)]/20 border border-[var(--accent)]/40 text-[var(--text-primary)]" : "bg-[var(--glass-interactive-bg)] border border-[color:var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--overlay-hover)]"}`}
+        >
+          <div className="flex items-center gap-2">
+            <span className="font-medium">{s.name}</span>
+            {s.version && <span className="text-xs text-[var(--text-tertiary)]">v{s.version}</span>}
+          </div>
+          {s.description && (
+            <div className="mt-0.5 text-xs text-[var(--text-tertiary)] truncate">{s.description}</div>
+          )}
+        </button>
+        {s.kind === "custom" && (
+          <button
+            disabled={creating}
+            onClick={() => void deleteCustom(s.id)}
+            title="Remove custom server"
+            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-[var(--text-tertiary)] hover:text-[var(--error)] hover:bg-[var(--overlay-hover)]"
+          >
+            <X size={13} />
+          </button>
+        )}
+      </div>
+    );
+  };
+
   return (
     <GlassModal open={open} onClose={onClose} title="New Conversation">
-      <div className="space-y-2 mb-6">
-        {AGENTS.map((a) => (
-          <button
-            key={a.id}
-            disabled={creating}
-            onClick={() => { setSelectedAgent(a); setError(null); }}
-            className={`w-full text-left px-5 py-3 rounded-[var(--radius-md)] text-sm disabled:opacity-50 transition-colors ${selectedAgent.id === a.id ? "bg-[var(--accent)]/20 border border-[var(--accent)]/40 text-[var(--text-primary)]" : "bg-[var(--glass-interactive-bg)] border border-[color:var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--overlay-hover)]"}`}
-          >
-            {a.label}
-          </button>
-        ))}
+      <div className="flex items-center justify-between mb-2 px-1">
+        <span className="text-xs font-medium uppercase tracking-wide text-[var(--text-tertiary)]">Agents</span>
+        <button
+          disabled={serversLoading || creating}
+          onClick={() => void refreshRegistry()}
+          title="Refresh agent registry"
+          className="flex items-center gap-1 text-xs text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] disabled:opacity-50"
+        >
+          <RefreshCw size={12} className={serversLoading ? "animate-spin" : ""} />
+          {serversLoading ? "Refreshing…" : "Refresh"}
+        </button>
       </div>
-      {error && (
-        <p className="mb-4 text-sm text-[var(--error)] px-1">{error}</p>
+
+      <div className="space-y-2 mb-4 max-h-72 overflow-y-auto pr-1">
+        {servers.length === 0 && !serversLoading && (
+          <p className="text-sm text-[var(--text-tertiary)] px-1">
+            No agents available. Connect to the internet and hit Refresh, or add a custom server below.
+          </p>
+        )}
+        {registryServers.map(renderServer)}
+        {customServers.length > 0 && (
+          <>
+            <div className="pt-1 text-xs font-medium uppercase tracking-wide text-[var(--text-tertiary)] px-1">Custom</div>
+            {customServers.map(renderServer)}
+          </>
+        )}
+      </div>
+
+      {showCustomForm ? (
+        <div className="space-y-2 mb-4 p-3 rounded-[var(--radius-md)] bg-[var(--glass-interactive-bg)] border border-[color:var(--border-default)]">
+          <GlassInput
+            value={customName}
+            onChange={(e) => setCustomName(e.target.value)}
+            placeholder="Name (e.g. My Agent)"
+            disabled={creating}
+          />
+          <GlassInput
+            value={customCommand}
+            onChange={(e) => setCustomCommand(e.target.value)}
+            placeholder="Command (e.g. npx -y my-agent --acp)"
+            disabled={creating}
+          />
+          <textarea
+            value={customEnv}
+            onChange={(e) => setCustomEnv(e.target.value)}
+            placeholder={"Env (one KEY=VALUE per line, optional)\nANTHROPIC_API_KEY=sk-…"}
+            disabled={creating}
+            rows={2}
+            className="w-full px-3 py-2 text-sm rounded-[var(--radius-sm)] bg-[var(--glass-bg)] border border-[color:var(--border-default)] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] resize-none focus:outline-none focus:border-[var(--accent)]"
+          />
+          <div className="flex gap-2">
+            <GlassButton size="sm" variant="accent" disabled={creating} onClick={handleAddCustom}>Save server</GlassButton>
+            <GlassButton size="sm" variant="ghost" disabled={creating} onClick={() => setShowCustomForm(false)}>Cancel</GlassButton>
+          </div>
+        </div>
+      ) : (
+        <button
+          disabled={creating}
+          onClick={() => { setShowCustomForm(true); setError(null); }}
+          className="flex items-center gap-1.5 mb-4 px-1 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-50"
+        >
+          <Plus size={14} /> Add custom ACP server…
+        </button>
       )}
-      <GlassButton variant="accent" className="w-full py-3" disabled={creating} onClick={handleCreate}>
+
+      {error && (
+        <p className="mb-4 text-sm text-[var(--error)] px-1 whitespace-pre-wrap">{error}</p>
+      )}
+      <GlassButton variant="accent" className="w-full py-3" disabled={creating || !selected} onClick={handleCreate}>
         {creating ? "Creating…" : "Create"}
       </GlassButton>
     </GlassModal>

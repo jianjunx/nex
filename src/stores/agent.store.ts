@@ -2,17 +2,24 @@ import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
-  acpCreateSession,
-  acpSendPrompt,
-  acpCancel,
-  acpRespondPermission,
-  acpCloseSession,
-  onAcpNotification,
-  onAcpPermissionRequest,
-  onAcpSessionTerminated,
+  agentCreateSession,
+  agentSendPrompt,
+  agentCancel,
+  agentRespondPermission,
+  agentCloseSession,
+  agentListServers,
+  agentRefreshRegistry,
+  agentCustomUpsert,
+  agentCustomDelete,
+  onAgentNotification,
+  onAgentPermissionRequest,
+  onAgentSessionTerminated,
   type Message,
+  type ServerDescriptor,
+  type SessionTarget,
+  type CustomServer,
 } from "../bridge/tauri";
-import type { AcpPermissionRequestPayload } from "../bridge/events";
+import type { AgentPermissionRequestPayload } from "../bridge/events";
 import { useConversationStore } from "./conversation.store";
 
 export interface AgentSession {
@@ -23,27 +30,37 @@ export interface AgentSession {
 
 interface AgentStore {
   sessions: Record<string, AgentSession>; // keyed by conversationId
-  /** Outstanding ACP permission requests, FIFO per session (keyed by sessionId). */
-  permissionQueues: Record<string, AcpPermissionRequestPayload[]>;
+  /** Outstanding permission requests, FIFO per session (keyed by sessionId). */
+  permissionQueues: Record<string, AgentPermissionRequestPayload[]>;
   /** The permission request currently shown in the modal (head of the first non-empty queue). */
-  pendingPermission: AcpPermissionRequestPayload | null;
+  pendingPermission: AgentPermissionRequestPayload | null;
   /** conversationId -> id of the assistant message currently accumulating stream chunks. */
   streamingMessageId: Record<string, string>;
+  /** Available agents for the New-Conversation dropdown (registry + custom). */
+  servers: ServerDescriptor[];
   loading: boolean;
+  /** True while the server list is (re)loading, for the dropdown's spinner. */
+  serversLoading: boolean;
   error: string | null;
 
-  createSession: (conversationId: string, agentCommand: string, cwd: string) => Promise<string>;
+  createSession: (conversationId: string, target: SessionTarget, cwd: string) => Promise<string>;
   /**
    * Tears down the conversation's agent session (kills the agent process)
    * and drops local session state. No-op when no session was ever started.
-   * Idempotent with the `acp-session-terminated` listener, which cleans up
+   * Idempotent with the `agent-session-terminated` listener, which cleans up
    * the same keys when the backend confirms termination.
    */
   removeSession: (conversationId: string) => Promise<void>;
   sendPrompt: (sessionId: string, content: string) => Promise<void>;
   cancel: (sessionId: string) => Promise<void>;
   respondPermission: (requestId: string, optionId: string | null) => Promise<void>;
-  /** Subscribes to ACP events. Returns an unlisten cleanup; safe to call from a StrictMode effect. */
+  /** Loads the merged agent list (registry + custom) from the backend. */
+  loadServers: () => Promise<void>;
+  /** Forces a registry re-fetch, then reloads the list. */
+  refreshRegistry: () => Promise<void>;
+  upsertCustom: (server: CustomServer) => Promise<void>;
+  deleteCustom: (id: string) => Promise<void>;
+  /** Subscribes to agent events. Returns an unlisten cleanup; safe to call from a StrictMode effect. */
   initListeners: () => () => void;
 }
 
@@ -101,8 +118,8 @@ function parseSessionUpdate(update: unknown): ParsedUpdate | null {
  * queues are empty.
  */
 function nextPendingPermission(
-  queues: Record<string, AcpPermissionRequestPayload[]>,
-): AcpPermissionRequestPayload | null {
+  queues: Record<string, AgentPermissionRequestPayload[]>,
+): AgentPermissionRequestPayload | null {
   for (const queue of Object.values(queues)) {
     if (queue.length > 0) return queue[0];
   }
@@ -115,13 +132,15 @@ export const useAgentStore = create<AgentStore>()(
     permissionQueues: {},
     pendingPermission: null,
     streamingMessageId: {},
+    servers: [],
     loading: false,
+    serversLoading: false,
     error: null,
 
-    createSession: async (conversationId, agentCommand, cwd) => {
+    createSession: async (conversationId, target, cwd) => {
       set((s) => { s.loading = true; s.error = null; });
       try {
-        const sessionId = await acpCreateSession(conversationId, agentCommand, cwd);
+        const sessionId = await agentCreateSession(conversationId, target, cwd);
         set((s) => {
           s.sessions[conversationId] = { sessionId, conversationId, status: "idle" };
         });
@@ -140,12 +159,12 @@ export const useAgentStore = create<AgentStore>()(
       if (!session) return;
       set((s) => { s.error = null; });
       try {
-        await acpCloseSession(session.sessionId);
+        await agentCloseSession(session.sessionId);
       } catch (err) {
         set((s) => { s.error = errorMessage(err); });
       } finally {
         // Drop local state regardless: the tab is closing either way, and
-        // the acp-session-terminated listener does the same cleanup when the
+        // the agent-session-terminated listener does the same cleanup when the
         // backend event arrives.
         set((s) => {
           delete s.sessions[conversationId];
@@ -154,7 +173,7 @@ export const useAgentStore = create<AgentStore>()(
       }
     },
 
-    // `acpSendPrompt` resolves when the agent finishes the turn, so the
+    // `agentSendPrompt` resolves when the agent finishes the turn, so the
     // session stays "running" for the whole turn instead of flickering per
     // streamed chunk. Session status, not `loading`, tracks the turn.
     sendPrompt: async (sessionId, content) => {
@@ -168,7 +187,7 @@ export const useAgentStore = create<AgentStore>()(
         s.error = null;
       });
       try {
-        await acpSendPrompt(sessionId, content);
+        await agentSendPrompt(sessionId, content);
       } catch (err) {
         set((s) => { s.error = errorMessage(err); });
       } finally {
@@ -182,7 +201,7 @@ export const useAgentStore = create<AgentStore>()(
     cancel: async (sessionId) => {
       set((s) => { s.error = null; });
       try {
-        await acpCancel(sessionId);
+        await agentCancel(sessionId);
       } catch (err) {
         set((s) => { s.error = errorMessage(err); });
       } finally {
@@ -202,7 +221,7 @@ export const useAgentStore = create<AgentStore>()(
     respondPermission: async (requestId, optionId) => {
       set((s) => { s.error = null; });
       try {
-        await acpRespondPermission(requestId, optionId);
+        await agentRespondPermission(requestId, optionId);
       } catch (err) {
         set((s) => { s.error = errorMessage(err); });
       } finally {
@@ -222,6 +241,54 @@ export const useAgentStore = create<AgentStore>()(
       }
     },
 
+    loadServers: async () => {
+      set((s) => { s.serversLoading = true; });
+      try {
+        const servers = await agentListServers();
+        set((s) => { s.servers = servers; });
+      } catch (err) {
+        set((s) => { s.error = errorMessage(err); });
+      } finally {
+        set((s) => { s.serversLoading = false; });
+      }
+    },
+
+    refreshRegistry: async () => {
+      set((s) => { s.serversLoading = true; s.error = null; });
+      try {
+        await agentRefreshRegistry();
+        const servers = await agentListServers();
+        set((s) => { s.servers = servers; });
+      } catch (err) {
+        set((s) => { s.error = errorMessage(err); });
+      } finally {
+        set((s) => { s.serversLoading = false; });
+      }
+    },
+
+    upsertCustom: async (server) => {
+      set((s) => { s.error = null; });
+      try {
+        await agentCustomUpsert(server);
+        const servers = await agentListServers();
+        set((s) => { s.servers = servers; });
+      } catch (err) {
+        set((s) => { s.error = errorMessage(err); });
+        throw err;
+      }
+    },
+
+    deleteCustom: async (id) => {
+      set((s) => { s.error = null; });
+      try {
+        await agentCustomDelete(id);
+        const servers = await agentListServers();
+        set((s) => { s.servers = servers; });
+      } catch (err) {
+        set((s) => { s.error = errorMessage(err); });
+      }
+    },
+
     initListeners: () => {
       if (listenerTeardown) return listenerTeardown;
       let disposed = false;
@@ -229,7 +296,7 @@ export const useAgentStore = create<AgentStore>()(
       let unlistenPermission: UnlistenFn | null = null;
       let unlistenTerminated: UnlistenFn | null = null;
 
-      onAcpNotification(({ sessionId, update }) => {
+      onAgentNotification(({ sessionId, update }) => {
         const session = Object.values(get().sessions).find((ss) => ss.sessionId === sessionId);
         if (!session) return;
         const parsed = parseSessionUpdate(update);
@@ -275,7 +342,7 @@ export const useAgentStore = create<AgentStore>()(
         }
       }).then((fn) => { if (disposed) fn(); else unlistenNotification = fn; });
 
-      onAcpPermissionRequest((payload) => {
+      onAgentPermissionRequest((payload) => {
         set((s) => {
           if (!s.permissionQueues[payload.sessionId]) s.permissionQueues[payload.sessionId] = [];
           s.permissionQueues[payload.sessionId].push(payload);
@@ -284,7 +351,7 @@ export const useAgentStore = create<AgentStore>()(
         });
       }).then((fn) => { if (disposed) fn(); else unlistenPermission = fn; });
 
-      onAcpSessionTerminated(({ sessionId }) => {
+      onAgentSessionTerminated(({ sessionId }) => {
         set((s) => {
           const session = Object.values(s.sessions).find((ss) => ss.sessionId === sessionId);
           if (session) {

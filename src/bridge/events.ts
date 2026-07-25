@@ -1,19 +1,19 @@
 // Event name constants - must match Rust emit() calls
 export const EVENTS = {
-  ACP_NOTIFICATION: "acp-notification",
-  ACP_PERMISSION_REQUEST: "acp-permission-request",
-  ACP_SESSION_TERMINATED: "acp-session-terminated",
+  AGENT_NOTIFICATION: "agent-notification",
+  AGENT_PERMISSION_REQUEST: "agent-permission-request",
+  AGENT_SESSION_TERMINATED: "agent-session-terminated",
   GIT_STATUS_CHANGED: "git-status-changed",
   TERMINAL_OUTPUT: "terminal-output",
   FS_CHANGED: "fs-changed",
 } as const;
 
-export interface AcpNotificationPayload {
+export interface AgentNotificationPayload {
   sessionId: string;
-  update: unknown; // SessionUpdate from ACP
+  update: unknown; // SessionUpdate (ACP)
 }
 
-export interface AcpPermissionRequestPayload {
+export interface AgentPermissionRequestPayload {
   sessionId: string;
   requestId: string;
   options: { optionId: string; label: string }[];

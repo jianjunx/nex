@@ -7,12 +7,16 @@ export const COMMANDS = {
   CONVERSATION_CREATE: "conversation_create",
   CONVERSATION_LIST: "conversation_list",
   CONVERSATION_GET_MESSAGES: "conversation_get_messages",
-  // ACP
-  ACP_CREATE_SESSION: "acp_create_session",
-  ACP_SEND_PROMPT: "acp_send_prompt",
-  ACP_CANCEL: "acp_cancel",
-  ACP_RESPOND_PERMISSION: "acp_respond_permission",
-  ACP_CLOSE_SESSION: "acp_close_session",
+  // Agent (open ACP registry + custom servers)
+  AGENT_LIST_SERVERS: "agent_list_servers",
+  AGENT_REFRESH_REGISTRY: "agent_refresh_registry",
+  AGENT_CREATE_SESSION: "agent_create_session",
+  AGENT_SEND_PROMPT: "agent_send_prompt",
+  AGENT_CANCEL: "agent_cancel",
+  AGENT_RESPOND_PERMISSION: "agent_respond_permission",
+  AGENT_CLOSE_SESSION: "agent_close_session",
+  AGENT_CUSTOM_UPSERT: "agent_custom_upsert",
+  AGENT_CUSTOM_DELETE: "agent_custom_delete",
   // Git
   GIT_STATUS: "git_status",
   GIT_DIFF: "git_diff",

@@ -1,14 +1,26 @@
-import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { GlassButton } from "../../ui";
+import {
+  Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@glinui/ui";
 import { useProjectStore } from "../../stores/project.store";
 import { useConversationStore } from "../../stores/conversation.store";
 import { fsWatchStart } from "../../bridge/tauri";
 
+// Radix highlights items on hover/keyboard via data-[highlighted]; map it to
+// the old --overlay-hover token. dark: counterparts are required: Tailwind v4
+// dark: is prefers-color-scheme-based here and the item base carries
+// dark:data-[highlighted]:bg-black/50 that twMerge can't merge across.
+const ITEM_HIGHLIGHT =
+  "data-[highlighted]:bg-[var(--overlay-hover)] dark:data-[highlighted]:bg-[var(--overlay-hover)]";
+
 export function ProjectSelector() {
   const { projects, activeProjectId, openProject, switchProject } = useProjectStore();
   const loadConversations = useConversationStore((s) => s.loadConversations);
-  const [showList, setShowList] = useState(false);
   const activeProject = projects.find((p) => p.id === activeProjectId);
 
   const handleOpen = async () => {
@@ -28,29 +40,54 @@ export function ProjectSelector() {
   };
 
   return (
-    <div className="relative">
-      <GlassButton size="sm" variant="ghost" onClick={() => setShowList(!showList)}>
-        {activeProject?.name || "Open Project"} ▾
-      </GlassButton>
+    <DropdownMenu>
+      {/*
+        asChild merges the trigger's classes onto Button with a plain string
+        join (Radix Slot, no twMerge), so pass variant/size explicitly to
+        neutralize the trigger's defaultVariants, and squash rounded-md/text-sm
+        via className to match Button's rounded-xl/text-xs.
+      */}
+      <DropdownMenuTrigger asChild variant="ghost" size="sm" className="rounded-xl text-xs">
+        <Button variant="ghost" size="sm">
+          {activeProject?.name || "Open Project"} ▾
+        </Button>
+      </DropdownMenuTrigger>
 
-      {showList && (
-        <div className="absolute top-full left-0 mt-1.5 z-40 min-w-[200px] rounded-[var(--radius-md)] backdrop-blur-[12px] bg-[var(--glass-overlay-bg)] border border-[color:var(--border-emphasis)] p-1.5">
-          {projects.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => { switchProject(p.id); loadConversations(p.id); fsWatchStart(p.path).catch(() => {}); setShowList(false); }}
-              className={`w-full text-left px-3 py-1.5 text-sm rounded-[var(--radius-sm)] ${p.id === activeProjectId ? "bg-[var(--overlay-active)] text-[var(--text-primary)]" : "text-[var(--text-secondary)] hover:bg-[var(--overlay-hover)]"}`}
-            >
-              {p.name}
-            </button>
-          ))}
-          <div className="border-t border-[color:var(--border-default)] mt-1.5 pt-1.5">
-            <button onClick={() => { handleOpen(); setShowList(false); }} className="w-full text-left px-3 py-1.5 text-sm text-[var(--accent)] rounded-[var(--radius-sm)] hover:bg-[var(--overlay-hover)]">
-              + Open Folder...
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
+      {/* DropdownMenuContent self-wraps its own Portal; base already has z-50. */}
+      <DropdownMenuContent
+        align="start"
+        variant="glass"
+        className="min-w-[200px] rounded-[var(--radius-md)] p-1.5"
+      >
+        {projects.map((p) => (
+          <DropdownMenuItem
+            key={p.id}
+            onSelect={() => {
+              switchProject(p.id);
+              loadConversations(p.id);
+              fsWatchStart(p.path).catch(() => {});
+            }}
+            className={`px-3 ${ITEM_HIGHLIGHT} ${
+              p.id === activeProjectId
+                ? "bg-[var(--overlay-active)] text-[var(--text-primary)]"
+                : "text-[var(--text-secondary)]"
+            }`}
+          >
+            {p.name}
+          </DropdownMenuItem>
+        ))}
+        <DropdownMenuSeparator className="my-1.5" />
+        <DropdownMenuItem
+          onSelect={() => {
+            // setTimeout guards against Radix focus-restore racing the native
+            // folder dialog (removable once confirmed in manual QA).
+            setTimeout(() => void handleOpen(), 0);
+          }}
+          className={`px-3 text-[var(--accent)] ${ITEM_HIGHLIGHT}`}
+        >
+          + Open Folder...
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

@@ -1,7 +1,8 @@
 import { useState } from "react";
+import { motion } from "framer-motion";
 import { Plus, PanelRight } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { GlassButton, GlassTab } from "../../ui";
+import { Button, Tabs, TabsList, TabsTrigger } from "@glinui/ui";
 import { useUiStore } from "../../stores/ui.store";
 import { useConversationStore } from "../../stores/conversation.store";
 import { useAgentStore } from "../../stores/agent.store";
@@ -39,38 +40,72 @@ export function TopBar() {
     <div
       data-tauri-drag-region
       onMouseDown={handleMouseDown}
-      className="flex items-center h-12 px-4 gap-3 border-b border-[color:var(--border-subtle)] bg-[var(--glass-base-bg)] backdrop-blur-[40px]"
+      className="flex items-center h-12 px-4 gap-3 border-b border-[color:var(--border-subtle)] bg-[var(--glass-1-surface)] backdrop-blur-[40px]"
     >
       {/* Project selector */}
       <ProjectSelector />
 
       {/* New conversation */}
-      <GlassButton size="sm" variant="ghost" onClick={() => setShowNewConversation(true)}>
+      <Button size="sm" variant="ghost" onClick={() => setShowNewConversation(true)}>
         <Plus size={14} />
-      </GlassButton>
+      </Button>
 
       {/* Conversation tabs */}
-      <div className="flex items-center gap-1.5 flex-1 overflow-x-auto">
+      <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-x-auto">
         {openTabs.length === 0 ? (
           <span className="text-xs text-[var(--text-tertiary)] px-2">No conversations</span>
         ) : (
-          openTabs.map((tabId) => (
-            <GlassTab
-              key={tabId}
-              label={allConversations.find((c) => c.id === tabId)?.title ?? tabId}
-              active={tabId === activeTabId}
-              indicator={sessions[tabId]?.status ?? null}
-              onClick={() => switchTab(tabId)}
-              onClose={() => { removeSession(tabId); closeTab(tabId); }}
-            />
-          ))
+          <Tabs value={activeTabId ?? ""} onValueChange={switchTab} className="min-w-0">
+            <TabsList className="h-8 border-transparent bg-transparent p-0">
+              {openTabs.map((tabId) => {
+                const status = sessions[tabId]?.status ?? null;
+                return (
+                  <TabsTrigger
+                    key={tabId}
+                    value={tabId}
+                    className="gap-2 rounded-[var(--radius-sm)] font-normal text-[var(--text-secondary)] hover:text-[var(--text-primary)] data-[state=active]:bg-[var(--glass-interactive-bg)] data-[state=active]:text-[var(--text-primary)] data-[state=active]:shadow-[inset_0_-2px_0_0_var(--accent)]"
+                  >
+                    {status && status !== "idle" && (
+                      <motion.span
+                        className="w-2 h-2 rounded-full"
+                        style={{ backgroundColor: status === "running" ? "var(--accent)" : "var(--warning)" }}
+                        animate={status === "running" ? { scale: [1, 1.3, 1] } : {}}
+                        transition={{ repeat: Infinity, duration: 1.5 }}
+                      />
+                    )}
+                    <span className="max-w-[120px] truncate">
+                      {allConversations.find((c) => c.id === tabId)?.title ?? tabId}
+                    </span>
+                    {/*
+                      TabsTrigger renders a <button>, so the close × cannot be
+                      a nested <button> (invalid HTML). It's a span[role="button"]
+                      that swallows mousedown (otherwise Radix activates the tab
+                      before the close click lands) and click.
+                    */}
+                    <span
+                      role="button"
+                      className="ml-1 cursor-pointer text-xs opacity-50 hover:opacity-100"
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeSession(tabId);
+                        closeTab(tabId);
+                      }}
+                    >
+                      ×
+                    </span>
+                  </TabsTrigger>
+                );
+              })}
+            </TabsList>
+          </Tabs>
         )}
       </div>
 
       {/* Panel toggle */}
-      <GlassButton size="sm" variant="ghost" onClick={toggleSidePanel}>
+      <Button size="sm" variant="ghost" onClick={toggleSidePanel}>
         <PanelRight size={14} className={sidePanelVisible ? "text-[var(--accent)]" : ""} />
-      </GlassButton>
+      </Button>
 
       {/* Custom window controls (Windows only) */}
       {isWindows && (

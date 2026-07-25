@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Minus, Square, X, Copy } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { GlassButton } from "../../ui";
+import { Button } from "@glinui/ui";
 
 export function WindowControls() {
   const [isMaximized, setIsMaximized] = useState(false);
@@ -24,15 +24,15 @@ export function WindowControls() {
 
   return (
     <div className="flex items-center gap-0.5 ml-1">
-      <GlassButton size="sm" variant="ghost" onClick={() => window.minimize()}>
+      <Button size="sm" variant="ghost" onClick={() => window.minimize()}>
         <Minus size={14} />
-      </GlassButton>
-      <GlassButton size="sm" variant="ghost" onClick={() => window.toggleMaximize()}>
+      </Button>
+      <Button size="sm" variant="ghost" onClick={() => window.toggleMaximize()}>
         {isMaximized ? <Copy size={12} /> : <Square size={12} />}
-      </GlassButton>
-      <GlassButton size="sm" variant="ghost" onClick={() => window.close()}>
+      </Button>
+      <Button size="sm" variant="ghost" onClick={() => window.close()}>
         <X size={14} />
-      </GlassButton>
+      </Button>
     </div>
   );
 }

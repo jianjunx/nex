@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, type KeyboardEvent } from "react";
 import { Send, Square } from "lucide-react";
-import { GlassButton } from "../../ui";
+import { Button, Textarea } from "@glinui/ui";
 import { useAgentStore } from "../../stores/agent.store";
 import { useConversationStore } from "../../stores/conversation.store";
 import type { Message } from "../../bridge/tauri";
@@ -66,25 +66,32 @@ export function ChatInput() {
 
   return (
     <div className="px-6 py-4 border-t border-[color:var(--border-subtle)]">
-      <div className="flex items-end gap-3 rounded-[var(--radius-lg)] bg-[var(--glass-interactive-bg)] border border-[color:var(--border-strong)] px-5 py-3.5">
-        <textarea
+      <div className="flex items-end gap-3 rounded-[var(--radius-lg)] bg-[var(--glass-3-surface)] border border-[color:var(--glass-border)] px-5 py-3.5">
+        <Textarea
           ref={textareaRef}
+          variant="glass"
           value={text}
           onChange={(e) => { setText(e.target.value); adjustHeight(); }}
           onKeyDown={handleKeyDown}
           placeholder={session ? "Send a message..." : "Start an agent session to chat"}
-          className="flex-1 bg-transparent text-sm leading-[21px] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] outline-none resize-none overflow-y-auto pr-1"
+          className="flex-1 font-normal leading-[21px] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] resize-none overflow-y-auto"
           style={{ minHeight: MIN_HEIGHT, maxHeight: MAX_HEIGHT }}
         />
         <div className="flex-none flex items-center justify-center">
           {isRunning ? (
-            <GlassButton size="md" variant="ghost" onClick={() => session && void cancel(session.sessionId)}>
+            <Button size="md" variant="ghost" onClick={() => session && void cancel(session.sessionId)}>
               <Square size={16} className="text-[var(--error)]" />
-            </GlassButton>
+            </Button>
           ) : (
-            <GlassButton size="md" variant="accent" onClick={() => void handleSend()} disabled={!text.trim() || !session}>
+            <Button
+              size="md"
+              variant="ghost"
+              onClick={() => void handleSend()}
+              disabled={!text.trim() || !session}
+              className="bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] dark:bg-[var(--accent)] dark:text-white dark:hover:bg-[var(--accent-hover)]"
+            >
               <Send size={16} />
-            </GlassButton>
+            </Button>
           )}
         </div>
       </div>

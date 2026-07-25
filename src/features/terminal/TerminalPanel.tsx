@@ -6,7 +6,7 @@ import { Plus, X } from "lucide-react";
 import { useTerminalStore } from "../../stores/terminal.store";
 import { useProjectStore } from "../../stores/project.store";
 import { onTerminalOutput } from "../../bridge/tauri";
-import { GlassButton } from "../../ui";
+import { Button } from "@glinui/ui";
 
 export function TerminalPanel() {
   const termRef = useRef<HTMLDivElement>(null);
@@ -79,9 +79,9 @@ export function TerminalPanel() {
             {s.title}
           </button>
         ))}
-        <GlassButton size="sm" variant="ghost" onClick={handleCreate}><Plus size={12} /></GlassButton>
+        <Button size="sm" variant="ghost" onClick={handleCreate}><Plus size={12} /></Button>
         {activeSessionId && (
-          <GlassButton size="sm" variant="ghost" onClick={() => void kill(activeSessionId)}><X size={12} /></GlassButton>
+          <Button size="sm" variant="ghost" onClick={() => void kill(activeSessionId)}><X size={12} /></Button>
         )}
       </div>
       <div ref={termRef} className="flex-1 p-3" />

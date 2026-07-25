@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { GitBranch, Plus, Minus, Check } from "lucide-react";
-import { GlassButton } from "../../ui";
+import { Button, Input } from "@glinui/ui";
 import { useGitStore } from "../../stores/git.store";
 import { useProjectStore } from "../../stores/project.store";
 
@@ -54,9 +54,9 @@ export function GitPanel() {
           <div className="mb-4">
             <div className="flex items-center justify-between px-2 py-1.5 text-xs text-[var(--text-tertiary)]">
               <span>Changes ({unstaged.length})</span>
-              <GlassButton size="sm" variant="ghost" disabled={loading} onClick={() => handleStage(unstaged.map((f) => f.path))}>
+              <Button size="sm" variant="ghost" disabled={loading} onClick={() => handleStage(unstaged.map((f) => f.path))}>
                 <Plus size={10} />
-              </GlassButton>
+              </Button>
             </div>
             {unstaged.map((f) => (
               <div key={f.path} className="flex items-center gap-2 px-2.5 py-1.5 hover:bg-[var(--overlay-hover)] rounded-[var(--radius-sm)] cursor-pointer" onClick={() => viewDiff(project.path, f.path, false)}>
@@ -70,9 +70,9 @@ export function GitPanel() {
           <div>
             <div className="flex items-center justify-between px-2 py-1.5 text-xs text-[var(--text-tertiary)]">
               <span>Staged ({staged.length})</span>
-              <GlassButton size="sm" variant="ghost" disabled={loading} onClick={() => handleUnstage(staged.map((f) => f.path))}>
+              <Button size="sm" variant="ghost" disabled={loading} onClick={() => handleUnstage(staged.map((f) => f.path))}>
                 <Minus size={10} />
-              </GlassButton>
+              </Button>
             </div>
             {staged.map((f) => (
               <div key={f.path} className="flex items-center gap-2 px-2.5 py-1.5 hover:bg-[var(--overlay-hover)] rounded-[var(--radius-sm)] cursor-pointer" onClick={() => viewDiff(project.path, f.path, true)}>
@@ -87,16 +87,22 @@ export function GitPanel() {
 
       {/* Commit area */}
       <div className="p-4 border-t border-[color:var(--border-subtle)]">
-        <input
+        <Input
+          variant="glass"
           value={commitMsg}
           onChange={(e) => setCommitMsg(e.target.value)}
           placeholder="Commit message..."
-          className="w-full bg-[var(--glass-interactive-bg)] border border-[color:var(--border-default)] rounded-[var(--radius-md)] px-4 py-2.5 text-sm text-[var(--text-primary)] outline-none focus:border-[color:var(--border-focus)] transition-colors"
+          className="font-normal text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)]"
           onKeyDown={(e) => e.key === "Enter" && handleCommit()}
         />
-        <GlassButton variant="accent" className="mt-3 w-full py-2.5" disabled={loading || !commitMsg.trim()} onClick={handleCommit}>
+        <Button
+          variant="ghost"
+          className="mt-3 w-full h-auto py-2.5 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] dark:bg-[var(--accent)] dark:text-white dark:hover:bg-[var(--accent-hover)]"
+          disabled={loading || !commitMsg.trim()}
+          onClick={handleCommit}
+        >
           <Check size={14} className="mr-2" /> Commit
-        </GlassButton>
+        </Button>
       </div>
 
       {/* Diff viewer */}

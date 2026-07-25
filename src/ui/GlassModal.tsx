@@ -1,4 +1,5 @@
 import { type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { scaleIn } from "./animations";
 
@@ -10,7 +11,7 @@ interface GlassModalProps {
 }
 
 export function GlassModal({ open, onClose, children, title }: GlassModalProps) {
-  return (
+  return createPortal(
     <AnimatePresence>
       {open && (
         <motion.div
@@ -31,6 +32,7 @@ export function GlassModal({ open, onClose, children, title }: GlassModalProps) 
           </motion.div>
         </motion.div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body
   );
 }

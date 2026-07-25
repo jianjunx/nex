@@ -22,6 +22,9 @@ export interface AgentSession {
 
 interface AgentStore {
   sessions: Record<string, AgentSession>; // keyed by conversationId
+  /** Outstanding ACP permission requests, FIFO per session (keyed by sessionId). */
+  permissionQueues: Record<string, AcpPermissionRequestPayload[]>;
+  /** The permission request currently shown in the modal (head of the first non-empty queue). */
   pendingPermission: AcpPermissionRequestPayload | null;
   /** conversationId -> id of the assistant message currently accumulating stream chunks. */
   streamingMessageId: Record<string, string>;
@@ -84,9 +87,24 @@ function parseSessionUpdate(update: unknown): ParsedUpdate | null {
   }
 }
 
+/**
+ * The request to display is the head of the first non-empty session queue
+ * (Record iteration order is stable insertion order), or null when all
+ * queues are empty.
+ */
+function nextPendingPermission(
+  queues: Record<string, AcpPermissionRequestPayload[]>,
+): AcpPermissionRequestPayload | null {
+  for (const queue of Object.values(queues)) {
+    if (queue.length > 0) return queue[0];
+  }
+  return null;
+}
+
 export const useAgentStore = create<AgentStore>()(
   immer((set, get) => ({
     sessions: {},
+    permissionQueues: {},
     pendingPermission: null,
     streamingMessageId: {},
     loading: false,
@@ -143,6 +161,12 @@ export const useAgentStore = create<AgentStore>()(
         set((s) => {
           const session = Object.values(s.sessions).find((ss) => ss.sessionId === sessionId);
           if (session) session.status = "idle";
+          // Cancel resolves the session's pending permissions as Cancelled on
+          // the backend; drop them so the modal cannot stick on dead requests.
+          delete s.permissionQueues[sessionId];
+          if (s.pendingPermission?.sessionId === sessionId) {
+            s.pendingPermission = nextPendingPermission(s.permissionQueues);
+          }
         });
       }
     },
@@ -151,9 +175,22 @@ export const useAgentStore = create<AgentStore>()(
       set((s) => { s.error = null; });
       try {
         await acpRespondPermission(requestId, optionId);
-        set((s) => { s.pendingPermission = null; });
       } catch (err) {
         set((s) => { s.error = errorMessage(err); });
+      } finally {
+        // Advance on success AND failure: the request is gone either way
+        // (unknown-id responses error), so the modal must still close.
+        set((s) => {
+          for (const [sessionId, queue] of Object.entries(s.permissionQueues)) {
+            const idx = queue.findIndex((q) => q.requestId === requestId);
+            if (idx !== -1) {
+              queue.splice(idx, 1);
+              if (queue.length === 0) delete s.permissionQueues[sessionId];
+              break;
+            }
+          }
+          s.pendingPermission = nextPendingPermission(s.permissionQueues);
+        });
       }
     },
 
@@ -211,7 +248,12 @@ export const useAgentStore = create<AgentStore>()(
       }).then((fn) => { if (disposed) fn(); else unlistenNotification = fn; });
 
       onAcpPermissionRequest((payload) => {
-        set((s) => { s.pendingPermission = payload; });
+        set((s) => {
+          if (!s.permissionQueues[payload.sessionId]) s.permissionQueues[payload.sessionId] = [];
+          s.permissionQueues[payload.sessionId].push(payload);
+          // FIFO: only show this request if nothing is currently displayed.
+          if (!s.pendingPermission) s.pendingPermission = payload;
+        });
       }).then((fn) => { if (disposed) fn(); else unlistenPermission = fn; });
 
       onAcpSessionTerminated(({ sessionId }) => {
@@ -221,7 +263,10 @@ export const useAgentStore = create<AgentStore>()(
             delete s.sessions[session.conversationId];
             delete s.streamingMessageId[session.conversationId];
           }
-          if (s.pendingPermission?.sessionId === sessionId) s.pendingPermission = null;
+          delete s.permissionQueues[sessionId];
+          if (s.pendingPermission?.sessionId === sessionId) {
+            s.pendingPermission = nextPendingPermission(s.permissionQueues);
+          }
         });
       }).then((fn) => { if (disposed) fn(); else unlistenTerminated = fn; });
 

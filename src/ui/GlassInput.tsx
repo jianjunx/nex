@@ -1,4 +1,5 @@
 import { forwardRef, type TextareaHTMLAttributes } from "react";
+import { Textarea } from "@glinui/ui";
 
 interface GlassInputProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
   multiline?: boolean;
@@ -7,11 +8,12 @@ interface GlassInputProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
 export const GlassInput = forwardRef<HTMLTextAreaElement, GlassInputProps>(
   ({ className = "", ...props }, ref) => {
     return (
-      <textarea
+      <Textarea
         ref={ref}
-        className={`w-full resize-none rounded-[var(--radius-lg)] bg-[var(--glass-interactive-bg)] border border-[color:var(--border-strong)] px-4 py-3 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] outline-none focus:border-[color:var(--border-focus)] focus:shadow-[var(--shadow-focus)] transition-all duration-200 ${className}`}
+        variant="glass"
         rows={1}
-        {...props}
+        className={`resize-none ${className}`}
+        {...(props as object)}
       />
     );
   }

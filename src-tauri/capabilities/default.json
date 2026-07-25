@@ -14,6 +14,7 @@
     "core:window:allow-is-maximized",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
+    "liquid-glass:default",
     "sql:default",
     "store:default",
     "dialog:default"

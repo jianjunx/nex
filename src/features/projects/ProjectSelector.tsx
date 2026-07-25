@@ -1,6 +1,12 @@
-import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { GlassButton } from "../../ui";
+import { Check, ChevronDown } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@glinui/ui";
 import { useProjectStore } from "../../stores/project.store";
 import { useConversationStore } from "../../stores/conversation.store";
 import { fsWatchStart } from "../../bridge/tauri";
@@ -8,7 +14,6 @@ import { fsWatchStart } from "../../bridge/tauri";
 export function ProjectSelector() {
   const { projects, activeProjectId, openProject, switchProject } = useProjectStore();
   const loadConversations = useConversationStore((s) => s.loadConversations);
-  const [showList, setShowList] = useState(false);
   const activeProject = projects.find((p) => p.id === activeProjectId);
 
   const handleOpen = async () => {
@@ -27,30 +32,32 @@ export function ProjectSelector() {
     }
   };
 
-  return (
-    <div className="relative">
-      <GlassButton size="sm" variant="ghost" onClick={() => setShowList(!showList)}>
-        {activeProject?.name || "Open Project"} ▾
-      </GlassButton>
+  const switchTo = (id: string, path: string) => {
+    switchProject(id);
+    loadConversations(id);
+    fsWatchStart(path).catch(() => {});
+  };
 
-      {showList && (
-        <div className="absolute top-full left-0 mt-1.5 z-40 min-w-[200px] rounded-[var(--radius-md)] backdrop-blur-[12px] bg-[var(--glass-overlay-bg)] border border-[color:var(--border-emphasis)] p-1.5">
-          {projects.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => { switchProject(p.id); loadConversations(p.id); fsWatchStart(p.path).catch(() => {}); setShowList(false); }}
-              className={`w-full text-left px-3 py-1.5 text-sm rounded-[var(--radius-sm)] ${p.id === activeProjectId ? "bg-[var(--overlay-active)] text-[var(--text-primary)]" : "text-[var(--text-secondary)] hover:bg-[var(--overlay-hover)]"}`}
-            >
-              {p.name}
-            </button>
-          ))}
-          <div className="border-t border-[color:var(--border-default)] mt-1.5 pt-1.5">
-            <button onClick={() => { handleOpen(); setShowList(false); }} className="w-full text-left px-3 py-1.5 text-sm text-[var(--accent)] rounded-[var(--radius-sm)] hover:bg-[var(--overlay-hover)]">
-              + Open Folder...
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger variant="glass" size="sm" className="gap-1.5">
+        <span className="max-w-[160px] truncate">{activeProject?.name || "Open Project"}</span>
+        <ChevronDown size={14} className="opacity-70" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent variant="glass" align="start" className="min-w-[220px]">
+        {projects.map((p) => (
+          <DropdownMenuItem key={p.id} onSelect={() => switchTo(p.id, p.path)}>
+            <span className="flex-1 truncate">{p.name}</span>
+            {p.id === activeProjectId && (
+              <Check size={14} className="text-[var(--color-accent)]" />
+            )}
+          </DropdownMenuItem>
+        ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem className="text-[var(--color-accent)]" onSelect={() => void handleOpen()}>
+          + Open Folder...
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

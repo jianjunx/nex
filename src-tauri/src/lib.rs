@@ -23,6 +23,7 @@ pub fn run() {
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_liquid_glass::init())
         .invoke_handler(tauri::generate_handler![
             commands::project_cmds::project_open,
             commands::project_cmds::project_list,
@@ -61,6 +62,13 @@ pub fn run() {
                     None,
                     None,
                 );
+                // Native macOS 26+ Liquid Glass effect on the main window.
+                // No-op on older macOS (falls back to the vibrancy above) and
+                // on other platforms.
+                use tauri_plugin_liquid_glass::LiquidGlassExt;
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = app.liquid_glass().set_effect(&win, Default::default());
+                }
             }
 
             #[cfg(target_os = "windows")]

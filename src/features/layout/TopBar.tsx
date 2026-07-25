@@ -2,6 +2,12 @@ import { useState } from "react";
 import { Plus, PanelRight } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { GlassButton, GlassTab } from "../../ui";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@glinui/ui";
 import { useUiStore } from "../../stores/ui.store";
 import { useConversationStore } from "../../stores/conversation.store";
 import { useAgentStore } from "../../stores/agent.store";
@@ -45,9 +51,16 @@ export function TopBar() {
       <ProjectSelector />
 
       {/* New conversation */}
-      <GlassButton size="sm" variant="ghost" onClick={() => setShowNewConversation(true)}>
-        <Plus size={14} />
-      </GlassButton>
+      <DropdownMenu>
+        <DropdownMenuTrigger variant="ghost" size="sm" className="px-2" aria-label="New conversation">
+          <Plus size={14} />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent variant="glass" align="start" className="min-w-[180px]">
+          <DropdownMenuItem onSelect={() => setShowNewConversation(true)}>
+            New Conversation
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
 
       {/* Conversation tabs */}
       <div className="flex items-center gap-1.5 flex-1 overflow-x-auto">

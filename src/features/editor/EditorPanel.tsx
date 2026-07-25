@@ -69,13 +69,17 @@ export function EditorPanel() {
       )}
       <div className="flex-1 overflow-hidden">
         {editorFile.isText ? (
-          <CodeMirror
-            value={editorFile.draft}
-            onChange={setDraft}
-            onCreateEditor={(view) => { viewRef.current = view; }}
-            theme={editorTheme}
-            height="100%"
-          />
+          <>
+            {/* key = one EditorView per file: without it the undo stack survives a file switch and Ctrl+Z can resurrect the previous file's content — a wrong-path save hazard. Esc-hide is unaffected (same path, CSS-only hide), so undo/scroll preservation across hide/re-show still holds. */}
+            <CodeMirror
+              key={editorFile.path}
+              value={editorFile.draft}
+              onChange={setDraft}
+              onCreateEditor={(view) => { viewRef.current = view; }}
+              theme={editorTheme}
+              height="100%"
+            />
+          </>
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-[var(--text-tertiary)]">
             二进制或超大文件 ({(editorFile.size / 1024).toFixed(1)} KB) — 暂不可编辑

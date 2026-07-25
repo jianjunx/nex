@@ -17,7 +17,7 @@ const editorTheme = EditorView.theme({
 });
 
 export function EditorPanel() {
-  const { editorFile, setDraft, closeEditor, saveFile, reloadEditor, dismissStale } = useFsStore();
+  const { editorFile, error, setDraft, closeEditor, saveFile, reloadEditor, dismissStale, clearError } = useFsStore();
   const editorVisible = useUiStore((s) => s.editorVisible);
   const viewRef = useRef<EditorView | null>(null);
 
@@ -60,6 +60,12 @@ export function EditorPanel() {
         <Button size="sm" variant="ghost" disabled={!editorFile.dirty || !editorFile.isText} onClick={() => void saveFile()}>保存</Button>
         <Button size="sm" variant="ghost" onClick={closeEditor}><X size={12} /></Button>
       </div>
+      {error && (
+        <div className="flex items-center gap-2 px-4 py-1.5 text-xs text-[var(--error)] bg-[var(--error)]/10">
+          <span className="flex-1 truncate">{error}</span>
+          <Button size="sm" variant="ghost" onClick={clearError}><X size={12} /></Button>
+        </div>
+      )}
       {editorFile.stale && (
         <div className="flex items-center gap-2 px-4 py-1.5 text-xs text-[var(--warning)] bg-[var(--warning)]/10">
           <span className="flex-1 truncate">文件在磁盘上已被修改</span>

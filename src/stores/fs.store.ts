@@ -36,6 +36,7 @@ interface FsStore {
   dismissStale: () => void;
   search: (projectPath: string, query: string) => Promise<void>;
   clearSearch: () => void;
+  clearError: () => void;
 }
 
 // Backend errors arrive as { type, message }; fall back to String(err).
@@ -91,6 +92,14 @@ export const useFsStore = create<FsStore>()(
     },
 
     openFile: async (filePath: string) => {
+      // Re-showing an already-open file must not clobber the draft/undo
+      // history (B4: Esc hides, re-click re-shows, edits survive). Disk
+      // freshness for an open file is syncExternalChange's job; a forced
+      // re-read stays available via the stale banner's 重新加载.
+      if (get().editorFile?.path === filePath) {
+        useUiStore.getState().setEditorVisible(true);
+        return;
+      }
       set((s) => { s.loading = true; s.error = null; });
       try {
         const result = await fsReadFile(filePath);
@@ -214,6 +223,10 @@ export const useFsStore = create<FsStore>()(
 
     clearSearch: () => {
       set((s) => { s.searchResults = []; s.searching = false; });
+    },
+
+    clearError: () => {
+      set((s) => { s.error = null; });
     },
   }))
 );

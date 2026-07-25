@@ -10,12 +10,16 @@ interface UiState {
   terminalVisible: boolean;
   sidePanelWidth: number;
   terminalHeight: number;
+  editorVisible: boolean;
+  editorWidth: number;
 
   toggleSidePanel: () => void;
   setSidePanelTab: (tab: SidePanelTab) => void;
   toggleTerminal: () => void;
   setSidePanelWidth: (w: number) => void;
   setTerminalHeight: (h: number) => void;
+  setEditorVisible: (v: boolean) => void;
+  setEditorWidth: (w: number) => void;
 }
 
 // Persist layout state so the window reopens exactly as the user left it
@@ -28,6 +32,8 @@ export const useUiStore = create<UiState>()(
       terminalVisible: false,
       sidePanelWidth: 320,
       terminalHeight: 200,
+      editorVisible: false,
+      editorWidth: 480,
 
       toggleSidePanel: () => set((s) => { s.sidePanelVisible = !s.sidePanelVisible; }),
       setSidePanelTab: (tab) => set((s) => { s.sidePanelTab = tab; s.sidePanelVisible = true; }),
@@ -40,6 +46,8 @@ export const useUiStore = create<UiState>()(
       }),
       setSidePanelWidth: (w) => set((s) => { s.sidePanelWidth = w; }),
       setTerminalHeight: (h) => set((s) => { s.terminalHeight = h; }),
+      setEditorVisible: (v) => set((s) => { s.editorVisible = v; }),
+      setEditorWidth: (w) => set((s) => { s.editorWidth = w; }),
     })),
     {
       name: "nex-ui",
@@ -50,6 +58,8 @@ export const useUiStore = create<UiState>()(
         terminalVisible: s.terminalVisible,
         sidePanelWidth: s.sidePanelWidth,
         terminalHeight: s.terminalHeight,
+        editorVisible: s.editorVisible,
+        editorWidth: s.editorWidth,
       }),
     }
   )

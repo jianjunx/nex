@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { MainLayout } from "./features/layout/MainLayout";
 import { SidePanel } from "./features/layout/SidePanel";
 import { ChatArea } from "./features/agent/ChatArea";
-import { FilePreview } from "./features/files/FilePreview";
+import { EditorPanel } from "./features/editor/EditorPanel";
 import { onFsChanged, onGitStatusChanged, fsWatchStart } from "./bridge/tauri";
 import { useAgentStore } from "./stores/agent.store";
 import { useProjectStore } from "./stores/project.store";
@@ -64,6 +64,7 @@ function App() {
     const unlistenFs = onFsChanged((payload) => {
       if (payload.projectPath !== activeProjectPath()) return;
       useFsStore.getState().loadRoot(payload.projectPath);
+      void useFsStore.getState().syncExternalChange(payload.paths);
     });
     const unlistenGit = onGitStatusChanged((payload) => {
       if (payload.projectPath !== activeProjectPath()) return;
@@ -78,14 +79,14 @@ function App() {
     };
   }, []);
 
+  const hasEditorFile = useFsStore((s) => !!s.editorFile);
+
   return (
-    <>
-      <MainLayout
-        mainContent={<ChatArea />}
-        sidePanel={<SidePanel />}
-      />
-      <FilePreview />
-    </>
+    <MainLayout
+      mainContent={<ChatArea />}
+      editorPanel={hasEditorFile ? <EditorPanel /> : null}
+      sidePanel={<SidePanel />}
+    />
   );
 }
 

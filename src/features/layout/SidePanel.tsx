@@ -2,6 +2,7 @@ import { useUiStore } from "../../stores/ui.store";
 import { FileTree } from "../files/FileTree";
 import { GitPanel } from "../git/GitPanel";
 import { SearchPanel } from "../search/SearchPanel";
+import { SettingsPanel } from "../settings/SettingsPanel";
 import { TerminalPanel } from "../terminal/TerminalPanel";
 
 export function SidePanel() {
@@ -14,6 +15,7 @@ export function SidePanel() {
         {sidePanelTab === "files" && <FileTree />}
         {sidePanelTab === "git" && <GitPanel />}
         {sidePanelTab === "search" && <SearchPanel />}
+        {sidePanelTab === "settings" && <SettingsPanel />}
       </div>
 
       {/* Lower: terminal */}

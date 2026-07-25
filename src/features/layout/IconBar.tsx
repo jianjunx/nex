@@ -47,7 +47,12 @@ export function IconBar() {
         variant="ghost"
         size="sm"
         title="设置"
-        className="text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+        onClick={() => setSidePanelTab("settings")}
+        className={
+          sidePanelTab === "settings"
+            ? "bg-[var(--overlay-active)] text-[var(--text-primary)]"
+            : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+        }
       >
         <Settings size={16} />
       </Button>

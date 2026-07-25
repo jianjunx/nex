@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { persist } from "zustand/middleware";
 
-export type SidePanelTab = "files" | "git" | "search";
+export type SidePanelTab = "files" | "git" | "search" | "settings";
 
 interface UiState {
   sidePanelVisible: boolean;
@@ -20,6 +20,7 @@ interface UiState {
   setTerminalHeight: (h: number) => void;
   setEditorVisible: (v: boolean) => void;
   setEditorWidth: (w: number) => void;
+  resetLayoutDims: () => void;
 }
 
 // Persist layout state so the window reopens exactly as the user left it
@@ -48,6 +49,13 @@ export const useUiStore = create<UiState>()(
       setTerminalHeight: (h) => set((s) => { s.terminalHeight = h; }),
       setEditorVisible: (v) => set((s) => { s.editorVisible = v; }),
       setEditorWidth: (w) => set((s) => { s.editorWidth = w; }),
+      // "Restore defaults" in the settings panel: reset sizes only, never
+      // visibility, so a tidy-up can't hide the user's panels.
+      resetLayoutDims: () => set((s) => {
+        s.sidePanelWidth = 320;
+        s.terminalHeight = 200;
+        s.editorWidth = 480;
+      }),
     })),
     {
       name: "nex-ui",

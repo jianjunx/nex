@@ -23,6 +23,7 @@ pub fn run() {
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_liquid_glass::init())
         .invoke_handler(tauri::generate_handler![
             commands::project_cmds::project_open,
             commands::project_cmds::project_list,
@@ -57,14 +58,16 @@ pub fn run() {
         .setup(|app| {
             #[cfg(target_os = "macos")]
             {
-                use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
+                use tauri_plugin_liquid_glass::{LiquidGlassConfig, LiquidGlassExt};
                 let window = app.get_webview_window("main").expect("main window not found");
-                let _ = apply_vibrancy(
+                // macOS 26+: native NSGlassEffectView; the plugin falls back to
+                // NSVisualEffectView on older macOS, superseding apply_vibrancy.
+                if let Err(e) = app.liquid_glass().set_effect(
                     &window,
-                    NSVisualEffectMaterial::UnderWindowBackground,
-                    None,
-                    None,
-                );
+                    LiquidGlassConfig { enabled: true, ..Default::default() },
+                ) {
+                    eprintln!("liquid glass set_effect failed: {e}");
+                }
             }
 
             #[cfg(target_os = "windows")]

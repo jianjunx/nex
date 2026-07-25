@@ -15,7 +15,6 @@
     "@tanstack/react-virtual": "^3.14.8",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
-    "framer-motion": "^12.42.2",
     "immer": "^11.1.15",
     "lucide-react": "^1.26.0",
     "react": "^19.2.7",

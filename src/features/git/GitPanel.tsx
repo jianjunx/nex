@@ -109,13 +109,17 @@ export function GitPanel() {
       {diff && diffFile && (
         <div className="border-t border-[color:var(--border-subtle)] max-h-[200px] overflow-auto">
           <div className="px-4 py-2 text-xs text-[var(--text-tertiary)]">{diffFile}</div>
-          <pre className="px-4 pb-4 text-xs font-mono text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">
-            {diff.split("\n").map((line, i) => (
-              <div key={i} className={line.startsWith("+") ? "text-[var(--success)]" : line.startsWith("-") ? "text-[var(--error)]" : ""}>
-                {line}
-              </div>
-            ))}
-          </pre>
+          {diff.includes("Binary files ") || diff.includes("GIT binary patch") ? (
+            <div className="px-4 pb-4 text-xs text-[var(--text-tertiary)]">二进制文件 — 无法显示文本差异</div>
+          ) : (
+            <pre className="px-4 pb-4 text-xs font-mono text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">
+              {diff.split("\n").map((line, i) => (
+                <div key={i} className={line.startsWith("+") ? "text-[var(--success)]" : line.startsWith("-") ? "text-[var(--error)]" : ""}>
+                  {line}
+                </div>
+              ))}
+            </pre>
+          )}
         </div>
       )}
     </div>

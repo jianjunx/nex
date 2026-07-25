@@ -1,4 +1,7 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "@glinui/tokens/theme.css";
+@source "../../node_modules/@glinui/ui/dist";
 
 :root {
   /* Glass materials - Dark mode (default) */
@@ -109,13 +112,18 @@
   box-sizing: border-box;
 }
 
-html, body, #root {
+html, body {
   height: 100%;
   width: 100%;
   overflow: hidden;
+  background: transparent !important;
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
   color: var(--text-primary);
-  background: transparent;
+}
+#root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
 }
 
 /* Glass highlight pseudo-element utility */

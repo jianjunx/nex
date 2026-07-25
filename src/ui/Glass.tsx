@@ -9,9 +9,9 @@ interface GlassProps extends HTMLAttributes<HTMLDivElement> {
 
 const levelStyles: Record<GlassLevel, string> = {
   base: "backdrop-blur-[40px] bg-[var(--glass-base-bg)]",
-  elevated: "backdrop-blur-[24px] bg-[var(--glass-elevated-bg)] border border-white/[0.08]",
-  interactive: "backdrop-blur-[16px] bg-[var(--glass-interactive-bg)] border border-white/[0.12]",
-  overlay: "backdrop-blur-[12px] bg-[var(--glass-overlay-bg)] border border-white/[0.18]",
+  elevated: "backdrop-blur-[24px] bg-[var(--glass-elevated-bg)] border border-[color:var(--border-default)]",
+  interactive: "backdrop-blur-[16px] bg-[var(--glass-interactive-bg)] border border-[color:var(--border-strong)]",
+  overlay: "backdrop-blur-[12px] bg-[var(--glass-overlay-bg)] border border-[color:var(--border-emphasis)]",
 };
 
 export const Glass = forwardRef<HTMLDivElement, GlassProps>(

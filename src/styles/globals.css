@@ -18,6 +18,24 @@
   --glass-overlay-blur: 12px;
   --glass-overlay-border: 1px solid rgba(255, 255, 255, 0.18);
 
+  /* Semantic borders / overlays - Dark mode (white tints on dark glass) */
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-default: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  --border-emphasis: rgba(255, 255, 255, 0.18);
+  --border-focus: rgba(255, 255, 255, 0.20);
+
+  --overlay-hover: rgba(255, 255, 255, 0.05);
+  --overlay-soft: rgba(255, 255, 255, 0.04);
+  --overlay-ghost: rgba(255, 255, 255, 0.06);
+  --overlay-active: rgba(255, 255, 255, 0.10);
+  --overlay-active-strong: rgba(255, 255, 255, 0.13);
+
+  --shadow-focus: 0 0 20px rgba(255, 255, 255, 0.05);
+  --highlight-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0) 40%);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.15);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.25);
+
   /* Text */
   --text-primary: rgba(255, 255, 255, 0.92);
   --text-secondary: rgba(255, 255, 255, 0.60);
@@ -58,9 +76,31 @@
   --glass-overlay-bg: rgba(0, 0, 0, 0.08);
   --glass-overlay-border: 1px solid rgba(0, 0, 0, 0.10);
 
+  /* Semantic borders / overlays - Light mode (black tints on light glass) */
+  --border-subtle: rgba(0, 0, 0, 0.06);
+  --border-default: rgba(0, 0, 0, 0.08);
+  --border-strong: rgba(0, 0, 0, 0.12);
+  --border-emphasis: rgba(0, 0, 0, 0.18);
+  --border-focus: rgba(124, 138, 255, 0.50);
+
+  --overlay-hover: rgba(0, 0, 0, 0.04);
+  --overlay-soft: rgba(0, 0, 0, 0.03);
+  --overlay-ghost: rgba(0, 0, 0, 0.05);
+  --overlay-active: rgba(0, 0, 0, 0.08);
+  --overlay-active-strong: rgba(0, 0, 0, 0.10);
+
+  --shadow-focus: 0 0 20px rgba(124, 138, 255, 0.15);
+  --highlight-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.7) 0%, rgba(255, 255, 255, 0) 40%);
+  --scrollbar-thumb: rgba(0, 0, 0, 0.15);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.25);
+
   --text-primary: rgba(0, 0, 0, 0.88);
   --text-secondary: rgba(0, 0, 0, 0.56);
   --text-tertiary: rgba(0, 0, 0, 0.36);
+
+  --accent: #5B67E8;
+  --accent-hover: #4A55CC;
+  --accent-glow: rgba(91, 103, 232, 0.18);
 }
 
 * {
@@ -87,11 +127,7 @@ html, body, #root {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.12) 0%,
-    rgba(255, 255, 255, 0.0) 40%
-  );
+  background: var(--highlight-gradient);
   pointer-events: none;
   z-index: 1;
 }
@@ -105,9 +141,9 @@ html, body, #root {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--scrollbar-thumb);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.25);
+  background: var(--scrollbar-thumb-hover);
 }

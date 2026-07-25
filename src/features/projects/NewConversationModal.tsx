@@ -46,7 +46,7 @@ export function NewConversationModal({ open, onClose }: Props) {
           <button
             key={a.id}
             onClick={() => setSelectedAgent(a)}
-            className={`w-full text-left px-3 py-2 rounded-[var(--radius-sm)] text-sm ${selectedAgent.id === a.id ? "bg-[var(--accent)]/20 border border-[var(--accent)]/40 text-[var(--text-primary)]" : "bg-[var(--glass-interactive-bg)] border border-white/[0.08] text-[var(--text-secondary)]"}`}
+            className={`w-full text-left px-3 py-2 rounded-[var(--radius-sm)] text-sm ${selectedAgent.id === a.id ? "bg-[var(--accent)]/20 border border-[var(--accent)]/40 text-[var(--text-primary)]" : "bg-[var(--glass-interactive-bg)] border border-[color:var(--border-default)] text-[var(--text-secondary)]"}`}
           >
             {a.label}
           </button>

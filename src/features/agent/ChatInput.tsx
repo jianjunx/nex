@@ -45,8 +45,8 @@ export function ChatInput() {
   };
 
   return (
-    <div className="px-4 py-3 border-t border-white/[0.06]">
-      <div className="flex items-end gap-2 rounded-[var(--radius-lg)] bg-[var(--glass-interactive-bg)] border border-white/[0.12] px-4 py-2">
+    <div className="px-4 py-3 border-t border-[color:var(--border-subtle)]">
+      <div className="flex items-end gap-2 rounded-[var(--radius-lg)] bg-[var(--glass-interactive-bg)] border border-[color:var(--border-strong)] px-4 py-2">
         <textarea
           ref={textareaRef}
           value={text}

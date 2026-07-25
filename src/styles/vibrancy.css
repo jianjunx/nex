@@ -1,13 +1,25 @@
-/* macOS: window is transparent, system vibrancy provides L0 */
-@media (-webkit-appearance: none) {
-  html, body {
-    background: transparent !important;
-  }
+/* Frosted-glass background strategy
+   ----------------------------------
+   The Tauri window has transparent: true. The real "blur the desktop
+   wallpaper" effect is applied natively in Rust:
+     - macOS:   apply_vibrancy (NSVisualEffectMaterial::UnderWindowBackground)
+     - Windows: apply_acrylic with an RGBA tint
+   Those native effects render behind the (transparent) WebView and provide
+   the actual frosted blur + base tint.
+
+   The CSS body below sits on top of the native effect. It adds an extra
+   dark tint to push opacity higher (so foreground UI stays readable) and
+   also acts as a fallback if the native effect fails to apply — in that
+   case you still get a semi-opaque dark surface instead of full transparency.
+
+   Tune the alpha values below to adjust how much of the blurred wallpaper
+   remains visible. */
+html, body {
+  background: rgba(20, 22, 35, 0.9) !important;
 }
 
-/* Fallback for non-macOS: solid dark background */
-@supports not (-webkit-appearance: none) {
-  html, body {
-    background: #1a1a2e;
-  }
+/* Light theme: lighter tint so light UI text stays readable. */
+[data-theme="light"] html,
+[data-theme="light"] body {
+  background: rgba(245, 246, 250, 0.9) !important;
 }

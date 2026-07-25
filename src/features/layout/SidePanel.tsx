@@ -17,7 +17,7 @@ export function SidePanel() {
 
       {/* Lower: terminal */}
       {terminalVisible && (
-        <div className="border-t border-white/[0.06]" style={{ height: terminalHeight }}>
+        <div className="border-t border-[color:var(--border-subtle)]" style={{ height: terminalHeight }}>
           <TerminalPanel />
         </div>
       )}

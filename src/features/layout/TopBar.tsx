@@ -17,7 +17,7 @@ export function TopBar() {
   const allConversations = Object.values(conversationsByProject).flat();
 
   return (
-    <div className="flex items-center h-10 px-3 gap-2 border-b border-white/[0.06] bg-[var(--glass-base-bg)] backdrop-blur-[40px]">
+    <div className="flex items-center h-10 px-3 gap-2 border-b border-[color:var(--border-subtle)] bg-[var(--glass-base-bg)] backdrop-blur-[40px]">
       {/* Project selector */}
       <ProjectSelector />
 

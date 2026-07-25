@@ -11,14 +11,14 @@ export function IconBar() {
   const { sidePanelTab, setSidePanelTab, terminalVisible, toggleTerminal } = useUiStore();
 
   return (
-    <div className="flex flex-col items-center py-2 gap-1 w-10 border-l border-white/[0.06] bg-[var(--glass-base-bg)]">
+    <div className="flex flex-col items-center py-2 gap-1 w-10 border-l border-[color:var(--border-subtle)] bg-[var(--glass-base-bg)]">
       {tabs.map(({ id, icon: Icon, label }) => (
         <button
           key={id}
           title={label}
           onClick={() => setSidePanelTab(id)}
           className={`p-2 rounded-[var(--radius-sm)] transition-colors ${
-            sidePanelTab === id ? "bg-white/[0.10] text-[var(--text-primary)]" : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+            sidePanelTab === id ? "bg-[var(--overlay-active)] text-[var(--text-primary)]" : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
           }`}
         >
           <Icon size={16} />
@@ -29,7 +29,7 @@ export function IconBar() {
         title="终端"
         onClick={toggleTerminal}
         className={`p-2 rounded-[var(--radius-sm)] transition-colors ${
-          terminalVisible ? "bg-white/[0.10] text-[var(--text-primary)]" : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+          terminalVisible ? "bg-[var(--overlay-active)] text-[var(--text-primary)]" : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
         }`}
       >
         <Terminal size={16} />

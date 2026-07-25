@@ -25,3 +25,6 @@ dist-ssr
 
 # Playwright MCP scratch snapshots
 .playwright-mcp/
+
+# WorkBuddy local memory
+.workbuddy/

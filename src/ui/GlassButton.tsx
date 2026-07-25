@@ -14,8 +14,8 @@ const sizes = {
 };
 
 const variants = {
-  default: "bg-[var(--glass-interactive-bg)] border border-white/[0.12] hover:bg-white/[0.13]",
-  ghost: "bg-transparent border border-transparent hover:bg-white/[0.06]",
+  default: "bg-[var(--glass-interactive-bg)] border border-[color:var(--border-strong)] hover:bg-[var(--overlay-active-strong)]",
+  ghost: "bg-transparent border border-transparent hover:bg-[var(--overlay-ghost)]",
   accent: "bg-[var(--accent)] border border-transparent hover:bg-[var(--accent-hover)]",
 };
 

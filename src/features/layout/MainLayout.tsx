@@ -23,7 +23,7 @@ export function MainLayout({ mainContent, sidePanel }: MainLayoutProps) {
         {/* Side panel */}
         {sidePanelVisible && (
           <div
-            className="flex flex-col border-l border-white/[0.06] overflow-hidden"
+            className="flex flex-col border-l border-[color:var(--border-subtle)] overflow-hidden"
             style={{ width: sidePanelWidth }}
           >
             <div className="flex-1 overflow-hidden">

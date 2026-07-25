@@ -17,7 +17,7 @@ export function MessageList() {
       {messages.map((msg) =>
         msg.tool_summary ? (
           <div key={msg.id} className="flex justify-start">
-            <div className="flex items-center gap-2 rounded-[var(--radius-sm)] px-3 py-1.5 text-xs text-[var(--text-tertiary)] bg-white/[0.04] border border-white/[0.06]">
+            <div className="flex items-center gap-2 rounded-[var(--radius-sm)] px-3 py-1.5 text-xs text-[var(--text-tertiary)] bg-[var(--overlay-soft)] border border-[color:var(--border-subtle)]">
               <Wrench size={12} />
               <span className="font-mono">{msg.tool_summary}</span>
             </div>

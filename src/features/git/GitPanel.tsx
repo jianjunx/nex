@@ -40,7 +40,7 @@ export function GitPanel() {
   return (
     <div className="flex flex-col h-full text-sm overflow-hidden">
       {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-white/[0.06]">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-[color:var(--border-subtle)]">
         <GitBranch size={14} className="text-[var(--accent)]" />
         <span className="text-[var(--text-primary)] font-medium">{status?.branch || "—"}</span>
         {status && (status.ahead > 0 || status.behind > 0) && (
@@ -59,7 +59,7 @@ export function GitPanel() {
               </GlassButton>
             </div>
             {unstaged.map((f) => (
-              <div key={f.path} className="flex items-center gap-1 px-1 py-0.5 hover:bg-white/[0.05] rounded cursor-pointer" onClick={() => viewDiff(project.path, f.path, false)}>
+              <div key={f.path} className="flex items-center gap-1 px-1 py-0.5 hover:bg-[var(--overlay-hover)] rounded cursor-pointer" onClick={() => viewDiff(project.path, f.path, false)}>
                 <span className="text-[var(--warning)] text-xs w-3">{f.status[0].toUpperCase()}</span>
                 <span className="text-[var(--text-secondary)] truncate">{f.path}</span>
               </div>
@@ -75,7 +75,7 @@ export function GitPanel() {
               </GlassButton>
             </div>
             {staged.map((f) => (
-              <div key={f.path} className="flex items-center gap-1 px-1 py-0.5 hover:bg-white/[0.05] rounded cursor-pointer" onClick={() => viewDiff(project.path, f.path, true)}>
+              <div key={f.path} className="flex items-center gap-1 px-1 py-0.5 hover:bg-[var(--overlay-hover)] rounded cursor-pointer" onClick={() => viewDiff(project.path, f.path, true)}>
                 <span className="text-[var(--success)] text-xs w-3">{f.status[0].toUpperCase()}</span>
                 <span className="text-[var(--text-secondary)] truncate">{f.path}</span>
               </div>
@@ -86,12 +86,12 @@ export function GitPanel() {
       </div>
 
       {/* Commit area */}
-      <div className="px-2 py-2 border-t border-white/[0.06]">
+      <div className="px-2 py-2 border-t border-[color:var(--border-subtle)]">
         <input
           value={commitMsg}
           onChange={(e) => setCommitMsg(e.target.value)}
           placeholder="Commit message..."
-          className="w-full bg-[var(--glass-interactive-bg)] border border-white/[0.08] rounded-[var(--radius-sm)] px-2 py-1 text-xs text-[var(--text-primary)] outline-none"
+          className="w-full bg-[var(--glass-interactive-bg)] border border-[color:var(--border-default)] rounded-[var(--radius-sm)] px-2 py-1 text-xs text-[var(--text-primary)] outline-none"
           onKeyDown={(e) => e.key === "Enter" && handleCommit()}
         />
         <GlassButton size="sm" variant="accent" className="mt-1 w-full" disabled={loading || !commitMsg.trim()} onClick={handleCommit}>
@@ -101,7 +101,7 @@ export function GitPanel() {
 
       {/* Diff viewer */}
       {diff && diffFile && (
-        <div className="border-t border-white/[0.06] max-h-[200px] overflow-auto">
+        <div className="border-t border-[color:var(--border-subtle)] max-h-[200px] overflow-auto">
           <div className="px-2 py-1 text-xs text-[var(--text-tertiary)]">{diffFile}</div>
           <pre className="px-2 pb-2 text-xs font-mono text-[var(--text-secondary)] whitespace-pre-wrap">
             {diff.split("\n").map((line, i) => (

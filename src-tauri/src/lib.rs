@@ -62,6 +62,18 @@ pub fn run() {
                 );
             }
 
+            #[cfg(target_os = "windows")]
+            {
+                use window_vibrancy::apply_acrylic;
+                let window = app.get_webview_window("main").expect("main window not found");
+                // Tint is RGBA. The OS blurs the desktop wallpaper behind the
+                // (transparent) Tauri window and applies this tint, producing a
+                // real frosted-glass effect that CSS backdrop-filter cannot
+                // achieve. Light tint matches the default light theme; tune the
+                // alpha (4th byte) to adjust opacity.
+                let _ = apply_acrylic(&window, Some((245, 246, 250, 180)));
+            }
+
             // Initialize database
             let app_data_dir = app.path().app_data_dir().expect("failed to get app data dir");
             std::fs::create_dir_all(&app_data_dir).ok();

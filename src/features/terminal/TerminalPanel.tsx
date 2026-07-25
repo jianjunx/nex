@@ -19,13 +19,19 @@ export function TerminalPanel() {
   useEffect(() => {
     if (!termRef.current) return;
 
+    // Terminal foreground/cursor follow the active theme so text stays
+    // readable on both light and dark glass backgrounds.
+    const cs = getComputedStyle(document.documentElement);
+    const foreground = cs.getPropertyValue("--text-primary").trim() || "rgba(255,255,255,0.9)";
+    const cursor = cs.getPropertyValue("--accent").trim() || "rgba(124,138,255,1)";
+
     const term = new Terminal({
       fontSize: 13,
       fontFamily: "JetBrains Mono, Menlo, monospace",
       theme: {
         background: "transparent",
-        foreground: "rgba(255,255,255,0.9)",
-        cursor: "rgba(255,255,255,0.7)",
+        foreground,
+        cursor,
       },
       cursorBlink: true,
     });
@@ -63,12 +69,12 @@ export function TerminalPanel() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center gap-1 px-2 py-1 border-b border-white/[0.06]">
+      <div className="flex items-center gap-1 px-2 py-1 border-b border-[color:var(--border-subtle)]">
         {sessions.map((s) => (
           <button
             key={s.id}
             onClick={() => setActive(s.id)}
-            className={`px-2 py-0.5 text-xs rounded ${s.id === activeSessionId ? "bg-white/[0.1]" : ""}`}
+            className={`px-2 py-0.5 text-xs rounded ${s.id === activeSessionId ? "bg-[var(--overlay-active)]" : ""}`}
           >
             {s.title}
           </button>

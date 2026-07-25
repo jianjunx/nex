@@ -23,7 +23,7 @@ export function GlassModal({ open, onClose, children, title }: GlassModalProps) 
           <div className="absolute inset-0 bg-black/40" onClick={onClose} />
           <motion.div
             {...scaleIn}
-            className="relative z-10 w-full max-w-md rounded-[var(--radius-lg)] backdrop-blur-[12px] bg-[var(--glass-overlay-bg)] border border-white/[0.18] p-6 glass-highlight"
+            className="relative z-10 w-full max-w-md rounded-[var(--radius-lg)] backdrop-blur-[12px] bg-[var(--glass-overlay-bg)] border border-[color:var(--border-emphasis)] p-6 glass-highlight"
           >
             {title && (
               <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-4">{title}</h2>

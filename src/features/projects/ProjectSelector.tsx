@@ -34,18 +34,18 @@ export function ProjectSelector() {
       </GlassButton>
 
       {showList && (
-        <div className="absolute top-full left-0 mt-1 z-40 min-w-[200px] rounded-[var(--radius-md)] backdrop-blur-[12px] bg-[var(--glass-overlay-bg)] border border-white/[0.18] p-1">
+        <div className="absolute top-full left-0 mt-1 z-40 min-w-[200px] rounded-[var(--radius-md)] backdrop-blur-[12px] bg-[var(--glass-overlay-bg)] border border-[color:var(--border-emphasis)] p-1">
           {projects.map((p) => (
             <button
               key={p.id}
               onClick={() => { switchProject(p.id); loadConversations(p.id); fsWatchStart(p.path).catch(() => {}); setShowList(false); }}
-              className={`w-full text-left px-3 py-1.5 text-sm rounded-[var(--radius-sm)] ${p.id === activeProjectId ? "bg-white/[0.1] text-[var(--text-primary)]" : "text-[var(--text-secondary)] hover:bg-white/[0.05]"}`}
+              className={`w-full text-left px-3 py-1.5 text-sm rounded-[var(--radius-sm)] ${p.id === activeProjectId ? "bg-[var(--overlay-active)] text-[var(--text-primary)]" : "text-[var(--text-secondary)] hover:bg-[var(--overlay-hover)]"}`}
             >
               {p.name}
             </button>
           ))}
-          <div className="border-t border-white/[0.08] mt-1 pt-1">
-            <button onClick={() => { handleOpen(); setShowList(false); }} className="w-full text-left px-3 py-1.5 text-sm text-[var(--accent)] rounded-[var(--radius-sm)] hover:bg-white/[0.05]">
+          <div className="border-t border-[color:var(--border-default)] mt-1 pt-1">
+            <button onClick={() => { handleOpen(); setShowList(false); }} className="w-full text-left px-3 py-1.5 text-sm text-[var(--accent)] rounded-[var(--radius-sm)] hover:bg-[var(--overlay-hover)]">
               + Open Folder...
             </button>
           </div>

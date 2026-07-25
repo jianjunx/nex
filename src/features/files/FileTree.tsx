@@ -21,7 +21,7 @@ function TreeNode({ node, depth }: { node: { name: string; path: string; is_dir:
     <div>
       <div
         onClick={handleClick}
-        className="flex items-center gap-1 px-2 py-0.5 text-sm cursor-pointer hover:bg-white/[0.05] rounded"
+        className="flex items-center gap-1 px-2 py-0.5 text-sm cursor-pointer hover:bg-[var(--overlay-hover)] rounded"
         style={{ paddingLeft: depth * 12 + 8 }}
       >
         {node.is_dir ? (

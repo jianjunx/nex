@@ -3,7 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { Plus, X } from "lucide-react";
-import { useTerminalStore, getReplay } from "../../stores/terminal.store";
+import { useTerminalStore, getReplay, setLiveSink } from "../../stores/terminal.store";
 import { useProjectStore } from "../../stores/project.store";
 import { Button } from "@glinui/ui";
 
@@ -52,13 +52,20 @@ export function TerminalPanel() {
 
     xtermRef.current = term;
 
+    // Render live output for the ACTIVE session immediately; background
+    // tabs buffer only (their replay runs on switch). getState() at call
+    // time — never capture activeSessionId.
+    setLiveSink((id, data) => {
+      if (useTerminalStore.getState().activeSessionId === id) term.write(data);
+    });
+
     const el = termRef.current;
     const observer = new ResizeObserver(() => {
       if (el.offsetWidth > 0 && el.offsetHeight > 0) fitAddon.fit();
     });
     observer.observe(el);
 
-    return () => { observer.disconnect(); term.dispose(); xtermRef.current = null; };
+    return () => { setLiveSink(null); observer.disconnect(); term.dispose(); xtermRef.current = null; };
   }, []);
 
   // Replay the active session's buffered output: on first mount (the

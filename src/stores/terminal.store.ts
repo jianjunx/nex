@@ -42,6 +42,7 @@ const BUFFER_CAP = 262_144; // chars per session; oldest chunks dropped on overf
 const outputBuffers = new Map<string, { chunks: string[]; length: number }>();
 
 function appendOutput(terminalId: string, data: string): void {
+  if (data.length === 0) return;
   let buf = outputBuffers.get(terminalId);
   if (!buf) {
     buf = { chunks: [], length: 0 };
@@ -73,6 +74,18 @@ function dropBuffer(terminalId: string): void {
 // mounts -> cleans up -> re-mounts, and this guard prevents double subscription.
 // (Same pattern as agent.store.ts.)
 let listenerTeardown: (() => void) | null = null;
+
+// Live sink: the output listener also hands each chunk to the mounted
+// terminal for immediate rendering. Buffering alone would leave the
+// display frozen between tab switches (no keystroke echo / command
+// output until a replay re-dumps the buffer). The sink is a plain
+// function, NOT a listener — event subscription stays app-scope in
+// initListeners; TerminalPanel sets/clears it on mount/unmount.
+let liveSink: ((terminalId: string, data: string) => void) | null = null;
+
+export function setLiveSink(fn: ((terminalId: string, data: string) => void) | null): void {
+  liveSink = fn;
+}
 
 export const useTerminalStore = create<TerminalStore>()(
   immer((set) => ({
@@ -140,6 +153,7 @@ export const useTerminalStore = create<TerminalStore>()(
       // keeping the keystroke-frequency hot path out of immer/re-renders.
       onTerminalOutput(({ terminalId, data }) => {
         appendOutput(terminalId, data);
+        liveSink?.(terminalId, data);
       }).then((fn) => { if (disposed) fn(); else unlistenOutput = fn; });
 
       // The shell exited (EOF/err): drop its buffer and remove the tab.

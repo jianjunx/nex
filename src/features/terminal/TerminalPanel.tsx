@@ -3,19 +3,20 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { Plus, X } from "lucide-react";
-import { useTerminalStore } from "../../stores/terminal.store";
+import { useTerminalStore, getReplay } from "../../stores/terminal.store";
 import { useProjectStore } from "../../stores/project.store";
-import { onTerminalOutput } from "../../bridge/tauri";
 import { Button } from "@glinui/ui";
 
 export function TerminalPanel() {
   const termRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
-  const { sessions, activeSessionId, create, write, resize, kill, setActive } = useTerminalStore();
+  const { sessions, activeSessionId, error, create, kill, setActive, clearError } = useTerminalStore();
   const projects = useProjectStore((s) => s.projects);
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const project = projects.find((p) => p.id === activeProjectId);
 
+  // Construct the single xterm instance once; session switches reuse it via
+  // reset + replay (effect below) instead of dispose/reconstruct.
   useEffect(() => {
     if (!termRef.current) return;
 
@@ -28,11 +29,9 @@ export function TerminalPanel() {
     const term = new Terminal({
       fontSize: 13,
       fontFamily: "JetBrains Mono, Menlo, monospace",
-      theme: {
-        background: "transparent",
-        foreground,
-        cursor,
-      },
+      allowTransparency: true,
+      // No `background` key: xterm 6 silently rejects "transparent"; the DOM renderer + globals.css handle transparency, and a future canvas renderer must not fall back to opaque black.
+      theme: { foreground, cursor },
       cursorBlink: true,
     });
     const fitAddon = new FitAddon();
@@ -40,11 +39,14 @@ export function TerminalPanel() {
     term.open(termRef.current);
     fitAddon.fit();
 
+    // Read the session at call time via getState() — never capture
+    // activeSessionId/write/resize from render scope (stale closures).
     term.onData((data) => {
+      const { activeSessionId, write } = useTerminalStore.getState();
       if (activeSessionId) write(activeSessionId, data);
     });
-
     term.onResize(({ cols, rows }) => {
+      const { activeSessionId, resize } = useTerminalStore.getState();
       if (activeSessionId) resize(activeSessionId, cols, rows);
     });
 
@@ -56,11 +58,18 @@ export function TerminalPanel() {
     });
     observer.observe(el);
 
-    const unlisten = onTerminalOutput(({ terminalId, data }) => {
-      if (terminalId === activeSessionId) term.write(data);
-    });
+    return () => { observer.disconnect(); term.dispose(); xtermRef.current = null; };
+  }, []);
 
-    return () => { observer.disconnect(); unlisten.then((fn) => fn()); term.dispose(); };
+  // Replay the active session's buffered output: on first mount (the
+  // app-scope listener captured the shell banner before this component
+  // existed) and on every tab switch. term.reset() clears the previous
+  // session; the buffer is the single source of truth.
+  useEffect(() => {
+    const term = xtermRef.current;
+    if (!term || !activeSessionId) return;
+    term.reset();
+    term.write(getReplay(activeSessionId));
   }, [activeSessionId]);
 
   const handleCreate = () => {
@@ -79,12 +88,22 @@ export function TerminalPanel() {
             {s.title}
           </button>
         ))}
-        <Button size="sm" variant="ghost" onClick={handleCreate}><Plus size={12} /></Button>
+        <Button size="sm" variant="ghost" disabled={!project} onClick={handleCreate}><Plus size={12} /></Button>
         {activeSessionId && (
           <Button size="sm" variant="ghost" onClick={() => void kill(activeSessionId)}><X size={12} /></Button>
         )}
       </div>
-      <div ref={termRef} className="flex-1 p-3" />
+      {error && (
+        <div className="flex items-center gap-2 px-4 py-1.5 text-xs text-[var(--error)] bg-[var(--error)]/10">
+          <span className="flex-1 truncate">{error}</span>
+          <Button size="sm" variant="ghost" onClick={clearError}><X size={12} /></Button>
+        </div>
+      )}
+      {project ? (
+        <div ref={termRef} className="flex-1 p-3" />
+      ) : (
+        <div className="flex-1 flex items-center justify-center text-sm text-[var(--text-tertiary)]">未打开项目</div>
+      )}
     </div>
   );
 }

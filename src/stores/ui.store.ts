@@ -31,7 +31,13 @@ export const useUiStore = create<UiState>()(
 
       toggleSidePanel: () => set((s) => { s.sidePanelVisible = !s.sidePanelVisible; }),
       setSidePanelTab: (tab) => set((s) => { s.sidePanelTab = tab; s.sidePanelVisible = true; }),
-      toggleTerminal: () => set((s) => { s.terminalVisible = !s.terminalVisible; }),
+      toggleTerminal: () => set((s) => {
+        s.terminalVisible = !s.terminalVisible;
+        // The terminal tray lives INSIDE the side panel; turning it on while
+        // the panel is hidden would light the icon with nothing appearing.
+        // (Same force-show precedent as setSidePanelTab.)
+        if (s.terminalVisible) s.sidePanelVisible = true;
+      }),
       setSidePanelWidth: (w) => set((s) => { s.sidePanelWidth = w; }),
       setTerminalHeight: (h) => set((s) => { s.terminalHeight = h; }),
     })),

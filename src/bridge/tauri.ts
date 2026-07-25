@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { COMMANDS } from "./commands";
-import { EVENTS, type AgentNotificationPayload, type AgentPermissionRequestPayload, type TerminalOutputPayload, type FsChangedPayload, type GitStatusChangedPayload } from "./events";
+import { EVENTS, type AgentNotificationPayload, type AgentPermissionRequestPayload, type TerminalOutputPayload, type TerminalExitedPayload, type FsChangedPayload, type GitStatusChangedPayload } from "./events";
 
 // --- Projects ---
 export interface Project {
@@ -214,6 +214,10 @@ export function onAgentSessionTerminated(cb: (payload: { sessionId: string }) =>
 
 export function onTerminalOutput(cb: (payload: TerminalOutputPayload) => void): Promise<UnlistenFn> {
   return listen(EVENTS.TERMINAL_OUTPUT, (e) => cb(e.payload as TerminalOutputPayload));
+}
+
+export function onTerminalExited(cb: (payload: TerminalExitedPayload) => void): Promise<UnlistenFn> {
+  return listen(EVENTS.TERMINAL_EXITED, (e) => cb(e.payload as TerminalExitedPayload));
 }
 
 export function onFsChanged(cb: (payload: FsChangedPayload) => void): Promise<UnlistenFn> {

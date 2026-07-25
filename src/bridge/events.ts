@@ -5,6 +5,7 @@ export const EVENTS = {
   AGENT_SESSION_TERMINATED: "agent-session-terminated",
   GIT_STATUS_CHANGED: "git-status-changed",
   TERMINAL_OUTPUT: "terminal-output",
+  TERMINAL_EXITED: "terminal-exited",
   FS_CHANGED: "fs-changed",
 } as const;
 
@@ -26,6 +27,10 @@ export interface GitStatusChangedPayload {
 export interface TerminalOutputPayload {
   terminalId: string;
   data: string;
+}
+
+export interface TerminalExitedPayload {
+  terminalId: string;
 }
 
 export interface FsChangedPayload {

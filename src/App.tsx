@@ -9,6 +9,7 @@ import { useProjectStore } from "./stores/project.store";
 import { useFsStore } from "./stores/fs.store";
 import { useGitStore } from "./stores/git.store";
 import { useConversationStore } from "./stores/conversation.store";
+import { useTerminalStore } from "./stores/terminal.store";
 
 /** Path of the currently active project, if any. */
 function activeProjectPath(): string | undefined {
@@ -19,10 +20,9 @@ function activeProjectPath(): string | undefined {
 function App() {
   const initListeners = useAgentStore((s) => s.initListeners);
   const loadProjects = useProjectStore((s) => s.loadProjects);
-
   useEffect(() => {
     const cleanup = initListeners();
-
+    const cleanupTerminal = useTerminalStore.getState().initListeners();
     // Restore the last session: re-open the previously active project, its
     // file watcher, the conversation tabs that were open, and each tab's
     // message history. Persisted ids come back synchronously from the
@@ -72,6 +72,7 @@ function App() {
 
     return () => {
       cleanup();
+      cleanupTerminal();
       unlistenFs.then((fn) => fn());
       unlistenGit.then((fn) => fn());
     };

@@ -4,13 +4,13 @@ mod error;
 mod state;
 mod watcher;
 mod commands;
-pub mod acp;
+pub mod agent;
 pub mod db;
 pub mod fs;
 pub mod git;
 pub mod terminal;
 
-use acp::manager::AcpSessionManager;
+use agent::AgentSessionManager;
 use db::Database;
 use state::AppState;
 use std::sync::Arc;
@@ -44,11 +44,15 @@ pub fn run() {
             commands::terminal_cmds::terminal_write,
             commands::terminal_cmds::terminal_resize,
             commands::terminal_cmds::terminal_kill,
-            commands::acp_cmds::acp_create_session,
-            commands::acp_cmds::acp_send_prompt,
-            commands::acp_cmds::acp_cancel,
-            commands::acp_cmds::acp_respond_permission,
-            commands::acp_cmds::acp_close_session,
+            commands::agent_cmds::agent_list_servers,
+            commands::agent_cmds::agent_refresh_registry,
+            commands::agent_cmds::agent_create_session,
+            commands::agent_cmds::agent_send_prompt,
+            commands::agent_cmds::agent_cancel,
+            commands::agent_cmds::agent_respond_permission,
+            commands::agent_cmds::agent_close_session,
+            commands::agent_cmds::agent_custom_upsert,
+            commands::agent_cmds::agent_custom_delete,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -87,7 +91,7 @@ pub fn run() {
             app.manage(AppState {
                 db: Arc::new(db),
                 terminal_manager: TerminalManager::new(),
-                acp_manager: AcpSessionManager::new(),
+                agent_manager: AgentSessionManager::new(&app_data_dir),
                 watcher_manager: WatcherManager::new(),
             });
 

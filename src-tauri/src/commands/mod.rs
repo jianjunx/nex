@@ -1,4 +1,4 @@
-pub mod acp_cmds;
+pub mod agent_cmds;
 pub mod project_cmds;
 pub mod fs_cmds;
 pub mod git_cmds;

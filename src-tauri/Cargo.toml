@@ -39,6 +39,7 @@ ignore = "0.4"
 content_inspector = "0.2"
 rusqlite = { version = "0.32", features = ["bundled"] }
 agent-client-protocol = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 chrono = { version = "0.4", features = ["serde"] }
 
 [dev-dependencies]

@@ -16,9 +16,11 @@ function errorMessage(err: unknown): string {
   return String(err);
 }
 
-// Accent CTA overrides must carry dark: counterparts: Tailwind v4's dark: is
-// prefers-color-scheme-based here and GlinUI's default variant brings
-// dark:bg-*/dark:text-*/dark:hover:bg-* that twMerge can't merge across.
+// Accent CTA overrides must carry dark: counterparts: dark: is bound to
+// [data-theme="dark"] via @custom-variant in globals.css (app pins light, so
+// these are inert until dark theme support lands), but GlinUI's default
+// variant brings dark:bg-*/dark:text-*/dark:hover:bg-* that tailwind-merge
+// can't merge across modifier groups.
 const ACCENT_CTA =
   "bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] dark:bg-[var(--accent)] dark:text-white dark:hover:bg-[var(--accent-hover)]";
 

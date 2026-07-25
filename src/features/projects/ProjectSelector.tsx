@@ -12,9 +12,11 @@ import { useConversationStore } from "../../stores/conversation.store";
 import { fsWatchStart } from "../../bridge/tauri";
 
 // Radix highlights items on hover/keyboard via data-[highlighted]; map it to
-// the old --overlay-hover token. dark: counterparts are required: Tailwind v4
-// dark: is prefers-color-scheme-based here and the item base carries
-// dark:data-[highlighted]:bg-black/50 that twMerge can't merge across.
+// the old --overlay-hover token. dark: is bound to [data-theme="dark"] via
+// @custom-variant in globals.css (app pins light, so these are inert until
+// dark theme support lands), but the dark: counterparts are still required:
+// the item base carries dark:data-[highlighted]:bg-black/50 and tailwind-merge
+// doesn't merge across modifier groups.
 const ITEM_HIGHLIGHT =
   "data-[highlighted]:bg-[var(--overlay-hover)] dark:data-[highlighted]:bg-[var(--overlay-hover)]";
 

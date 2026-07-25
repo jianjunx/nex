@@ -20,8 +20,8 @@ export function PermissionModal() {
 
   return (
     // `open` stays constant true while a request is pending; Radix emits
-    // onOpenChange(false) for Esc, overlay click and the built-in X — all
-    // routed to the same dismiss/deny path GlassModal's onClose used.
+    // onOpenChange(false) for Esc, outside click, and the X button — all
+    // route here: dismissal means deny.
     <Modal open={true} onOpenChange={(o) => { if (!o) dismiss(); }}>
       <ModalContent size="sm">
         <ModalHeader>

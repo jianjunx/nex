@@ -83,7 +83,7 @@ export function ProjectSelector() {
             // folder dialog (removable once confirmed in manual QA).
             setTimeout(() => void handleOpen(), 0);
           }}
-          className={`px-3 text-[var(--accent)] ${ITEM_HIGHLIGHT}`}
+          className={`px-3 text-[var(--accent)] ${ITEM_HIGHLIGHT} data-[highlighted]:text-[var(--accent)] dark:data-[highlighted]:text-[var(--accent)]`}
         >
           + Open Folder...
         </DropdownMenuItem>

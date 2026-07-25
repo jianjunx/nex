@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { motion } from "framer-motion";
 import { Plus, PanelRight } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Button, Tabs, TabsList, TabsTrigger } from "@glinui/ui";
@@ -66,11 +65,9 @@ export function TopBar() {
                     className="gap-2 rounded-[var(--radius-sm)] font-normal text-[var(--text-secondary)] hover:text-[var(--text-primary)] data-[state=active]:bg-[var(--glass-interactive-bg)] data-[state=active]:text-[var(--text-primary)] data-[state=active]:shadow-[inset_0_-2px_0_0_var(--accent)]"
                   >
                     {status && status !== "idle" && (
-                      <motion.span
-                        className="w-2 h-2 rounded-full"
+                      <span
+                        className={`w-2 h-2 rounded-full ${status === "running" ? "animate-pulse" : ""}`}
                         style={{ backgroundColor: status === "running" ? "var(--accent)" : "var(--warning)" }}
-                        animate={status === "running" ? { scale: [1, 1.3, 1] } : {}}
-                        transition={{ repeat: Infinity, duration: 1.5 }}
                       />
                     )}
                     <span className="max-w-[120px] truncate">
@@ -79,13 +76,18 @@ export function TopBar() {
                     {/*
                       TabsTrigger renders a <button>, so the close × cannot be
                       a nested <button> (invalid HTML). It's a span[role="button"]
-                      that swallows mousedown (otherwise Radix activates the tab
-                      before the close click lands) and click.
+                      whose mousedown calls preventDefault (blocks the focus
+                      move that would auto-activate the tab under Radix's
+                      automatic activation) plus stopPropagation, so clicking ×
+                      on an inactive tab closes it without switching to it.
                     */}
                     <span
                       role="button"
                       className="ml-1 cursor-pointer text-xs opacity-50 hover:opacity-100"
-                      onMouseDown={(e) => e.stopPropagation()}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                      }}
                       onClick={(e) => {
                         e.stopPropagation();
                         removeSession(tabId);

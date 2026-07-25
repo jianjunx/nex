@@ -30,6 +30,12 @@ const ACP_NOTIFICATION_EVENT: &str = "acp-notification";
 const ACP_PERMISSION_REQUEST_EVENT: &str = "acp-permission-request";
 const ACP_SESSION_TERMINATED_EVENT: &str = "acp-session-terminated";
 
+/// Upper bound for the initialize + new_session handshake. Without this a
+/// spawned-but-unresponsive agent (wrong flags, waiting on auth, protocol
+/// mismatch) would leave `acp_create_session` pending forever and the
+/// frontend's Create button looking dead.
+const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// A permission request that is waiting for the user's answer. Dropping `tx`
 /// without sending resolves the pending handler with `Cancelled`.
 struct PendingPermission {
@@ -310,6 +316,12 @@ async fn run_session(
             return;
         }
     };
+    // Pipe the agent's stderr into the app log (bounded) so handshake
+    // failures are diagnosable — `claude` missing under `cmd /c`, auth
+    // prompts, and protocol errors otherwise vanish silently.
+    if let Some(stderr) = child.stderr.take() {
+        drain_stderr(stderr, program.clone());
+    }
     // The ACP SDK speaks futures-io; tokio-util's compat layer bridges the
     // child's tokio-based stdio pipes.
     let outgoing = child.stdin.take().expect("agent stdin not piped").compat_write();
@@ -334,7 +346,7 @@ async fn run_session(
         let _ = io_done_tx.send(());
     });
 
-    let handshake = async {
+    let handshake = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
         conn.initialize(acp::InitializeRequest {
             protocol_version: acp::V1,
             client_capabilities: acp::ClientCapabilities::default(),
@@ -346,8 +358,15 @@ async fn run_session(
             .await
             .map_err(NexError::from)?;
         Ok(response.session_id)
-    }
+    })
     .await;
+    let handshake = match handshake {
+        Ok(result) => result,
+        Err(_) => Err(NexError::Agent(format!(
+            "agent `{program}` did not complete the ACP handshake within {}s",
+            HANDSHAKE_TIMEOUT.as_secs()
+        ))),
+    };
 
     match handshake {
         Ok(agent_session_id) => {
@@ -401,9 +420,10 @@ fn spawn_agent(program: &str, args: &[String], cwd: &str) -> Result<tokio::proce
             .current_dir(cwd)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            // Not drained; inheriting would mix agent logs into the app
-            // console, piping would deadlock once the buffer fills.
-            .stderr(std::process::Stdio::null())
+            // Piped and drained by `drain_stderr` — inheriting would mix
+            // agent logs into the app console, and an undrained pipe would
+            // deadlock the child once the buffer fills.
+            .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
     }
 
@@ -415,10 +435,39 @@ fn spawn_agent(program: &str, args: &[String], cwd: &str) -> Result<tokio::proce
             let mut via_cmd = tokio::process::Command::new("cmd");
             via_cmd.arg("/c").arg(program);
             configure(&mut via_cmd, args, cwd);
-            via_cmd
-                .spawn()
-                .map_err(|e2| NexError::Agent(format!("failed to spawn agent `{program}`: {e2}")))
+            via_cmd.spawn().map_err(|e2| {
+                NexError::Agent(format!("failed to spawn agent `{program}`: {e2} (is it installed and on PATH?)"))
+            })
         }
-        Err(e) => Err(NexError::Agent(format!("failed to spawn agent `{program}`: {e}"))),
+        Err(e) => Err(NexError::Agent(format!("failed to spawn agent `{program}`: {e} (is it installed and on PATH?)"))),
     }
+}
+
+/// Streams the agent's stderr into the app log, capped so a noisy agent
+/// cannot flood the log file. Must be spawned on the session's LocalSet (it
+/// outlives the handshake; the LocalSet runs until session teardown).
+fn drain_stderr(stderr: tokio::process::ChildStderr, program: String) {
+    const MAX_LOGGED_LINES: u32 = 100;
+    tokio::task::spawn_local(async move {
+        use tokio::io::AsyncBufReadExt;
+        let mut lines = tokio::io::BufReader::new(stderr).lines();
+        let mut count: u32 = 0;
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => {
+                    count += 1;
+                    if count <= MAX_LOGGED_LINES {
+                        log::warn!("agent `{program}` stderr: {line}");
+                    } else if count == MAX_LOGGED_LINES + 1 {
+                        log::warn!("agent `{program}` stderr: (further output suppressed)");
+                    }
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    log::error!("agent `{program}` stderr read failed: {e}");
+                    break;
+                }
+            }
+        }
+    });
 }

@@ -27,7 +27,7 @@ export const GlassButton = forwardRef<HTMLButtonElement, GlassButtonProps>(
         whileHover={{ scale: 1.02 }}
         whileTap={{ scale: 0.97 }}
         transition={springTransition}
-        className={`rounded-[var(--radius-sm)] font-medium cursor-pointer transition-colors duration-150 ${sizes[size]} ${variants[variant]} ${className}`}
+        className={`rounded-[var(--radius-sm)] font-medium cursor-pointer transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed ${sizes[size]} ${variants[variant]} ${className}`}
         {...(props as any)}
       >
         {children}

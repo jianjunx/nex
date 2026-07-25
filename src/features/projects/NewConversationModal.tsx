@@ -186,7 +186,7 @@ export function NewConversationModal({ open, onClose }: Props) {
         </div>
 
         {showCustomForm ? (
-          <div className="space-y-2 p-3 rounded-[var(--radius-md)] bg-[var(--glass-interactive-bg)] border border-[color:var(--border-default)]">
+          <div className="space-y-2 p-3 rounded-[var(--radius-md)] bg-[var(--glass-2-surface)] border border-[color:var(--border-default)]">
             <Input
               variant="glass"
               value={customName}

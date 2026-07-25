@@ -67,7 +67,7 @@ export function SearchPanel() {
               <button
                 key={`${m.path}:${m.line ?? 0}:${i}`}
                 onClick={() => void openFile(m.path)}
-                className="w-full text-left px-3 py-2 rounded-[var(--radius-md)] hover:bg-[var(--glass-interactive-bg)] transition-colors"
+                className="w-full text-left px-3 py-2 rounded-[var(--radius-md)] hover:bg-[var(--glass-2-surface)] transition-colors"
               >
                 <div className="flex items-center gap-2 text-sm text-[var(--text-primary)]">
                   <FileCode size={13} className="flex-none text-[var(--text-tertiary)]" />

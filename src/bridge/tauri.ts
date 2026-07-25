@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { COMMANDS } from "./commands";
-import { EVENTS, type AcpNotificationPayload, type AcpPermissionRequestPayload, type TerminalOutputPayload, type FsChangedPayload } from "./events";
+import { EVENTS, type AcpNotificationPayload, type AcpPermissionRequestPayload, type TerminalOutputPayload, type FsChangedPayload, type GitStatusChangedPayload } from "./events";
 
 // --- Projects ---
 export interface Project {
@@ -145,6 +145,10 @@ export async function fsReadFile(filePath: string): Promise<{ is_text: boolean; 
   return invoke(COMMANDS.FS_READ_FILE, { filePath });
 }
 
+export async function fsWatchStart(projectPath: string): Promise<void> {
+  return invoke(COMMANDS.FS_WATCH_START, { projectPath });
+}
+
 // --- Event Listeners ---
 export function onAcpNotification(cb: (payload: AcpNotificationPayload) => void): Promise<UnlistenFn> {
   return listen(EVENTS.ACP_NOTIFICATION, (e) => cb(e.payload as AcpNotificationPayload));
@@ -164,4 +168,8 @@ export function onTerminalOutput(cb: (payload: TerminalOutputPayload) => void): 
 
 export function onFsChanged(cb: (payload: FsChangedPayload) => void): Promise<UnlistenFn> {
   return listen(EVENTS.FS_CHANGED, (e) => cb(e.payload as FsChangedPayload));
+}
+
+export function onGitStatusChanged(cb: (payload: GitStatusChangedPayload) => void): Promise<UnlistenFn> {
+  return listen(EVENTS.GIT_STATUS_CHANGED, (e) => cb(e.payload as GitStatusChangedPayload));
 }

@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { GlassButton } from "../../ui";
 import { useProjectStore } from "../../stores/project.store";
 import { useConversationStore } from "../../stores/conversation.store";
+import { fsWatchStart } from "../../bridge/tauri";
 
 export function ProjectSelector() {
   const { projects, activeProjectId, openProject, switchProject } = useProjectStore();
@@ -15,9 +16,14 @@ export function ProjectSelector() {
     if (selected && typeof selected === "string") {
       await openProject(selected);
       // openProject returns void and sets activeProjectId on success; read
-      // the resulting id back and load that project's conversations.
-      const activeId = useProjectStore.getState().activeProjectId;
-      if (activeId) loadConversations(activeId);
+      // the resulting project back from the store.
+      const { activeProjectId: id, projects: all } = useProjectStore.getState();
+      const active = all.find((p) => p.id === id);
+      if (active) {
+        loadConversations(active.id);
+        // Fire-and-forget: watcher failures shouldn't block opening a project.
+        fsWatchStart(active.path).catch(() => {});
+      }
     }
   };
 
@@ -32,7 +38,7 @@ export function ProjectSelector() {
           {projects.map((p) => (
             <button
               key={p.id}
-              onClick={() => { switchProject(p.id); loadConversations(p.id); setShowList(false); }}
+              onClick={() => { switchProject(p.id); loadConversations(p.id); fsWatchStart(p.path).catch(() => {}); setShowList(false); }}
               className={`w-full text-left px-3 py-1.5 text-sm rounded-[var(--radius-sm)] ${p.id === activeProjectId ? "bg-white/[0.1] text-[var(--text-primary)]" : "text-[var(--text-secondary)] hover:bg-white/[0.05]"}`}
             >
               {p.name}

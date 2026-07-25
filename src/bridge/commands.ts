@@ -31,4 +31,5 @@ export const COMMANDS = {
   FS_READ_TREE: "fs_read_tree",
   FS_EXPAND_DIR: "fs_expand_dir",
   FS_READ_FILE: "fs_read_file",
+  FS_WATCH_START: "fs_watch_start",
 } as const;

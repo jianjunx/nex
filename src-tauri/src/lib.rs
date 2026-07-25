@@ -2,6 +2,7 @@ use tauri::Manager;
 
 mod error;
 mod state;
+mod watcher;
 mod commands;
 pub mod acp;
 pub mod db;
@@ -14,6 +15,7 @@ use db::Database;
 use state::AppState;
 use std::sync::Arc;
 use terminal::pty::TerminalManager;
+use watcher::WatcherManager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -30,6 +32,7 @@ pub fn run() {
             commands::fs_cmds::fs_read_tree,
             commands::fs_cmds::fs_expand_dir,
             commands::fs_cmds::fs_read_file,
+            commands::fs_cmds::fs_watch_start,
             commands::git_cmds::git_status,
             commands::git_cmds::git_diff,
             commands::git_cmds::git_log,
@@ -65,7 +68,12 @@ pub fn run() {
             let db_path = app_data_dir.join("nex.db");
             let db = Database::new(&db_path).expect("failed to initialize database");
 
-            app.manage(AppState { db: Arc::new(db), terminal_manager: TerminalManager::new(), acp_manager: AcpSessionManager::new() });
+            app.manage(AppState {
+                db: Arc::new(db),
+                terminal_manager: TerminalManager::new(),
+                acp_manager: AcpSessionManager::new(),
+                watcher_manager: WatcherManager::new(),
+            });
 
             Ok(())
         })

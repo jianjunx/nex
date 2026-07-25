@@ -34,7 +34,7 @@ export function ProjectSelector() {
       </GlassButton>
 
       {showList && (
-        <div className="absolute top-full left-0 mt-1 z-40 min-w-[200px] rounded-[var(--radius-md)] backdrop-blur-[12px] bg-[var(--glass-overlay-bg)] border border-[color:var(--border-emphasis)] p-1">
+        <div className="absolute top-full left-0 mt-1.5 z-40 min-w-[200px] rounded-[var(--radius-md)] backdrop-blur-[12px] bg-[var(--glass-overlay-bg)] border border-[color:var(--border-emphasis)] p-1.5">
           {projects.map((p) => (
             <button
               key={p.id}
@@ -44,7 +44,7 @@ export function ProjectSelector() {
               {p.name}
             </button>
           ))}
-          <div className="border-t border-[color:var(--border-default)] mt-1 pt-1">
+          <div className="border-t border-[color:var(--border-default)] mt-1.5 pt-1.5">
             <button onClick={() => { handleOpen(); setShowList(false); }} className="w-full text-left px-3 py-1.5 text-sm text-[var(--accent)] rounded-[var(--radius-sm)] hover:bg-[var(--overlay-hover)]">
               + Open Folder...
             </button>

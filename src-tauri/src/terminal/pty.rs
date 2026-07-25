@@ -88,11 +88,7 @@ impl TerminalManager {
     }
 
     pub fn write(&self, id: &str, data: &str) -> Result<(), NexError> {
-        let sessions = self.sessions.lock().unwrap();
-        let session = sessions
-            .iter()
-            .find(|s| s.id == id)
-            .ok_or_else(|| NexError::Terminal("session not found".into()))?;
+        let session = self.session(id)?;
         session
             .writer
             .lock()
@@ -103,11 +99,7 @@ impl TerminalManager {
     }
 
     pub fn resize(&self, id: &str, cols: u16, rows: u16) -> Result<(), NexError> {
-        let sessions = self.sessions.lock().unwrap();
-        let session = sessions
-            .iter()
-            .find(|s| s.id == id)
-            .ok_or_else(|| NexError::Terminal("session not found".into()))?;
+        let session = self.session(id)?;
         session
             .master
             .lock()
@@ -118,14 +110,33 @@ impl TerminalManager {
     }
 
     pub fn kill(&self, id: &str) -> Result<(), NexError> {
-        let mut sessions = self.sessions.lock().unwrap();
-        if let Some(pos) = sessions.iter().position(|s| s.id == id) {
-            let session = sessions.remove(pos);
+        // Remove the session from the vec and drop the vec lock before
+        // killing the child, so a stalled kill can't block create/kill/
+        // resize for every other terminal.
+        let session = {
+            let mut sessions = self.sessions.lock().unwrap();
+            sessions.iter().position(|s| s.id == id).map(|pos| sessions.remove(pos))
+        };
+        if let Some(session) = session {
             // Terminate the child so the shell process isn't leaked; the
             // reader thread then sees EOF on the PTY and exits on its own.
             // Ignore errors - the child may already have exited.
             let _ = session.child.lock().unwrap().kill();
         }
         Ok(())
+    }
+
+    /// Looks up a session by id and clones its `Arc`, dropping the sessions
+    /// vec lock before the caller does any PTY I/O (a stalled child with a
+    /// full pipe must not block the other terminals). Mirrors
+    /// `AcpSessionManager::session`.
+    fn session(&self, id: &str) -> Result<Arc<TerminalSession>, NexError> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|s| s.id == id)
+            .cloned()
+            .ok_or_else(|| NexError::Terminal("session not found".into()))
     }
 }

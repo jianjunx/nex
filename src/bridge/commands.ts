@@ -20,8 +20,6 @@ export const COMMANDS = {
   GIT_STAGE: "git_stage",
   GIT_UNSTAGE: "git_unstage",
   GIT_COMMIT: "git_commit",
-  GIT_BRANCH_LIST: "git_branch_list",
-  GIT_CHECKOUT: "git_checkout",
   // Terminal
   TERMINAL_CREATE: "terminal_create",
   TERMINAL_WRITE: "terminal_write",

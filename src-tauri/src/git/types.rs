@@ -22,10 +22,3 @@ pub struct CommitInfo {
     pub author: String,
     pub time: i64,
 }
-
-#[derive(Debug, Clone, Serialize)]
-pub struct BranchInfo {
-    pub name: String,
-    pub is_current: bool,
-    pub is_remote: bool,
-}

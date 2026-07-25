@@ -3,6 +3,7 @@ import { GlassModal, GlassButton } from "../../ui";
 import { useConversationStore } from "../../stores/conversation.store";
 import { useAgentStore } from "../../stores/agent.store";
 import { useProjectStore } from "../../stores/project.store";
+import type { Conversation } from "../../bridge/tauri";
 
 const AGENTS = [
   { id: "claude-code", label: "Claude Code", command: "claude --acp" },
@@ -16,6 +17,7 @@ interface Props { open: boolean; onClose: () => void; }
 export function NewConversationModal({ open, onClose }: Props) {
   const [selectedAgent, setSelectedAgent] = useState(AGENTS[0]);
   const createConversation = useConversationStore((s) => s.createConversation);
+  const closeTab = useConversationStore((s) => s.closeTab);
   const createSession = useAgentStore((s) => s.createSession);
   const projects = useProjectStore((s) => s.projects);
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
@@ -23,8 +25,17 @@ export function NewConversationModal({ open, onClose }: Props) {
 
   const handleCreate = async () => {
     if (!project) return;
-    const conv = await createConversation(project.id, selectedAgent.id);
-    await createSession(conv.id, selectedAgent.command, project.path);
+    let conv: Conversation | null = null;
+    try {
+      conv = await createConversation(project.id, selectedAgent.id);
+      await createSession(conv.id, selectedAgent.command, project.path);
+    } catch {
+      // The store error field carries the message; keep the modal open so
+      // the user can retry. If the conversation (and its tab) was created
+      // before the agent session failed to start, drop the orphan tab.
+      if (conv) closeTab(conv.id);
+      return;
+    }
     onClose();
   };
 

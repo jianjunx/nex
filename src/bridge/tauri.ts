@@ -70,6 +70,10 @@ export async function acpRespondPermission(requestId: string, optionId: string |
   return invoke(COMMANDS.ACP_RESPOND_PERMISSION, { requestId, optionId });
 }
 
+export async function acpCloseSession(sessionId: string): Promise<void> {
+  return invoke(COMMANDS.ACP_CLOSE_SESSION, { sessionId });
+}
+
 // --- Git ---
 export interface GitFileChange {
   path: string;

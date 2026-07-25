@@ -12,6 +12,7 @@ export const COMMANDS = {
   ACP_SEND_PROMPT: "acp_send_prompt",
   ACP_CANCEL: "acp_cancel",
   ACP_RESPOND_PERMISSION: "acp_respond_permission",
+  ACP_CLOSE_SESSION: "acp_close_session",
   // Git
   GIT_STATUS: "git_status",
   GIT_DIFF: "git_diff",

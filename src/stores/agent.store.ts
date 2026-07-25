@@ -6,6 +6,7 @@ import {
   acpSendPrompt,
   acpCancel,
   acpRespondPermission,
+  acpCloseSession,
   onAcpNotification,
   onAcpPermissionRequest,
   onAcpSessionTerminated,
@@ -32,6 +33,13 @@ interface AgentStore {
   error: string | null;
 
   createSession: (conversationId: string, agentCommand: string, cwd: string) => Promise<string>;
+  /**
+   * Tears down the conversation's agent session (kills the agent process)
+   * and drops local session state. No-op when no session was ever started.
+   * Idempotent with the `acp-session-terminated` listener, which cleans up
+   * the same keys when the backend confirms termination.
+   */
+  removeSession: (conversationId: string) => Promise<void>;
   sendPrompt: (sessionId: string, content: string) => Promise<void>;
   cancel: (sessionId: string) => Promise<void>;
   respondPermission: (requestId: string, optionId: string | null) => Promise<void>;
@@ -123,6 +131,26 @@ export const useAgentStore = create<AgentStore>()(
         throw err;
       } finally {
         set((s) => { s.loading = false; });
+      }
+    },
+
+    removeSession: async (conversationId) => {
+      const session = get().sessions[conversationId];
+      // No session was ever started for this tab — nothing to tear down.
+      if (!session) return;
+      set((s) => { s.error = null; });
+      try {
+        await acpCloseSession(session.sessionId);
+      } catch (err) {
+        set((s) => { s.error = errorMessage(err); });
+      } finally {
+        // Drop local state regardless: the tab is closing either way, and
+        // the acp-session-terminated listener does the same cleanup when the
+        // backend event arrives.
+        set((s) => {
+          delete s.sessions[conversationId];
+          delete s.streamingMessageId[conversationId];
+        });
       }
     },
 

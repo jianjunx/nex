@@ -29,3 +29,12 @@ pub async fn acp_cancel(state: State<'_, AppState>, session_id: String) -> Resul
 pub fn acp_respond_permission(state: State<AppState>, request_id: String, option_id: Option<String>) -> Result<(), NexError> {
     state.acp_manager.respond_permission(&request_id, option_id)
 }
+
+/// Tears down a session: removing it from the manager drops the last
+/// `SessionHandle`, which signals the session thread to kill the agent
+/// process, drain its pending permissions, and emit `acp-session-terminated`.
+#[tauri::command]
+pub fn acp_close_session(state: State<AppState>, session_id: String) -> Result<(), NexError> {
+    state.acp_manager.remove_session(&session_id);
+    Ok(())
+}

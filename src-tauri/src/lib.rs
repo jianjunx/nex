@@ -44,6 +44,7 @@ pub fn run() {
             commands::acp_cmds::acp_send_prompt,
             commands::acp_cmds::acp_cancel,
             commands::acp_cmds::acp_respond_permission,
+            commands::acp_cmds::acp_close_session,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]

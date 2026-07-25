@@ -11,6 +11,7 @@ export function TopBar() {
   const { toggleSidePanel, sidePanelVisible } = useUiStore();
   const { openTabs, activeTabId, conversationsByProject, switchTab, closeTab } = useConversationStore();
   const sessions = useAgentStore((s) => s.sessions);
+  const removeSession = useAgentStore((s) => s.removeSession);
   const [showNewConversation, setShowNewConversation] = useState(false);
 
   const allConversations = Object.values(conversationsByProject).flat();
@@ -37,7 +38,7 @@ export function TopBar() {
               active={tabId === activeTabId}
               indicator={sessions[tabId]?.status ?? null}
               onClick={() => switchTab(tabId)}
-              onClose={() => closeTab(tabId)}
+              onClose={() => { removeSession(tabId); closeTab(tabId); }}
             />
           ))
         )}

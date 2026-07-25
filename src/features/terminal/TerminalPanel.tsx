@@ -99,11 +99,18 @@ export function TerminalPanel() {
           <Button size="sm" variant="ghost" onClick={clearError}><X size={12} /></Button>
         </div>
       )}
-      {project ? (
-        <div ref={termRef} className="flex-1 p-3" />
-      ) : (
-        <div className="flex-1 flex items-center justify-center text-sm text-[var(--text-tertiary)]">未打开项目</div>
-      )}
+      {/* The xterm host stays mounted for the tray's whole lifetime —
+          construction is a mount-once effect, so unmounting the host while
+          no project is open would leave a dead terminal when one is opened
+          later (the effect never re-runs). The empty state overlays it. */}
+      <div className="relative flex-1 overflow-hidden">
+        <div ref={termRef} className="h-full p-3" />
+        {!project && (
+          <div className="absolute inset-0 flex items-center justify-center text-sm text-[var(--text-tertiary)]">
+            未打开项目
+          </div>
+        )}
+      </div>
     </div>
   );
 }

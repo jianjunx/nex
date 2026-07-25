@@ -13,6 +13,7 @@
     "@glinui/tokens": "^0.1.1",
     "@glinui/ui": "^0.1.1",
     "@tanstack/react-virtual": "^3.14.8",
+    "@uiw/react-codemirror": "^4.25.11",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "immer": "^11.1.15",

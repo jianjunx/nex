@@ -44,11 +44,17 @@ export function TerminalPanel() {
 
     xtermRef.current = term;
 
+    const el = termRef.current;
+    const observer = new ResizeObserver(() => {
+      if (el.offsetWidth > 0 && el.offsetHeight > 0) fitAddon.fit();
+    });
+    observer.observe(el);
+
     const unlisten = onTerminalOutput(({ terminalId, data }) => {
       if (terminalId === activeSessionId) term.write(data);
     });
 
-    return () => { unlisten.then((fn) => fn()); term.dispose(); };
+    return () => { observer.disconnect(); unlisten.then((fn) => fn()); term.dispose(); };
   }, [activeSessionId]);
 
   const handleCreate = () => {

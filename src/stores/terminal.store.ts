@@ -13,8 +13,11 @@ interface TerminalStore {
   activeSessionId: string | null;
   loading: boolean;
   error: string | null;
+  /** Bumped when terminal-affecting settings change; TerminalPanel's construction effect depends on it, so a bump disposes + rebuilds xterm with the new options while the module-level output buffers keep the content alive across the rebuild. */
+  settingsVersion: number;
+  bumpSettingsVersion: () => void;
 
-  create: (projectPath: string) => Promise<void>;
+  create: (projectPath: string, shell?: string) => Promise<void>;
   write: (id: string, data: string) => void;
   resize: (id: string, cols: number, rows: number) => void;
   kill: (id: string) => Promise<void>;
@@ -93,11 +96,13 @@ export const useTerminalStore = create<TerminalStore>()(
     activeSessionId: null,
     loading: false,
     error: null,
+    settingsVersion: 0,
+    bumpSettingsVersion: () => { set((s) => { s.settingsVersion += 1; }); },
 
-    create: async (projectPath: string) => {
+    create: async (projectPath: string, shell?: string) => {
       set((s) => { s.loading = true; s.error = null; });
       try {
-        const id = await terminalCreate(projectPath);
+        const id = await terminalCreate(projectPath, shell);
         set((s) => {
           s.sessions.push({ id, title: `Terminal ${s.sessions.length + 1}` });
           s.activeSessionId = id;

@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { LazyStore } from "@tauri-apps/plugin-store";
+import { appearanceSetTheme } from "../bridge/tauri";
+import { useTerminalStore } from "./terminal.store";
 
 export type Theme = "light" | "dark";
 
@@ -77,30 +79,42 @@ export const useSettingsStore = create<SettingsState>()(
       }
       // Apply the resolved theme so the panel and the CSS can never fight.
       document.documentElement.setAttribute("data-theme", get().theme);
+      // Startup catch-up: lib.rs applied the LIGHT glass tint at launch;
+      // a persisted dark theme must re-tint the OS window once here.
+      if (get().theme === "dark") void appearanceSetTheme("dark").catch(() => {});
     },
 
     setTheme: (theme) => {
       set((s) => { s.theme = theme; });
       // CSS theming is driven entirely by this attribute (globals.css
-      // @custom-variant dark + [data-theme="light"] overrides); the OS
-      // glass re-tint joins this setter in a later commit.
+      // @custom-variant dark + [data-theme="light"] overrides).
       document.documentElement.setAttribute("data-theme", theme);
+      // Re-tint the OS glass (fire-and-forget — a failing acrylic refresh,
+      // e.g. Windows 10, must never block the CSS theme switch) and rebuild
+      // the terminal so its snapshotted theme colors follow the new theme.
+      void appearanceSetTheme(theme).catch(() => {});
+      useTerminalStore.getState().bumpSettingsVersion();
       void settingsStore.set(KEYS.theme, theme).catch(() => {});
     },
     setTerminalShell: (shell) => {
       set((s) => { s.terminalShell = shell; });
+      // No settingsVersion bump: the shell only affects newly created
+      // terminals, never the running instance.
       void settingsStore.set(KEYS.shell, shell).catch(() => {});
     },
     setTerminalFontSize: (size) => {
       set((s) => { s.terminalFontSize = size; });
+      useTerminalStore.getState().bumpSettingsVersion();
       void settingsStore.set(KEYS.fontSize, size).catch(() => {});
     },
     setTerminalFontFamily: (family) => {
       set((s) => { s.terminalFontFamily = family; });
+      useTerminalStore.getState().bumpSettingsVersion();
       void settingsStore.set(KEYS.fontFamily, family).catch(() => {});
     },
     setTerminalScrollback: (lines) => {
       set((s) => { s.terminalScrollback = lines; });
+      useTerminalStore.getState().bumpSettingsVersion();
       void settingsStore.set(KEYS.scrollback, lines).catch(() => {});
     },
   }))

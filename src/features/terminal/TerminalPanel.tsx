@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { Plus, X } from "lucide-react";
 import { useTerminalStore, getReplay, setLiveSink } from "../../stores/terminal.store";
+import { useSettingsStore } from "../../stores/settings.store";
 import { useProjectStore } from "../../stores/project.store";
 import { Button } from "@glinui/ui";
 
@@ -11,12 +12,17 @@ export function TerminalPanel() {
   const termRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const { sessions, activeSessionId, error, create, kill, setActive, clearError } = useTerminalStore();
+  const settingsVersion = useTerminalStore((s) => s.settingsVersion);
+  const terminalShell = useSettingsStore((s) => s.terminalShell);
   const projects = useProjectStore((s) => s.projects);
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const project = projects.find((p) => p.id === activeProjectId);
 
-  // Construct the single xterm instance once; session switches reuse it via
+  // Construct the single xterm instance; session switches reuse it via
   // reset + replay (effect below) instead of dispose/reconstruct.
+  // Rebuilt when settingsVersion bumps (settings.store setters) — the
+  // module-level output buffers survive the dispose, and the replay effect
+  // below restores the visible content.
   useEffect(() => {
     if (!termRef.current) return;
 
@@ -26,9 +32,14 @@ export function TerminalPanel() {
     const foreground = cs.getPropertyValue("--text-primary").trim() || "rgba(255,255,255,0.9)";
     const cursor = cs.getPropertyValue("--accent").trim() || "rgba(124,138,255,1)";
 
+    // Live settings read at construction time via getState() (no stale
+    // closures, no extra effect deps).
+    const { terminalFontSize, terminalFontFamily, terminalScrollback } = useSettingsStore.getState();
+
     const term = new Terminal({
-      fontSize: 13,
-      fontFamily: "JetBrains Mono, Menlo, monospace",
+      fontSize: terminalFontSize,
+      fontFamily: terminalFontFamily,
+      scrollback: terminalScrollback,
       allowTransparency: true,
       // No `background` key: xterm 6 silently rejects "transparent"; the DOM renderer + globals.css handle transparency, and a future canvas renderer must not fall back to opaque black.
       theme: { foreground, cursor },
@@ -66,21 +77,25 @@ export function TerminalPanel() {
     observer.observe(el);
 
     return () => { setLiveSink(null); observer.disconnect(); term.dispose(); xtermRef.current = null; };
-  }, []);
+  }, [settingsVersion]);
 
   // Replay the active session's buffered output: on first mount (the
   // app-scope listener captured the shell banner before this component
-  // existed) and on every tab switch. term.reset() clears the previous
-  // session; the buffer is the single source of truth.
+  // existed), on every tab switch, and after a settings-driven rebuild
+  // (the fresh instance starts empty — reset + buffer replay restores the
+  // content preserved by the module-level buffers). term.reset() clears the
+  // previous session; the buffer is the single source of truth.
   useEffect(() => {
     const term = xtermRef.current;
     if (!term || !activeSessionId) return;
     term.reset();
     term.write(getReplay(activeSessionId));
-  }, [activeSessionId]);
+  }, [activeSessionId, settingsVersion]);
 
   const handleCreate = () => {
-    if (project) void create(project.path);
+    // Empty shell = system default ("" -> undefined, the bridge's
+    // Option<String> None).
+    if (project) void create(project.path, terminalShell || undefined);
   };
 
   return (

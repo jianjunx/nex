@@ -1,5 +1,5 @@
 use crate::error::NexError;
-use crate::terminal::types::TerminalOutputPayload;
+use crate::terminal::types::{TerminalExitedPayload, TerminalOutputPayload};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
@@ -9,6 +9,10 @@ use uuid::Uuid;
 /// Name of the event emitted with PTY output; must match
 /// `EVENTS.TERMINAL_OUTPUT` in `src/bridge/events.ts`.
 const TERMINAL_OUTPUT_EVENT: &str = "terminal-output";
+
+/// Name of the event emitted when a PTY's shell exits; must match
+/// `EVENTS.TERMINAL_EXITED` in `src/bridge/events.ts`.
+const TERMINAL_EXITED_EVENT: &str = "terminal-exited";
 
 pub struct TerminalSession {
     pub id: String,
@@ -55,25 +59,102 @@ impl TerminalManager {
 
         let id = Uuid::new_v4().to_string();
 
-        // Reader thread: forwards PTY output to the frontend until the child
-        // exits (EOF / read error), at which point the thread ends.
+        // Reader thread: forwards PTY output to the frontend until the
+        // child exits (EOF / read error), then emits `terminal-exited`
+        // so the frontend can drop the tab. Output is decoded
+        // incrementally: a multi-byte UTF-8 character split across two
+        // 4 KB reads (common with CJK output) would be mangled into
+        // replacement characters by per-chunk lossy conversion, so an
+        // incomplete trailing sequence is kept in `pending` until the
+        // next read completes it.
         let app_clone = app.clone();
         let sid = id.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
+            let mut pending: Vec<u8> = Vec::new();
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        let payload = TerminalOutputPayload {
-                            terminal_id: sid.clone(),
-                            data: String::from_utf8_lossy(&buf[..n]).to_string(),
-                        };
-                        let _ = app_clone.emit(TERMINAL_OUTPUT_EVENT, payload);
+                        pending.extend_from_slice(&buf[..n]);
+                        // Consume `pending` as far as it is valid UTF-8;
+                        // stop at an incomplete trailing sequence (kept
+                        // for the next read) or after handling a truly
+                        // invalid byte (emitted as a replacement char).
+                        loop {
+                            match std::str::from_utf8(&pending) {
+                                Ok(text) => {
+                                    if !text.is_empty() {
+                                        let _ = app_clone.emit(
+                                            TERMINAL_OUTPUT_EVENT,
+                                            TerminalOutputPayload {
+                                                terminal_id: sid.clone(),
+                                                data: text.to_string(),
+                                            },
+                                        );
+                                        pending.clear();
+                                    }
+                                    break;
+                                }
+                                Err(e) => {
+                                    let valid = e.valid_up_to();
+                                    if valid > 0 {
+                                        // SAFETY: `valid_up_to()` is a UTF-8
+                                        // char boundary by construction.
+                                        let text = std::str::from_utf8(&pending[..valid])
+                                            .expect("valid_up_to is a char boundary");
+                                        let _ = app_clone.emit(
+                                            TERMINAL_OUTPUT_EVENT,
+                                            TerminalOutputPayload {
+                                                terminal_id: sid.clone(),
+                                                data: text.to_string(),
+                                            },
+                                        );
+                                        pending.drain(..valid);
+                                        continue;
+                                    }
+                                    match e.error_len() {
+                                        // Incomplete trailing sequence:
+                                        // wait for more bytes.
+                                        None => break,
+                                        // Truly invalid bytes: emit the
+                                        // replacement char(s) and skip them.
+                                        Some(len) => {
+                                            let lossy = String::from_utf8_lossy(&pending[..len]).into_owned();
+                                            let _ = app_clone.emit(
+                                                TERMINAL_OUTPUT_EVENT,
+                                                TerminalOutputPayload {
+                                                    terminal_id: sid.clone(),
+                                                    data: lossy,
+                                                },
+                                            );
+                                            pending.drain(..len);
+                                            continue;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                     Err(_) => break,
                 }
             }
+            // Flush anything left (possibly an incomplete sequence) lossily.
+            if !pending.is_empty() {
+                let _ = app_clone.emit(
+                    TERMINAL_OUTPUT_EVENT,
+                    TerminalOutputPayload {
+                        terminal_id: sid.clone(),
+                        data: String::from_utf8_lossy(&pending).into_owned(),
+                    },
+                );
+            }
+            // The shell has exited: tell the frontend to remove the tab.
+            // Ignore emit errors — the window may already be gone.
+            let _ = app_clone.emit(
+                TERMINAL_EXITED_EVENT,
+                TerminalExitedPayload { terminal_id: sid },
+            );
         });
 
         let session = Arc::new(TerminalSession {

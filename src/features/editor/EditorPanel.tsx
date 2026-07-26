@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import CodeMirror, { EditorView } from "@uiw/react-codemirror";
+import { searchPanelOpen, closeSearchPanel } from "@codemirror/search";
 import { X } from "lucide-react";
 import { Button } from "@glinui/ui";
 import { useFsStore } from "../../stores/fs.store";
@@ -7,16 +8,37 @@ import { useUiStore } from "../../stores/ui.store";
 import { useProjectStore } from "../../stores/project.store";
 import { fileBasename, relativeToProject } from "./pathUtils";
 import { languageExtensionsForPath } from "./language";
+import { editorSearchExtensions } from "./editorSearch";
 
 // CSS variables are resolved at paint time, so a light/dark theme switch
 // restyles the editor with zero reconstruction — no editor re-theme needed.
+// height/overflow on & + .cm-scroller is required for mouse-wheel scrolling
+// when the parent gives a fixed flex height (otherwise the doc grows the view).
 const editorTheme = EditorView.theme({
-  "&": { backgroundColor: "transparent", color: "var(--text-primary)", fontSize: "13px" },
+  "&": {
+    height: "100%",
+    backgroundColor: "transparent",
+    color: "var(--text-primary)",
+    fontSize: "13px",
+  },
+  ".cm-scroller": { overflow: "auto" },
   ".cm-content": { caretColor: "var(--accent)", fontFamily: "JetBrains Mono, Menlo, Consolas, monospace" },
   ".cm-cursor": { borderLeftColor: "var(--accent)" },
   "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": { backgroundColor: "var(--overlay-active)" },
   ".cm-gutters": { backgroundColor: "transparent", color: "var(--text-tertiary)", borderRight: "1px solid var(--border-subtle)" },
   ".cm-activeLine": { backgroundColor: "var(--overlay-ghost)" },
+  // Host the custom find bar at the top without CodeMirror's default panel chrome.
+  ".cm-panels.cm-panels-top": {
+    backgroundColor: "transparent",
+    borderBottom: "1px solid var(--border-subtle)",
+  },
+  ".cm-panel": {
+    backgroundColor: "transparent",
+    padding: "0",
+    boxShadow: "none",
+  },
+  ".cm-searchMatch": { backgroundColor: "color-mix(in srgb, var(--accent) 28%, transparent)" },
+  ".cm-searchMatch.cm-searchMatch-selected": { backgroundColor: "color-mix(in srgb, var(--accent) 55%, transparent)" },
 });
 
 export function EditorPanel() {
@@ -37,22 +59,32 @@ export function EditorPanel() {
   const projectPath = projects.find((p) => p.id === activeProjectId)?.path;
   const viewRef = useRef<EditorView | null>(null);
 
+  const extensions = useMemo(
+    () => [...languageExtensionsForPath(editorFile?.path ?? ""), ...editorSearchExtensions()],
+    [editorFile?.path],
+  );
+
   // CodeMirror measured at zero size while `hidden` lays out wrong when
   // re-shown; force a re-measure.
   useEffect(() => {
     if (editorVisible) viewRef.current?.requestMeasure();
   }, [editorVisible]);
 
-  // Global keyboard-shortcut pattern (first in this codebase — copy this for
-  // future app-level shortcuts): one window listener per mounted panel, live
-  // state via getState() (never captured values), and YIELD to any open Radix
-  // dialog — Radix does not stopPropagation on Esc, so without the role check
-  // this handler would fire underneath a modal's own Esc handling.
+  // Global keyboard-shortcut pattern: one window listener per mounted panel,
+  // live state via getState(), and YIELD to any open Radix dialog.
+  // Capture phase so we beat React input handlers: Esc closes the find bar
+  // first; a second Esc (panel already closed) hides the editor.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (document.querySelector('[role="dialog"],[role="alertdialog"]')) return;
       if (e.key === "Escape") {
-        // Hide only — the editor stays mounted so draft + undo history survive.
+        const view = viewRef.current;
+        if (view && searchPanelOpen(view.state)) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          closeSearchPanel(view);
+          return;
+        }
         useUiStore.getState().setEditorVisible(false);
         return;
       }
@@ -63,8 +95,8 @@ export function EditorPanel() {
         if (active?.dirty) void fs.saveFile();
       }
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
   }, []);
 
   if (openFiles.length === 0) return null;
@@ -129,7 +161,7 @@ export function EditorPanel() {
       )}
       <div className="flex-1 min-h-0 overflow-hidden">
         {editorFile?.isText ? (
-          <>
+          <div className="h-full min-h-0">
             {/* key = one EditorView per file: without it the undo stack survives a file switch and Ctrl+Z can resurrect the previous file's content — a wrong-path save hazard. Esc-hide is unaffected (same path, CSS-only hide), so undo/scroll preservation across hide/re-show still holds. */}
             <CodeMirror
               key={editorFile.path}
@@ -137,10 +169,11 @@ export function EditorPanel() {
               onChange={setDraft}
               onCreateEditor={(view) => { viewRef.current = view; }}
               theme={editorTheme}
-              extensions={languageExtensionsForPath(editorFile.path)}
+              extensions={extensions}
               height="100%"
+              style={{ height: "100%" }}
             />
-          </>
+          </div>
         ) : editorFile ? (
           <div className="flex h-full items-center justify-center text-sm text-[var(--text-tertiary)]">
             二进制或超大文件 ({(editorFile.size / 1024).toFixed(1)} KB) — 暂不可编辑

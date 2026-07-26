@@ -3,8 +3,10 @@ import { useConversationStore } from "../../stores/conversation.store";
 /** Load, validate, and hydrate conversation tabs for a project (startup / switch). */
 export async function restoreProjectConversationTabs(projectId: string) {
   const convStore = useConversationStore.getState();
-  await convStore.loadConversations(projectId);
-  const convs = useConversationStore.getState().conversationsByProject[projectId] ?? [];
+  const convs = await convStore.loadConversations(projectId);
+  // List failure must not overwrite persisted tabs with empty validIds.
+  if (convs === null) return;
+
   const validIds = new Set(convs.map((c) => c.id));
 
   const legacy = useConversationStore.getState().legacyTabsMigration;

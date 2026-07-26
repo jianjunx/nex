@@ -86,6 +86,13 @@ describe("conversation.store project-scoped tabs", () => {
     expect(useConversationStore.getState().activeTabByProject["proj-a"]).toBe("keep");
   });
 
+  it("loadConversations returns null on list failure", async () => {
+    conversationList.mockRejectedValueOnce(new Error("list failed"));
+    const result = await useConversationStore.getState().loadConversations("proj-a");
+    expect(result).toBeNull();
+    expect(useConversationStore.getState().error).toBe("list failed");
+  });
+
   it("migrateConversationPersist v0 maps openTabs into legacyTabsMigration", () => {
     const next = migrateConversationPersist(
       { openTabs: ["x"], activeTabId: "x" },

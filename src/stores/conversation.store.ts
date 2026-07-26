@@ -22,7 +22,8 @@ interface ConversationStore {
   loading: boolean;
   error: string | null;
 
-  loadConversations: (projectId: string) => Promise<void>;
+  /** Returns the list on success; `null` on failure (error set on store). */
+  loadConversations: (projectId: string) => Promise<Conversation[] | null>;
   createConversation: (projectId: string, agentType: string) => Promise<Conversation>;
   switchTab: (id: string) => void;
   closeTab: (id: string) => void;
@@ -119,10 +120,12 @@ export const useConversationStore = create<ConversationStore>()(
           set((s) => {
             s.conversationsByProject[projectId] = convs;
           });
+          return convs;
         } catch (err) {
           set((s) => {
             s.error = errorMessage(err);
           });
+          return null;
         } finally {
           set((s) => {
             s.loading = false;

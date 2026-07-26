@@ -30,14 +30,21 @@ export function TopBar() {
     if (!isWindows) return;
     if (e.button !== 0) return;
     const target = e.target as HTMLElement;
-    // Don't drag when interacting with controls
-    if (target.closest("button, input, select, textarea, a, [role='button']")) return;
+    // Don't drag when interacting with controls or portaled menus. Prefer JS
+    // startDragging over a full-bar data-tauri-drag-region: the native attribute
+    // can swallow pointer events for overlays that sit near the title bar.
+    if (
+      target.closest(
+        "button, input, select, textarea, a, [role='button'], [role='menuitem'], [data-radix-popper-content-wrapper]",
+      )
+    ) {
+      return;
+    }
     getCurrentWindow().startDragging();
   };
 
   return (
     <div
-      data-tauri-drag-region
       onMouseDown={handleMouseDown}
       className="flex items-center h-12 px-4 gap-3 border-b border-[color:var(--border-subtle)] bg-[var(--glass-1-surface)] backdrop-blur-[40px]"
     >

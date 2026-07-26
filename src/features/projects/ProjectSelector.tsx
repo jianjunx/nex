@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
@@ -21,90 +22,130 @@ import { fsWatchStart } from "../../bridge/tauri";
 const ITEM_HIGHLIGHT =
   "data-[highlighted]:bg-[var(--overlay-hover)] dark:data-[highlighted]:bg-[var(--overlay-hover)]";
 
+function errorMessage(err: unknown): string {
+  if (err && typeof err === "object" && "message" in err) {
+    return String((err as { message: unknown }).message);
+  }
+  return String(err);
+}
+
 export function ProjectSelector() {
   const { projects, activeProjectId, openProject, switchProject } = useProjectStore();
   const loadConversations = useConversationStore((s) => s.loadConversations);
   const activeProject = projects.find((p) => p.id === activeProjectId);
+  const [openError, setOpenError] = useState<string | null>(null);
+  const openErrorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  // Defer the native folder dialog until after the menu has fully closed.
+  // Opening it from onSelect races Radix focus-restore and, on Windows, the
+  // OS dialog can land behind the app (reads as "click did nothing").
+  const pendingOpenFolder = useRef(false);
+
+  const showOpenError = (msg: string) => {
+    setOpenError(msg);
+    if (openErrorTimer.current) clearTimeout(openErrorTimer.current);
+    openErrorTimer.current = setTimeout(() => setOpenError(null), 6000);
+  };
 
   const handleOpen = async () => {
     try {
-      // Windows foreground-lock mitigation: the folder dialog is spawned right
-      // after Radix restores focus to the trigger, and an OS dialog opened by a
-      // non-foreground process can appear behind the app window — reading as
-      // "the click did nothing". Bring our window to the foreground first so
-      // the (owned) dialog opens on top of it. Focus is best-effort: a focus
-      // hiccup must never abort the open (that would re-create the exact
-      // "nothing happens" symptom, now invisibly in release builds).
+      // Best-effort foreground: a focus hiccup must never abort the open.
       await getCurrentWindow().setFocus().catch(() => {});
       const selected = await open({ directory: true, multiple: false, title: "Open Folder" });
       if (selected && typeof selected === "string") {
         await openProject(selected);
-        // openProject returns void and sets activeProjectId on success; read
-        // the resulting project back from the store.
         const { activeProjectId: id, projects: all } = useProjectStore.getState();
         const active = all.find((p) => p.id === id);
         if (active) {
           loadConversations(active.id);
-          // Fire-and-forget: watcher failures shouldn't block opening a project.
           fsWatchStart(active.path).catch(() => {});
         }
       }
     } catch (err) {
-      // Don't die silently: a rejected dialog invoke (permission, IPC) must be
-      // diagnosable instead of reading as "the click did nothing".
       console.error("[ProjectSelector] open folder failed:", err);
+      showOpenError(errorMessage(err));
     }
   };
+  const handleOpenRef = useRef(handleOpen);
+  handleOpenRef.current = handleOpen;
+
+  useEffect(() => {
+    if (dropdownOpen || !pendingOpenFolder.current) return;
+    pendingOpenFolder.current = false;
+    // Short delay lets the menu unmount / focus settle before the OS dialog.
+    const t = setTimeout(() => void handleOpenRef.current(), 50);
+    return () => clearTimeout(t);
+  }, [dropdownOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (openErrorTimer.current) clearTimeout(openErrorTimer.current);
+    };
+  }, []);
 
   return (
-    <DropdownMenu>
-      {/*
-        asChild merges the trigger's classes onto Button with a plain string
-        join (Radix Slot, no twMerge), so pass variant/size explicitly to
-        neutralize the trigger's defaultVariants, and squash rounded-md/text-sm
-        via className to match Button's rounded-xl/text-xs.
-      */}
-      <DropdownMenuTrigger asChild variant="ghost" size="sm" className="rounded-xl text-xs">
-        <Button variant="ghost" size="sm">
-          {activeProject?.name || "Open Project"} ▾
-        </Button>
-      </DropdownMenuTrigger>
+    <div className="relative" data-tauri-drag-region="false">
+      <DropdownMenu open={dropdownOpen} onOpenChange={setDropdownOpen}>
+        {/*
+          asChild merges the trigger's classes onto Button with a plain string
+          join (Radix Slot, no twMerge), so pass variant/size explicitly to
+          neutralize the trigger's defaultVariants, and squash rounded-md/text-sm
+          via className to match Button's rounded-xl/text-xs.
+        */}
+        <DropdownMenuTrigger asChild variant="ghost" size="sm" className="rounded-xl text-xs">
+          <Button variant="ghost" size="sm">
+            {activeProject?.name || "Open Project"} ▾
+          </Button>
+        </DropdownMenuTrigger>
 
-      {/* DropdownMenuContent self-wraps its own Portal; base already has z-50. */}
-      <DropdownMenuContent
-        align="start"
-        variant="glass"
-        className="min-w-[200px] rounded-[var(--radius-md)] p-1.5"
-      >
-        {projects.map((p) => (
-          <DropdownMenuItem
-            key={p.id}
-            onSelect={() => {
-              switchProject(p.id);
-              loadConversations(p.id);
-              fsWatchStart(p.path).catch(() => {});
-            }}
-            className={`px-3 ${ITEM_HIGHLIGHT} ${
-              p.id === activeProjectId
-                ? "bg-[var(--overlay-active)] text-[var(--text-primary)]"
-                : "text-[var(--text-secondary)]"
-            }`}
-          >
-            {p.name}
-          </DropdownMenuItem>
-        ))}
-        <DropdownMenuSeparator className="my-1.5" />
-        <DropdownMenuItem
-          onSelect={() => {
-            // setTimeout guards against Radix focus-restore racing the native
-            // folder dialog (removable once confirmed in manual QA).
-            setTimeout(() => void handleOpen(), 0);
+        {/* DropdownMenuContent self-wraps its own Portal; base already has z-50. */}
+        <DropdownMenuContent
+          align="start"
+          variant="glass"
+          data-tauri-drag-region="false"
+          className="min-w-[200px] rounded-[var(--radius-md)] p-1.5"
+          onCloseAutoFocus={(e) => {
+            // Keep focus from jumping back to the trigger before the folder
+            // dialog opens — that restore is what loses the Windows foreground.
+            if (pendingOpenFolder.current) e.preventDefault();
           }}
-          className={`px-3 text-[var(--accent)] ${ITEM_HIGHLIGHT} data-[highlighted]:text-[var(--accent)] dark:data-[highlighted]:text-[var(--accent)]`}
         >
-          + Open Folder...
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+          {projects.map((p) => (
+            <DropdownMenuItem
+              key={p.id}
+              onSelect={() => {
+                switchProject(p.id);
+                loadConversations(p.id);
+                fsWatchStart(p.path).catch(() => {});
+              }}
+              className={`px-3 ${ITEM_HIGHLIGHT} ${
+                p.id === activeProjectId
+                  ? "bg-[var(--overlay-active)] text-[var(--text-primary)]"
+                  : "text-[var(--text-secondary)]"
+              }`}
+            >
+              {p.name}
+            </DropdownMenuItem>
+          ))}
+          <DropdownMenuSeparator className="my-1.5" />
+          <DropdownMenuItem
+            onSelect={() => {
+              pendingOpenFolder.current = true;
+            }}
+            className={`px-3 text-[var(--accent)] ${ITEM_HIGHLIGHT} data-[highlighted]:text-[var(--accent)] dark:data-[highlighted]:text-[var(--accent)]`}
+          >
+            + Open Folder...
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {openError && (
+        <div
+          role="alert"
+          className="absolute left-0 top-full z-50 mt-1 w-max max-w-[280px] rounded-md border border-[color:var(--border-subtle)] bg-[var(--glass-3-surface)] px-3 py-2 text-xs text-[var(--error)] shadow-md backdrop-blur-xl"
+        >
+          打开文件夹失败：{openError}
+        </div>
+      )}
+    </div>
   );
 }

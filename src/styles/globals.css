@@ -60,11 +60,12 @@
   --accent-glow: rgba(91, 103, 232, 0.18);
 }
 
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
+/* NOTE: do not add an unlayered universal reset here. Tailwind v4 emits its
+   utilities inside `@layer utilities`, and unlayered author CSS beats every
+   cascade layer — a plain `* { margin: 0; padding: 0 }` silently zeroes every
+   padding/margin utility in the app. The preflight bundled with
+   `@import "tailwindcss"` already resets margin/padding/box-sizing in
+   `@layer base`, where utilities can still override it. */
 
 html, body {
   height: 100%;

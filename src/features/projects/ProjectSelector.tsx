@@ -1,4 +1,5 @@
 import { open } from "@tauri-apps/plugin-dialog";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Button,
   DropdownMenu,
@@ -26,18 +27,30 @@ export function ProjectSelector() {
   const activeProject = projects.find((p) => p.id === activeProjectId);
 
   const handleOpen = async () => {
-    const selected = await open({ directory: true, multiple: false });
-    if (selected && typeof selected === "string") {
-      await openProject(selected);
-      // openProject returns void and sets activeProjectId on success; read
-      // the resulting project back from the store.
-      const { activeProjectId: id, projects: all } = useProjectStore.getState();
-      const active = all.find((p) => p.id === id);
-      if (active) {
-        loadConversations(active.id);
-        // Fire-and-forget: watcher failures shouldn't block opening a project.
-        fsWatchStart(active.path).catch(() => {});
+    try {
+      // Windows foreground-lock mitigation: the folder dialog is spawned right
+      // after Radix restores focus to the trigger, and an OS dialog opened by a
+      // non-foreground process can appear behind the app window — reading as
+      // "the click did nothing". Bring our window to the foreground first so
+      // the (owned) dialog opens on top of it.
+      await getCurrentWindow().setFocus();
+      const selected = await open({ directory: true, multiple: false, title: "Open Folder" });
+      if (selected && typeof selected === "string") {
+        await openProject(selected);
+        // openProject returns void and sets activeProjectId on success; read
+        // the resulting project back from the store.
+        const { activeProjectId: id, projects: all } = useProjectStore.getState();
+        const active = all.find((p) => p.id === id);
+        if (active) {
+          loadConversations(active.id);
+          // Fire-and-forget: watcher failures shouldn't block opening a project.
+          fsWatchStart(active.path).catch(() => {});
+        }
       }
+    } catch (err) {
+      // Don't die silently: a rejected dialog invoke (permission, IPC) must be
+      // diagnosable instead of reading as "the click did nothing".
+      console.error("[ProjectSelector] open folder failed:", err);
     }
   };
 

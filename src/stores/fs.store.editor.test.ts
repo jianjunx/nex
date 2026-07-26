@@ -90,6 +90,18 @@ describe("fs.store multi-tab editor", () => {
     expect(useFsStore.getState().activePath).toBe("/p/a.ts");
   });
 
+  it("closeFile keeps dirty tab when save fails", async () => {
+    fsReadFile.mockResolvedValueOnce({ is_text: true, content: "a", size: 1 });
+    await useFsStore.getState().openFile("/p/a.ts");
+    useFsStore.getState().setDraft("a!");
+    fsWriteFile.mockRejectedValueOnce(new Error("disk full"));
+    await useFsStore.getState().closeFile("/p/a.ts");
+    expect(useFsStore.getState().openFiles.map((f) => f.path)).toEqual(["/p/a.ts"]);
+    expect(useFsStore.getState().openFiles[0].dirty).toBe(true);
+    expect(useFsStore.getState().error).toBeTruthy();
+    expect(useFsStore.getState().activePath).toBe("/p/a.ts");
+  });
+
   it("closing last file clears active and hides panel", async () => {
     fsReadFile.mockResolvedValueOnce({ is_text: true, content: "a", size: 1 });
     await useFsStore.getState().openFile("/p/a.ts");

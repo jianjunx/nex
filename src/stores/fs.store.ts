@@ -35,7 +35,8 @@ interface FsStore {
   closeFile: (filePath: string) => Promise<void>;
   closeEditor: () => Promise<void>;
   setDraft: (draft: string) => void;
-  saveFile: (filePath?: string) => Promise<void>;
+  /** @returns false when a write was attempted and failed */
+  saveFile: (filePath?: string) => Promise<boolean>;
   syncExternalChange: (paths: string[]) => Promise<void>;
   reloadEditor: () => Promise<void>;
   dismissStale: () => void;
@@ -146,7 +147,8 @@ export const useFsStore = create<FsStore>()(
 
       const file = get().openFiles[index];
       if (file.dirty) {
-        await get().saveFile(filePath);
+        const saved = await get().saveFile(filePath);
+        if (!saved) return; // keep dirty tab + error bar
       }
 
       const wasActive = get().activePath === filePath;
@@ -174,11 +176,18 @@ export const useFsStore = create<FsStore>()(
       for (const path of dirtyPaths) {
         await get().saveFile(path);
       }
+      // Drop only clean / successfully saved files; keep any that remain dirty.
       set((s) => {
-        s.openFiles = [];
-        s.activePath = null;
+        s.openFiles = s.openFiles.filter((f) => f.dirty);
+        if (s.openFiles.length === 0) {
+          s.activePath = null;
+        } else if (!s.openFiles.some((f) => f.path === s.activePath)) {
+          s.activePath = s.openFiles[0].path;
+        }
       });
-      useUiStore.getState().setEditorVisible(false);
+      if (get().openFiles.length === 0) {
+        useUiStore.getState().setEditorVisible(false);
+      }
     },
 
     setDraft: (draft) => {
@@ -192,9 +201,9 @@ export const useFsStore = create<FsStore>()(
 
     saveFile: async (filePath?) => {
       const target = filePath ?? get().activePath;
-      if (!target) return;
+      if (!target) return true;
       const cur = findOpenFile(get().openFiles, target);
-      if (!cur || !cur.dirty) return;
+      if (!cur || !cur.dirty) return true;
       const intendedDraft = cur.draft;
       set((s) => { s.loading = true; s.error = null; });
       try {
@@ -207,8 +216,10 @@ export const useFsStore = create<FsStore>()(
           f.content = intendedDraft;
           f.dirty = false;
         });
+        return true;
       } catch (err) {
         set((s) => { s.error = errorMessage(err); });
+        return false;
       } finally {
         set((s) => { s.loading = false; });
       }

@@ -6,6 +6,7 @@ import { useFsStore } from "../../stores/fs.store";
 import { useUiStore } from "../../stores/ui.store";
 import { useProjectStore } from "../../stores/project.store";
 import { fileBasename, relativeToProject } from "./pathUtils";
+import { languageExtensionsForPath } from "./language";
 
 // CSS variables are resolved at paint time, so a light/dark theme switch
 // restyles the editor with zero reconstruction — no editor re-theme needed.
@@ -136,6 +137,7 @@ export function EditorPanel() {
               onChange={setDraft}
               onCreateEditor={(view) => { viewRef.current = view; }}
               theme={editorTheme}
+              extensions={languageExtensionsForPath(editorFile.path)}
               height="100%"
             />
           </>

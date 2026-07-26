@@ -39,12 +39,15 @@ interface ConversationStore {
   clearLegacyTabsMigration: () => void;
 }
 
+/** Stable empty tabs — never allocate in selectors (breaks useSyncExternalStore). */
+const EMPTY_TABS: string[] = [];
+
 export function selectProjectOpenTabs(
   s: Pick<ConversationStore, "tabsByProject">,
   projectId: string | null | undefined,
 ): string[] {
-  if (!projectId) return [];
-  return s.tabsByProject[projectId] ?? [];
+  if (!projectId) return EMPTY_TABS;
+  return s.tabsByProject[projectId] ?? EMPTY_TABS;
 }
 
 export function selectProjectActiveTabId(

@@ -491,7 +491,10 @@ export const useFsStore = create<FsStore>()(
           s.openFiles = [];
           s.activePath = null;
         });
-        for (const path of layout.paths) {
+        // Dedupe in case a prior buggy persist wrote the same path twice
+        // (React keys would collide and remount editors incorrectly).
+        const uniquePaths = [...new Set(layout.paths)];
+        for (const path of uniquePaths) {
           try {
             await get().openFile(path, true);
           } catch {

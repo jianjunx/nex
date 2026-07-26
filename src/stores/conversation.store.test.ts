@@ -40,6 +40,13 @@ describe("conversation.store project-scoped tabs", () => {
     });
   });
 
+  it("selectProjectOpenTabs returns a stable empty array reference", () => {
+    const s = useConversationStore.getState();
+    expect(selectProjectOpenTabs(s, null)).toBe(selectProjectOpenTabs(s, undefined));
+    expect(selectProjectOpenTabs(s, "missing")).toBe(selectProjectOpenTabs(s, "also-missing"));
+    expect(selectProjectOpenTabs(s, "missing")).toEqual([]);
+  });
+
   it("createConversation writes tabs for that project only", async () => {
     conversationCreate.mockResolvedValueOnce({
       id: "c1",

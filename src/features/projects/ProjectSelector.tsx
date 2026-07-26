@@ -11,6 +11,7 @@ import {
 } from "@glinui/ui";
 import { useProjectStore } from "../../stores/project.store";
 import { useConversationStore } from "../../stores/conversation.store";
+import { useFsStore } from "../../stores/fs.store";
 import { fsWatchStart } from "../../bridge/tauri";
 
 // Radix highlights items on hover/keyboard via data-[highlighted]; map it to
@@ -53,10 +54,15 @@ export function ProjectSelector() {
       await getCurrentWindow().setFocus().catch(() => {});
       const selected = await open({ directory: true, multiple: false, title: "Open Folder" });
       if (selected && typeof selected === "string") {
+        const oldId = useProjectStore.getState().activeProjectId;
+        if (oldId) {
+          await useFsStore.getState().saveCurrentEditorState(oldId);
+        }
         await openProject(selected);
         const { activeProjectId: id, projects: all } = useProjectStore.getState();
         const active = all.find((p) => p.id === id);
         if (active) {
+          await useFsStore.getState().loadEditorState(active.id);
           loadConversations(active.id);
           fsWatchStart(active.path).catch(() => {});
         }
@@ -114,9 +120,16 @@ export function ProjectSelector() {
             <DropdownMenuItem
               key={p.id}
               onSelect={() => {
-                switchProject(p.id);
-                loadConversations(p.id);
-                fsWatchStart(p.path).catch(() => {});
+                const oldId = useProjectStore.getState().activeProjectId;
+                void (async () => {
+                  if (oldId && oldId !== p.id) {
+                    await useFsStore.getState().saveCurrentEditorState(oldId);
+                  }
+                  switchProject(p.id);
+                  await useFsStore.getState().loadEditorState(p.id);
+                  loadConversations(p.id);
+                  fsWatchStart(p.path).catch(() => {});
+                })();
               }}
               className={`px-3 ${ITEM_HIGHLIGHT} ${
                 p.id === activeProjectId

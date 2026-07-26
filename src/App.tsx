@@ -55,6 +55,10 @@ function App() {
 
       const restoredTabs = useConversationStore.getState().openTabs;
       await Promise.all(restoredTabs.map((tabId) => convStore.loadMessages(tabId)));
+
+      // Restore the editor panel for the active project (open files + active
+      // tab), mirroring how conversation tabs are restored on cold start.
+      await useFsStore.getState().loadEditorState(activeProjectId);
     })();
 
     // External-change events: the file tree and git panel only render the
@@ -71,11 +75,22 @@ function App() {
       useGitStore.getState().refresh(payload.projectPath);
     });
 
+    // Persist the active project's editor layout before the window closes so
+    // the next launch restores exactly which files were open.
+    const handleBeforeUnload = () => {
+      const { activeProjectId } = useProjectStore.getState();
+      if (activeProjectId) {
+        useFsStore.getState().persistEditorLayout(activeProjectId);
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
     return () => {
       cleanup();
       cleanupTerminal();
       unlistenFs.then((fn) => fn());
       unlistenGit.then((fn) => fn());
+      window.removeEventListener("beforeunload", handleBeforeUnload);
     };
   }, []);
 

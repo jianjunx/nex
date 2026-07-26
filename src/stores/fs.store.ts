@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
+import { persist } from "zustand/middleware";
 import { enableMapSet } from "immer";
 import { fsReadTree, fsExpandDir, fsReadFile, fsSearch, fsWriteFile, fsCreateFile, fsCreateDir, type FsNode, type SearchMatch } from "../bridge/tauri";
 import { useUiStore } from "./ui.store";
@@ -40,6 +41,12 @@ export type EditorFile = {
   pinned: boolean;        // true = permanent tab, false = preview (replaced on next single-click)
 };
 
+/** Persisted per-project editor layout — only file paths, content is re-read from disk on restore. */
+export type EditorLayout = { paths: string[]; activePath: string | null };
+
+/** In-memory per-project editor cache — full EditorFile[] preserving dirty drafts within a session. */
+export type EditorCache = { openFiles: EditorFile[]; activePath: string | null };
+
 interface FsStore {
   nodesByDir: Record<string, FsNode[]>;
   expandedDirs: Set<string>;
@@ -50,6 +57,10 @@ interface FsStore {
   searching: boolean;
   loading: boolean;
   error: string | null;
+  /** Per-project open-file paths + active path, persisted to localStorage. */
+  editorLayoutByProject: Record<string, EditorLayout>;
+  /** Per-project full EditorFile[] + active path, in-memory only (survives switches within a session). */
+  editorCacheByProject: Record<string, EditorCache>;
 
   loadRoot: (projectPath: string) => Promise<void>;
   expandDir: (dirPath: string) => Promise<void>;
@@ -72,6 +83,12 @@ interface FsStore {
   search: (projectPath: string, query: string) => Promise<void>;
   clearSearch: () => void;
   clearError: () => void;
+  /** Flush dirty files, cache full EditorFile[] + paths for the project. Call before switching away. */
+  saveCurrentEditorState: (projectId: string) => Promise<void>;
+  /** Restore editor for a project — from in-memory cache (instant) or persisted layout (re-reads disk). */
+  loadEditorState: (projectId: string) => Promise<void>;
+  /** Synchronously persist current open-file paths for the project (for beforeunload). */
+  persistEditorLayout: (projectId: string) => void;
 }
 
 // Backend errors arrive as { type, message }; fall back to String(err).
@@ -87,7 +104,8 @@ function findOpenFile(openFiles: EditorFile[], path: string): EditorFile | undef
 }
 
 export const useFsStore = create<FsStore>()(
-  immer((set, get) => ({
+  persist(
+    immer((set, get) => ({
     nodesByDir: {},
     expandedDirs: new Set(),
     openFiles: [],
@@ -97,6 +115,8 @@ export const useFsStore = create<FsStore>()(
     searching: false,
     loading: false,
     error: null,
+    editorLayoutByProject: {},
+    editorCacheByProject: {},
 
     loadRoot: async (projectPath: string) => {
       set((s) => { s.loading = true; s.error = null; });
@@ -425,5 +445,92 @@ export const useFsStore = create<FsStore>()(
     clearError: () => {
       set((s) => { s.error = null; });
     },
-  }))
+
+    saveCurrentEditorState: async (projectId: string) => {
+      // Flush auto-save timers and persist dirty drafts to disk before
+      // swapping — mirrors closeFile's save-on-close contract.
+      const dirtyPaths = get().openFiles.filter((f) => f.dirty).map((f) => f.path);
+      for (const path of dirtyPaths) {
+        clearAutoSaveTimer(path);
+        await get().saveFile(path);
+      }
+      set((s) => {
+        // Cache the full EditorFile[] so switching back is instant and
+        // preserves any drafts that failed to save.
+        s.editorCacheByProject[projectId] = {
+          openFiles: s.openFiles,
+          activePath: s.activePath,
+        };
+        // Persist only paths — content is re-read from disk on cold restore.
+        s.editorLayoutByProject[projectId] = {
+          paths: s.openFiles.map((f) => f.path),
+          activePath: s.activePath,
+        };
+      });
+    },
+
+    loadEditorState: async (projectId: string) => {
+      // Kill any pending auto-save timers for the outgoing files.
+      clearAllAutoSaveTimers();
+
+      // 1. In-memory cache (instant, preserves unsaved drafts).
+      const cached = get().editorCacheByProject[projectId];
+      if (cached) {
+        set((s) => {
+          s.openFiles = cached.openFiles;
+          s.activePath = cached.activePath;
+        });
+        useUiStore.getState().setEditorVisible(cached.openFiles.length > 0);
+        return;
+      }
+
+      // 2. Persisted layout — re-open each file from disk as a pinned tab.
+      const layout = get().editorLayoutByProject[projectId];
+      if (layout && layout.paths.length > 0) {
+        set((s) => {
+          s.openFiles = [];
+          s.activePath = null;
+        });
+        for (const path of layout.paths) {
+          try {
+            await get().openFile(path, true);
+          } catch {
+            // File may have been deleted/moved since last session — skip.
+          }
+        }
+        // Restore the saved active tab if it survived re-opening.
+        if (layout.activePath && get().openFiles.some((f) => f.path === layout.activePath)) {
+          set((s) => { s.activePath = layout.activePath; });
+        }
+        useUiStore.getState().setEditorVisible(get().openFiles.length > 0);
+        return;
+      }
+
+      // 3. No saved state for this project — start with a clean editor.
+      set((s) => {
+        s.openFiles = [];
+        s.activePath = null;
+      });
+      useUiStore.getState().setEditorVisible(false);
+    },
+
+    persistEditorLayout: (projectId: string) => {
+      const { openFiles, activePath } = get();
+      set((s) => {
+        s.editorLayoutByProject[projectId] = {
+          paths: openFiles.map((f) => f.path),
+          activePath,
+        };
+      });
+    },
+    })),
+    {
+      name: "nex-fs",
+      // Only the per-project open-file paths are persisted; file content,
+      // tree state, and the in-memory EditorFile cache are ephemeral.
+      partialize: (s) => ({
+        editorLayoutByProject: s.editorLayoutByProject,
+      }),
+    }
+  )
 );

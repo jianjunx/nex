@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import CodeMirror, { EditorView } from "@uiw/react-codemirror";
 import { searchPanelOpen, closeSearchPanel } from "@codemirror/search";
-import { X } from "lucide-react";
+import { ChevronDown, X } from "lucide-react";
 import { Button } from "@glinui/ui";
 import { useFsStore } from "../../stores/fs.store";
 import { useUiStore } from "../../stores/ui.store";
@@ -49,7 +49,6 @@ export function EditorPanel() {
   const setDraft = useFsStore((s) => s.setDraft);
   const switchFile = useFsStore((s) => s.switchFile);
   const closeFile = useFsStore((s) => s.closeFile);
-  const saveFile = useFsStore((s) => s.saveFile);
   const reloadEditor = useFsStore((s) => s.reloadEditor);
   const dismissStale = useFsStore((s) => s.dismissStale);
   const clearError = useFsStore((s) => s.clearError);
@@ -58,6 +57,7 @@ export function EditorPanel() {
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const projectPath = projects.find((p) => p.id === activeProjectId)?.path;
   const viewRef = useRef<EditorView | null>(null);
+  const lastEscRef = useRef<number>(0);
 
   const extensions = useMemo(
     () => [...languageExtensionsForPath(editorFile?.path ?? ""), ...editorSearchExtensions()],
@@ -85,7 +85,13 @@ export function EditorPanel() {
           closeSearchPanel(view);
           return;
         }
-        useUiStore.getState().setEditorVisible(false);
+        const now = Date.now();
+        if (now - lastEscRef.current < 500) {
+          useUiStore.getState().setEditorVisible(false);
+          lastEscRef.current = 0;
+        } else {
+          lastEscRef.current = now;
+        }
         return;
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
@@ -140,10 +146,10 @@ export function EditorPanel() {
         <Button
           size="sm"
           variant="ghost"
-          disabled={!editorFile?.dirty || !editorFile?.isText}
-          onClick={() => void saveFile()}
+          title="收起面板"
+          onClick={() => useUiStore.getState().setEditorVisible(false)}
         >
-          保存
+          <ChevronDown size={14} />
         </Button>
       </div>
       {error && (

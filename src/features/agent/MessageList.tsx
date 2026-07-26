@@ -1,10 +1,12 @@
 import ReactMarkdown from "react-markdown";
 import { Wrench } from "lucide-react";
 import { Card, CardContent, Chip } from "@glinui/ui";
-import { useConversationStore } from "../../stores/conversation.store";
+import { useProjectStore } from "../../stores/project.store";
+import { selectProjectActiveTabId, useConversationStore } from "../../stores/conversation.store";
 
 export function MessageList() {
-  const activeTabId = useConversationStore((s) => s.activeTabId);
+  const activeProjectId = useProjectStore((s) => s.activeProjectId);
+  const activeTabId = useConversationStore((s) => selectProjectActiveTabId(s, activeProjectId));
   const messagesByConversation = useConversationStore((s) => s.messagesByConversation);
   const messages = activeTabId ? (messagesByConversation[activeTabId] || []) : [];
 

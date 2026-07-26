@@ -2,7 +2,8 @@ import { useState, useRef, useEffect, useCallback, type KeyboardEvent } from "re
 import { Send, Square } from "lucide-react";
 import { Button, Textarea } from "@glinui/ui";
 import { useAgentStore } from "../../stores/agent.store";
-import { useConversationStore } from "../../stores/conversation.store";
+import { useProjectStore } from "../../stores/project.store";
+import { selectProjectActiveTabId, useConversationStore } from "../../stores/conversation.store";
 import type { Message } from "../../bridge/tauri";
 
 // Min ~5 visible lines, max before scrolling kicks in (text-sm ~21px line-height).
@@ -12,7 +13,8 @@ const MAX_HEIGHT = 320;
 export function ChatInput() {
   const [text, setText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const activeTabId = useConversationStore((s) => s.activeTabId);
+  const activeProjectId = useProjectStore((s) => s.activeProjectId);
+  const activeTabId = useConversationStore((s) => selectProjectActiveTabId(s, activeProjectId));
   const sessions = useAgentStore((s) => s.sessions);
   const sendPrompt = useAgentStore((s) => s.sendPrompt);
   const cancel = useAgentStore((s) => s.cancel);

@@ -8,7 +8,11 @@ import { useAgentStore } from "./stores/agent.store";
 import { useProjectStore } from "./stores/project.store";
 import { useFsStore } from "./stores/fs.store";
 import { useGitStore } from "./stores/git.store";
-import { useConversationStore } from "./stores/conversation.store";
+import {
+  selectProjectActiveTabId,
+  selectProjectOpenTabs,
+  useConversationStore,
+} from "./stores/conversation.store";
 import { useTerminalStore } from "./stores/terminal.store";
 
 /** Path of the currently active project, if any. */
@@ -50,10 +54,12 @@ function App() {
       // each surviving tab's messages from the DB.
       const convs = useConversationStore.getState().conversationsByProject[activeProjectId] ?? [];
       const validIds = new Set(convs.map((c) => c.id));
-      const { openTabs, activeTabId } = useConversationStore.getState();
-      convStore.restoreTabs(openTabs, activeTabId, validIds);
+      const convState = useConversationStore.getState();
+      const openTabs = selectProjectOpenTabs(convState, activeProjectId);
+      const activeTabId = selectProjectActiveTabId(convState, activeProjectId);
+      convStore.restoreTabs(activeProjectId, openTabs, activeTabId, validIds);
 
-      const restoredTabs = useConversationStore.getState().openTabs;
+      const restoredTabs = selectProjectOpenTabs(useConversationStore.getState(), activeProjectId);
       await Promise.all(restoredTabs.map((tabId) => convStore.loadMessages(tabId)));
 
       // Restore the editor panel for the active project (open files + active

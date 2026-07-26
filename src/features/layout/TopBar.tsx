@@ -3,7 +3,12 @@ import { Plus, PanelRight } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Button, Tabs, TabsList, TabsTrigger } from "@glinui/ui";
 import { useUiStore } from "../../stores/ui.store";
-import { useConversationStore } from "../../stores/conversation.store";
+import { useProjectStore } from "../../stores/project.store";
+import {
+  selectProjectActiveTabId,
+  selectProjectOpenTabs,
+  useConversationStore,
+} from "../../stores/conversation.store";
 import { useAgentStore } from "../../stores/agent.store";
 import { ProjectSelector } from "../projects/ProjectSelector";
 import { NewConversationModal } from "../projects/NewConversationModal";
@@ -15,12 +20,19 @@ const isWindows =
 
 export function TopBar() {
   const { toggleSidePanel, sidePanelVisible } = useUiStore();
-  const { openTabs, activeTabId, conversationsByProject, switchTab, closeTab } = useConversationStore();
+  const activeProjectId = useProjectStore((s) => s.activeProjectId);
+  const openTabs = useConversationStore((s) => selectProjectOpenTabs(s, activeProjectId));
+  const activeTabId = useConversationStore((s) => selectProjectActiveTabId(s, activeProjectId));
+  const conversationsByProject = useConversationStore((s) => s.conversationsByProject);
+  const switchTab = useConversationStore((s) => s.switchTab);
+  const closeTab = useConversationStore((s) => s.closeTab);
   const sessions = useAgentStore((s) => s.sessions);
   const removeSession = useAgentStore((s) => s.removeSession);
   const [showNewConversation, setShowNewConversation] = useState(false);
 
-  const allConversations = Object.values(conversationsByProject).flat();
+  const projectConversations = activeProjectId
+    ? (conversationsByProject[activeProjectId] ?? [])
+    : [];
 
   // On Windows the native title bar is hidden, so the tab bar doubles as the
   // drag handle. We start a native drag when the user presses the left button
@@ -78,7 +90,7 @@ export function TopBar() {
                       />
                     )}
                     <span className="max-w-[120px] truncate">
-                      {allConversations.find((c) => c.id === tabId)?.title ?? tabId}
+                      {projectConversations.find((c) => c.id === tabId)?.title ?? tabId}
                     </span>
                     {/*
                       TabsTrigger renders a <button>, so the close × cannot be

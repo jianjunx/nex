@@ -1,12 +1,23 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { persist } from "zustand/middleware";
-import { conversationCreate, conversationList, conversationGetMessages, type Conversation, type Message } from "../bridge/tauri";
+import {
+  conversationCreate,
+  conversationList,
+  conversationGetMessages,
+  type Conversation,
+  type Message,
+} from "../bridge/tauri";
+import { useProjectStore } from "./project.store";
+
+export type LegacyTabsMigration = { tabs: string[]; activeId: string | null };
 
 interface ConversationStore {
   conversationsByProject: Record<string, Conversation[]>;
-  openTabs: string[];
-  activeTabId: string | null;
+  tabsByProject: Record<string, string[]>;
+  activeTabByProject: Record<string, string | null>;
+  /** One-shot stash from v0 persist; App applies then clearLegacyTabsMigration() */
+  legacyTabsMigration: LegacyTabsMigration | null;
   messagesByConversation: Record<string, Message[]>;
   loading: boolean;
   error: string | null;
@@ -18,15 +29,68 @@ interface ConversationStore {
   loadMessages: (conversationId: string) => Promise<void>;
   appendMessage: (conversationId: string, message: Message) => void;
   updateMessageContent: (conversationId: string, messageId: string, content: string) => void;
-  /**
-   * Atomically restore the open tabs and active tab after validating that
-   * every id still exists in `validIds`. Used during startup recovery so the
-   * app reopens with the same conversations the user had when they quit.
-   */
-  restoreTabs: (candidateTabs: string[], candidateActiveId: string | null, validIds: Set<string>) => void;
+  restoreTabs: (
+    projectId: string,
+    candidateTabs: string[],
+    candidateActiveId: string | null,
+    validIds: Set<string>,
+  ) => void;
+  clearLegacyTabsMigration: () => void;
 }
 
-// Backend errors arrive as { type, message }; fall back to String(err).
+export function selectProjectOpenTabs(
+  s: Pick<ConversationStore, "tabsByProject">,
+  projectId: string | null | undefined,
+): string[] {
+  if (!projectId) return [];
+  return s.tabsByProject[projectId] ?? [];
+}
+
+export function selectProjectActiveTabId(
+  s: Pick<ConversationStore, "activeTabByProject">,
+  projectId: string | null | undefined,
+): string | null {
+  if (!projectId) return null;
+  return s.activeTabByProject[projectId] ?? null;
+}
+
+/** Exported for unit tests; also wired as persist.migrate */
+export function migrateConversationPersist(
+  persistedState: unknown,
+  version: number,
+): {
+  tabsByProject: Record<string, string[]>;
+  activeTabByProject: Record<string, string | null>;
+  legacyTabsMigration: LegacyTabsMigration | null;
+} {
+  const old = (persistedState ?? {}) as {
+    openTabs?: string[];
+    activeTabId?: string | null;
+    tabsByProject?: Record<string, string[]>;
+    activeTabByProject?: Record<string, string | null>;
+    legacyTabsMigration?: LegacyTabsMigration | null;
+  };
+
+  if (version >= 1) {
+    return {
+      tabsByProject: old.tabsByProject ?? {},
+      activeTabByProject: old.activeTabByProject ?? {},
+      legacyTabsMigration: old.legacyTabsMigration ?? null,
+    };
+  }
+
+  const legacy =
+    Array.isArray(old.openTabs) && old.openTabs.length > 0
+      ? { tabs: old.openTabs, activeId: old.activeTabId ?? null }
+      : null;
+
+  return {
+    tabsByProject: old.tabsByProject ?? {},
+    activeTabByProject: old.activeTabByProject ?? {},
+    legacyTabsMigration: old.legacyTabsMigration ?? legacy,
+  };
+}
+
 function errorMessage(err: unknown): string {
   if (err && typeof err === "object" && "message" in err && typeof (err as { message: unknown }).message === "string") {
     return (err as { message: string }).message;
@@ -38,100 +102,143 @@ export const useConversationStore = create<ConversationStore>()(
   persist(
     immer((set) => ({
       conversationsByProject: {},
-      openTabs: [],
-      activeTabId: null,
+      tabsByProject: {},
+      activeTabByProject: {},
+      legacyTabsMigration: null,
       messagesByConversation: {},
       loading: false,
       error: null,
 
-    loadConversations: async (projectId: string) => {
-      set((s) => { s.loading = true; s.error = null; });
-      try {
-        const convs = await conversationList(projectId);
-        set((s) => { s.conversationsByProject[projectId] = convs; });
-      } catch (err) {
-        set((s) => { s.error = errorMessage(err); });
-      } finally {
-        set((s) => { s.loading = false; });
-      }
-    },
-
-    createConversation: async (projectId: string, agentType: string) => {
-      set((s) => { s.loading = true; s.error = null; });
-      try {
-        const conv = await conversationCreate(projectId, agentType);
+      loadConversations: async (projectId: string) => {
         set((s) => {
-          if (!s.conversationsByProject[projectId]) s.conversationsByProject[projectId] = [];
-          s.conversationsByProject[projectId].unshift(conv);
-          s.openTabs.push(conv.id);
-          s.activeTabId = conv.id;
+          s.loading = true;
+          s.error = null;
         });
-        return conv;
-      } catch (err) {
-        set((s) => { s.error = errorMessage(err); });
-        throw err;
-      } finally {
-        set((s) => { s.loading = false; });
-      }
-    },
-
-    switchTab: (id: string) => {
-      set((s) => { s.activeTabId = id; });
-    },
-
-    closeTab: (id: string) => {
-      set((s) => {
-        s.openTabs = s.openTabs.filter((t) => t !== id);
-        if (s.activeTabId === id) {
-          s.activeTabId = s.openTabs[s.openTabs.length - 1] || null;
+        try {
+          const convs = await conversationList(projectId);
+          set((s) => {
+            s.conversationsByProject[projectId] = convs;
+          });
+        } catch (err) {
+          set((s) => {
+            s.error = errorMessage(err);
+          });
+        } finally {
+          set((s) => {
+            s.loading = false;
+          });
         }
-      });
-    },
+      },
 
-    loadMessages: async (conversationId: string) => {
-      set((s) => { s.loading = true; s.error = null; });
-      try {
-        const msgs = await conversationGetMessages(conversationId);
-        set((s) => { s.messagesByConversation[conversationId] = msgs; });
-      } catch (err) {
-        set((s) => { s.error = errorMessage(err); });
-      } finally {
-        set((s) => { s.loading = false; });
-      }
-    },
+      createConversation: async (projectId: string, agentType: string) => {
+        set((s) => {
+          s.loading = true;
+          s.error = null;
+        });
+        try {
+          const conv = await conversationCreate(projectId, agentType);
+          set((s) => {
+            if (!s.conversationsByProject[projectId]) s.conversationsByProject[projectId] = [];
+            s.conversationsByProject[projectId].unshift(conv);
+            const tabs = s.tabsByProject[projectId] ?? [];
+            tabs.push(conv.id);
+            s.tabsByProject[projectId] = tabs;
+            s.activeTabByProject[projectId] = conv.id;
+          });
+          return conv;
+        } catch (err) {
+          set((s) => {
+            s.error = errorMessage(err);
+          });
+          throw err;
+        } finally {
+          set((s) => {
+            s.loading = false;
+          });
+        }
+      },
 
-    appendMessage: (conversationId: string, message: Message) => {
-      set((s) => {
-        if (!s.messagesByConversation[conversationId]) s.messagesByConversation[conversationId] = [];
-        s.messagesByConversation[conversationId].push(message);
-      });
-    },
+      switchTab: (id: string) => {
+        const projectId = useProjectStore.getState().activeProjectId;
+        if (!projectId) return;
+        set((s) => {
+          s.activeTabByProject[projectId] = id;
+        });
+      },
 
-    updateMessageContent: (conversationId: string, messageId: string, content: string) => {
-      set((s) => {
-        const msg = s.messagesByConversation[conversationId]?.find((m) => m.id === messageId);
-        if (msg) msg.content = content;
-      });
-    },
+      closeTab: (id: string) => {
+        const projectId = useProjectStore.getState().activeProjectId;
+        if (!projectId) return;
+        set((s) => {
+          const tabs = (s.tabsByProject[projectId] ?? []).filter((t) => t !== id);
+          s.tabsByProject[projectId] = tabs;
+          if (s.activeTabByProject[projectId] === id) {
+            s.activeTabByProject[projectId] = tabs[tabs.length - 1] || null;
+          }
+        });
+      },
 
-    restoreTabs: (candidateTabs: string[], candidateActiveId: string | null, validIds: Set<string>) => {
-      set((s) => {
-        const valid = candidateTabs.filter((id) => validIds.has(id));
-        s.openTabs = valid;
-        s.activeTabId = candidateActiveId && valid.includes(candidateActiveId)
-          ? candidateActiveId
-          : valid[valid.length - 1] ?? null;
-      });
-    },
+      loadMessages: async (conversationId: string) => {
+        set((s) => {
+          s.loading = true;
+          s.error = null;
+        });
+        try {
+          const msgs = await conversationGetMessages(conversationId);
+          set((s) => {
+            s.messagesByConversation[conversationId] = msgs;
+          });
+        } catch (err) {
+          set((s) => {
+            s.error = errorMessage(err);
+          });
+        } finally {
+          set((s) => {
+            s.loading = false;
+          });
+        }
+      },
+
+      appendMessage: (conversationId: string, message: Message) => {
+        set((s) => {
+          if (!s.messagesByConversation[conversationId]) s.messagesByConversation[conversationId] = [];
+          s.messagesByConversation[conversationId].push(message);
+        });
+      },
+
+      updateMessageContent: (conversationId: string, messageId: string, content: string) => {
+        set((s) => {
+          const msg = s.messagesByConversation[conversationId]?.find((m) => m.id === messageId);
+          if (msg) msg.content = content;
+        });
+      },
+
+      restoreTabs: (projectId, candidateTabs, candidateActiveId, validIds) => {
+        set((s) => {
+          const valid = candidateTabs.filter((id) => validIds.has(id));
+          s.tabsByProject[projectId] = valid;
+          s.activeTabByProject[projectId] =
+            candidateActiveId && valid.includes(candidateActiveId)
+              ? candidateActiveId
+              : (valid[valid.length - 1] ?? null);
+        });
+      },
+
+      clearLegacyTabsMigration: () => {
+        set((s) => {
+          s.legacyTabsMigration = null;
+        });
+      },
     })),
     {
       name: "nex-conversations",
-      // Persist only the tab layout so it can be restored on next launch;
-      // messages and conversation lists are always re-fetched from the DB.
+      version: 1,
+      migrate: (persistedState, version) => migrateConversationPersist(persistedState, version),
       partialize: (s) => ({
-        openTabs: s.openTabs,
-        activeTabId: s.activeTabId,
+        tabsByProject: s.tabsByProject,
+        activeTabByProject: s.activeTabByProject,
+        legacyTabsMigration: s.legacyTabsMigration,
       }),
-    }
-  )
+    },
+  ),
 );

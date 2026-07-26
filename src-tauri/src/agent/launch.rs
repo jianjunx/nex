@@ -32,9 +32,9 @@ pub struct LaunchSpec {
 /// Resolves a registry agent into a launch spec.
 ///
 /// v1 supports the `npx` distribution (the common case: claude-acp, codex-acp,
-/// gemini, …). Agents that ship only a `binary` distribution would require
-/// download + checksum + extraction machinery we haven't ported; we surface a
-/// clear error rather than guess at it.
+/// gemini, …). For binary-only agents we look up the current platform's target
+/// and spawn the command directly — Nex does not download or extract archives,
+/// so the binary must already be installed on PATH.
 pub fn resolve_registry(entry: &RegistryEntry, cwd: &str) -> Result<LaunchSpec, NexError> {
     if let Some(npx) = &entry.distribution.npx {
         // `npx --yes -- <package@version> <entry args…>`. The registry's
@@ -48,18 +48,31 @@ pub fn resolve_registry(entry: &RegistryEntry, cwd: &str) -> Result<LaunchSpec, 
         return Ok(LaunchSpec { program: "npx".to_string(), args, env, cwd: cwd.to_string() });
     }
 
-    if entry.distribution.binary.is_some() {
+    if let Some(binaries) = &entry.distribution.binary {
+        let key = current_platform_key();
+        if let Some(target) = binaries.get(&key) {
+            let program = target.cmd.clone();
+            let args = target.args.clone();
+            let mut env = target.env.clone();
+            apply_per_id_env(&entry.id, &mut env);
+            return Ok(LaunchSpec { program, args, env, cwd: cwd.to_string() });
+        }
         return Err(NexError::Agent(format!(
-            "agent `{}` is distributed only as a binary, which Nex does not download yet; \
-             pick an npx-based agent or add a custom server",
-            entry.id
+            "agent `{}` has no binary for platform `{}` (available: {:?})",
+            entry.id, key, binaries.keys().collect::<Vec<_>>()
         )));
     }
 
     Err(NexError::Agent(format!(
-        "agent `{}` has no supported distribution (an `npx` distribution is required)",
+        "agent `{}` has no supported distribution (an `npx` or `binary` distribution is required)",
         entry.id
     )))
+}
+
+/// Builds the platform key used to index binary targets in the registry
+/// (e.g. `windows-x86_64`, `macos-aarch64`).
+fn current_platform_key() -> String {
+    format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
 }
 
 /// Resolves a user-defined custom server (a raw command string) into a launch
@@ -251,14 +264,41 @@ mod tests {
     }
 
     #[test]
-    fn resolve_registry_rejects_binary_only() {
+    fn resolve_registry_spawns_binary_from_platform_target() {
         use crate::agent::registry::RegistryBinaryTarget;
         let mut binary = HashMap::new();
         binary.insert(
-            "windows-x86_64".to_string(),
+            current_platform_key(),
             RegistryBinaryTarget {
                 archive: "https://x/a.zip".to_string(),
-                cmd: "a.exe".to_string(),
+                cmd: "my-agent".to_string(),
+                args: vec!["--acp".to_string()],
+                sha256: None,
+                env: HashMap::new(),
+            },
+        );
+        let e = RegistryEntry {
+            id: "cursor".to_string(),
+            name: "Cursor".to_string(),
+            version: "1.0.0".to_string(),
+            description: String::new(),
+            icon: None,
+            distribution: RegistryDistribution { binary: Some(binary), npx: None },
+        };
+        let spec = resolve_registry(&e, "/w").unwrap();
+        assert_eq!(spec.program, "my-agent");
+        assert_eq!(spec.args, vec!["--acp"]);
+    }
+
+    #[test]
+    fn resolve_registry_errors_on_missing_platform_target() {
+        use crate::agent::registry::RegistryBinaryTarget;
+        let mut binary = HashMap::new();
+        binary.insert(
+            "unsupported-os-arch".to_string(),
+            RegistryBinaryTarget {
+                archive: "https://x/a.zip".to_string(),
+                cmd: "x".to_string(),
                 args: vec![],
                 sha256: None,
                 env: HashMap::new(),
@@ -274,7 +314,7 @@ mod tests {
         };
         let err = resolve_registry(&e, "/w").unwrap_err();
         let msg = format!("{err}");
-        assert!(msg.contains("binary"), "error should mention binary: {msg}");
+        assert!(msg.contains("has no binary for platform"), "error should mention missing platform: {msg}");
     }
 
     #[test]

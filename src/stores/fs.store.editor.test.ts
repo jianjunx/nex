@@ -18,10 +18,10 @@ vi.mock("./ui.store", () => ({
   },
 }));
 
-// settings mock — Task 3 will assert autosave; keep default false here so Task 2 stays quiet
+let editorAutoSave = false;
 vi.mock("./settings.store", () => ({
   useSettingsStore: {
-    getState: () => ({ editorAutoSave: false }),
+    getState: () => ({ editorAutoSave }),
   },
 }));
 
@@ -30,6 +30,7 @@ import { useFsStore } from "./fs.store";
 describe("fs.store multi-tab editor", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    editorAutoSave = false;
     useFsStore.setState({
       openFiles: [],
       activePath: null,
@@ -127,5 +128,48 @@ describe("fs.store multi-tab editor", () => {
     fsReadFile.mockResolvedValueOnce({ is_text: true, content: "disk", size: 4 });
     await useFsStore.getState().syncExternalChange(["/p/a.ts"]);
     expect(useFsStore.getState().openFiles[0].draft).toBe("disk");
+  });
+
+  it("autosaves dirty active file after 1500ms when enabled", async () => {
+    vi.useFakeTimers();
+    editorAutoSave = true;
+    fsReadFile.mockResolvedValueOnce({ is_text: true, content: "a", size: 1 });
+    await useFsStore.getState().openFile("/p/a.ts");
+    useFsStore.getState().setDraft("a!");
+    fsWriteFile.mockResolvedValue(undefined);
+    await vi.advanceTimersByTimeAsync(1499);
+    expect(fsWriteFile).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fsWriteFile).toHaveBeenCalledWith("/p/a.ts", "a!");
+    vi.useRealTimers();
+    editorAutoSave = false;
+  });
+
+  it("does not autosave when setting is off", async () => {
+    vi.useFakeTimers();
+    editorAutoSave = false;
+    fsReadFile.mockResolvedValueOnce({ is_text: true, content: "a", size: 1 });
+    await useFsStore.getState().openFile("/p/a.ts");
+    useFsStore.getState().setDraft("a!");
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(fsWriteFile).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("switchFile flushes pending autosave for previous file", async () => {
+    vi.useFakeTimers();
+    editorAutoSave = true;
+    fsReadFile
+      .mockResolvedValueOnce({ is_text: true, content: "a", size: 1 })
+      .mockResolvedValueOnce({ is_text: true, content: "b", size: 1 });
+    await useFsStore.getState().openFile("/p/a.ts");
+    await useFsStore.getState().openFile("/p/b.ts");
+    await useFsStore.getState().switchFile("/p/a.ts");
+    useFsStore.getState().setDraft("a!");
+    fsWriteFile.mockResolvedValue(undefined);
+    await useFsStore.getState().switchFile("/p/b.ts");
+    expect(fsWriteFile).toHaveBeenCalledWith("/p/a.ts", "a!");
+    vi.useRealTimers();
+    editorAutoSave = false;
   });
 });

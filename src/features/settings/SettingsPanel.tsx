@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { RefreshCw, X } from "lucide-react";
-import { Button, Input, Label, RadioGroup, RadioGroupItem, Slider, Textarea } from "@glinui/ui";
+import { Button, Input, Label, RadioGroup, RadioGroupItem, Slider, Switch, Textarea } from "@glinui/ui";
 import { useSettingsStore, type Theme } from "../../stores/settings.store";
 import { useAgentStore } from "../../stores/agent.store";
 import { useUiStore } from "../../stores/ui.store";
@@ -22,11 +22,13 @@ export function SettingsPanel() {
     terminalFontSize,
     terminalFontFamily,
     terminalScrollback,
+    editorAutoSave,
     setTheme,
     setTerminalShell,
     setTerminalFontSize,
     setTerminalFontFamily,
     setTerminalScrollback,
+    setEditorAutoSave,
   } = useSettingsStore();
   const { servers, serversLoading, loadServers, refreshRegistry, upsertCustom, deleteCustom } = useAgentStore();
   const resetLayoutDims = useUiStore((s) => s.resetLayoutDims);
@@ -96,6 +98,21 @@ export function SettingsPanel() {
             </div>
           </RadioGroup>
           <p className="text-xs text-[var(--text-tertiary)]">v1 暂不支持跟随系统</p>
+        </div>
+      </section>
+
+      <section>
+        <div className={SECTION_HEADER}>编辑器</div>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <Label htmlFor="editor-autosave">自动保存</Label>
+            <p className="text-xs text-[var(--text-tertiary)]">停止输入约 1.5 秒后写入磁盘</p>
+          </div>
+          <Switch
+            id="editor-autosave"
+            checked={editorAutoSave}
+            onCheckedChange={setEditorAutoSave}
+          />
         </div>
       </section>
 

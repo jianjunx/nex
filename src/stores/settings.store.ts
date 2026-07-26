@@ -19,6 +19,7 @@ const KEYS = {
   fontSize: "terminal.fontSize",
   fontFamily: "terminal.fontFamily",
   scrollback: "terminal.scrollback",
+  autoSave: "editor.autoSave",
 } as const;
 
 export const TERMINAL_DEFAULTS = {
@@ -34,6 +35,7 @@ interface SettingsState {
   terminalFontSize: number;
   terminalFontFamily: string;
   terminalScrollback: number;
+  editorAutoSave: boolean;
 
   load: () => Promise<void>;
   setTheme: (theme: Theme) => void;
@@ -41,6 +43,7 @@ interface SettingsState {
   setTerminalFontSize: (size: number) => void;
   setTerminalFontFamily: (family: string) => void;
   setTerminalScrollback: (lines: number) => void;
+  setEditorAutoSave: (v: boolean) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -51,6 +54,7 @@ export const useSettingsStore = create<SettingsState>()(
     terminalFontSize: TERMINAL_DEFAULTS.fontSize,
     terminalFontFamily: TERMINAL_DEFAULTS.fontFamily,
     terminalScrollback: TERMINAL_DEFAULTS.scrollback,
+    editorAutoSave: true,
 
     // Reads every key, keeping the built-in default for missing/invalid
     // entries (a deleted settings.json yields a clean light-default start).
@@ -58,12 +62,13 @@ export const useSettingsStore = create<SettingsState>()(
     // getter failure falls through to defaults.
     load: async () => {
       try {
-        const [theme, shell, fontSize, fontFamily, scrollback] = await Promise.all([
+        const [theme, shell, fontSize, fontFamily, scrollback, autoSave] = await Promise.all([
           settingsStore.get<Theme>(KEYS.theme),
           settingsStore.get<string>(KEYS.shell),
           settingsStore.get<number>(KEYS.fontSize),
           settingsStore.get<string>(KEYS.fontFamily),
           settingsStore.get<number>(KEYS.scrollback),
+          settingsStore.get<boolean>(KEYS.autoSave),
         ]);
         set((s) => {
           if (theme === "light" || theme === "dark") s.theme = theme;
@@ -71,6 +76,7 @@ export const useSettingsStore = create<SettingsState>()(
           if (typeof fontSize === "number") s.terminalFontSize = fontSize;
           if (typeof fontFamily === "string") s.terminalFontFamily = fontFamily;
           if (typeof scrollback === "number") s.terminalScrollback = scrollback;
+          if (typeof autoSave === "boolean") s.editorAutoSave = autoSave;
         });
       } catch {
         // Unreadable store: keep defaults.
@@ -116,6 +122,10 @@ export const useSettingsStore = create<SettingsState>()(
       set((s) => { s.terminalScrollback = lines; });
       useTerminalStore.getState().bumpSettingsVersion();
       void settingsStore.set(KEYS.scrollback, lines).catch(() => {});
+    },
+    setEditorAutoSave: (v) => {
+      set((s) => { s.editorAutoSave = v; });
+      void settingsStore.set(KEYS.autoSave, v).catch(() => {});
     },
   }))
 );

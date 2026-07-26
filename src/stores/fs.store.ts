@@ -3,9 +3,39 @@ import { immer } from "zustand/middleware/immer";
 import { enableMapSet } from "immer";
 import { fsReadTree, fsExpandDir, fsReadFile, fsSearch, fsWriteFile, type FsNode, type SearchMatch } from "../bridge/tauri";
 import { useUiStore } from "./ui.store";
+import { useSettingsStore } from "./settings.store";
 
 // Required by immer before a Set can be drafted (expandedDirs).
 enableMapSet();
+
+const AUTO_SAVE_MS = 1500;
+const autoSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function clearAutoSaveTimer(path: string) {
+  const t = autoSaveTimers.get(path);
+  if (t) {
+    clearTimeout(t);
+    autoSaveTimers.delete(path);
+  }
+}
+
+function scheduleAutoSave(path: string) {
+  if (!useSettingsStore.getState().editorAutoSave) return;
+  clearAutoSaveTimer(path);
+  autoSaveTimers.set(
+    path,
+    setTimeout(() => {
+      autoSaveTimers.delete(path);
+      void useFsStore.getState().saveFile(path);
+    }, AUTO_SAVE_MS),
+  );
+}
+
+async function flushAutoSave(path: string) {
+  clearAutoSaveTimer(path);
+  const file = useFsStore.getState().openFiles.find((f) => f.path === path);
+  if (file?.dirty) await useFsStore.getState().saveFile(path);
+}
 
 export type EditorFile = {
   path: string;
@@ -138,6 +168,10 @@ export const useFsStore = create<FsStore>()(
 
     switchFile: async (filePath: string) => {
       if (!get().openFiles.some((f) => f.path === filePath)) return;
+      const previous = get().activePath;
+      if (previous && previous !== filePath) {
+        await flushAutoSave(previous);
+      }
       set((s) => { s.activePath = filePath; });
     },
 
@@ -145,6 +179,7 @@ export const useFsStore = create<FsStore>()(
       const index = get().openFiles.findIndex((f) => f.path === filePath);
       if (index < 0) return;
 
+      clearAutoSaveTimer(filePath);
       const file = get().openFiles[index];
       if (file.dirty) {
         const saved = await get().saveFile(filePath);
@@ -191,12 +226,14 @@ export const useFsStore = create<FsStore>()(
     },
 
     setDraft: (draft) => {
+      const path = get().activePath;
       set((s) => {
         const active = s.activePath ? findOpenFile(s.openFiles, s.activePath) : undefined;
         if (!active) return;
         active.draft = draft;
         active.dirty = active.isText && draft !== (active.content ?? "");
       });
+      if (path) scheduleAutoSave(path);
     },
 
     saveFile: async (filePath?) => {
@@ -216,6 +253,7 @@ export const useFsStore = create<FsStore>()(
           f.content = intendedDraft;
           f.dirty = false;
         });
+        clearAutoSaveTimer(cur.path);
         return true;
       } catch (err) {
         set((s) => { s.error = errorMessage(err); });

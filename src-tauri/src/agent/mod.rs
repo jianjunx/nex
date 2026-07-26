@@ -7,6 +7,7 @@
 //! `server` (the facade the Tauri commands call).
 
 pub mod acp_adapter;
+pub mod binary;
 pub mod launch;
 pub mod registry;
 pub mod server;

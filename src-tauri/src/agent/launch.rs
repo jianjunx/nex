@@ -14,6 +14,7 @@
 use std::collections::HashMap;
 
 use super::registry::RegistryEntry;
+use super::binary::BinaryCache;
 use crate::error::NexError;
 
 /// Registry id of Anthropic's Claude agent — the one agent that needs an env
@@ -31,11 +32,15 @@ pub struct LaunchSpec {
 
 /// Resolves a registry agent into a launch spec.
 ///
-/// v1 supports the `npx` distribution (the common case: claude-acp, codex-acp,
-/// gemini, …). For binary-only agents we look up the current platform's target
-/// and spawn the command directly — Nex does not download or extract archives,
-/// so the binary must already be installed on PATH.
-pub fn resolve_registry(entry: &RegistryEntry, cwd: &str) -> Result<LaunchSpec, NexError> {
+/// For `npx` distributions the command is always `npx --yes -- <package>`.
+/// For `binary` distributions we download + extract the archive the first time
+/// (via `BinaryCache`) and spawn the extracted executable directly. Once cached
+/// the binary is reused across restarts.
+pub async fn resolve_registry(
+    entry: &RegistryEntry,
+    cwd: &str,
+    cache: &BinaryCache,
+) -> Result<LaunchSpec, NexError> {
     if let Some(npx) = &entry.distribution.npx {
         // `npx --yes -- <package@version> <entry args…>`. The registry's
         // `package` already embeds the pinned version, so we use it verbatim.
@@ -51,10 +56,20 @@ pub fn resolve_registry(entry: &RegistryEntry, cwd: &str) -> Result<LaunchSpec, 
     if let Some(binaries) = &entry.distribution.binary {
         let key = current_platform_key();
         if let Some(target) = binaries.get(&key) {
-            let program = target.cmd.clone();
+            // Download + extract on first use; reuses cached copy thereafter.
+            let exe_path = cache
+                .ensure_installed(entry, target, &key)
+                .await?;
+            let program = exe_path.to_string_lossy().to_string();
             let args = target.args.clone();
             let mut env = target.env.clone();
             apply_per_id_env(&entry.id, &mut env);
+            log::info!(
+                "resolved binary agent `{}`: {} {}",
+                entry.id,
+                program,
+                args.join(" ")
+            );
             return Ok(LaunchSpec { program, args, env, cwd: cwd.to_string() });
         }
         return Err(NexError::Agent(format!(
@@ -208,6 +223,10 @@ mod tests {
         }
     }
 
+    fn test_cache() -> BinaryCache {
+        BinaryCache::new(&std::env::temp_dir().join("nex-test-binary-cache"))
+    }
+
     #[test]
     fn shell_argv_wraps_npx_on_windows() {
         let args: Vec<String> = vec!["--yes".into(), "--".into(), "pkg@1.0.0".into()];
@@ -238,60 +257,32 @@ mod tests {
         assert_eq!(program, "cmd");
     }
 
-    #[test]
-    fn resolve_registry_builds_npx_command_verbatim_package() {
+    #[tokio::test]
+    async fn resolve_registry_builds_npx_command_verbatim_package() {
         let e = entry("codex-acp", Some(npx("@agentclientprotocol/codex-acp@1.1.7", &[])));
-        let spec = resolve_registry(&e, "/work").unwrap();
+        let spec = resolve_registry(&e, "/work", &test_cache()).await.unwrap();
         assert_eq!(spec.program, "npx");
         assert_eq!(spec.args, vec!["--yes", "--", "@agentclientprotocol/codex-acp@1.1.7"]);
         assert_eq!(spec.cwd, "/work");
-        // Not claude-acp, so no ANTHROPIC_API_KEY override.
         assert!(!spec.env.contains_key("ANTHROPIC_API_KEY"));
     }
 
-    #[test]
-    fn resolve_registry_appends_entry_args() {
+    #[tokio::test]
+    async fn resolve_registry_appends_entry_args() {
         let e = entry("gemini", Some(npx("@google/gemini-cli@0.52.0", &["--acp"])));
-        let spec = resolve_registry(&e, "/w").unwrap();
+        let spec = resolve_registry(&e, "/w", &test_cache()).await.unwrap();
         assert_eq!(spec.args, vec!["--yes", "--", "@google/gemini-cli@0.52.0", "--acp"]);
     }
 
-    #[test]
-    fn resolve_registry_clears_anthropic_key_for_claude() {
+    #[tokio::test]
+    async fn resolve_registry_clears_anthropic_key_for_claude() {
         let e = entry("claude-acp", Some(npx("@agentclientprotocol/claude-agent-acp@0.62.0", &[])));
-        let spec = resolve_registry(&e, "/w").unwrap();
+        let spec = resolve_registry(&e, "/w", &test_cache()).await.unwrap();
         assert_eq!(spec.env.get("ANTHROPIC_API_KEY").map(String::as_str), Some(""));
     }
 
-    #[test]
-    fn resolve_registry_spawns_binary_from_platform_target() {
-        use crate::agent::registry::RegistryBinaryTarget;
-        let mut binary = HashMap::new();
-        binary.insert(
-            current_platform_key(),
-            RegistryBinaryTarget {
-                archive: "https://x/a.zip".to_string(),
-                cmd: "my-agent".to_string(),
-                args: vec!["--acp".to_string()],
-                sha256: None,
-                env: HashMap::new(),
-            },
-        );
-        let e = RegistryEntry {
-            id: "cursor".to_string(),
-            name: "Cursor".to_string(),
-            version: "1.0.0".to_string(),
-            description: String::new(),
-            icon: None,
-            distribution: RegistryDistribution { binary: Some(binary), npx: None },
-        };
-        let spec = resolve_registry(&e, "/w").unwrap();
-        assert_eq!(spec.program, "my-agent");
-        assert_eq!(spec.args, vec!["--acp"]);
-    }
-
-    #[test]
-    fn resolve_registry_errors_on_missing_platform_target() {
+    #[tokio::test]
+    async fn resolve_registry_errors_on_missing_platform_target() {
         use crate::agent::registry::RegistryBinaryTarget;
         let mut binary = HashMap::new();
         binary.insert(
@@ -312,7 +303,7 @@ mod tests {
             icon: None,
             distribution: RegistryDistribution { binary: Some(binary), npx: None },
         };
-        let err = resolve_registry(&e, "/w").unwrap_err();
+        let err = resolve_registry(&e, "/w", &test_cache()).await.unwrap_err();
         let msg = format!("{err}");
         assert!(msg.contains("has no binary for platform"), "error should mention missing platform: {msg}");
     }

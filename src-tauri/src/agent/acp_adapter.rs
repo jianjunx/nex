@@ -301,6 +301,11 @@ async fn run_session(
 ) {
     let program = spec.program.clone();
     let cwd = spec.cwd.clone();
+    log::info!(
+        "spawning ACP agent: {} {} (cwd: {cwd})",
+        spec.program,
+        spec.args.join(" ")
+    );
     let mut child = match spawn_agent(&spec) {
         Ok(child) => child,
         Err(e) => {
@@ -360,11 +365,11 @@ async fn run_session(
         Ok(Ok(agent_session_id)) => Ok(agent_session_id),
         // The agent rejected the handshake (e.g. closed stdout -> "server shut
         // down unexpectedly"); enrich with stderr tail + exit status.
-        Ok(Err(e)) => Err(enrich(e, &mut child, &stderr_tail)),
+        Ok(Err(e)) => Err(enrich(e, &mut child, &stderr_tail, &program, &spec.args)),
         Err(_) => Err(NexError::Agent(format!(
             "agent `{program}` did not complete the ACP handshake within {}s{}",
             HANDSHAKE_TIMEOUT.as_secs(),
-            diag(&mut child, &stderr_tail)
+            diag(&mut child, &stderr_tail, &program, &spec.args)
         ))),
     };
 
@@ -413,11 +418,21 @@ async fn run_session(
 
 /// Builds a human-readable diagnostics suffix: the child's exit status (if it
 /// has exited) plus the captured stderr tail.
-fn diag(child: &mut tokio::process::Child, tail: &Mutex<VecDeque<String>>) -> String {
+fn diag(
+    child: &mut tokio::process::Child,
+    tail: &Mutex<VecDeque<String>>,
+    program: &str,
+    args: &[String],
+) -> String {
     let mut out = String::new();
+    out.push_str(&format!("\ncommand: {program} {}", args.join(" ")));
     match child.try_wait() {
         Ok(Some(status)) => out.push_str(&format!("\nagent process exited ({status})")),
-        Ok(None) => out.push_str("\nagent process still running (no response on stdout)"),
+        Ok(None) => out.push_str(
+            "\nagent process still running but not responding on stdout \
+             — the binary may not support ACP v1; try the agent CLI directly \
+             to verify it accepts ACP-over-stdio protocol",
+        ),
         Err(e) => out.push_str(&format!("\nfailed to query agent process status: {e}")),
     }
     let lines = tail.lock().unwrap();
@@ -432,9 +447,9 @@ fn diag(child: &mut tokio::process::Child, tail: &Mutex<VecDeque<String>>) -> St
 
 /// Appends `diag` to an existing agent error so the raw protocol message
 /// (e.g. `server shut down unexpectedly`) is followed by actionable detail.
-fn enrich(e: NexError, child: &mut tokio::process::Child, tail: &Mutex<VecDeque<String>>) -> NexError {
+fn enrich(e: NexError, child: &mut tokio::process::Child, tail: &Mutex<VecDeque<String>>, program: &str, args: &[String]) -> NexError {
     match e {
-        NexError::Agent(msg) => NexError::Agent(format!("{msg}{}", diag(child, tail))),
+        NexError::Agent(msg) => NexError::Agent(format!("{msg}{}", diag(child, tail, program, args))),
         other => other,
     }
 }

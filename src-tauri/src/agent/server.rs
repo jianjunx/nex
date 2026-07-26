@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
 use super::acp_adapter::AcpSessionManager;
+use super::binary::BinaryCache;
 use super::launch;
 use super::registry::{RegistryEntry, RegistryStore};
 use crate::error::NexError;
@@ -133,6 +134,7 @@ impl CustomStore {
 pub struct AgentSessionManager {
     registry: Arc<RegistryStore>,
     custom: Arc<CustomStore>,
+    binary_cache: BinaryCache,
     acp: AcpSessionManager,
 }
 
@@ -141,6 +143,7 @@ impl AgentSessionManager {
         Self {
             registry: Arc::new(RegistryStore::new(app_data_dir)),
             custom: Arc::new(CustomStore::new(app_data_dir)),
+            binary_cache: BinaryCache::new(app_data_dir),
             acp: AcpSessionManager::new(),
         }
     }
@@ -165,7 +168,7 @@ impl AgentSessionManager {
                         "unknown agent `{id}` — refresh the agent registry and try again"
                     ))
                 })?;
-                launch::resolve_registry(&entry, cwd)?
+                launch::resolve_registry(&entry, cwd, &self.binary_cache).await?
             }
             SessionTarget::Custom { id } => {
                 let server = self.custom.find(&id).ok_or_else(|| {

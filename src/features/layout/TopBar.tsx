@@ -10,6 +10,7 @@ import {
   useConversationStore,
 } from "../../stores/conversation.store";
 import { useAgentStore } from "../../stores/agent.store";
+import { CloseTabConfirmDialog } from "../agent/CloseTabConfirmDialog";
 import { ProjectSelector } from "../projects/ProjectSelector";
 import { NewConversationModal } from "../projects/NewConversationModal";
 import { WindowControls } from "./WindowControls";
@@ -29,6 +30,8 @@ export function TopBar() {
   const sessions = useAgentStore((s) => s.sessions);
   const removeSession = useAgentStore((s) => s.removeSession);
   const [showNewConversation, setShowNewConversation] = useState(false);
+  const [pendingCloseId, setPendingCloseId] = useState<string | null>(null);
+  const [closing, setClosing] = useState(false);
 
   const projectConversations = activeProjectId
     ? (conversationsByProject[activeProjectId] ?? [])
@@ -109,8 +112,7 @@ export function TopBar() {
                       }}
                       onClick={(e) => {
                         e.stopPropagation();
-                        removeSession(tabId);
-                        closeTab(tabId);
+                        setPendingCloseId(tabId);
                       }}
                     >
                       ×
@@ -136,6 +138,26 @@ export function TopBar() {
       )}
 
       <NewConversationModal open={showNewConversation} onClose={() => setShowNewConversation(false)} />
+      <CloseTabConfirmDialog
+        open={pendingCloseId !== null}
+        busy={closing}
+        status={pendingCloseId ? (sessions[pendingCloseId]?.status ?? null) : null}
+        onCancel={() => { if (!closing) setPendingCloseId(null); }}
+        onConfirm={() => {
+          if (!pendingCloseId || closing) return;
+          const id = pendingCloseId;
+          setClosing(true);
+          void (async () => {
+            try {
+              await removeSession(id);
+              closeTab(id);
+            } finally {
+              setClosing(false);
+              setPendingCloseId(null);
+            }
+          })();
+        }}
+      />
     </div>
   );
 }

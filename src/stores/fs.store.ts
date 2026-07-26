@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { enableMapSet } from "immer";
-import { fsReadTree, fsExpandDir, fsReadFile, fsSearch, fsWriteFile, type FsNode, type SearchMatch } from "../bridge/tauri";
+import { fsReadTree, fsExpandDir, fsReadFile, fsSearch, fsWriteFile, fsCreateFile, fsCreateDir, type FsNode, type SearchMatch } from "../bridge/tauri";
 import { useUiStore } from "./ui.store";
 import { useSettingsStore } from "./settings.store";
 import {
@@ -44,6 +44,7 @@ interface FsStore {
   expandedDirs: Set<string>;
   openFiles: EditorFile[];
   activePath: string | null;
+  selectedPath: string | null;
   searchResults: SearchMatch[];
   searching: boolean;
   loading: boolean;
@@ -52,11 +53,16 @@ interface FsStore {
   loadRoot: (projectPath: string) => Promise<void>;
   expandDir: (dirPath: string) => Promise<void>;
   collapseDir: (dirPath: string) => void;
+  collapseAll: (projectPath: string) => void;
   openFile: (filePath: string) => Promise<void>;
   switchFile: (filePath: string) => Promise<void>;
   closeFile: (filePath: string) => Promise<void>;
   closeEditor: () => Promise<void>;
   setDraft: (draft: string) => void;
+  setSelectedPath: (path: string | null) => void;
+  createFile: (parentDir: string, name: string) => Promise<void>;
+  createDir: (parentDir: string, name: string) => Promise<void>;
+  refreshDir: (dirPath: string) => Promise<void>;
   /** @returns false when a write was attempted and failed */
   saveFile: (filePath?: string) => Promise<boolean>;
   syncExternalChange: (paths: string[]) => Promise<void>;
@@ -85,6 +91,7 @@ export const useFsStore = create<FsStore>()(
     expandedDirs: new Set(),
     openFiles: [],
     activePath: null,
+    selectedPath: null,
     searchResults: [],
     searching: false,
     loading: false,
@@ -122,6 +129,13 @@ export const useFsStore = create<FsStore>()(
 
     collapseDir: (dirPath: string) => {
       set((s) => { s.expandedDirs.delete(dirPath); });
+    },
+
+    collapseAll: (projectPath: string) => {
+      set((s) => {
+        s.expandedDirs = new Set([projectPath]);
+        s.selectedPath = null;
+      });
     },
 
     openFile: async (filePath: string) => {
@@ -234,6 +248,42 @@ export const useFsStore = create<FsStore>()(
       if (!path) return;
       if (dirty) scheduleAutoSave(path);
       else clearAutoSaveTimer(path);
+    },
+
+    setSelectedPath: (path) => {
+      set((s) => { s.selectedPath = path; });
+    },
+
+    createFile: async (parentDir, name) => {
+      set((s) => { s.error = null; });
+      try {
+        await fsCreateFile(parentDir, name);
+        await get().refreshDir(parentDir);
+      } catch (err) {
+        set((s) => { s.error = errorMessage(err); });
+      }
+    },
+
+    createDir: async (parentDir, name) => {
+      set((s) => { s.error = null; });
+      try {
+        await fsCreateDir(parentDir, name);
+        await get().refreshDir(parentDir);
+      } catch (err) {
+        set((s) => { s.error = errorMessage(err); });
+      }
+    },
+
+    refreshDir: async (dirPath) => {
+      set((s) => { s.loading = true; s.error = null; });
+      try {
+        const nodes = await fsReadTree(dirPath);
+        set((s) => { s.nodesByDir[dirPath] = nodes; });
+      } catch (err) {
+        set((s) => { s.error = errorMessage(err); });
+      } finally {
+        set((s) => { s.loading = false; });
+      }
     },
 
     saveFile: async (filePath?) => {

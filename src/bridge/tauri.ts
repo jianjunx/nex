@@ -207,6 +207,14 @@ export async function fsWatchStart(projectPath: string): Promise<void> {
   return invoke(COMMANDS.FS_WATCH_START, { projectPath });
 }
 
+export async function fsCreateFile(parentDir: string, name: string): Promise<void> {
+  return invoke(COMMANDS.FS_CREATE_FILE, { parentDir, name });
+}
+
+export async function fsCreateDir(parentDir: string, name: string): Promise<void> {
+  return invoke(COMMANDS.FS_CREATE_DIR, { parentDir, name });
+}
+
 // --- Event Listeners ---
 export function onAgentNotification(cb: (payload: AgentNotificationPayload) => void): Promise<UnlistenFn> {
   return listen(EVENTS.AGENT_NOTIFICATION, (e) => cb(e.payload as AgentNotificationPayload));

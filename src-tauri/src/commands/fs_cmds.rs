@@ -2,6 +2,7 @@ use crate::error::NexError;
 use crate::fs::tree::{FsNode, read_tree, expand_dir};
 use crate::fs::read::{FileContent, read_file};
 use crate::fs::write::write_file;
+use crate::fs::create::{create_file, create_dir};
 use crate::fs::search::{SearchMatch, search};
 use crate::state::AppState;
 use std::path::Path;
@@ -40,4 +41,14 @@ pub fn fs_watch_start(app: AppHandle, state: State<AppState>, project_path: Stri
 #[tauri::command]
 pub fn fs_search(project_path: String, query: String) -> Result<Vec<SearchMatch>, NexError> {
     search(Path::new(&project_path), &query)
+}
+
+#[tauri::command]
+pub fn fs_create_file(parent_dir: String, name: String) -> Result<(), NexError> {
+    create_file(Path::new(&parent_dir), &name)
+}
+
+#[tauri::command]
+pub fn fs_create_dir(parent_dir: String, name: String) -> Result<(), NexError> {
+    create_dir(Path::new(&parent_dir), &name)
 }

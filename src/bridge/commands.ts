@@ -36,6 +36,8 @@ export const COMMANDS = {
   FS_WRITE_FILE: "fs_write_file",
   FS_WATCH_START: "fs_watch_start",
   FS_SEARCH: "fs_search",
+  FS_CREATE_FILE: "fs_create_file",
+  FS_CREATE_DIR: "fs_create_dir",
   // Appearance
   APPEARANCE_SET_THEME: "appearance_set_theme",
 } as const;

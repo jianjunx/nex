@@ -172,4 +172,19 @@ describe("fs.store multi-tab editor", () => {
     vi.useRealTimers();
     editorAutoSave = false;
   });
+
+  it("openFile flushes pending autosave for previous file before 1500ms", async () => {
+    vi.useFakeTimers();
+    editorAutoSave = true;
+    fsReadFile
+      .mockResolvedValueOnce({ is_text: true, content: "a", size: 1 })
+      .mockResolvedValueOnce({ is_text: true, content: "b", size: 1 });
+    await useFsStore.getState().openFile("/p/a.ts");
+    useFsStore.getState().setDraft("a!");
+    fsWriteFile.mockResolvedValue(undefined);
+    await useFsStore.getState().openFile("/p/b.ts");
+    expect(fsWriteFile).toHaveBeenCalledWith("/p/a.ts", "a!");
+    vi.useRealTimers();
+    editorAutoSave = false;
+  });
 });

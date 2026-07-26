@@ -137,6 +137,10 @@ export const useFsStore = create<FsStore>()(
       // history (B4: Esc hides, re-click re-shows, edits survive). Disk
       // freshness for an open file is syncExternalChange's job; a forced
       // re-read stays available via the stale banner's 重新加载.
+      const previous = get().activePath;
+      if (previous && previous !== filePath) {
+        await flushAutoSave(previous);
+      }
       if (get().openFiles.some((f) => f.path === filePath)) {
         set((s) => { s.activePath = filePath; });
         useUiStore.getState().setEditorVisible(true);

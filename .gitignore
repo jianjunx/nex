@@ -28,3 +28,7 @@ dist-ssr
 
 # WorkBuddy local memory
 .workbuddy/
+
+# Git worktrees
+.worktrees/
+

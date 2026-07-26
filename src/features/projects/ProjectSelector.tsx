@@ -32,8 +32,10 @@ export function ProjectSelector() {
       // after Radix restores focus to the trigger, and an OS dialog opened by a
       // non-foreground process can appear behind the app window — reading as
       // "the click did nothing". Bring our window to the foreground first so
-      // the (owned) dialog opens on top of it.
-      await getCurrentWindow().setFocus();
+      // the (owned) dialog opens on top of it. Focus is best-effort: a focus
+      // hiccup must never abort the open (that would re-create the exact
+      // "nothing happens" symptom, now invisibly in release builds).
+      await getCurrentWindow().setFocus().catch(() => {});
       const selected = await open({ directory: true, multiple: false, title: "Open Folder" });
       if (selected && typeof selected === "string") {
         await openProject(selected);

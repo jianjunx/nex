@@ -10,8 +10,11 @@ import {
   DropdownMenuTrigger,
 } from "@glinui/ui";
 import { useProjectStore } from "../../stores/project.store";
+import { useConversationStore } from "../../stores/conversation.store";
+import { useAgentStore } from "../../stores/agent.store";
 import { useFsStore } from "../../stores/fs.store";
 import { fsWatchStart } from "../../bridge/tauri";
+import { projectSessionIndicators } from "../agent/projectSessionIndicators";
 import { restoreProjectConversationTabs } from "./restoreProjectConversationTabs";
 
 // Radix highlights items on hover/keyboard via data-[highlighted]; map it to
@@ -28,6 +31,32 @@ function errorMessage(err: unknown): string {
     return String((err as { message: unknown }).message);
   }
   return String(err);
+}
+
+function StatusDots({ projectId }: { projectId: string }) {
+  const sessions = useAgentStore((s) => s.sessions);
+  const conversationsByProject = useConversationStore((s) => s.conversationsByProject);
+  const ids = (conversationsByProject[projectId] ?? []).map((c) => c.id);
+  const { hasRunning, hasWaiting } = projectSessionIndicators(ids, sessions);
+  if (!hasRunning && !hasWaiting) return null;
+  return (
+    <span className="inline-flex items-center gap-1 ml-2">
+      {hasRunning && (
+        <span
+          className="w-2 h-2 rounded-full animate-pulse"
+          style={{ backgroundColor: "var(--accent)" }}
+          title="Agent running"
+        />
+      )}
+      {hasWaiting && (
+        <span
+          className="w-2 h-2 rounded-full"
+          style={{ backgroundColor: "var(--warning)" }}
+          title="Agent waiting"
+        />
+      )}
+    </span>
+  );
 }
 
 export function ProjectSelector() {
@@ -99,7 +128,11 @@ export function ProjectSelector() {
         */}
         <DropdownMenuTrigger asChild variant="ghost" size="sm" className="rounded-xl text-xs">
           <Button variant="ghost" size="sm">
-            {activeProject?.name || "Open Project"} ▾
+            <span className="inline-flex items-center">
+              {activeProject?.name || "Open Project"}
+              {activeProjectId && <StatusDots projectId={activeProjectId} />}
+              <span className="ml-1">▾</span>
+            </span>
           </Button>
         </DropdownMenuTrigger>
 
@@ -136,7 +169,10 @@ export function ProjectSelector() {
                   : "text-[var(--text-secondary)]"
               }`}
             >
-              {p.name}
+              <span className="flex items-center justify-between w-full gap-2">
+                <span className="truncate">{p.name}</span>
+                <StatusDots projectId={p.id} />
+              </span>
             </DropdownMenuItem>
           ))}
           <DropdownMenuSeparator className="my-1.5" />

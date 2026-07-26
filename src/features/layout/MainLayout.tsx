@@ -79,10 +79,10 @@ export function MainLayout({ mainContent, editorPanel, sidePanel }: MainLayoutPr
               className="w-1 flex-none cursor-col-resize hover:bg-[var(--accent)]/40 active:bg-[var(--accent)]/60 transition-colors"
             />
             <div
-              className="flex flex-col border-l border-[color:var(--border-subtle)] overflow-hidden rounded-l-[var(--radius-md)]"
+              className="flex flex-col h-full border-l border-[color:var(--border-subtle)] overflow-hidden rounded-l-[var(--radius-md)]"
               style={{ width: editorWidth }}
             >
-              <div className="flex-1 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-hidden">
                 {editorPanel}
               </div>
             </div>

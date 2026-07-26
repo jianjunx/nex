@@ -8,11 +8,7 @@ import { useAgentStore } from "./stores/agent.store";
 import { useProjectStore } from "./stores/project.store";
 import { useFsStore } from "./stores/fs.store";
 import { useGitStore } from "./stores/git.store";
-import {
-  selectProjectActiveTabId,
-  selectProjectOpenTabs,
-  useConversationStore,
-} from "./stores/conversation.store";
+import { restoreProjectConversationTabs } from "./features/projects/restoreProjectConversationTabs";
 import { useTerminalStore } from "./stores/terminal.store";
 
 /** Path of the currently active project, if any. */
@@ -45,22 +41,12 @@ function App() {
         return;
       }
 
-      const convStore = useConversationStore.getState();
-      await convStore.loadConversations(activeProjectId);
       // Watcher failures are non-fatal (e.g. path no longer exists).
       fsWatchStart(activeProject.path).catch(() => {});
 
-      // Filter out tabs whose conversations no longer exist, then reload
-      // each surviving tab's messages from the DB.
-      const convs = useConversationStore.getState().conversationsByProject[activeProjectId] ?? [];
-      const validIds = new Set(convs.map((c) => c.id));
-      const convState = useConversationStore.getState();
-      const openTabs = selectProjectOpenTabs(convState, activeProjectId);
-      const activeTabId = selectProjectActiveTabId(convState, activeProjectId);
-      convStore.restoreTabs(activeProjectId, openTabs, activeTabId, validIds);
-
-      const restoredTabs = selectProjectOpenTabs(useConversationStore.getState(), activeProjectId);
-      await Promise.all(restoredTabs.map((tabId) => convStore.loadMessages(tabId)));
+      // Validate persisted tabs (incl. one-shot legacy migration) against
+      // backend conversations, then reload each surviving tab's messages.
+      await restoreProjectConversationTabs(activeProjectId);
 
       // Restore the editor panel for the active project (open files + active
       // tab), mirroring how conversation tabs are restored on cold start.

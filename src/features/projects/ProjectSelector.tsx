@@ -10,9 +10,9 @@ import {
   DropdownMenuTrigger,
 } from "@glinui/ui";
 import { useProjectStore } from "../../stores/project.store";
-import { useConversationStore } from "../../stores/conversation.store";
 import { useFsStore } from "../../stores/fs.store";
 import { fsWatchStart } from "../../bridge/tauri";
+import { restoreProjectConversationTabs } from "./restoreProjectConversationTabs";
 
 // Radix highlights items on hover/keyboard via data-[highlighted]; map it to
 // the old --overlay-hover token. dark: is bound to [data-theme="dark"] via
@@ -32,7 +32,6 @@ function errorMessage(err: unknown): string {
 
 export function ProjectSelector() {
   const { projects, activeProjectId, openProject, switchProject } = useProjectStore();
-  const loadConversations = useConversationStore((s) => s.loadConversations);
   const activeProject = projects.find((p) => p.id === activeProjectId);
   const [openError, setOpenError] = useState<string | null>(null);
   const openErrorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -63,7 +62,7 @@ export function ProjectSelector() {
         const active = all.find((p) => p.id === id);
         if (active) {
           await useFsStore.getState().loadEditorState(active.id);
-          loadConversations(active.id);
+          await restoreProjectConversationTabs(active.id);
           fsWatchStart(active.path).catch(() => {});
         }
       }
@@ -127,7 +126,7 @@ export function ProjectSelector() {
                   }
                   switchProject(p.id);
                   await useFsStore.getState().loadEditorState(p.id);
-                  loadConversations(p.id);
+                  await restoreProjectConversationTabs(p.id);
                   fsWatchStart(p.path).catch(() => {});
                 })();
               }}

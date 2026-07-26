@@ -37,6 +37,7 @@ export type EditorFile = {
   draft: string;          // editable text (== content until the user types)
   dirty: boolean;         // draft !== disk snapshot
   stale: boolean;         // file changed on disk while dirty
+  pinned: boolean;        // true = permanent tab, false = preview (replaced on next single-click)
 };
 
 interface FsStore {
@@ -54,7 +55,7 @@ interface FsStore {
   expandDir: (dirPath: string) => Promise<void>;
   collapseDir: (dirPath: string) => void;
   collapseAll: (projectPath: string) => void;
-  openFile: (filePath: string) => Promise<void>;
+  openFile: (filePath: string, pin?: boolean) => Promise<void>;
   switchFile: (filePath: string) => Promise<void>;
   closeFile: (filePath: string) => Promise<void>;
   closeEditor: () => Promise<void>;
@@ -138,7 +139,7 @@ export const useFsStore = create<FsStore>()(
       });
     },
 
-    openFile: async (filePath: string) => {
+    openFile: async (filePath: string, pin = false) => {
       // Re-showing an already-open file must not clobber the draft/undo
       // history (B4: Esc hides, re-click re-shows, edits survive). Disk
       // freshness for an open file is syncExternalChange's job; a forced
@@ -147,14 +148,40 @@ export const useFsStore = create<FsStore>()(
       if (previous && previous !== filePath) {
         await flushAutoSave(previous);
       }
-      if (get().openFiles.some((f) => f.path === filePath)) {
-        set((s) => { s.activePath = filePath; });
+      // If file already open, just switch to it (and optionally pin).
+      const existingIndex = get().openFiles.findIndex((f) => f.path === filePath);
+      if (existingIndex >= 0) {
+        set((s) => {
+          s.activePath = filePath;
+          if (pin) s.openFiles[existingIndex].pinned = true;
+        });
         useUiStore.getState().setEditorVisible(true);
         return;
       }
       set((s) => { s.loading = true; s.error = null; });
       try {
         const result = await fsReadFile(filePath);
+        if (!pin) {
+          // Preview mode: replace the first unpinned tab if one exists.
+          const previewIndex = get().openFiles.findIndex((f) => !f.pinned);
+          if (previewIndex >= 0) {
+            set((s) => {
+              s.openFiles[previewIndex] = {
+                path: filePath,
+                content: result.content ?? null,
+                isText: result.is_text,
+                size: result.size,
+                draft: result.content ?? "",
+                dirty: false,
+                stale: false,
+                pinned: false,
+              };
+              s.activePath = filePath;
+            });
+            useUiStore.getState().setEditorVisible(true);
+            return;
+          }
+        }
         set((s) => {
           s.openFiles.push({
             path: filePath,
@@ -164,6 +191,7 @@ export const useFsStore = create<FsStore>()(
             draft: result.content ?? "",
             dirty: false,
             stale: false,
+            pinned: pin,
           });
           s.activePath = filePath;
         });
@@ -242,8 +270,11 @@ export const useFsStore = create<FsStore>()(
         const active = s.activePath ? findOpenFile(s.openFiles, s.activePath) : undefined;
         if (!active) return;
         active.draft = draft;
+        const wasDirty = active.dirty;
         active.dirty = active.isText && draft !== (active.content ?? "");
         dirty = active.dirty;
+        // Auto-pin the tab the moment the user starts typing.
+        if (!wasDirty && dirty) active.pinned = true;
       });
       if (!path) return;
       if (dirty) scheduleAutoSave(path);

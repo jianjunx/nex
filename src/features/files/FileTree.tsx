@@ -80,12 +80,19 @@ function TreeNode({ node, depth, isRoot, creatingIn, creatingType, onCreatingDon
     }
   };
 
+  const handleDoubleClick = () => {
+    if (!node.is_dir) {
+      openFile(node.path, true);
+    }
+  };
+
   const displayName = isRoot ? (rootActions?.projectName ?? node.name) : node.name;
 
   return (
     <div>
       <div
         onClick={handleClick}
+        onDoubleClick={handleDoubleClick}
         className={`flex items-center gap-2 px-2.5 py-1.5 text-sm cursor-pointer rounded-[var(--radius-sm)] ${
           isSelected ? "bg-[var(--overlay-active)]" : "hover:bg-[var(--overlay-hover)]"
         }`}

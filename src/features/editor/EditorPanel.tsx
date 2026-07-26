@@ -123,7 +123,7 @@ export function EditorPanel() {
               title={relativeToProject(f.path, projectPath)}
               onClick={() => void switchFile(f.path)}
             >
-              <span className="truncate">{fileBasename(f.path)}</span>
+              <span className={`truncate ${!f.pinned ? "italic" : ""}`}>{fileBasename(f.path)}</span>
               {f.dirty && <span className="text-[var(--accent)]" title="未保存的修改">●</span>}
               <span
                 role="button"

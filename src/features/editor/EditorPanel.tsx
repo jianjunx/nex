@@ -17,7 +17,16 @@ const editorTheme = EditorView.theme({
 });
 
 export function EditorPanel() {
-  const { editorFile, error, setDraft, closeEditor, saveFile, reloadEditor, dismissStale, clearError } = useFsStore();
+  const openFiles = useFsStore((s) => s.openFiles);
+  const activePath = useFsStore((s) => s.activePath);
+  const editorFile = openFiles.find((f) => f.path === activePath) ?? null;
+  const error = useFsStore((s) => s.error);
+  const setDraft = useFsStore((s) => s.setDraft);
+  const closeFile = useFsStore((s) => s.closeFile);
+  const saveFile = useFsStore((s) => s.saveFile);
+  const reloadEditor = useFsStore((s) => s.reloadEditor);
+  const dismissStale = useFsStore((s) => s.dismissStale);
+  const clearError = useFsStore((s) => s.clearError);
   const editorVisible = useUiStore((s) => s.editorVisible);
   const viewRef = useRef<EditorView | null>(null);
 
@@ -43,7 +52,8 @@ export function EditorPanel() {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
         e.preventDefault();
         const fs = useFsStore.getState();
-        if (fs.editorFile?.dirty) void fs.saveFile();
+        const active = fs.openFiles.find((f) => f.path === fs.activePath);
+        if (active?.dirty) void fs.saveFile();
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -58,7 +68,7 @@ export function EditorPanel() {
         <span className="flex-1 truncate text-xs text-[var(--text-primary)]">{editorFile.path.split("/").pop()}</span>
         {editorFile.dirty && <span className="text-xs text-[var(--accent)]" title="未保存的修改">●</span>}
         <Button size="sm" variant="ghost" disabled={!editorFile.dirty || !editorFile.isText} onClick={() => void saveFile()}>保存</Button>
-        <Button size="sm" variant="ghost" onClick={closeEditor}><X size={12} /></Button>
+        <Button size="sm" variant="ghost" onClick={() => void closeFile(activePath!)}><X size={12} /></Button>
       </div>
       {error && (
         <div className="flex items-center gap-2 px-4 py-1.5 text-xs text-[var(--error)] bg-[var(--error)]/10">

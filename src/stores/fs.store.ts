@@ -7,18 +7,21 @@ import { useUiStore } from "./ui.store";
 // Required by immer before a Set can be drafted (expandedDirs).
 enableMapSet();
 
+export type EditorFile = {
+  path: string;
+  content: string | null; // disk snapshot at last load/save
+  isText: boolean;
+  size: number;
+  draft: string;          // editable text (== content until the user types)
+  dirty: boolean;         // draft !== disk snapshot
+  stale: boolean;         // file changed on disk while dirty
+};
+
 interface FsStore {
   nodesByDir: Record<string, FsNode[]>;
   expandedDirs: Set<string>;
-  editorFile: {
-    path: string;
-    content: string | null; // disk snapshot at last load/save
-    isText: boolean;
-    size: number;
-    draft: string;          // editable text (== content until the user types)
-    dirty: boolean;         // draft !== disk snapshot
-    stale: boolean;         // file changed on disk while dirty
-  } | null;
+  openFiles: EditorFile[];
+  activePath: string | null;
   searchResults: SearchMatch[];
   searching: boolean;
   loading: boolean;
@@ -28,9 +31,11 @@ interface FsStore {
   expandDir: (dirPath: string) => Promise<void>;
   collapseDir: (dirPath: string) => void;
   openFile: (filePath: string) => Promise<void>;
-  closeEditor: () => void;
+  switchFile: (filePath: string) => Promise<void>;
+  closeFile: (filePath: string) => Promise<void>;
+  closeEditor: () => Promise<void>;
   setDraft: (draft: string) => void;
-  saveFile: () => Promise<void>;
+  saveFile: (filePath?: string) => Promise<void>;
   syncExternalChange: (paths: string[]) => Promise<void>;
   reloadEditor: () => Promise<void>;
   dismissStale: () => void;
@@ -47,11 +52,16 @@ function errorMessage(err: unknown): string {
   return String(err);
 }
 
+function findOpenFile(openFiles: EditorFile[], path: string): EditorFile | undefined {
+  return openFiles.find((f) => f.path === path);
+}
+
 export const useFsStore = create<FsStore>()(
   immer((set, get) => ({
     nodesByDir: {},
     expandedDirs: new Set(),
-    editorFile: null,
+    openFiles: [],
+    activePath: null,
     searchResults: [],
     searching: false,
     loading: false,
@@ -96,7 +106,8 @@ export const useFsStore = create<FsStore>()(
       // history (B4: Esc hides, re-click re-shows, edits survive). Disk
       // freshness for an open file is syncExternalChange's job; a forced
       // re-read stays available via the stale banner's 重新加载.
-      if (get().editorFile?.path === filePath) {
+      if (get().openFiles.some((f) => f.path === filePath)) {
+        set((s) => { s.activePath = filePath; });
         useUiStore.getState().setEditorVisible(true);
         return;
       }
@@ -104,7 +115,7 @@ export const useFsStore = create<FsStore>()(
       try {
         const result = await fsReadFile(filePath);
         set((s) => {
-          s.editorFile = {
+          s.openFiles.push({
             path: filePath,
             content: result.content ?? null,
             isText: result.is_text,
@@ -112,7 +123,8 @@ export const useFsStore = create<FsStore>()(
             draft: result.content ?? "",
             dirty: false,
             stale: false,
-          };
+          });
+          s.activePath = filePath;
         });
         // Opening a file always reveals the panel, even if Esc hid it.
         useUiStore.getState().setEditorVisible(true);
@@ -123,31 +135,77 @@ export const useFsStore = create<FsStore>()(
       }
     },
 
-    closeEditor: () => {
-      set((s) => { s.editorFile = null; });
+    switchFile: async (filePath: string) => {
+      if (!get().openFiles.some((f) => f.path === filePath)) return;
+      set((s) => { s.activePath = filePath; });
+    },
+
+    closeFile: async (filePath: string) => {
+      const index = get().openFiles.findIndex((f) => f.path === filePath);
+      if (index < 0) return;
+
+      const file = get().openFiles[index];
+      if (file.dirty) {
+        await get().saveFile(filePath);
+      }
+
+      const wasActive = get().activePath === filePath;
+      set((s) => {
+        const i = s.openFiles.findIndex((f) => f.path === filePath);
+        if (i < 0) return;
+        s.openFiles.splice(i, 1);
+        if (!wasActive) return;
+        if (s.openFiles.length === 0) {
+          s.activePath = null;
+        } else {
+          // Prefer right neighbor, else left.
+          const next = s.openFiles[Math.min(i, s.openFiles.length - 1)];
+          s.activePath = next.path;
+        }
+      });
+
+      if (get().openFiles.length === 0) {
+        useUiStore.getState().setEditorVisible(false);
+      }
+    },
+
+    closeEditor: async () => {
+      const dirtyPaths = get().openFiles.filter((f) => f.dirty).map((f) => f.path);
+      for (const path of dirtyPaths) {
+        await get().saveFile(path);
+      }
+      set((s) => {
+        s.openFiles = [];
+        s.activePath = null;
+      });
       useUiStore.getState().setEditorVisible(false);
     },
 
     setDraft: (draft) => {
       set((s) => {
-        if (!s.editorFile) return;
-        s.editorFile.draft = draft;
-        s.editorFile.dirty = s.editorFile.isText && draft !== (s.editorFile.content ?? "");
+        const active = s.activePath ? findOpenFile(s.openFiles, s.activePath) : undefined;
+        if (!active) return;
+        active.draft = draft;
+        active.dirty = active.isText && draft !== (active.content ?? "");
       });
     },
 
-    saveFile: async () => {
-      const cur = get().editorFile;
+    saveFile: async (filePath?) => {
+      const target = filePath ?? get().activePath;
+      if (!target) return;
+      const cur = findOpenFile(get().openFiles, target);
       if (!cur || !cur.dirty) return;
+      const intendedDraft = cur.draft;
       set((s) => { s.loading = true; s.error = null; });
       try {
-        await fsWriteFile(cur.path, cur.draft);
-        // The user may have switched files while the write was in flight.
-        if (get().editorFile?.path !== cur.path) return;
+        await fsWriteFile(cur.path, intendedDraft);
+        // Only clear dirty if the path is still open and draft still matches
+        // the write intent (user may have kept typing during the write).
         set((s) => {
-          if (!s.editorFile) return;
-          s.editorFile.content = s.editorFile.draft;
-          s.editorFile.dirty = false;
+          const f = findOpenFile(s.openFiles, cur.path);
+          if (!f || f.draft !== intendedDraft) return;
+          f.content = intendedDraft;
+          f.dirty = false;
         });
       } catch (err) {
         set((s) => { s.error = errorMessage(err); });
@@ -157,44 +215,50 @@ export const useFsStore = create<FsStore>()(
     },
 
     syncExternalChange: async (paths) => {
-      const cur = get().editorFile;
-      if (!cur || !paths.includes(cur.path)) return;
-      if (cur.dirty) {
-        // Unsaved edits: keep them, surface the stale banner instead.
-        set((s) => { if (s.editorFile) s.editorFile.stale = true; });
-        return;
-      }
-      // Clean file: silently pick up the new disk content.
-      try {
-        const result = await fsReadFile(cur.path);
-        if (get().editorFile?.path !== cur.path) return;
-        set((s) => {
-          if (!s.editorFile) return;
-          s.editorFile.content = result.content ?? null;
-          s.editorFile.draft = result.content ?? "";
-          s.editorFile.isText = result.is_text;
-          s.editorFile.size = result.size;
-        });
-      } catch {
-        // Reload failure is non-fatal; keep showing the old content.
+      const affected = get().openFiles.filter((f) => paths.includes(f.path));
+      for (const cur of affected) {
+        if (cur.dirty) {
+          // Unsaved edits: keep them, surface the stale banner instead.
+          set((s) => {
+            const f = findOpenFile(s.openFiles, cur.path);
+            if (f) f.stale = true;
+          });
+          continue;
+        }
+        // Clean file: silently pick up the new disk content.
+        try {
+          const result = await fsReadFile(cur.path);
+          set((s) => {
+            const f = findOpenFile(s.openFiles, cur.path);
+            if (!f || f.dirty) return;
+            f.content = result.content ?? null;
+            f.draft = result.content ?? "";
+            f.isText = result.is_text;
+            f.size = result.size;
+          });
+        } catch {
+          // Reload failure is non-fatal; keep showing the old content.
+        }
       }
     },
 
     reloadEditor: async () => {
-      const cur = get().editorFile;
+      const activePath = get().activePath;
+      if (!activePath) return;
+      const cur = findOpenFile(get().openFiles, activePath);
       if (!cur) return;
       try {
         const result = await fsReadFile(cur.path);
         // Unconditional: the draft is discarded whatever it contained.
-        if (get().editorFile?.path !== cur.path) return;
         set((s) => {
-          if (!s.editorFile) return;
-          s.editorFile.content = result.content ?? null;
-          s.editorFile.draft = result.content ?? "";
-          s.editorFile.isText = result.is_text;
-          s.editorFile.size = result.size;
-          s.editorFile.dirty = false;
-          s.editorFile.stale = false;
+          const f = findOpenFile(s.openFiles, cur.path);
+          if (!f) return;
+          f.content = result.content ?? null;
+          f.draft = result.content ?? "";
+          f.isText = result.is_text;
+          f.size = result.size;
+          f.dirty = false;
+          f.stale = false;
         });
       } catch (err) {
         set((s) => { s.error = errorMessage(err); });
@@ -202,7 +266,10 @@ export const useFsStore = create<FsStore>()(
     },
 
     dismissStale: () => {
-      set((s) => { if (s.editorFile) s.editorFile.stale = false; });
+      set((s) => {
+        const active = s.activePath ? findOpenFile(s.openFiles, s.activePath) : undefined;
+        if (active) active.stale = false;
+      });
     },
 
     search: async (projectPath: string, query: string) => {

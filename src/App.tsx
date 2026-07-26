@@ -79,12 +79,12 @@ function App() {
     };
   }, []);
 
-  const hasEditorFile = useFsStore((s) => !!s.editorFile);
+  const hasOpenEditors = useFsStore((s) => s.openFiles.length > 0);
 
   return (
     <MainLayout
       mainContent={<ChatArea />}
-      editorPanel={hasEditorFile ? <EditorPanel /> : null}
+      editorPanel={hasOpenEditors ? <EditorPanel /> : null}
       sidePanel={<SidePanel />}
     />
   );

@@ -11,7 +11,7 @@ export function SidePanel() {
   return (
     <div className="flex flex-col h-full">
       {/* Upper: active tab content */}
-      <div className="flex-1 overflow-hidden px-5 pt-4">
+      <div className="flex-1 overflow-hidden">
         {sidePanelTab === "files" && <FileTree />}
         {sidePanelTab === "git" && <GitPanel />}
         {sidePanelTab === "search" && <SearchPanel />}

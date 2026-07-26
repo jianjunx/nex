@@ -81,16 +81,65 @@ export async function agentListServers(): Promise<ServerDescriptor[]> {
   return invoke(COMMANDS.AGENT_LIST_SERVERS);
 }
 
+export async function agentListAllServers(): Promise<ServerDescriptor[]> {
+  return invoke(COMMANDS.AGENT_LIST_ALL_SERVERS);
+}
+
 export async function agentRefreshRegistry(): Promise<void> {
   return invoke(COMMANDS.AGENT_REFRESH_REGISTRY);
 }
 
-export async function agentCreateSession(conversationId: string, target: SessionTarget, cwd: string): Promise<string> {
+export interface SessionModeDto {
+  id: string;
+  name: string;
+  description?: string | null;
+}
+
+export interface SessionModesDto {
+  currentModeId: string;
+  availableModes: SessionModeDto[];
+}
+
+export interface SessionModelDto {
+  id: string;
+  name: string;
+  description?: string | null;
+}
+
+export interface SessionModelsDto {
+  currentModelId: string;
+  availableModels: SessionModelDto[];
+}
+
+export interface CreateSessionResult {
+  sessionId: string;
+  modes?: SessionModesDto | null;
+  models?: SessionModelsDto | null;
+}
+
+export type PromptBlock =
+  | { type: "text"; text: string }
+  | { type: "resource"; uri: string; mime_type?: string | null; text: string }
+  | { type: "resource_link"; uri: string; name: string; mime_type?: string | null };
+
+export async function agentCreateSession(
+  conversationId: string,
+  target: SessionTarget,
+  cwd: string,
+): Promise<CreateSessionResult> {
   return invoke(COMMANDS.AGENT_CREATE_SESSION, { conversationId, target, cwd });
 }
 
-export async function agentSendPrompt(sessionId: string, content: string): Promise<void> {
-  return invoke(COMMANDS.AGENT_SEND_PROMPT, { sessionId, content });
+export async function agentSendPrompt(sessionId: string, blocks: PromptBlock[]): Promise<void> {
+  return invoke(COMMANDS.AGENT_SEND_PROMPT, { sessionId, blocks });
+}
+
+export async function agentSetSessionMode(sessionId: string, modeId: string): Promise<void> {
+  return invoke(COMMANDS.AGENT_SET_SESSION_MODE, { sessionId, modeId });
+}
+
+export async function agentSetSessionModel(sessionId: string, modelId: string): Promise<void> {
+  return invoke(COMMANDS.AGENT_SET_SESSION_MODEL, { sessionId, modelId });
 }
 
 export async function agentCancel(sessionId: string): Promise<void> {

@@ -17,6 +17,7 @@ export interface AgentNotificationPayload {
 export interface AgentPermissionRequestPayload {
   sessionId: string;
   requestId: string;
+  toolCallId?: string | null;
   options: { optionId: string; label: string }[];
 }
 

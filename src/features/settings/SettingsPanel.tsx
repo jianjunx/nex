@@ -30,7 +30,7 @@ export function SettingsPanel() {
     setTerminalScrollback,
     setEditorAutoSave,
   } = useSettingsStore();
-  const { servers, serversLoading, loadServers, refreshRegistry, upsertCustom, deleteCustom } = useAgentStore();
+  const { servers, serversLoading, loadAllServers, refreshRegistry, upsertCustom, deleteCustom } = useAgentStore();
   const resetLayoutDims = useUiStore((s) => s.resetLayoutDims);
 
   const [showForm, setShowForm] = useState(false);
@@ -42,7 +42,7 @@ export function SettingsPanel() {
 
   // The side panel only mounts this tab when it is active; load the merged
   // agent list on mount (idempotent if another surface already loaded it).
-  useEffect(() => { void loadServers(); }, [loadServers]);
+  useEffect(() => { void loadAllServers(); }, [loadAllServers]);
 
   const handleAddCustom = async () => {
     const name = customName.trim();
@@ -171,7 +171,7 @@ export function SettingsPanel() {
             variant="ghost"
             size="sm"
             title="Refresh agent registry"
-            onClick={() => void refreshRegistry()}
+            onClick={() => void refreshRegistry().then(() => loadAllServers())}
             disabled={serversLoading}
           >
             <RefreshCw size={12} className={serversLoading ? "animate-spin" : ""} />

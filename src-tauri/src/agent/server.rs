@@ -24,7 +24,11 @@ use super::acp_adapter::AcpSessionManager;
 use super::binary::BinaryCache;
 use super::launch;
 use super::registry::{RegistryEntry, RegistryStore};
+use super::types::{CreateSessionResult, PromptBlock};
 use crate::error::NexError;
+
+/// Registry agent ids exposed in the New-Conversation picker this phase.
+const WHITELISTED_REGISTRY_IDS: &[&str] = &["claude-acp", "codex-acp", "cursor"];
 
 /// File name for the user's custom servers, inside the app data dir.
 const CUSTOM_SERVERS_FILE: &str = "custom-servers.json";
@@ -157,7 +161,7 @@ impl AgentSessionManager {
         conversation_id: &str,
         target: SessionTarget,
         cwd: &str,
-    ) -> Result<String, NexError> {
+    ) -> Result<CreateSessionResult, NexError> {
         let spec = match target {
             SessionTarget::Registry { id } => {
                 if let Err(e) = self.registry.refresh_if_stale().await {
@@ -180,10 +184,15 @@ impl AgentSessionManager {
         self.acp.create_session(app, conversation_id, spec).await
     }
 
-    /// Merges registry agents and the user's custom servers into one list.
+    /// Registry agents on the whitelist only (Claude Code / Codex / Cursor).
+    /// Custom servers are managed in Settings but omitted from the New-
+    /// Conversation dropdown this phase.
     pub fn list_servers(&self) -> Vec<ServerDescriptor> {
         let mut out = Vec::new();
         for e in self.registry.list() {
+            if !WHITELISTED_REGISTRY_IDS.contains(&e.id.as_str()) {
+                continue;
+            }
             out.push(ServerDescriptor {
                 id: e.id,
                 name: e.name,
@@ -193,6 +202,12 @@ impl AgentSessionManager {
                 kind: ServerKind::Registry,
             });
         }
+        out
+    }
+
+    /// Full list including custom servers (Settings page).
+    pub fn list_all_servers(&self) -> Vec<ServerDescriptor> {
+        let mut out = self.list_servers();
         for c in self.custom.list() {
             out.push(ServerDescriptor {
                 id: c.id,
@@ -201,6 +216,20 @@ impl AgentSessionManager {
                 description: c.command.clone(),
                 icon: None,
                 kind: ServerKind::Custom,
+            });
+        }
+        // Also include non-whitelisted registry agents for settings visibility.
+        for e in self.registry.list() {
+            if WHITELISTED_REGISTRY_IDS.contains(&e.id.as_str()) {
+                continue;
+            }
+            out.push(ServerDescriptor {
+                id: e.id,
+                name: e.name,
+                version: e.version,
+                description: e.description,
+                icon: e.icon,
+                kind: ServerKind::Registry,
             });
         }
         out
@@ -222,8 +251,16 @@ impl AgentSessionManager {
 
     // --- Delegates to the ACP transport (session lifecycle) ---
 
-    pub async fn send_prompt(&self, session_id: &str, content: &str) -> Result<(), NexError> {
-        self.acp.send_prompt(session_id, content).await
+    pub async fn send_prompt(&self, session_id: &str, blocks: Vec<PromptBlock>) -> Result<(), NexError> {
+        self.acp.send_prompt(session_id, blocks).await
+    }
+
+    pub async fn set_session_mode(&self, session_id: &str, mode_id: &str) -> Result<(), NexError> {
+        self.acp.set_session_mode(session_id, mode_id).await
+    }
+
+    pub async fn set_session_model(&self, session_id: &str, model_id: &str) -> Result<(), NexError> {
+        self.acp.set_session_model(session_id, model_id).await
     }
 
     pub async fn cancel(&self, session_id: &str) -> Result<(), NexError> {

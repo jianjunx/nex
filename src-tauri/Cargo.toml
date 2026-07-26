@@ -38,7 +38,8 @@ notify-debouncer-full = "0.4"
 ignore = "0.4"
 content_inspector = "0.2"
 rusqlite = { version = "0.32", features = ["bundled"] }
-agent-client-protocol = "0.1"
+async-trait = "0.1"
+agent-client-protocol = { version = "0.7", features = ["unstable"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 chrono = { version = "0.4", features = ["serde"] }
 tauri-plugin-liquid-glass = "0.1.6"

@@ -14,3 +14,4 @@ pub mod server;
 pub mod types;
 
 pub use server::{AgentSessionManager, CustomServer, ServerDescriptor, ServerKind, SessionTarget};
+pub use types::{CreateSessionResult, PromptBlock};

@@ -1,0 +1,302 @@
+import type {
+  AssistantMessageEntry,
+  PlanEntry,
+  SessionMeta,
+  ThreadEntry,
+  ToolCallContentBlock,
+  ToolCallEntry,
+  ToolCallStatus,
+} from "./types";
+
+function contentBlockText(content: unknown): string | null {
+  if (!content || typeof content !== "object") return null;
+  const c = content as Record<string, unknown>;
+  if (c.type === "text" && typeof c.text === "string") return c.text;
+  if (typeof c.text === "string") return c.text;
+  return null;
+}
+
+function mapToolStatus(raw: unknown): ToolCallStatus {
+  if (typeof raw !== "string") return "pending";
+  switch (raw) {
+    case "pending":
+    case "in_progress":
+    case "completed":
+    case "failed":
+      return raw;
+    default:
+      return "pending";
+  }
+}
+
+function mapToolContent(raw: unknown): ToolCallContentBlock[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ToolCallContentBlock[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    if (o.type === "diff") {
+      out.push({
+        type: "diff",
+        path: typeof o.path === "string" ? o.path : undefined,
+        oldText: typeof o.oldText === "string" ? o.oldText : typeof o.old_text === "string" ? o.old_text : undefined,
+        newText: typeof o.newText === "string" ? o.newText : typeof o.new_text === "string" ? o.new_text : undefined,
+      });
+      continue;
+    }
+    if (o.type === "content" && o.content) {
+      const text = contentBlockText(o.content);
+      if (text) out.push({ type: "text", text });
+      continue;
+    }
+    const text = contentBlockText(o);
+    if (text) out.push({ type: "text", text });
+  }
+  return out;
+}
+
+function mapPlanEntries(raw: unknown): PlanEntry[] {
+  if (!raw || typeof raw !== "object") return [];
+  const entries = (raw as Record<string, unknown>).entries;
+  if (!Array.isArray(entries)) return [];
+  return entries
+    .filter((e): e is Record<string, unknown> => !!e && typeof e === "object")
+    .map((e) => ({
+      content: typeof e.content === "string" ? e.content : "",
+      priority: typeof e.priority === "string" ? e.priority : "medium",
+      status: typeof e.status === "string" ? e.status : "pending",
+    }));
+}
+
+function lastAssistant(entries: ThreadEntry[]): AssistantMessageEntry | null {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i];
+    if (e.kind === "assistant_message") return e;
+  }
+  return null;
+}
+
+function findTool(entries: ThreadEntry[], toolCallId: string): ToolCallEntry | null {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i];
+    if (e.kind === "tool_call" && e.toolCallId === toolCallId) return e;
+  }
+  return null;
+}
+
+function appendAssistantChunk(
+  entries: ThreadEntry[],
+  isThought: boolean,
+  text: string,
+  now: number,
+): void {
+  if (!text) return;
+  const last = lastAssistant(entries);
+  if (last) {
+    const chunk = last.chunks[last.chunks.length - 1];
+    if (chunk && chunk.type === (isThought ? "thought" : "message")) {
+      chunk.text += text;
+      return;
+    }
+    last.chunks.push(isThought ? { type: "thought", text } : { type: "message", text });
+    return;
+  }
+  entries.push({
+    id: crypto.randomUUID(),
+    kind: "assistant_message",
+    timestamp: now,
+    chunks: [isThought ? { type: "thought", text } : { type: "message", text }],
+  });
+}
+
+function upsertToolCall(entries: ThreadEntry[], update: Record<string, unknown>, now: number): void {
+  const toolCallId =
+    typeof update.toolCallId === "string"
+      ? update.toolCallId
+      : typeof update.id === "string"
+        ? update.id
+        : null;
+  if (!toolCallId) return;
+
+  const existing = findTool(entries, toolCallId);
+  const title = typeof update.title === "string" ? update.title : existing?.title ?? "Tool call";
+  const toolKind =
+    typeof update.kind === "string" ? update.kind : existing?.toolKind ?? "other";
+  const status = update.status !== undefined ? mapToolStatus(update.status) : existing?.status ?? "pending";
+  const content =
+    update.content !== undefined ? mapToolContent(update.content) : existing?.content ?? [];
+
+  if (existing) {
+    existing.title = title;
+    existing.toolKind = toolKind;
+    if (existing.status !== "waiting_for_confirmation" || status !== "pending") {
+      existing.status = status;
+    }
+    existing.content = content;
+    return;
+  }
+
+  entries.push({
+    id: crypto.randomUUID(),
+    kind: "tool_call",
+    timestamp: now,
+    toolCallId,
+    title,
+    toolKind,
+    status,
+    content,
+  });
+}
+
+export function emptySessionMeta(): SessionMeta {
+  return {
+    modes: [],
+    currentModeId: null,
+    models: [],
+    currentModelId: null,
+    configOptions: [],
+    availableCommands: [],
+    plan: null,
+  };
+}
+
+export interface ApplyResult {
+  entriesChanged: boolean;
+  metaChanged: boolean;
+  completedPlanSnapshot: PlanEntry[] | null;
+}
+
+/**
+ * Applies one ACP SessionUpdate (JSON) onto thread entries + session meta.
+ * Mutates `entries` / `meta` in place (Immer-friendly).
+ */
+export function applySessionUpdate(
+  entries: ThreadEntry[],
+  meta: SessionMeta,
+  update: unknown,
+): ApplyResult {
+  const result: ApplyResult = {
+    entriesChanged: false,
+    metaChanged: false,
+    completedPlanSnapshot: null,
+  };
+  if (!update || typeof update !== "object") return result;
+  const u = update as Record<string, unknown>;
+  const kind = u.sessionUpdate;
+  const now = Date.now();
+
+  switch (kind) {
+    case "user_message_chunk":
+      // Optimistic user messages already exist; ignore agent echoes.
+      return result;
+
+    case "agent_message_chunk": {
+      const text = contentBlockText(u.content);
+      if (text) {
+        appendAssistantChunk(entries, false, text, now);
+        result.entriesChanged = true;
+      }
+      return result;
+    }
+
+    case "agent_thought_chunk": {
+      const text = contentBlockText(u.content);
+      if (text) {
+        appendAssistantChunk(entries, true, text, now);
+        result.entriesChanged = true;
+      }
+      return result;
+    }
+
+    case "tool_call":
+      upsertToolCall(entries, u, now);
+      result.entriesChanged = true;
+      return result;
+
+    case "tool_call_update":
+      upsertToolCall(entries, u, now);
+      result.entriesChanged = true;
+      return result;
+
+    case "plan": {
+      const plan = mapPlanEntries(u);
+      meta.plan = plan.length > 0 ? plan : null;
+      result.metaChanged = true;
+      if (plan.length > 0 && plan.every((p) => p.status === "completed")) {
+        result.completedPlanSnapshot = plan;
+        meta.plan = null;
+      }
+      return result;
+    }
+
+    case "available_commands_update": {
+      const cmds = Array.isArray(u.availableCommands)
+        ? u.availableCommands
+        : Array.isArray(u.available_commands)
+          ? u.available_commands
+          : [];
+      meta.availableCommands = cmds
+        .filter((c): c is Record<string, unknown> => !!c && typeof c === "object")
+        .map((c) => ({
+          name: typeof c.name === "string" ? c.name : "",
+          description: typeof c.description === "string" ? c.description : "",
+          inputHint:
+            c.input && typeof c.input === "object" && typeof (c.input as { hint?: unknown }).hint === "string"
+              ? (c.input as { hint: string }).hint
+              : undefined,
+        }))
+        .filter((c) => c.name);
+      result.metaChanged = true;
+      return result;
+    }
+
+    case "current_mode_update": {
+      const id =
+        typeof u.currentModeId === "string"
+          ? u.currentModeId
+          : typeof u.current_mode_id === "string"
+            ? u.current_mode_id
+            : null;
+      if (id) {
+        meta.currentModeId = id;
+        result.metaChanged = true;
+      }
+      return result;
+    }
+
+    case "config_option_update": {
+      // Forward-compatible: agents on newer ACP may send this.
+      const options = Array.isArray(u.configOptions)
+        ? u.configOptions
+        : Array.isArray(u.config_options)
+          ? u.config_options
+          : [];
+      meta.configOptions = options
+        .filter((o): o is Record<string, unknown> => !!o && typeof o === "object")
+        .map((o) => ({
+          id: typeof o.id === "string" ? o.id : "",
+          name: typeof o.name === "string" ? o.name : "",
+          currentValueId:
+            typeof o.currentValueId === "string"
+              ? o.currentValueId
+              : typeof o.current_value_id === "string"
+                ? o.current_value_id
+                : "",
+          options: Array.isArray(o.options)
+            ? o.options
+                .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
+                .map((x) => ({
+                  id: typeof x.id === "string" ? x.id : "",
+                  name: typeof x.name === "string" ? x.name : "",
+                }))
+            : [],
+        }))
+        .filter((o) => o.id);
+      result.metaChanged = true;
+      return result;
+    }
+
+    default:
+      return result;
+  }
+}

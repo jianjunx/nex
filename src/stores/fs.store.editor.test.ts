@@ -25,12 +25,13 @@ vi.mock("./settings.store", () => ({
   },
 }));
 
-import { useFsStore } from "./fs.store";
+import { clearAllAutoSaveTimers, useFsStore } from "./fs.store";
 
 describe("fs.store multi-tab editor", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     editorAutoSave = false;
+    clearAllAutoSaveTimers();
     useFsStore.setState({
       openFiles: [],
       activePath: null,
@@ -151,6 +152,35 @@ describe("fs.store multi-tab editor", () => {
     fsReadFile.mockResolvedValueOnce({ is_text: true, content: "a", size: 1 });
     await useFsStore.getState().openFile("/p/a.ts");
     useFsStore.getState().setDraft("a!");
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(fsWriteFile).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("disabling autosave cancels already-scheduled timers", async () => {
+    vi.useFakeTimers();
+    editorAutoSave = true;
+    fsReadFile.mockResolvedValueOnce({ is_text: true, content: "a", size: 1 });
+    await useFsStore.getState().openFile("/p/a.ts");
+    useFsStore.getState().setDraft("a!");
+    fsWriteFile.mockResolvedValue(undefined);
+    // Simulate setEditorAutoSave(false): flip setting + clear pending timers.
+    editorAutoSave = false;
+    clearAllAutoSaveTimers();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(fsWriteFile).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("timer callback skips save when autosave was turned off", async () => {
+    vi.useFakeTimers();
+    editorAutoSave = true;
+    fsReadFile.mockResolvedValueOnce({ is_text: true, content: "a", size: 1 });
+    await useFsStore.getState().openFile("/p/a.ts");
+    useFsStore.getState().setDraft("a!");
+    fsWriteFile.mockResolvedValue(undefined);
+    // Flip setting without clearing timers — callback must re-check.
+    editorAutoSave = false;
     await vi.advanceTimersByTimeAsync(2000);
     expect(fsWriteFile).not.toHaveBeenCalled();
     vi.useRealTimers();

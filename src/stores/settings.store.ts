@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { LazyStore } from "@tauri-apps/plugin-store";
 import { appearanceSetTheme } from "../bridge/tauri";
+import { clearAllAutoSaveTimers } from "./editorAutosave";
 import { useTerminalStore } from "./terminal.store";
 
 export type Theme = "light" | "dark";
@@ -125,6 +126,7 @@ export const useSettingsStore = create<SettingsState>()(
     },
     setEditorAutoSave: (v) => {
       set((s) => { s.editorAutoSave = v; });
+      if (!v) clearAllAutoSaveTimers();
       void settingsStore.set(KEYS.autoSave, v).catch(() => {});
     },
   }))

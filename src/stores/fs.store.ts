@@ -4,31 +4,23 @@ import { enableMapSet } from "immer";
 import { fsReadTree, fsExpandDir, fsReadFile, fsSearch, fsWriteFile, type FsNode, type SearchMatch } from "../bridge/tauri";
 import { useUiStore } from "./ui.store";
 import { useSettingsStore } from "./settings.store";
+import {
+  clearAllAutoSaveTimers,
+  clearAutoSaveTimer,
+  scheduleAutoSaveTimer,
+} from "./editorAutosave";
+
+export { clearAllAutoSaveTimers };
 
 // Required by immer before a Set can be drafted (expandedDirs).
 enableMapSet();
 
-const AUTO_SAVE_MS = 1500;
-const autoSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
-function clearAutoSaveTimer(path: string) {
-  const t = autoSaveTimers.get(path);
-  if (t) {
-    clearTimeout(t);
-    autoSaveTimers.delete(path);
-  }
-}
-
 function scheduleAutoSave(path: string) {
   if (!useSettingsStore.getState().editorAutoSave) return;
-  clearAutoSaveTimer(path);
-  autoSaveTimers.set(
-    path,
-    setTimeout(() => {
-      autoSaveTimers.delete(path);
-      void useFsStore.getState().saveFile(path);
-    }, AUTO_SAVE_MS),
-  );
+  scheduleAutoSaveTimer(path, () => {
+    if (!useSettingsStore.getState().editorAutoSave) return;
+    void useFsStore.getState().saveFile(path);
+  });
 }
 
 async function flushAutoSave(path: string) {
@@ -231,13 +223,17 @@ export const useFsStore = create<FsStore>()(
 
     setDraft: (draft) => {
       const path = get().activePath;
+      let dirty = false;
       set((s) => {
         const active = s.activePath ? findOpenFile(s.openFiles, s.activePath) : undefined;
         if (!active) return;
         active.draft = draft;
         active.dirty = active.isText && draft !== (active.content ?? "");
+        dirty = active.dirty;
       });
-      if (path) scheduleAutoSave(path);
+      if (!path) return;
+      if (dirty) scheduleAutoSave(path);
+      else clearAutoSaveTimer(path);
     },
 
     saveFile: async (filePath?) => {

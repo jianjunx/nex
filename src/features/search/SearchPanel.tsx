@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Search, FileCode, Loader2 } from "lucide-react";
-import { Input } from "@glinui/ui";
+import { Input } from "@/components/ui/input";
 import { useFsStore } from "../../stores/fs.store";
 import { useProjectStore } from "../../stores/project.store";
 
@@ -35,7 +35,6 @@ export function SearchPanel() {
     <div className="flex flex-col h-full">
       <div className="py-4 px-1">
         <Input
-          variant="glass"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search files and content…"

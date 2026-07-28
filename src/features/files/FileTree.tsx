@@ -1,4 +1,4 @@
-import { ChevronRight, ChevronDown, File, Folder, FilePlus, FolderPlus, RefreshCw, ChevronsDownUp } from "lucide-react";
+import { ChevronRight, File, Folder, FilePlus, FolderPlus, RefreshCw, ChevronsDownUp } from "lucide-react";
 import { useFsStore } from "../../stores/fs.store";
 import { useProjectStore } from "../../stores/project.store";
 import { useEffect, useState, useRef, useCallback } from "react";
@@ -93,13 +93,13 @@ function TreeNode({ node, depth, isRoot, creatingIn, creatingType, onCreatingDon
       <div
         onClick={handleClick}
         onDoubleClick={handleDoubleClick}
-        className={`flex items-center gap-2 px-2.5 py-1.5 text-sm cursor-pointer rounded-[var(--radius-sm)] ${
-          isSelected ? "bg-[var(--overlay-active)]" : "hover:bg-[var(--overlay-hover)]"
+        className={`flex items-center gap-2 px-2.5 py-1.5 text-sm cursor-pointer rounded-[var(--radius-sm)] transition-colors duration-100 ${
+          isSelected ? "bg-[var(--accent)]/20" : "hover:bg-[var(--overlay-hover)]"
         }`}
         style={{ paddingLeft: depth * 12 + 8 }}
       >
         {isRoot || node.is_dir ? (
-          isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />
+          <ChevronRight size={12} className={`shrink-0 transition-transform duration-150 ease-out ${isExpanded ? "rotate-90" : ""}`} />
         ) : (
           <span className="w-3" />
         )}
@@ -115,16 +115,16 @@ function TreeNode({ node, depth, isRoot, creatingIn, creatingType, onCreatingDon
           <>
             <div className="flex-1" />
             <div className="flex items-center gap-0.5">
-              <span role="button" title="新建文件" className="p-0.5 rounded hover:bg-[var(--overlay-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onNewFile(); }}>
+              <span role="button" title="新建文件" className="p-0.5 rounded transition-colors duration-100 hover:bg-[var(--overlay-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onNewFile(); }}>
                 <FilePlus size={14} />
               </span>
-              <span role="button" title="新建目录" className="p-0.5 rounded hover:bg-[var(--overlay-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onNewFolder(); }}>
+              <span role="button" title="新建目录" className="p-0.5 rounded transition-colors duration-100 hover:bg-[var(--overlay-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onNewFolder(); }}>
                 <FolderPlus size={14} />
               </span>
-              <span role="button" title="刷新" className="p-0.5 rounded hover:bg-[var(--overlay-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onRefresh(); }}>
+              <span role="button" title="刷新" className="p-0.5 rounded transition-colors duration-100 hover:bg-[var(--overlay-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onRefresh(); }}>
                 <RefreshCw size={14} />
               </span>
-              <span role="button" title="全部折叠" className="p-0.5 rounded hover:bg-[var(--overlay-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onCollapseAll(); }}>
+              <span role="button" title="全部折叠" className="p-0.5 rounded transition-colors duration-100 hover:bg-[var(--overlay-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onCollapseAll(); }}>
                 <ChevronsDownUp size={14} />
               </span>
             </div>

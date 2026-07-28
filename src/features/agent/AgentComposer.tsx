@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback, type KeyboardEvent } from "react";
 import { Send, Square, X, AtSign, ChevronDown } from "lucide-react";
-import { Button, Textarea } from "@glinui/ui";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { useAgentStore } from "../../stores/agent.store";
 import { useProjectStore } from "../../stores/project.store";
 import { selectProjectActiveTabId, useConversationStore } from "../../stores/conversation.store";
@@ -214,7 +215,6 @@ export function AgentComposer() {
         <div className="flex flex-col gap-2 rounded-[var(--radius-lg)] bg-[var(--glass-3-surface)] border border-[color:var(--glass-border)] px-4 py-3">
           <Textarea
             ref={textareaRef}
-            variant="glass"
             value={text}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -302,7 +302,7 @@ export function AgentComposer() {
                 </Button>
               ) : (
                 <Button
-                  variant="glass"
+                  variant="default"
                   size="sm"
                   disabled={!text.trim() || !session}
                   onClick={() => void handleSend()}

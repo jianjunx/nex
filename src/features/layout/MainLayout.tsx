@@ -76,10 +76,10 @@ export function MainLayout({ mainContent, editorPanel, sidePanel }: MainLayoutPr
           <>
             <div
               onPointerDown={startEditorDrag}
-              className="w-1 flex-none cursor-col-resize hover:bg-[var(--accent)]/40 active:bg-[var(--accent)]/60 transition-colors"
+              className="w-1 flex-none cursor-col-resize hover:bg-[var(--accent)]/40 active:bg-[var(--accent)]/60 transition-colors duration-100"
             />
             <div
-              className="flex min-h-0 flex-col self-stretch border-l border-[color:var(--border-subtle)] overflow-hidden rounded-l-[var(--radius-md)]"
+              className="flex min-h-0 flex-col self-stretch border-l border-[color:var(--border-subtle)] overflow-hidden rounded-l-[var(--radius-md)] will-change-transform animate-in fade-in slide-in-from-right-2 duration-200 ease-out"
               style={{ width: editorWidth }}
             >
               <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -94,10 +94,10 @@ export function MainLayout({ mainContent, editorPanel, sidePanel }: MainLayoutPr
           <>
             <div
               onPointerDown={startDrag}
-              className="w-1 flex-none cursor-col-resize hover:bg-[var(--accent)]/40 active:bg-[var(--accent)]/60 transition-colors"
+              className="w-1 flex-none cursor-col-resize hover:bg-[var(--accent)]/40 active:bg-[var(--accent)]/60 transition-colors duration-100"
             />
             <div
-              className="flex flex-col border-l border-[color:var(--border-subtle)] overflow-hidden rounded-l-[var(--radius-md)]"
+              className="flex flex-col border-l border-[color:var(--border-subtle)] overflow-hidden rounded-l-[var(--radius-md)] will-change-transform animate-in fade-in slide-in-from-right-2 duration-200 ease-out"
               style={{ width: sidePanelWidth }}
             >
               <div className="flex-1 overflow-hidden">

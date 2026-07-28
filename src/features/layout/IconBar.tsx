@@ -1,5 +1,5 @@
 import { FolderTree, GitBranch, Search, Settings, Terminal } from "lucide-react";
-import { Button } from "@glinui/ui";
+import { Button } from "@/components/ui/button";
 import { useUiStore, type SidePanelTab } from "../../stores/ui.store";
 
 const tabs: { id: SidePanelTab; icon: typeof FolderTree; label: string }[] = [
@@ -12,19 +12,19 @@ export function IconBar() {
   const { sidePanelTab, setSidePanelTab, terminalVisible, toggleTerminal } = useUiStore();
 
   return (
-    <div className="flex flex-col items-center py-3 gap-2 w-12 border-l border-[color:var(--border-subtle)] bg-[var(--glass-1-surface)] mr-1.5 rounded-l-[var(--radius-md)]">
+    <div className="flex flex-col items-center py-3 gap-1.5 w-12 border-l border-[color:var(--border-subtle)] bg-[var(--glass-1-surface)] mr-1.5 rounded-l-[var(--radius-md)]">
       {tabs.map(({ id, icon: Icon, label }) => (
         <Button
           key={id}
           variant="ghost"
-          size="sm"
+          size="icon-sm"
           title={label}
           onClick={() => setSidePanelTab(id)}
-          className={
+          className={`transition-colors duration-150 ${
             sidePanelTab === id
-              ? "bg-[var(--overlay-active)] text-[var(--text-primary)]"
+              ? "bg-[var(--accent)]/15 text-[var(--accent)]"
               : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
-          }
+          }`}
         >
           <Icon size={16} />
         </Button>
@@ -32,27 +32,27 @@ export function IconBar() {
       <div className="flex-1" />
       <Button
         variant="ghost"
-        size="sm"
+        size="icon-sm"
         title="终端"
         onClick={toggleTerminal}
-        className={
+        className={`transition-colors duration-150 ${
           terminalVisible
-            ? "bg-[var(--overlay-active)] text-[var(--text-primary)]"
+            ? "bg-[var(--accent)]/15 text-[var(--accent)]"
             : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
-        }
+        }`}
       >
         <Terminal size={16} />
       </Button>
       <Button
         variant="ghost"
-        size="sm"
+        size="icon-sm"
         title="设置"
         onClick={() => setSidePanelTab("settings")}
-        className={
+        className={`transition-colors duration-150 ${
           sidePanelTab === "settings"
-            ? "bg-[var(--overlay-active)] text-[var(--text-primary)]"
+            ? "bg-[var(--accent)]/15 text-[var(--accent)]"
             : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
-        }
+        }`}
       >
         <Settings size={16} />
       </Button>

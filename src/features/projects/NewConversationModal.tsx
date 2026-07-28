@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
-import { Button, Modal, ModalContent, ModalHeader, ModalTitle } from "@glinui/ui";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useConversationStore } from "../../stores/conversation.store";
 import { useAgentStore } from "../../stores/agent.store";
 import { useProjectStore } from "../../stores/project.store";
@@ -14,9 +20,6 @@ function errorMessage(err: unknown): string {
   }
   return String(err);
 }
-
-const ACCENT_CTA =
-  "bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] dark:bg-[var(--accent)] dark:text-white dark:hover:bg-[var(--accent-hover)]";
 
 export function NewConversationModal({ open, onClose }: Props) {
   const servers = useAgentStore((s) => s.servers);
@@ -64,12 +67,12 @@ export function NewConversationModal({ open, onClose }: Props) {
   };
 
   return (
-    <Modal open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <ModalContent size="sm">
-        <ModalHeader>
-          <ModalTitle>New Conversation</ModalTitle>
-        </ModalHeader>
-        <div className="flex items-center justify-between px-1">
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>New Conversation</DialogTitle>
+        </DialogHeader>
+        <div className="flex items-center justify-between">
           <span className="text-xs font-medium uppercase tracking-wide text-[var(--text-tertiary)]">
             Agents (Claude Code · Codex · Cursor)
           </span>
@@ -77,7 +80,7 @@ export function NewConversationModal({ open, onClose }: Props) {
             disabled={serversLoading || creating}
             onClick={() => void refreshRegistry()}
             title="Refresh agent registry"
-            className="flex items-center gap-1 text-xs text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] disabled:opacity-50"
+            className="flex items-center gap-1 text-xs text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-secondary)] disabled:opacity-50"
           >
             <RefreshCw size={12} className={serversLoading ? "animate-spin" : ""} />
             {serversLoading ? "Refreshing…" : "Refresh"}
@@ -97,7 +100,7 @@ export function NewConversationModal({ open, onClose }: Props) {
                 key={s.id}
                 disabled={creating}
                 onClick={() => { setSelectedId(s.id); setError(null); }}
-                className={`w-full text-left px-5 py-3 rounded-[var(--radius-md)] text-sm disabled:opacity-50 transition-colors ${isSelected ? "border border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--text-primary)]" : "bg-[var(--glass-2-surface)] border border-[color:var(--color-border)] text-[var(--text-secondary)] hover:bg-[var(--glass-3-surface)]"}`}
+                className={`w-full text-left px-5 py-3 rounded-[var(--radius-md)] text-sm disabled:opacity-50 transition-colors duration-150 ${isSelected ? "border border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--text-primary)]" : "bg-[var(--glass-2-surface)] border border-[color:var(--color-border)] text-[var(--text-secondary)] hover:bg-[var(--glass-3-surface)]"}`}
               >
                 <div className="flex items-center gap-2">
                   <span className="font-medium">{s.name}</span>
@@ -112,16 +115,16 @@ export function NewConversationModal({ open, onClose }: Props) {
         </div>
 
         {error && (
-          <p className="text-sm text-[var(--error)] px-1 whitespace-pre-wrap">{error}</p>
+          <p className="text-sm text-[var(--error)] whitespace-pre-wrap">{error}</p>
         )}
         <Button
           disabled={creating || !selected}
           onClick={handleCreate}
-          className={`w-full h-auto py-3 ${ACCENT_CTA}`}
+          className="w-full h-auto py-3"
         >
           {creating ? "Creating…" : "Create"}
         </Button>
-      </ModalContent>
-    </Modal>
+      </DialogContent>
+    </Dialog>
   );
 }

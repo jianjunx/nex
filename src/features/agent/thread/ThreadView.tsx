@@ -1,6 +1,6 @@
 import ReactMarkdown from "react-markdown";
 import { ListChecks } from "lucide-react";
-import { Card, CardContent } from "@glinui/ui";
+import { Card, CardContent } from "@/components/ui/card";
 import { useAgentStore } from "../../../stores/agent.store";
 import { useProjectStore } from "../../../stores/project.store";
 import { selectProjectActiveTabId, useConversationStore } from "../../../stores/conversation.store";
@@ -34,10 +34,9 @@ function EntryView({ entry }: { entry: ThreadEntry }) {
       return (
         <div className="flex justify-end">
           <Card
-            variant="matte"
-            className="max-w-[80%] px-4 py-2 text-sm bg-none bg-[var(--accent)]/15 border-[var(--accent)]/30 dark:bg-none dark:bg-[var(--accent)]/15 dark:border-[var(--accent)]/30"
+            className="max-w-[80%] gap-0 px-4 py-2 text-sm shadow-none bg-[var(--accent)]/15 border-[var(--accent)]/30"
           >
-            <CardContent>
+            <CardContent className="px-0">
               <p className="whitespace-pre-wrap">{entry.text}</p>
             </CardContent>
           </Card>
@@ -50,8 +49,8 @@ function EntryView({ entry }: { entry: ThreadEntry }) {
             g.type === "thought" ? (
               <ThinkingBlock key={i} text={g.text} />
             ) : (
-              <Card key={i} variant="glass" className="px-4 py-2 text-sm">
-                <CardContent>
+              <Card key={i} className="gap-0 px-4 py-2 text-sm shadow-none">
+                <CardContent className="px-0">
                   <div className="[&_pre]:overflow-x-auto [&_code]:text-[0.85em] [&_p]:my-1">
                     <ReactMarkdown>{g.text}</ReactMarkdown>
                   </div>

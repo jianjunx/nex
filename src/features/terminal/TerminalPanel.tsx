@@ -6,7 +6,7 @@ import { Plus, X } from "lucide-react";
 import { useTerminalStore, getReplay, setLiveSink } from "../../stores/terminal.store";
 import { useSettingsStore } from "../../stores/settings.store";
 import { useProjectStore } from "../../stores/project.store";
-import { Button } from "@glinui/ui";
+import { Button } from "@/components/ui/button";
 
 export function TerminalPanel() {
   const termRef = useRef<HTMLDivElement>(null);

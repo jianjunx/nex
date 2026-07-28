@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { GitBranch, Plus, Minus, Check } from "lucide-react";
-import { Button, Input } from "@glinui/ui";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useGitStore } from "../../stores/git.store";
 import { useProjectStore } from "../../stores/project.store";
 
@@ -59,7 +60,7 @@ export function GitPanel() {
               </Button>
             </div>
             {unstaged.map((f) => (
-              <div key={f.path} className="flex items-center gap-2 px-2.5 py-1.5 hover:bg-[var(--overlay-hover)] rounded-[var(--radius-sm)] cursor-pointer" onClick={() => viewDiff(project.path, f.path, false)}>
+              <div key={f.path} className="flex items-center gap-2 px-2.5 py-1.5 hover:bg-[var(--overlay-hover)] rounded-[var(--radius-sm)] cursor-pointer transition-colors duration-100" onClick={() => viewDiff(project.path, f.path, false)}>
                 <span className="text-[var(--warning)] text-xs w-3">{f.status[0].toUpperCase()}</span>
                 <span className="text-[var(--text-secondary)] truncate">{f.path}</span>
               </div>
@@ -75,7 +76,7 @@ export function GitPanel() {
               </Button>
             </div>
             {staged.map((f) => (
-              <div key={f.path} className="flex items-center gap-2 px-2.5 py-1.5 hover:bg-[var(--overlay-hover)] rounded-[var(--radius-sm)] cursor-pointer" onClick={() => viewDiff(project.path, f.path, true)}>
+              <div key={f.path} className="flex items-center gap-2 px-2.5 py-1.5 hover:bg-[var(--overlay-hover)] rounded-[var(--radius-sm)] cursor-pointer transition-colors duration-100" onClick={() => viewDiff(project.path, f.path, true)}>
                 <span className="text-[var(--success)] text-xs w-3">{f.status[0].toUpperCase()}</span>
                 <span className="text-[var(--text-secondary)] truncate">{f.path}</span>
               </div>
@@ -88,7 +89,6 @@ export function GitPanel() {
       {/* Commit area */}
       <div className="p-4 border-t border-[color:var(--border-subtle)]">
         <Input
-          variant="glass"
           value={commitMsg}
           onChange={(e) => setCommitMsg(e.target.value)}
           placeholder="Commit message..."

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { CheckCircle2, Circle, Loader2, Wrench } from "lucide-react";
-import { Button } from "@glinui/ui";
+import { Button } from "@/components/ui/button";
 import type { ToolCallEntry } from "./types";
 import { useAgentStore } from "../../../stores/agent.store";
 
@@ -49,7 +49,7 @@ export function ToolCallCard({ entry }: { entry: ToolCallEntry }) {
               {entry.options.map((opt) => (
                 <Button
                   key={opt.optionId}
-                  variant="glass"
+                  variant="outline"
                   size="sm"
                   onClick={() => void respondPermission(entry.permissionRequestId!, opt.optionId)}
                 >

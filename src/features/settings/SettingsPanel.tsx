@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import { RefreshCw, X } from "lucide-react";
-import { Button, Input, Label, RadioGroup, RadioGroupItem, Slider, Switch, Textarea } from "@glinui/ui";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import { useSettingsStore, type Theme } from "../../stores/settings.store";
 import { useAgentStore } from "../../stores/agent.store";
 import { useUiStore } from "../../stores/ui.store";
@@ -210,21 +216,18 @@ export function SettingsPanel() {
           {showForm ? (
             <div className="space-y-2 p-3 rounded-[var(--radius-md)] bg-[var(--glass-2-surface)] border border-[color:var(--border-default)]">
               <Input
-                variant="glass"
                 value={customName}
                 onChange={(e) => setCustomName(e.target.value)}
                 placeholder="名称"
                 disabled={adding}
               />
               <Input
-                variant="glass"
                 value={customCommand}
                 onChange={(e) => setCustomCommand(e.target.value)}
                 placeholder="命令（如 npx -y my-agent --acp）"
                 disabled={adding}
               />
               <Textarea
-                variant="glass"
                 value={customEnv}
                 onChange={(e) => setCustomEnv(e.target.value)}
                 placeholder={"环境变量，每行 KEY=VALUE（可选）\nANTHROPIC_API_KEY=sk-…"}

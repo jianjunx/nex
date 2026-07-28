@@ -1,4 +1,10 @@
-import { Button, Modal, ModalContent, ModalHeader, ModalTitle } from "@glinui/ui";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useAgentStore } from "../../stores/agent.store";
 import { useConversationStore } from "../../stores/conversation.store";
 
@@ -22,11 +28,11 @@ export function PermissionModal() {
     // `open` stays constant true while a request is pending; Radix emits
     // onOpenChange(false) for Esc, outside click, and the X button — all
     // route here: dismissal means deny.
-    <Modal open={true} onOpenChange={(o) => { if (!o) dismiss(); }}>
-      <ModalContent size="sm">
-        <ModalHeader>
-          <ModalTitle>Permission Required</ModalTitle>
-        </ModalHeader>
+    <Dialog open={true} onOpenChange={(o) => { if (!o) dismiss(); }}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Permission Required</DialogTitle>
+        </DialogHeader>
         <div>
           <p className="text-sm text-[var(--text-secondary)]">
             The agent is requesting permission:
@@ -39,7 +45,7 @@ export function PermissionModal() {
           {pendingPermission.options.map((opt) => (
             <Button
               key={opt.optionId}
-              variant="glass"
+              variant="outline"
               className="w-full justify-start"
               onClick={() => void respondPermission(pendingPermission.requestId, opt.optionId)}
             >
@@ -50,7 +56,7 @@ export function PermissionModal() {
             Deny
           </Button>
         </div>
-      </ModalContent>
-    </Modal>
+      </DialogContent>
+    </Dialog>
   );
 }

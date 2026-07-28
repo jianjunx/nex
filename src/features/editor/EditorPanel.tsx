@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import CodeMirror, { EditorView } from "@uiw/react-codemirror";
 import { searchPanelOpen, closeSearchPanel } from "@codemirror/search";
 import { ChevronDown, X } from "lucide-react";
-import { Button } from "@glinui/ui";
+import { Button } from "@/components/ui/button";
 import { useFsStore } from "../../stores/fs.store";
 import { useUiStore } from "../../stores/ui.store";
 import { useProjectStore } from "../../stores/project.store";

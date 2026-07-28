@@ -1,11 +1,43 @@
 @import "tailwindcss";
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 @import "tw-animate-css";
-@import "@glinui/tokens/theme.css";
-@source "../../node_modules/@glinui/ui/dist";
 
+/* ─── shadcn/ui design tokens ───────────────────────────────────────────
+   Standard CSS-variable theme consumed by shadcn components via Tailwind
+   utilities (bg-background, text-foreground, border-border, etc.).
+   Dark is the default; light values live under [data-theme="light"] to
+   match the app's existing theme-switch mechanism. */
 :root {
-  /* Semantic borders / overlays - Dark mode (white tints on dark glass) */
+  --background: oklch(0.14 0.005 260);
+  --foreground: oklch(0.93 0.005 260);
+
+  --card: oklch(0.17 0.005 260);
+  --card-foreground: oklch(0.93 0.005 260);
+
+  --popover: oklch(0.18 0.005 260);
+  --popover-foreground: oklch(0.93 0.005 260);
+
+  --primary: oklch(0.65 0.18 258);
+  --primary-foreground: oklch(0.99 0.003 260);
+
+  --secondary: oklch(0.22 0.008 260);
+  --secondary-foreground: oklch(0.88 0.005 260);
+
+  --muted: oklch(0.22 0.008 260);
+  --muted-foreground: oklch(0.60 0.01 260);
+
+  --accent-foreground: oklch(0.99 0.003 260);
+
+  --destructive: oklch(0.58 0.2 25);
+  --destructive-foreground: oklch(0.99 0.003 25);
+
+  --border: oklch(0.28 0.008 260);
+  --input: oklch(0.28 0.008 260);
+  --ring: oklch(0.65 0.18 258);
+
+  --radius: 0.75rem;
+
+  /* ─── App semantic tokens (preserved from original theme) ─────────── */
   --border-subtle: rgba(255, 255, 255, 0.06);
   --border-default: rgba(255, 255, 255, 0.08);
 
@@ -16,31 +48,65 @@
   --scrollbar-thumb: rgba(255, 255, 255, 0.15);
   --scrollbar-thumb-hover: rgba(255, 255, 255, 0.25);
 
-  /* Text */
   --text-primary: rgba(255, 255, 255, 0.92);
   --text-secondary: rgba(255, 255, 255, 0.60);
   --text-tertiary: rgba(255, 255, 255, 0.38);
 
-  /* Accent */
   --accent: #7C8AFF;
   --accent-hover: #9BA6FF;
   --accent-glow: rgba(124, 138, 255, 0.20);
+  /* Subtle surface used by shadcn hover/focus states (bg-accent utility).
+     Kept separate from the brand --accent so ghost buttons don't turn solid
+     purple on hover. */
+  --accent-surface: rgba(255, 255, 255, 0.08);
 
-  /* Semantic */
   --success: #34D399;
   --warning: #FBBF24;
   --error: #F87171;
 
-  /* Radius */
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
   --radius-xl: 24px;
+
+  /* ─── Glass surfaces (simplified, no nested calc) ─────────────────── */
+  --glass-1-surface: rgba(255, 255, 255, 0.04);
+  --glass-2-surface: rgba(255, 255, 255, 0.07);
+  --glass-3-surface: rgba(255, 255, 255, 0.10);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --color-border: rgba(255, 255, 255, 0.10);
 }
 
 /* Light mode override */
 [data-theme="light"] {
-  /* Semantic borders / overlays - Light mode (black tints on light glass) */
+  --background: oklch(0.98 0.002 260);
+  --foreground: oklch(0.20 0.01 260);
+
+  --card: oklch(0.99 0.002 260);
+  --card-foreground: oklch(0.20 0.01 260);
+
+  --popover: oklch(0.99 0.002 260);
+  --popover-foreground: oklch(0.20 0.01 260);
+
+  --primary: oklch(0.55 0.19 258);
+  --primary-foreground: oklch(0.99 0.003 260);
+
+  --secondary: oklch(0.94 0.005 260);
+  --secondary-foreground: oklch(0.30 0.01 260);
+
+  --muted: oklch(0.94 0.005 260);
+  --muted-foreground: oklch(0.50 0.01 260);
+
+  --accent-foreground: oklch(0.20 0.01 260);
+
+  --destructive: oklch(0.55 0.2 25);
+  --destructive-foreground: oklch(0.99 0.003 25);
+
+  --border: oklch(0.88 0.008 260);
+  --input: oklch(0.88 0.008 260);
+  --ring: oklch(0.55 0.19 258);
+
+  /* App semantic tokens – light */
   --border-subtle: rgba(0, 0, 0, 0.06);
   --border-default: rgba(0, 0, 0, 0.08);
 
@@ -58,6 +124,54 @@
   --accent: #5B67E8;
   --accent-hover: #4A55CC;
   --accent-glow: rgba(91, 103, 232, 0.18);
+  --accent-surface: rgba(0, 0, 0, 0.06);
+
+  /* Glass surfaces – light */
+  --glass-1-surface: rgba(0, 0, 0, 0.02);
+  --glass-2-surface: rgba(0, 0, 0, 0.04);
+  --glass-3-surface: rgba(0, 0, 0, 0.06);
+  --glass-border: rgba(0, 0, 0, 0.08);
+  --color-border: rgba(0, 0, 0, 0.08);
+}
+
+/* ─── Tailwind v4 theme mapping ─────────────────────────────────────────
+   Maps shadcn CSS variables into Tailwind's theme namespace so utilities
+   like bg-background, text-foreground, border-border work and stay live
+   across theme switches. Radius literals mirror the :root values above so
+   `rounded-md` utilities and `var(--radius-md)` references agree. */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent-surface);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+
+  /* ─── Motion easing (native-feel curves) ────────────────────────────
+     --ease-spring: decelerate with a slight overshoot (macOS-style pop)
+     for dialog/menu entrances. --ease-smooth: pure deceleration for exits.
+     tw-animate-css animations read --tw-ease, so the ease-* utilities
+     driven by these tokens also time the animate-in/out keyframes. */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-smooth: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* NOTE: do not add an unlayered universal reset here. Tailwind v4 emits its

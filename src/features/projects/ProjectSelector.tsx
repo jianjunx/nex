@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { ChevronDown } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
-  Button,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@glinui/ui";
+} from "@/components/ui/dropdown-menu";
 import { useProjectStore } from "../../stores/project.store";
 import { useConversationStore } from "../../stores/conversation.store";
 import { useAgentStore } from "../../stores/agent.store";
@@ -17,14 +18,15 @@ import { fsWatchStart } from "../../bridge/tauri";
 import { projectSessionIndicators } from "../agent/projectSessionIndicators";
 import { restoreProjectConversationTabs } from "./restoreProjectConversationTabs";
 
-// Radix highlights items on hover/keyboard via data-[highlighted]; map it to
-// the old --overlay-hover token. dark: is bound to [data-theme="dark"] via
-// @custom-variant in globals.css (app pins light, so these are inert until
-// dark theme support lands), but the dark: counterparts are still required:
-// the item base carries dark:data-[highlighted]:bg-black/50 and tailwind-merge
-// doesn't merge across modifier groups.
+const platform = typeof navigator !== "undefined" ? navigator.platform : "";
+const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+// Match TopBar's compact fused bar on macOS (see TopBar for the rationale).
+const isMac = platform.startsWith("Mac") || /Macintosh/.test(ua);
+
+// Radix highlights items on hover/keyboard via focus + data-[highlighted];
+// override shadcn's solid accent focus with the app's subtle overlay token.
 const ITEM_HIGHLIGHT =
-  "data-[highlighted]:bg-[var(--overlay-hover)] dark:data-[highlighted]:bg-[var(--overlay-hover)]";
+  "focus:bg-[var(--overlay-hover)] focus:text-[var(--text-primary)] data-[highlighted]:bg-[var(--overlay-hover)]";
 
 function errorMessage(err: unknown): string {
   if (err && typeof err === "object" && "message" in err) {
@@ -120,18 +122,12 @@ export function ProjectSelector() {
   return (
     <div className="relative" data-tauri-drag-region="false">
       <DropdownMenu open={dropdownOpen} onOpenChange={setDropdownOpen}>
-        {/*
-          asChild merges the trigger's classes onto Button with a plain string
-          join (Radix Slot, no twMerge), so pass variant/size explicitly to
-          neutralize the trigger's defaultVariants, and squash rounded-md/text-sm
-          via className to match Button's rounded-xl/text-xs.
-        */}
-        <DropdownMenuTrigger asChild variant="ghost" size="sm" className="rounded-xl text-xs">
-          <Button variant="ghost" size="sm">
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="sm" className={`rounded-xl text-xs ${isMac ? "h-8" : ""}`}>
             <span className="inline-flex items-center">
               {activeProject?.name || "Open Project"}
               {activeProjectId && <StatusDots projectId={activeProjectId} />}
-              <span className="ml-1">▾</span>
+              <ChevronDown size={12} className="ml-1 opacity-60" />
             </span>
           </Button>
         </DropdownMenuTrigger>
@@ -139,7 +135,6 @@ export function ProjectSelector() {
         {/* DropdownMenuContent self-wraps its own Portal; base already has z-50. */}
         <DropdownMenuContent
           align="start"
-          variant="glass"
           data-tauri-drag-region="false"
           className="min-w-[200px] rounded-[var(--radius-md)] p-1.5"
           onCloseAutoFocus={(e) => {
@@ -163,7 +158,7 @@ export function ProjectSelector() {
                   fsWatchStart(p.path).catch(() => {});
                 })();
               }}
-              className={`px-3 ${ITEM_HIGHLIGHT} ${
+              className={`px-3 transition-colors duration-100 ${ITEM_HIGHLIGHT} ${
                 p.id === activeProjectId
                   ? "bg-[var(--overlay-active)] text-[var(--text-primary)]"
                   : "text-[var(--text-secondary)]"
@@ -180,7 +175,7 @@ export function ProjectSelector() {
             onSelect={() => {
               pendingOpenFolder.current = true;
             }}
-            className={`px-3 text-[var(--accent)] ${ITEM_HIGHLIGHT} data-[highlighted]:text-[var(--accent)] dark:data-[highlighted]:text-[var(--accent)]`}
+            className={`px-3 text-[var(--accent)] transition-colors duration-100 ${ITEM_HIGHLIGHT} focus:text-[var(--accent)] data-[highlighted]:text-[var(--accent)]`}
           >
             + Open Folder...
           </DropdownMenuItem>

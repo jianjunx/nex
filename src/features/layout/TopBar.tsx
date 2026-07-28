@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Plus, PanelRight } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Button, Tabs, TabsList, TabsTrigger } from "@glinui/ui";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useUiStore } from "../../stores/ui.store";
 import { useProjectStore } from "../../stores/project.store";
 import {
@@ -15,9 +16,29 @@ import { ProjectSelector } from "../projects/ProjectSelector";
 import { NewConversationModal } from "../projects/NewConversationModal";
 import { WindowControls } from "./WindowControls";
 
-const isWindows =
-  typeof navigator !== "undefined" &&
-  (navigator.platform.startsWith("Win") || navigator.userAgent.includes("Windows"));
+const platform = typeof navigator !== "undefined" ? navigator.platform : "";
+const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+const isWindows = platform.startsWith("Win") || ua.includes("Windows");
+const isMac = platform.startsWith("Mac") || /Macintosh/.test(ua);
+
+// Left padding (px) that clears the macOS traffic-light cluster when the native
+// title bar is overlaid onto this bar (titleBarStyle: "Overlay"). The lights sit
+// at ~x20..72, so content starts at 78. In fullscreen the lights float on hover
+// over the top-left instead of occupying the bar, so the padding is dropped and
+// the bar reclaims the full width — matching native apps.
+const MAC_TRAFFIC_LIGHT_PAD = "pl-[78px]";
+
+// Interactive targets must keep their own clicks; the bar's drag/zoom handlers
+// ignore them. Portaled Radix overlays live outside this subtree, so they're
+// naturally unaffected — which is why we drive dragging from JS mousedown rather
+// than a full-bar [data-tauri-drag-region] (the native attribute swallows clicks
+// for overlays that sit near the title bar).
+const INTERACTIVE =
+  "button, input, select, textarea, a, [role='button'], [role='menuitem'], [data-radix-popper-content-wrapper]";
+
+function isInteractiveTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement ? !!target.closest(INTERACTIVE) : false;
+}
 
 export function TopBar() {
   const { toggleSidePanel, sidePanelVisible } = useUiStore();
@@ -32,42 +53,62 @@ export function TopBar() {
   const [showNewConversation, setShowNewConversation] = useState(false);
   const [pendingCloseId, setPendingCloseId] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
+  const [macFullscreen, setMacFullscreen] = useState(false);
+
+  // Overlay mode puts our content under the native title bar, so the OS no
+  // longer provides a drag strip or double-click-to-zoom. We re-add both here,
+  // on every platform (Windows is frameless for the same reason). On macOS the
+  // traffic lights are native controls above the webview, so their clicks never
+  // reach these handlers — no special exclusion needed.
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0 || isInteractiveTarget(e.target)) return;
+    void getCurrentWindow().startDragging();
+  };
+  const handleDoubleClick = (e: React.MouseEvent) => {
+    if (isInteractiveTarget(e.target)) return;
+    void getCurrentWindow().toggleMaximize();
+  };
+
+  // Track macOS fullscreen to toggle the traffic-light padding (see above).
+  // No dedicated fullscreen event exists; a resize fires across the transition,
+  // so we re-query isFullscreen then.
+  useEffect(() => {
+    if (!isMac) return;
+    let active = true;
+    const win = getCurrentWindow();
+    const refresh = () => {
+      win.isFullscreen().then((v) => active && setMacFullscreen(v)).catch(() => {});
+    };
+    refresh();
+    const unlisten = win.onResized(refresh);
+    return () => {
+      active = false;
+      unlisten.then((fn) => fn()).catch(() => {});
+    };
+  }, []);
 
   const projectConversations = activeProjectId
     ? (conversationsByProject[activeProjectId] ?? [])
     : [];
 
-  // On Windows the native title bar is hidden, so the tab bar doubles as the
-  // drag handle. We start a native drag when the user presses the left button
-  // on a non-interactive part of the bar. macOS keeps its system title bar, so
-  // we leave dragging to the OS there.
-  const handleMouseDown = (e: React.MouseEvent) => {
-    if (!isWindows) return;
-    if (e.button !== 0) return;
-    const target = e.target as HTMLElement;
-    // Don't drag when interacting with controls or portaled menus. Prefer JS
-    // startDragging over a full-bar data-tauri-drag-region: the native attribute
-    // can swallow pointer events for overlays that sit near the title bar.
-    if (
-      target.closest(
-        "button, input, select, textarea, a, [role='button'], [role='menuitem'], [data-radix-popper-content-wrapper]",
-      )
-    ) {
-      return;
-    }
-    getCurrentWindow().startDragging();
-  };
+  // macOS: compact fused bar (40px) so the overlay traffic lights line up with
+  // the tabs. Windows keeps its taller frameless bar with custom window controls.
+  const sizing = isMac ? "h-10 gap-2" : "h-12 gap-3";
+  const pad =
+    isMac && !macFullscreen ? MAC_TRAFFIC_LIGHT_PAD + " pr-3" : isMac ? "px-3" : "px-4";
+  const iconSize = isMac ? "icon-sm" : "icon";
 
   return (
     <div
       onMouseDown={handleMouseDown}
-      className="flex items-center h-12 px-4 gap-3 border-b border-[color:var(--border-subtle)] bg-[var(--glass-1-surface)] backdrop-blur-[40px]"
+      onDoubleClick={handleDoubleClick}
+      className={`flex items-center border-b border-[color:var(--border-subtle)] bg-[var(--glass-1-surface)] backdrop-blur-xl ${sizing} ${pad}`}
     >
       {/* Project selector */}
       <ProjectSelector />
 
       {/* New conversation */}
-      <Button size="sm" variant="ghost" onClick={() => setShowNewConversation(true)}>
+      <Button size={iconSize} variant="ghost" onClick={() => setShowNewConversation(true)}>
         <Plus size={14} />
       </Button>
 
@@ -77,14 +118,14 @@ export function TopBar() {
           <span className="text-xs text-[var(--text-tertiary)] px-2">No conversations</span>
         ) : (
           <Tabs value={activeTabId ?? ""} onValueChange={switchTab} className="min-w-0">
-            <TabsList className="h-8 border-transparent bg-transparent p-0">
+            <TabsList variant="line" className={`h-8 gap-1 ${isMac ? "h-8" : "h-8"}`}>
               {openTabs.map((tabId) => {
                 const status = sessions[tabId]?.status ?? null;
                 return (
                   <TabsTrigger
                     key={tabId}
                     value={tabId}
-                    className="gap-2 rounded-[var(--radius-sm)] font-normal text-[var(--text-secondary)] hover:text-[var(--text-primary)] data-[state=active]:bg-[var(--glass-2-surface)] data-[state=active]:text-[var(--text-primary)] data-[state=active]:shadow-[inset_0_-2px_0_0_var(--accent)]"
+                    className={`${isMac ? "h-7 text-xs " : ""}flex-none gap-2 rounded-[var(--radius-sm)] px-2.5 font-normal text-[var(--text-secondary)] transition-colors duration-150 hover:text-[var(--text-primary)] data-[state=active]:bg-[var(--glass-2-surface)] data-[state=active]:text-[var(--text-primary)] data-[state=active]:shadow-[inset_0_-2px_0_0_var(--accent)] data-[state=active]:after:opacity-0`}
                   >
                     {status && status !== "idle" && (
                       <span
@@ -126,13 +167,14 @@ export function TopBar() {
       </div>
 
       {/* Panel toggle */}
-      <Button size="sm" variant="ghost" onClick={toggleSidePanel}>
+      <Button size={iconSize} variant="ghost" onClick={toggleSidePanel}>
         <PanelRight size={14} className={sidePanelVisible ? "text-[var(--accent)]" : ""} />
       </Button>
 
-      {/* Custom window controls (Windows only) */}
+      {/* Custom window controls (Windows only — macOS uses the native, overlaid
+          traffic lights at the left of this same bar). */}
       {isWindows && (
-        <div className="flex items-center" data-tauri-drag-region>
+        <div className="flex items-center">
           <WindowControls />
         </div>
       )}

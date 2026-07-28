@@ -1,0 +1,24 @@
+src/features/layout/TopBar.tsx
+  s_88d8b541e5ce0c::t_7a1e39653fce16 1,4-5,19-41,56-88,94-99,104-105,111,121,128,170
+src/features/projects/ProjectSelector.tsx
+  s_88d8b541e5ce0c::t_5d90e5aae7fab3 21-25
+  s_88d8b541e5ce0c::t_a57e2cd19b2a89 26-27
+src-tauri/tauri.conf.json
+  s_88d8b541e5ce0c::t_8fa93240df3cd0 21-22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "71cc0b8bc95e09f68649435b43e904333de0a304",
+  "prompts": {},
+  "sessions": {
+    "s_88d8b541e5ce0c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ca8b75a7-edd4-471b-9dc9-393857e26b69",
+        "model": "qwen3.8-max-preview"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

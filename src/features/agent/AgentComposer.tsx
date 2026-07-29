@@ -8,8 +8,9 @@ import { selectProjectActiveTabId, useConversationStore } from "../../stores/con
 import { fsSearch, fsReadFile, type PromptBlock, type SearchMatch } from "../../bridge/tauri";
 import { PlanBar } from "./thread/PlanBar";
 
-const MIN_HEIGHT = 105;
-const MAX_HEIGHT = 320;
+// Text area only — toolbar lives inside the same chrome below this.
+const MIN_HEIGHT = 60;
+const MAX_HEIGHT = 240;
 
 interface FileMention {
   path: string;
@@ -151,11 +152,8 @@ export function AgentComposer() {
     textareaRef.current?.focus();
   };
 
-  const currentMode = meta?.modes.find((m) => m.id === meta.currentModeId);
-  const currentModel = meta?.models.find((m) => m.id === meta.currentModelId);
-
   return (
-    <div className="border-t border-[color:var(--border-subtle)]">
+    <div>
       {meta?.plan && meta.plan.length > 0 && <PlanBar entries={meta.plan} />}
 
       <div className="px-6 py-4 relative">
@@ -212,24 +210,32 @@ export function AgentComposer() {
           </div>
         )}
 
-        <div className="flex flex-col gap-2 rounded-[var(--radius-lg)] bg-[var(--glass-3-surface)] border border-[color:var(--glass-border)] px-4 py-3">
+        {/* Single bordered surface: textarea + toolbar share one chrome so
+            Mode/Model/Send sit inside the input box (not below it). */}
+        <div
+          className="flex flex-col gap-2 rounded-[var(--radius-lg)] bg-[var(--glass-3-surface)] border border-[color:var(--glass-border)] px-3 pt-3 pb-2 shadow-xs transition-[border-color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50"
+          onClick={() => textareaRef.current?.focus()}
+        >
           <Textarea
             ref={textareaRef}
             value={text}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={session ? "Send a message…  / commands  @ files" : "Start an agent session to chat"}
-            className="flex-1 font-normal leading-[21px] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] resize-none overflow-y-auto"
+            className="flex-1 min-h-0 border-0 bg-transparent p-1 shadow-none rounded-none text-sm font-normal leading-[21px] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] resize-none overflow-y-auto focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
             style={{ minHeight: MIN_HEIGHT, maxHeight: MAX_HEIGHT }}
             disabled={!session}
           />
 
-          <div className="flex items-center gap-2 flex-wrap">
+          <div
+            className="flex items-center gap-1.5 flex-wrap pt-0.5"
+            onClick={(e) => e.stopPropagation()}
+          >
             {meta && meta.modes.length > 0 && session && (
               <label className="relative inline-flex items-center text-xs text-[var(--text-secondary)]">
                 <span className="mr-1 opacity-70">Mode</span>
                 <select
-                  className="appearance-none bg-[var(--glass-2-surface)] border border-[color:var(--border-subtle)] rounded-md pl-2 pr-6 py-1 text-xs"
+                  className="appearance-none bg-[var(--glass-2-surface)] border border-[color:var(--border-subtle)] rounded-full pl-2.5 pr-6 py-1 text-xs"
                   value={meta.currentModeId ?? ""}
                   onChange={(e) => void setMode(session.sessionId, e.target.value)}
                 >
@@ -245,11 +251,11 @@ export function AgentComposer() {
 
             {meta && meta.models.length > 0 && session && (
               <label className="relative inline-flex items-center text-xs text-[var(--text-secondary)]">
-                <span className="mr-1 opacity-70">Model</span>
                 <select
-                  className="appearance-none bg-[var(--glass-2-surface)] border border-[color:var(--border-subtle)] rounded-md pl-2 pr-6 py-1 text-xs max-w-[180px]"
+                  className="appearance-none bg-transparent hover:bg-[var(--glass-2-surface)] rounded-full pl-2 pr-6 py-1 text-xs max-w-[160px] text-[var(--text-secondary)]"
                   value={meta.currentModelId ?? ""}
                   onChange={(e) => void setModel(session.sessionId, e.target.value)}
+                  title="Model"
                 >
                   {meta.models.map((m) => (
                     <option key={m.id} value={m.id}>
@@ -266,7 +272,7 @@ export function AgentComposer() {
                 <label key={opt.id} className="relative inline-flex items-center text-xs text-[var(--text-secondary)]">
                   <span className="mr-1 opacity-70">{opt.name}</span>
                   <select
-                    className="appearance-none bg-[var(--glass-2-surface)] border border-[color:var(--border-subtle)] rounded-md pl-2 pr-6 py-1 text-xs"
+                    className="appearance-none bg-[var(--glass-2-surface)] border border-[color:var(--border-subtle)] rounded-full pl-2.5 pr-6 py-1 text-xs"
                     value={opt.currentValueId}
                     onChange={() => {
                       /* set_config not in ACP 0.7; UI ready for future wire-up */
@@ -283,33 +289,27 @@ export function AgentComposer() {
               ) : null,
             )}
 
-            {(currentMode || currentModel) && (
-              <span className="text-[10px] text-[var(--text-tertiary)] ml-auto hidden sm:inline">
-                {[currentMode?.name, currentModel?.name].filter(Boolean).join(" · ")}
-              </span>
-            )}
-
-            <div className="ml-auto flex items-center gap-2">
+            <div className="ml-auto flex items-center gap-1.5">
               {isRunning ? (
                 <Button
                   variant="ghost"
-                  size="sm"
+                  size="icon-sm"
                   onClick={() => session && void cancel(session.sessionId)}
-                  className="gap-1"
+                  title="Stop"
+                  className="rounded-full"
                 >
                   <Square size={14} />
-                  Stop
                 </Button>
               ) : (
                 <Button
                   variant="default"
-                  size="sm"
+                  size="icon-sm"
                   disabled={!text.trim() || !session}
                   onClick={() => void handleSend()}
-                  className="gap-1"
+                  title="Send"
+                  className="rounded-full"
                 >
                   <Send size={14} />
-                  Send
                 </Button>
               )}
             </div>

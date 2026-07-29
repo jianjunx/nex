@@ -456,18 +456,44 @@ async fn run_session(
     });
 
     let handshake = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
-        conn.initialize(acp::InitializeRequest {
-            protocol_version: acp::VERSION,
-            client_capabilities: acp::ClientCapabilities::default(),
-            client_info: Some(acp::Implementation {
-                name: "nex".into(),
-                title: Some("Nex".into()),
-                version: env!("CARGO_PKG_VERSION").into(),
-            }),
-            meta: None,
-        })
-        .await
-        .map_err(NexError::from)?;
+        let init = conn
+            .initialize(acp::InitializeRequest {
+                protocol_version: acp::VERSION,
+                client_capabilities: acp::ClientCapabilities::default(),
+                client_info: Some(acp::Implementation {
+                    name: "nex".into(),
+                    title: Some("Nex".into()),
+                    version: env!("CARGO_PKG_VERSION").into(),
+                }),
+                meta: None,
+            })
+            .await
+            .map_err(NexError::from)?;
+
+        // Cursor (and similar agents) advertise auth methods such as
+        // `cursor_login` and require `authenticate` before `session/new`.
+        // Skipping this step either errors with "Authentication required" or
+        // hangs until the handshake timeout.
+        if let Some(method) = pick_auth_method(&init.auth_methods) {
+            log::info!(
+                "authenticating ACP agent via method `{}` ({})",
+                method.id.0,
+                method.name
+            );
+            conn.authenticate(acp::AuthenticateRequest {
+                method_id: method.id.clone(),
+                meta: None,
+            })
+            .await
+            .map_err(|e| {
+                NexError::Agent(format!(
+                    "{e}\n\
+                     Tip: for Cursor, run `agent login` in a terminal first \
+                     (or set CURSOR_API_KEY), then retry creating the session."
+                ))
+            })?;
+        }
+
         let response = conn
             .new_session(acp::NewSessionRequest {
                 cwd: PathBuf::from(&cwd),
@@ -524,6 +550,19 @@ async fn run_session(
 
     sessions.lock().unwrap().remove(&session_key);
     let _ = app.emit(AGENT_SESSION_TERMINATED_EVENT, AgentSessionTerminated { session_id: session_key });
+}
+
+/// Prefer a known interactive login method when present; otherwise take the
+/// first advertised method. Agents with an empty `authMethods` list (Claude
+/// via npx, etc.) skip authentication entirely.
+fn pick_auth_method(methods: &[acp::AuthMethod]) -> Option<&acp::AuthMethod> {
+    const PREFERRED: &[&str] = &["cursor_login"];
+    for id in PREFERRED {
+        if let Some(m) = methods.iter().find(|m| m.id.0.as_ref() == *id) {
+            return Some(m);
+        }
+    }
+    methods.first()
 }
 
 fn diag(

@@ -85,9 +85,17 @@ pub async fn resolve_registry(
 }
 
 /// Builds the platform key used to index binary targets in the registry
-/// (e.g. `windows-x86_64`, `macos-aarch64`).
+/// (e.g. `windows-x86_64`, `darwin-aarch64`).
+///
+/// Rust reports macOS as `macos`, but the Zed agent registry (and Cursor's
+/// published binaries) use the Darwin triple — map that one OS name so lookup
+/// hits `darwin-aarch64` / `darwin-x86_64`.
 fn current_platform_key() -> String {
-    format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
+    let os = match std::env::consts::OS {
+        "macos" => "darwin",
+        other => other,
+    };
+    format!("{}-{}", os, std::env::consts::ARCH)
 }
 
 /// Resolves a user-defined custom server (a raw command string) into a launch
@@ -279,6 +287,27 @@ mod tests {
         let e = entry("claude-acp", Some(npx("@agentclientprotocol/claude-agent-acp@0.62.0", &[])));
         let spec = resolve_registry(&e, "/w", &test_cache()).await.unwrap();
         assert_eq!(spec.env.get("ANTHROPIC_API_KEY").map(String::as_str), Some(""));
+    }
+
+    #[test]
+    fn platform_key_uses_darwin_on_macos() {
+        let key = current_platform_key();
+        // Registry triples use `darwin-*`, never Rust's `macos` OS name.
+        assert!(
+            !key.starts_with("macos-"),
+            "platform key must not use Rust's macos OS name: {key}"
+        );
+        #[cfg(target_os = "macos")]
+        {
+            assert!(
+                key.starts_with("darwin-"),
+                "macOS should map to darwin-*: {key}"
+            );
+            assert!(
+                key.ends_with("-aarch64") || key.ends_with("-x86_64"),
+                "unexpected arch in platform key: {key}"
+            );
+        }
     }
 
     #[tokio::test]

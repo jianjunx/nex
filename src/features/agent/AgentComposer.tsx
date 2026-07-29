@@ -4,8 +4,12 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useAgentStore } from "../../stores/agent.store";
 import { useProjectStore } from "../../stores/project.store";
-import { selectProjectActiveTabId, useConversationStore } from "../../stores/conversation.store";
-import { fsSearch, fsReadFile, type PromptBlock, type SearchMatch } from "../../bridge/tauri";
+import {
+  selectProjectActiveTabId,
+  selectProjectConversations,
+  useConversationStore,
+} from "../../stores/conversation.store";
+import { fsSearch, fsReadFile, type PromptBlock, type SearchMatch, type SessionTarget } from "../../bridge/tauri";
 import { PlanBar } from "./thread/PlanBar";
 
 // Text area only — toolbar lives inside the same chrome below this.
@@ -41,7 +45,46 @@ export function AgentComposer() {
 
   const session = activeTabId ? sessions[activeTabId] : null;
   const meta = activeTabId ? metaByConversation[activeTabId] : null;
+  const isStarting = session?.status === "starting";
   const isRunning = session?.status === "running" || session?.status === "waiting";
+  const agentError = useAgentStore((s) => s.error);
+  const createSession = useAgentStore((s) => s.createSession);
+  const conversations = useConversationStore((s) =>
+    selectProjectConversations(s, activeProjectId),
+  );
+  const activeConversation = conversations.find((c) => c.id === activeTabId) ?? null;
+
+  /** After restart, tabs restore without a live ACP process — spawn on first send. */
+  const ensureLiveSession = async (): Promise<string | null> => {
+    if (!activeTabId || !project || !activeConversation) return null;
+    const current = useAgentStore.getState().sessions[activeTabId];
+    if (current?.sessionId && current.status !== "starting") return current.sessionId;
+
+    // Wait briefly if a create is already in flight for this tab.
+    if (current?.status === "starting") {
+      for (let i = 0; i < 60; i++) {
+        await new Promise((r) => setTimeout(r, 250));
+        const s = useAgentStore.getState().sessions[activeTabId];
+        if (s?.sessionId && s.status !== "starting") return s.sessionId;
+        if (!s) break;
+      }
+      return useAgentStore.getState().sessions[activeTabId]?.sessionId || null;
+    }
+
+    const servers = useAgentStore.getState().servers;
+    if (servers.length === 0) await useAgentStore.getState().loadServers();
+    const descriptor =
+      useAgentStore.getState().servers.find((s) => s.id === activeConversation.agent_type) ?? null;
+    const target: SessionTarget =
+      descriptor?.kind === "custom"
+        ? { type: "custom", id: activeConversation.agent_type }
+        : { type: "registry", id: activeConversation.agent_type };
+    try {
+      return await createSession(activeTabId, target, project.path);
+    } catch {
+      return null;
+    }
+  };
 
   const adjustHeight = useCallback(() => {
     const el = textareaRef.current;
@@ -78,7 +121,7 @@ export function AgentComposer() {
   });
 
   const handleSend = async () => {
-    if (!text.trim() || !session || !activeTabId) return;
+    if (!text.trim() || !activeTabId || isStarting) return;
     const content = text;
     const fileMentions = [...mentions];
     setText("");
@@ -89,6 +132,9 @@ export function AgentComposer() {
 
     appendUserMessage(activeTabId, content);
     autoTitleFromFirstMessage(activeTabId, content);
+
+    const sessionId = await ensureLiveSession();
+    if (!sessionId) return;
 
     const blocks: PromptBlock[] = [{ type: "text", text: content }];
     for (const m of fileMentions) {
@@ -108,7 +154,7 @@ export function AgentComposer() {
         blocks.push({ type: "resource_link", uri: pathToFileUri(m.path), name: m.name });
       }
     }
-    await sendPrompt(session.sessionId, blocks);
+    await sendPrompt(sessionId, blocks);
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -212,6 +258,17 @@ export function AgentComposer() {
           </div>
         )}
 
+        {(isStarting || agentError) && (
+          <div className="mb-2 text-xs px-1">
+            {isStarting && (
+              <p className="text-[var(--text-tertiary)]">正在启动 Agent（拉起进程并握手）…</p>
+            )}
+            {agentError && !isStarting && (
+              <p className="text-[var(--error)] whitespace-pre-wrap">{agentError}</p>
+            )}
+          </div>
+        )}
+
         {/* Single bordered surface: textarea + toolbar share one chrome so
             Mode/Model/Send sit inside the input box (not below it). */}
         <div
@@ -223,17 +280,23 @@ export function AgentComposer() {
             value={text}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={session ? "Send a message…  / commands  @ files" : "Start an agent session to chat"}
+            placeholder={
+              isStarting
+                ? "Agent starting…"
+                : activeTabId
+                  ? "Send a message…  / commands  @ files"
+                  : "Start a conversation to chat"
+            }
             className="flex-1 min-h-0 border-0 bg-transparent p-1 shadow-none rounded-none text-sm font-normal leading-[21px] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] resize-none overflow-y-auto focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
             style={{ minHeight: MIN_HEIGHT, maxHeight: MAX_HEIGHT }}
-            disabled={!session}
+            disabled={!activeTabId || isStarting}
           />
 
           <div
             className="flex items-center gap-1.5 flex-wrap pt-0.5"
             onClick={(e) => e.stopPropagation()}
           >
-            {meta && meta.modes.length > 0 && session && (
+            {meta && meta.modes.length > 0 && session?.sessionId && (
               <label className="relative inline-flex items-center text-xs text-[var(--text-secondary)]">
                 <span className="mr-1 opacity-70">Mode</span>
                 <select
@@ -251,7 +314,7 @@ export function AgentComposer() {
               </label>
             )}
 
-            {meta && meta.models.length > 0 && session && (
+            {meta && meta.models.length > 0 && session?.sessionId && (
               <label className="relative inline-flex items-center text-xs text-[var(--text-secondary)]">
                 <select
                   className="appearance-none bg-transparent hover:bg-[var(--glass-2-surface)] rounded-full pl-2 pr-6 py-1 text-xs max-w-[160px] text-[var(--text-secondary)]"
@@ -270,7 +333,7 @@ export function AgentComposer() {
             )}
 
             {meta?.configOptions.map((opt) =>
-              session ? (
+              session?.sessionId ? (
                 <label key={opt.id} className="relative inline-flex items-center text-xs text-[var(--text-secondary)]">
                   <span className="mr-1 opacity-70">{opt.name}</span>
                   <select
@@ -296,7 +359,7 @@ export function AgentComposer() {
                 <Button
                   variant="ghost"
                   size="icon-sm"
-                  onClick={() => session && void cancel(session.sessionId)}
+                  onClick={() => session?.sessionId && void cancel(session.sessionId)}
                   title="Stop"
                   className="rounded-full"
                 >
@@ -306,7 +369,7 @@ export function AgentComposer() {
                 <Button
                   variant="default"
                   size="icon-sm"
-                  disabled={!text.trim() || !session}
+                  disabled={!text.trim() || !activeTabId || isStarting}
                   onClick={() => void handleSend()}
                   title="Send"
                   className="rounded-full"

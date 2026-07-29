@@ -57,6 +57,20 @@ export async function conversationUpdateTitle(conversationId: string, title: str
   return invoke(COMMANDS.CONVERSATION_UPDATE_TITLE, { conversationId, title });
 }
 
+export async function conversationAppendMessage(
+  conversationId: string,
+  role: string,
+  content: string,
+  toolSummary?: string | null,
+): Promise<Message> {
+  return invoke(COMMANDS.CONVERSATION_APPEND_MESSAGE, {
+    conversationId,
+    role,
+    content,
+    toolSummary: toolSummary ?? null,
+  });
+}
+
 // --- Agent (open ACP registry + custom servers) ---
 /** One row in the New-Conversation agent dropdown. */
 export interface ServerDescriptor {

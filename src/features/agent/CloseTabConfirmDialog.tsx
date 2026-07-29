@@ -10,7 +10,7 @@ import {
 interface Props {
   open: boolean;
   busy: boolean;
-  status: "idle" | "running" | "waiting" | null;
+  status: "starting" | "idle" | "running" | "waiting" | null;
   onCancel: () => void;
   onConfirm: () => void;
 }

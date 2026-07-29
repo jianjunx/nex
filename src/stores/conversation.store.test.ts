@@ -4,12 +4,14 @@ const conversationCreate = vi.fn();
 const conversationList = vi.fn();
 const conversationGetMessages = vi.fn();
 const conversationUpdateTitle = vi.fn();
+const conversationAppendMessage = vi.fn();
 
 vi.mock("../bridge/tauri", () => ({
   conversationCreate: (...args: unknown[]) => conversationCreate(...args),
   conversationList: (...args: unknown[]) => conversationList(...args),
   conversationGetMessages: (...args: unknown[]) => conversationGetMessages(...args),
   conversationUpdateTitle: (...args: unknown[]) => conversationUpdateTitle(...args),
+  conversationAppendMessage: (...args: unknown[]) => conversationAppendMessage(...args),
 }));
 
 vi.mock("./project.store", () => ({

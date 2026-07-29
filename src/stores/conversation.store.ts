@@ -6,6 +6,7 @@ import {
   conversationList,
   conversationGetMessages,
   conversationUpdateTitle,
+  conversationAppendMessage,
   type Conversation,
   type Message,
 } from "../bridge/tauri";
@@ -41,6 +42,12 @@ interface ConversationStore {
   autoTitleFromFirstMessage: (conversationId: string, text: string) => void;
   loadMessages: (conversationId: string) => Promise<void>;
   appendMessage: (conversationId: string, message: Message) => void;
+  /** Persist a turn message to SQLite (and mirror into messagesByConversation). */
+  persistMessage: (
+    conversationId: string,
+    role: "user" | "assistant",
+    content: string,
+  ) => Promise<void>;
   updateMessageContent: (conversationId: string, messageId: string, content: string) => void;
   restoreTabs: (
     projectId: string,
@@ -53,6 +60,7 @@ interface ConversationStore {
 
 /** Stable empty tabs — never allocate in selectors (breaks useSyncExternalStore). */
 const EMPTY_TABS: string[] = [];
+const EMPTY_CONVERSATIONS: Conversation[] = [];
 
 export function selectProjectOpenTabs(
   s: Pick<ConversationStore, "tabsByProject">,
@@ -60,6 +68,14 @@ export function selectProjectOpenTabs(
 ): string[] {
   if (!projectId) return EMPTY_TABS;
   return s.tabsByProject[projectId] ?? EMPTY_TABS;
+}
+
+export function selectProjectConversations(
+  s: Pick<ConversationStore, "conversationsByProject">,
+  projectId: string | null | undefined,
+): Conversation[] {
+  if (!projectId) return EMPTY_CONVERSATIONS;
+  return s.conversationsByProject[projectId] ?? EMPTY_CONVERSATIONS;
 }
 
 export function selectProjectActiveTabId(
@@ -253,6 +269,20 @@ export const useConversationStore = create<ConversationStore>()(
           if (!s.messagesByConversation[conversationId]) s.messagesByConversation[conversationId] = [];
           s.messagesByConversation[conversationId].push(message);
         });
+      },
+
+      persistMessage: async (conversationId, role, content) => {
+        const trimmed = content.trim();
+        if (!trimmed) return;
+        try {
+          const msg = await conversationAppendMessage(conversationId, role, trimmed);
+          set((s) => {
+            if (!s.messagesByConversation[conversationId]) s.messagesByConversation[conversationId] = [];
+            s.messagesByConversation[conversationId].push(msg);
+          });
+        } catch (err) {
+          console.error("[conversation] persistMessage failed:", err);
+        }
       },
 
       updateMessageContent: (conversationId: string, messageId: string, content: string) => {

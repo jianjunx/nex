@@ -25,12 +25,14 @@ import {
 } from "../bridge/tauri";
 import type { AgentPermissionRequestPayload } from "../bridge/events";
 import { applySessionUpdate, emptySessionMeta } from "../features/agent/thread/applySessionUpdate";
+import { assistantTextAfterLastUser } from "../features/agent/thread/messagesToThreadEntries";
 import type { SessionMeta, ThreadEntry, ToolCallEntry } from "../features/agent/thread/types";
+import { useConversationStore } from "./conversation.store";
 
 export interface AgentSession {
   sessionId: string;
   conversationId: string;
-  status: "idle" | "running" | "waiting";
+  status: "starting" | "idle" | "running" | "waiting";
 }
 
 interface AgentStore {
@@ -48,6 +50,8 @@ interface AgentStore {
 
   createSession: (conversationId: string, target: SessionTarget, cwd: string) => Promise<string>;
   removeSession: (conversationId: string) => Promise<void>;
+  /** Replace in-memory thread with hydrated history (used on cold restore). */
+  hydrateEntries: (conversationId: string, entries: ThreadEntry[]) => void;
   appendUserMessage: (conversationId: string, text: string) => void;
   sendPrompt: (sessionId: string, blocks: PromptBlock[]) => Promise<void>;
   cancel: (sessionId: string) => Promise<void>;
@@ -152,6 +156,12 @@ export const useAgentStore = create<AgentStore>()(
       set((s) => {
         s.loading = true;
         s.error = null;
+        s.sessions[conversationId] = {
+          sessionId: "",
+          conversationId,
+          status: "starting",
+        };
+        if (!s.entriesByConversation[conversationId]) s.entriesByConversation[conversationId] = [];
       });
       try {
         const result = await agentCreateSession(conversationId, target, cwd);
@@ -167,6 +177,7 @@ export const useAgentStore = create<AgentStore>()(
         return result.sessionId;
       } catch (err) {
         set((s) => {
+          delete s.sessions[conversationId];
           s.error = errorMessage(err);
         });
         throw err;
@@ -184,7 +195,7 @@ export const useAgentStore = create<AgentStore>()(
         s.error = null;
       });
       try {
-        await agentCloseSession(session.sessionId);
+        if (session.sessionId) await agentCloseSession(session.sessionId);
       } catch (err) {
         set((s) => {
           s.error = errorMessage(err);
@@ -198,6 +209,12 @@ export const useAgentStore = create<AgentStore>()(
       }
     },
 
+    hydrateEntries: (conversationId, entries) => {
+      set((s) => {
+        s.entriesByConversation[conversationId] = entries;
+      });
+    },
+
     appendUserMessage: (conversationId, text) => {
       set((s) => {
         if (!s.entriesByConversation[conversationId]) s.entriesByConversation[conversationId] = [];
@@ -208,6 +225,7 @@ export const useAgentStore = create<AgentStore>()(
           timestamp: Date.now(),
         });
       });
+      void useConversationStore.getState().persistMessage(conversationId, "user", text);
     },
 
     sendPrompt: async (sessionId, blocks) => {
@@ -229,6 +247,15 @@ export const useAgentStore = create<AgentStore>()(
           s.error = errorMessage(err);
         });
       } finally {
+        const entries = get().entriesByConversation[session.conversationId] ?? [];
+        const assistantText = assistantTextAfterLastUser(entries);
+        if (assistantText) {
+          void useConversationStore.getState().persistMessage(
+            session.conversationId,
+            "assistant",
+            assistantText,
+          );
+        }
         set((s) => {
           if (s.sessions[session.conversationId]) {
             const hasWaiting = (s.permissionQueues[sessionId] ?? []).length > 0;

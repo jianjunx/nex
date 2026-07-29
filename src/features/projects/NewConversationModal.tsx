@@ -53,17 +53,24 @@ export function NewConversationModal({ open, onClose }: Props) {
     setError(null);
     let conv: Conversation | null = null;
     try {
+      // Open the tab immediately; agent handshake (spawn + authenticate +
+      // session/new) continues in the background so the modal isn't blocked
+      // for the full cold-start cost on every Create.
       conv = await createConversation(project.id, selected.id);
-      const target: SessionTarget = { type: "registry", id: selected.id };
-      await createSession(conv.id, target, project.path);
+      const target: SessionTarget =
+        selected.kind === "custom"
+          ? { type: "custom", id: selected.id }
+          : { type: "registry", id: selected.id };
+      setCreating(false);
+      onClose();
+      void createSession(conv.id, target, project.path).catch((err) => {
+        useAgentStore.setState({ error: errorMessage(err) });
+      });
     } catch (err) {
       if (conv) closeTab(conv.id);
       setError(errorMessage(err));
       setCreating(false);
-      return;
     }
-    setCreating(false);
-    onClose();
   };
 
   return (

@@ -37,3 +37,14 @@ pub fn conversation_get_messages(state: State<AppState>, conversation_id: String
 pub fn conversation_update_title(state: State<AppState>, conversation_id: String, title: String) -> Result<(), NexError> {
     state.db.update_conversation_title(&conversation_id, &title)
 }
+
+#[tauri::command]
+pub fn conversation_append_message(
+    state: State<AppState>,
+    conversation_id: String,
+    role: String,
+    content: String,
+    tool_summary: Option<String>,
+) -> Result<Message, NexError> {
+    state.db.append_message(&conversation_id, &role, &content, tool_summary.as_deref())
+}

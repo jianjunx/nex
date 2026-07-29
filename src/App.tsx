@@ -8,6 +8,7 @@ import { useAgentStore } from "./stores/agent.store";
 import { useProjectStore } from "./stores/project.store";
 import { useFsStore } from "./stores/fs.store";
 import { useGitStore } from "./stores/git.store";
+import { useUiStore } from "./stores/ui.store";
 import { restoreProjectConversationTabs } from "./features/projects/restoreProjectConversationTabs";
 import { useTerminalStore } from "./stores/terminal.store";
 
@@ -87,11 +88,12 @@ function App() {
   }, []);
 
   const hasOpenEditors = useFsStore((s) => s.openFiles.length > 0);
+  const editorVisible = useUiStore((s) => s.editorVisible);
 
   return (
     <MainLayout
       mainContent={<ChatArea />}
-      editorPanel={hasOpenEditors ? <EditorPanel /> : null}
+      editorPanel={hasOpenEditors && editorVisible ? <EditorPanel /> : null}
       sidePanel={<SidePanel />}
     />
   );

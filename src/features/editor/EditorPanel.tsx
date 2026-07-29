@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import CodeMirror, { EditorView } from "@uiw/react-codemirror";
 import { searchPanelOpen, closeSearchPanel } from "@codemirror/search";
-import { ChevronDown, X } from "lucide-react";
+import { PanelRight, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useFsStore } from "../../stores/fs.store";
 import { useUiStore } from "../../stores/ui.store";
@@ -52,7 +52,6 @@ export function EditorPanel() {
   const reloadEditor = useFsStore((s) => s.reloadEditor);
   const dismissStale = useFsStore((s) => s.dismissStale);
   const clearError = useFsStore((s) => s.clearError);
-  const editorVisible = useUiStore((s) => s.editorVisible);
   const projects = useProjectStore((s) => s.projects);
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const projectPath = projects.find((p) => p.id === activeProjectId)?.path;
@@ -64,11 +63,10 @@ export function EditorPanel() {
     [editorFile?.path],
   );
 
-  // CodeMirror measured at zero size while `hidden` lays out wrong when
-  // re-shown; force a re-measure.
+  // CodeMirror measured at zero size while hidden; force a re-measure on mount.
   useEffect(() => {
-    if (editorVisible) viewRef.current?.requestMeasure();
-  }, [editorVisible]);
+    viewRef.current?.requestMeasure();
+  }, []);
 
   // Global keyboard-shortcut pattern: one window listener per mounted panel,
   // live state via getState(), and YIELD to any open Radix dialog.
@@ -108,7 +106,7 @@ export function EditorPanel() {
   if (openFiles.length === 0) return null;
 
   return (
-    <div className={editorVisible ? "flex flex-col h-full min-h-0" : "hidden"}>
+    <div className="flex flex-col h-full min-h-0">
       <div className="flex items-center gap-1 px-2 py-1.5 border-b border-[color:var(--border-subtle)] overflow-x-auto shrink-0">
         {openFiles.map((f) => {
           const active = f.path === activePath;
@@ -149,7 +147,7 @@ export function EditorPanel() {
           title="收起面板"
           onClick={() => useUiStore.getState().setEditorVisible(false)}
         >
-          <ChevronDown size={14} />
+          <PanelRight size={14} />
         </Button>
       </div>
       {error && (

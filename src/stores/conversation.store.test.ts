@@ -3,11 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const conversationCreate = vi.fn();
 const conversationList = vi.fn();
 const conversationGetMessages = vi.fn();
+const conversationUpdateTitle = vi.fn();
 
 vi.mock("../bridge/tauri", () => ({
   conversationCreate: (...args: unknown[]) => conversationCreate(...args),
   conversationList: (...args: unknown[]) => conversationList(...args),
   conversationGetMessages: (...args: unknown[]) => conversationGetMessages(...args),
+  conversationUpdateTitle: (...args: unknown[]) => conversationUpdateTitle(...args),
 }));
 
 vi.mock("./project.store", () => ({
@@ -98,6 +100,50 @@ describe("conversation.store project-scoped tabs", () => {
     const result = await useConversationStore.getState().loadConversations("proj-a");
     expect(result).toBeNull();
     expect(useConversationStore.getState().error).toBe("list failed");
+  });
+
+  it("autoTitleFromFirstMessage renames only default New Chat titles", async () => {
+    conversationUpdateTitle.mockResolvedValue(undefined);
+    useConversationStore.setState({
+      conversationsByProject: {
+        "proj-a": [
+          {
+            id: "c1",
+            project_id: "proj-a",
+            title: "New Chat",
+            agent_type: "x",
+            status: "idle",
+            created_at: 0,
+            updated_at: 0,
+          },
+          {
+            id: "c2",
+            project_id: "proj-a",
+            title: "Already named",
+            agent_type: "x",
+            status: "idle",
+            created_at: 0,
+            updated_at: 0,
+          },
+        ],
+      },
+    });
+
+    useConversationStore.getState().autoTitleFromFirstMessage("c1", "Fix the login bug please");
+    await vi.waitFor(() => {
+      expect(conversationUpdateTitle).toHaveBeenCalledWith("c1", "Fix the login bug please");
+    });
+    expect(useConversationStore.getState().conversationsByProject["proj-a"][0].title).toBe(
+      "Fix the login bug please",
+    );
+
+    conversationUpdateTitle.mockClear();
+    useConversationStore.getState().autoTitleFromFirstMessage("c2", "Should not rename");
+    await Promise.resolve();
+    expect(conversationUpdateTitle).not.toHaveBeenCalled();
+    expect(useConversationStore.getState().conversationsByProject["proj-a"][1].title).toBe(
+      "Already named",
+    );
   });
 
   it("migrateConversationPersist v0 maps openTabs into legacyTabsMigration", () => {

@@ -5,10 +5,15 @@ import {
   conversationCreate,
   conversationList,
   conversationGetMessages,
+  conversationUpdateTitle,
   type Conversation,
   type Message,
 } from "../bridge/tauri";
 import { useProjectStore } from "./project.store";
+import {
+  DEFAULT_CONVERSATION_TITLE,
+  deriveConversationTitle,
+} from "../features/agent/deriveConversationTitle";
 
 export type LegacyTabsMigration = { tabs: string[]; activeId: string | null };
 
@@ -27,6 +32,13 @@ interface ConversationStore {
   createConversation: (projectId: string, agentType: string) => Promise<Conversation>;
   switchTab: (id: string) => void;
   closeTab: (id: string) => void;
+  /** Persist a new title and update the in-memory conversation list. */
+  renameConversation: (conversationId: string, title: string) => Promise<void>;
+  /**
+   * If the conversation still has the default "New Chat" title, rename it from
+   * the first user message. No-op once the title has been customized.
+   */
+  autoTitleFromFirstMessage: (conversationId: string, text: string) => void;
   loadMessages: (conversationId: string) => Promise<void>;
   appendMessage: (conversationId: string, message: Message) => void;
   updateMessageContent: (conversationId: string, messageId: string, content: string) => void;
@@ -182,6 +194,37 @@ export const useConversationStore = create<ConversationStore>()(
             s.activeTabByProject[projectId] = tabs[tabs.length - 1] || null;
           }
         });
+      },
+
+      renameConversation: async (conversationId, title) => {
+        const trimmed = title.trim();
+        if (!trimmed) return;
+        await conversationUpdateTitle(conversationId, trimmed);
+        set((s) => {
+          for (const list of Object.values(s.conversationsByProject)) {
+            const conv = list.find((c) => c.id === conversationId);
+            if (conv) {
+              conv.title = trimmed;
+              conv.updated_at = Date.now();
+              break;
+            }
+          }
+        });
+      },
+
+      autoTitleFromFirstMessage: (conversationId, text) => {
+        let shouldRename = false;
+        for (const list of Object.values(useConversationStore.getState().conversationsByProject)) {
+          const conv = list.find((c) => c.id === conversationId);
+          if (conv) {
+            shouldRename = conv.title === DEFAULT_CONVERSATION_TITLE;
+            break;
+          }
+        }
+        if (!shouldRename) return;
+        const next = deriveConversationTitle(text);
+        if (next === DEFAULT_CONVERSATION_TITLE) return;
+        void useConversationStore.getState().renameConversation(conversationId, next);
       },
 
       loadMessages: async (conversationId: string) => {

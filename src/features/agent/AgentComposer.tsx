@@ -37,6 +37,7 @@ export function AgentComposer() {
   const cancel = useAgentStore((s) => s.cancel);
   const setMode = useAgentStore((s) => s.setMode);
   const setModel = useAgentStore((s) => s.setModel);
+  const autoTitleFromFirstMessage = useConversationStore((s) => s.autoTitleFromFirstMessage);
 
   const session = activeTabId ? sessions[activeTabId] : null;
   const meta = activeTabId ? metaByConversation[activeTabId] : null;
@@ -87,6 +88,7 @@ export function AgentComposer() {
     requestAnimationFrame(adjustHeight);
 
     appendUserMessage(activeTabId, content);
+    autoTitleFromFirstMessage(activeTabId, content);
 
     const blocks: PromptBlock[] = [{ type: "text", text: content }];
     for (const m of fileMentions) {

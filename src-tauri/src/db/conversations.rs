@@ -102,4 +102,17 @@ impl Database {
         conn.execute("UPDATE conversations SET status = ?1, updated_at = ?2 WHERE id = ?3", params![status, now, id])?;
         Ok(())
     }
+
+    pub fn update_conversation_title(&self, id: &str, title: &str) -> Result<(), NexError> {
+        let conn = self.conn.lock().unwrap();
+        let now = chrono::Utc::now().timestamp_millis();
+        let n = conn.execute(
+            "UPDATE conversations SET title = ?1, updated_at = ?2 WHERE id = ?3",
+            params![title, now, id],
+        )?;
+        if n == 0 {
+            return Err(NexError::Database(format!("conversation not found: {id}")));
+        }
+        Ok(())
+    }
 }

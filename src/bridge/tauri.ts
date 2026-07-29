@@ -53,6 +53,10 @@ export async function conversationGetMessages(conversationId: string, limit = 50
   return invoke(COMMANDS.CONVERSATION_GET_MESSAGES, { conversationId, limit, offset });
 }
 
+export async function conversationUpdateTitle(conversationId: string, title: string): Promise<void> {
+  return invoke(COMMANDS.CONVERSATION_UPDATE_TITLE, { conversationId, title });
+}
+
 // --- Agent (open ACP registry + custom servers) ---
 /** One row in the New-Conversation agent dropdown. */
 export interface ServerDescriptor {

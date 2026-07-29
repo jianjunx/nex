@@ -32,3 +32,8 @@ pub fn conversation_list(state: State<AppState>, project_id: String) -> Result<V
 pub fn conversation_get_messages(state: State<AppState>, conversation_id: String, limit: i32, offset: i32) -> Result<Vec<Message>, NexError> {
     state.db.get_messages(&conversation_id, limit, offset)
 }
+
+#[tauri::command]
+pub fn conversation_update_title(state: State<AppState>, conversation_id: String, title: String) -> Result<(), NexError> {
+    state.db.update_conversation_title(&conversation_id, &title)
+}

@@ -1,0 +1,26 @@
+src/features/agent/AgentComposer.tsx
+  s_f2f94a4e6d0084::t_1610b3bdfabf92 213-218,225,230-233,238,255,258,275,292,296,298-299,306,309-310
+  h_a87bb7482381ea 12-13,156
+  s_f2f94a4e6d0084::t_55de08b9f1dd06 11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "7530a62f2a9ba32ee4bcfd5c766b605e9fe83b7d",
+  "prompts": {},
+  "humans": {
+    "h_a87bb7482381ea": {
+      "author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  },
+  "sessions": {
+    "s_f2f94a4e6d0084": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "afa102e1-98c4-4771-8da7-d1aad13075c8",
+        "model": "default"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

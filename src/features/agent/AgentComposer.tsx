@@ -86,6 +86,14 @@ export function AgentComposer() {
     }
   };
 
+  // Restore cold tabs without an active ACP process by starting the agent
+  // automatically when the active tab becomes available.
+  useEffect(() => {
+    if (!activeTabId || !project || !activeConversation) return;
+    void ensureLiveSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTabId, project?.path, activeConversation?.id]);
+
   const adjustHeight = useCallback(() => {
     const el = textareaRef.current;
     if (!el) return;

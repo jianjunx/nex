@@ -30,4 +30,18 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS idx_conv_project ON conversations(project_id);
 CREATE INDEX IF NOT EXISTS idx_conv_updated ON conversations(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_msg_conv_seq ON messages(conversation_id, sequence);
+
+-- Persisted agent thread entries (thought/tool_call/etc).
+-- We store the whole ThreadEntry payload as JSON so the UI can restore
+-- thinking and tool-call cards accurately after restart.
+CREATE TABLE IF NOT EXISTS thread_entries (
+    id              TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id),
+    kind            TEXT NOT NULL,
+    sequence       INTEGER NOT NULL,
+    timestamp      INTEGER NOT NULL,
+    payload_json   TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_thread_conv_seq ON thread_entries(conversation_id, sequence);
 "#;

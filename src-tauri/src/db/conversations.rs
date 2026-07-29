@@ -1,5 +1,6 @@
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use uuid::Uuid;
 
 use super::Database;
@@ -25,6 +26,15 @@ pub struct Message {
     pub tool_summary: Option<String>,
     pub timestamp: i64,
     pub sequence: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadEntryPersisted {
+    pub kind: String,
+    pub sequence: i32,
+    pub timestamp: i64,
+    /// Full ThreadEntry payload serialized as JSON.
+    pub payload: Value,
 }
 
 impl Database {
@@ -114,5 +124,75 @@ impl Database {
             return Err(NexError::Database(format!("conversation not found: {id}")));
         }
         Ok(())
+    }
+
+    /// Replace the whole persisted thread snapshot for `conversation_id`.
+    ///
+    /// We overwrite rather than do incremental patching because ThreadEntry
+    /// updates arrive in multiple notifications and we only need a stable
+    /// snapshot for restore.
+    pub fn replace_thread_entries(
+        &self,
+        conversation_id: &str,
+        entries: &[ThreadEntryPersisted],
+    ) -> Result<(), NexError> {
+        let mut conn = self.conn.lock().unwrap();
+
+        let tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM thread_entries WHERE conversation_id = ?1",
+            params![conversation_id],
+        )?;
+
+        for e in entries {
+            tx.execute(
+                "INSERT INTO thread_entries (id, conversation_id, kind, sequence, timestamp, payload_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    Uuid::new_v4().to_string(),
+                    conversation_id,
+                    e.kind,
+                    e.sequence,
+                    e.timestamp,
+                    serde_json::to_string(&e.payload).unwrap_or_else(|_| "null".to_string())
+                ],
+            )?;
+        }
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn get_thread_entries(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Vec<ThreadEntryPersisted>, NexError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT kind, sequence, timestamp, payload_json
+             FROM thread_entries
+             WHERE conversation_id = ?1
+             ORDER BY sequence ASC",
+        )?;
+
+        let rows = stmt
+            .query_map(params![conversation_id], |row| {
+                let kind: String = row.get(0)?;
+                let sequence: i32 = row.get(1)?;
+                let timestamp: i64 = row.get(2)?;
+                let payload_json: String = row.get(3)?;
+                let payload: Value = serde_json::from_str(&payload_json)
+                    .unwrap_or_else(|_| Value::Null);
+
+                Ok(ThreadEntryPersisted {
+                    kind,
+                    sequence,
+                    timestamp,
+                    payload,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(rows)
     }
 }

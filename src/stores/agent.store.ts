@@ -14,6 +14,7 @@ import {
   agentCustomDelete,
   agentSetSessionMode,
   agentSetSessionModel,
+  conversationReplaceThreadEntries,
   onAgentNotification,
   onAgentPermissionRequest,
   onAgentSessionTerminated,
@@ -256,6 +257,19 @@ export const useAgentStore = create<AgentStore>()(
             assistantText,
           );
         }
+        // Persist full thread snapshot (thought/tool_call/etc.) so the UI can
+        // restore complete history after restart.
+        void conversationReplaceThreadEntries(
+          session.conversationId,
+          entries.map((e, sequence) => ({
+            kind: e.kind,
+            sequence,
+            timestamp: e.timestamp,
+            payload: e,
+          })),
+        ).catch((e) => {
+          console.error("[conversation] persistThreadEntries failed:", e);
+        });
         set((s) => {
           if (s.sessions[session.conversationId]) {
             const hasWaiting = (s.permissionQueues[sessionId] ?? []).length > 0;

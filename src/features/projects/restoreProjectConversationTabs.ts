@@ -1,6 +1,8 @@
 import { useConversationStore } from "../../stores/conversation.store";
 import { useAgentStore } from "../../stores/agent.store";
 import { messagesToThreadEntries } from "../agent/thread/messagesToThreadEntries";
+import { conversationGetThreadEntries, type ThreadEntryPayloadDto } from "../../bridge/tauri";
+import type { ThreadEntry } from "../agent/thread/types";
 
 /** Load, validate, and hydrate conversation tabs for a project (startup / switch). */
 export async function restoreProjectConversationTabs(projectId: string) {
@@ -25,13 +27,40 @@ export async function restoreProjectConversationTabs(projectId: string) {
   }
 
   const restored = useConversationStore.getState().tabsByProject[projectId] ?? [];
-  await Promise.all(restored.map((tabId) => convStore.loadMessages(tabId)));
 
-  // ThreadView reads agent.store entries — mirror persisted messages into it.
+  // Prefer full thread entries (thought/tool_call/etc). Fall back to legacy
+  // user/assistant message table for older conversations.
+  const threadEntriesPayloads: ThreadEntryPayloadDto[][] = await Promise.all(
+    restored.map(async (tabId) => {
+      try {
+        return await conversationGetThreadEntries(tabId);
+      } catch {
+        return [];
+      }
+    }),
+  );
+
   const agentStore = useAgentStore.getState();
-  const messagesByConversation = useConversationStore.getState().messagesByConversation;
-  for (const tabId of restored) {
-    const msgs = messagesByConversation[tabId] ?? [];
-    agentStore.hydrateEntries(tabId, messagesToThreadEntries(msgs));
+  const emptyTabIds: string[] = [];
+
+  for (let i = 0; i < restored.length; i++) {
+    const tabId = restored[i]!;
+    const payloads = threadEntriesPayloads[i] ?? [];
+    if (payloads.length > 0) {
+      // payload is the full ThreadEntry object serialized from the client.
+      const entries = payloads.map((p) => p.payload as ThreadEntry);
+      agentStore.hydrateEntries(tabId, entries);
+    } else {
+      emptyTabIds.push(tabId);
+    }
+  }
+
+  if (emptyTabIds.length > 0) {
+    await Promise.all(emptyTabIds.map((tabId) => convStore.loadMessages(tabId)));
+    const messagesByConversation = useConversationStore.getState().messagesByConversation;
+    for (const tabId of emptyTabIds) {
+      const msgs = messagesByConversation[tabId] ?? [];
+      agentStore.hydrateEntries(tabId, messagesToThreadEntries(msgs));
+    }
   }
 }

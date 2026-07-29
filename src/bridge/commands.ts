@@ -8,6 +8,8 @@ export const COMMANDS = {
   CONVERSATION_LIST: "conversation_list",
   CONVERSATION_GET_MESSAGES: "conversation_get_messages",
   CONVERSATION_UPDATE_TITLE: "conversation_update_title",
+  CONVERSATION_GET_THREAD_ENTRIES: "conversation_get_thread_entries",
+  CONVERSATION_REPLACE_THREAD_ENTRIES: "conversation_replace_thread_entries",
   CONVERSATION_APPEND_MESSAGE: "conversation_append_message",
   // Agent (open ACP registry + custom servers)
   AGENT_LIST_SERVERS: "agent_list_servers",

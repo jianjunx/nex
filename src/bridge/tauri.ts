@@ -41,6 +41,14 @@ export interface Message {
   sequence: number;
 }
 
+export interface ThreadEntryPayloadDto {
+  kind: string;
+  sequence: number;
+  timestamp: number;
+  /** Full ThreadEntry payload serialized as JSON. */
+  payload: unknown;
+}
+
 export async function conversationCreate(projectId: string, agentType: string): Promise<Conversation> {
   return invoke(COMMANDS.CONVERSATION_CREATE, { projectId, agentType });
 }
@@ -55,6 +63,20 @@ export async function conversationGetMessages(conversationId: string, limit = 50
 
 export async function conversationUpdateTitle(conversationId: string, title: string): Promise<void> {
   return invoke(COMMANDS.CONVERSATION_UPDATE_TITLE, { conversationId, title });
+}
+
+export async function conversationGetThreadEntries(conversationId: string): Promise<ThreadEntryPayloadDto[]> {
+  return invoke(COMMANDS.CONVERSATION_GET_THREAD_ENTRIES, { conversationId });
+}
+
+export async function conversationReplaceThreadEntries(
+  conversationId: string,
+  entries: ThreadEntryPayloadDto[],
+): Promise<void> {
+  return invoke(COMMANDS.CONVERSATION_REPLACE_THREAD_ENTRIES, {
+    conversationId,
+    entries,
+  });
 }
 
 export async function conversationAppendMessage(

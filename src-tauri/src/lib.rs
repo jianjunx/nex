@@ -32,6 +32,8 @@ pub fn run() {
             commands::project_cmds::conversation_get_messages,
             commands::project_cmds::conversation_update_title,
             commands::project_cmds::conversation_append_message,
+            commands::project_cmds::conversation_get_thread_entries,
+            commands::project_cmds::conversation_replace_thread_entries,
             commands::fs_cmds::fs_read_tree,
             commands::fs_cmds::fs_expand_dir,
             commands::fs_cmds::fs_read_file,

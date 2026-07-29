@@ -2,7 +2,7 @@ use tauri::State;
 use crate::state::AppState;
 use crate::error::NexError;
 use crate::db::projects::Project;
-use crate::db::conversations::{Conversation, Message};
+use crate::db::conversations::{Conversation, Message, ThreadEntryPersisted};
 
 #[tauri::command]
 pub fn project_open(state: State<AppState>, path: String) -> Result<Project, NexError> {
@@ -47,4 +47,21 @@ pub fn conversation_append_message(
     tool_summary: Option<String>,
 ) -> Result<Message, NexError> {
     state.db.append_message(&conversation_id, &role, &content, tool_summary.as_deref())
+}
+
+#[tauri::command]
+pub fn conversation_get_thread_entries(
+    state: State<AppState>,
+    conversation_id: String,
+) -> Result<Vec<ThreadEntryPersisted>, NexError> {
+    state.db.get_thread_entries(&conversation_id)
+}
+
+#[tauri::command]
+pub fn conversation_replace_thread_entries(
+    state: State<AppState>,
+    conversation_id: String,
+    entries: Vec<ThreadEntryPersisted>,
+) -> Result<(), NexError> {
+    state.db.replace_thread_entries(&conversation_id, &entries)
 }

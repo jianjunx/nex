@@ -5,6 +5,7 @@ const conversationList = vi.fn();
 const conversationGetMessages = vi.fn();
 const conversationUpdateTitle = vi.fn();
 const conversationAppendMessage = vi.fn();
+const conversationGetThreadEntries = vi.fn();
 const hydrateEntries = vi.fn();
 
 vi.mock("../../bridge/tauri", () => ({
@@ -13,6 +14,7 @@ vi.mock("../../bridge/tauri", () => ({
   conversationGetMessages: (...args: unknown[]) => conversationGetMessages(...args),
   conversationUpdateTitle: (...args: unknown[]) => conversationUpdateTitle(...args),
   conversationAppendMessage: (...args: unknown[]) => conversationAppendMessage(...args),
+  conversationGetThreadEntries: (...args: unknown[]) => conversationGetThreadEntries(...args),
 }));
 
 vi.mock("../../stores/project.store", () => ({
@@ -57,9 +59,10 @@ describe("restoreProjectConversationTabs", () => {
     expect(useConversationStore.getState().activeTabByProject["proj-a"]).toBe("tab-1");
     expect(conversationGetMessages).not.toHaveBeenCalled();
     expect(hydrateEntries).not.toHaveBeenCalled();
+    expect(conversationGetThreadEntries).not.toHaveBeenCalled();
   });
 
-  it("hydrates agent thread entries from persisted messages", async () => {
+  it("hydrates agent thread entries from persisted messages when thread_entries is empty", async () => {
     conversationList.mockResolvedValueOnce([
       {
         id: "tab-1",
@@ -86,6 +89,7 @@ describe("restoreProjectConversationTabs", () => {
       tabsByProject: { "proj-a": ["tab-1"] },
       activeTabByProject: { "proj-a": "tab-1" },
     });
+    conversationGetThreadEntries.mockResolvedValueOnce([]);
 
     await restoreProjectConversationTabs("proj-a");
 

@@ -125,7 +125,7 @@ export function TopBar() {
                   <TabsTrigger
                     key={tabId}
                     value={tabId}
-                    className={`${isMac ? "h-7 text-xs " : ""}flex-none gap-2 rounded-[var(--radius-sm)] px-2.5 font-normal text-[var(--text-secondary)] transition-colors duration-150 hover:text-[var(--text-primary)] data-[state=active]:bg-[var(--glass-2-surface)] data-[state=active]:text-[var(--text-primary)] data-[state=active]:shadow-[inset_0_-2px_0_0_var(--accent)] data-[state=active]:after:opacity-0`}
+                    className={`${isMac ? "h-7 text-xs " : ""}flex-none gap-2 rounded-[var(--radius-sm)] px-2.5 font-normal text-[var(--text-secondary)] transition-colors duration-150 hover:text-[var(--text-primary)] data-[state=active]:bg-[var(--glass-2-surface)] data-[state=active]:text-[var(--text-primary)] data-[state=active]:shadow-[inset_0_-2px_0_0_var(--accent)] group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-0`}
                   >
                     {status && status !== "idle" && (
                       <span

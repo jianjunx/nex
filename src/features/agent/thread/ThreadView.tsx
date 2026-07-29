@@ -34,7 +34,7 @@ function EntryView({ entry }: { entry: ThreadEntry }) {
       return (
         <div className="flex justify-end">
           <Card
-            className="max-w-[80%] gap-0 px-4 py-2 text-sm shadow-none bg-[var(--accent)]/15 border-[var(--accent)]/30"
+            className="max-w-[80%] gap-0 px-4 py-2 text-sm shadow-none bg-[var(--accent)]/15 border-[color:var(--accent)]/25"
           >
             <CardContent className="px-0">
               <p className="whitespace-pre-wrap">{entry.text}</p>
@@ -49,7 +49,7 @@ function EntryView({ entry }: { entry: ThreadEntry }) {
             g.type === "thought" ? (
               <ThinkingBlock key={i} text={g.text} />
             ) : (
-              <Card key={i} className="gap-0 px-4 py-2 text-sm shadow-none">
+              <Card key={i} className="gap-0 px-4 py-2 text-sm shadow-none bg-[var(--glass-2-surface)] border-[color:var(--border-subtle)]">
                 <CardContent className="px-0">
                   <div className="[&_pre]:overflow-x-auto [&_code]:text-[0.85em] [&_p]:my-1">
                     <ReactMarkdown>{g.text}</ReactMarkdown>

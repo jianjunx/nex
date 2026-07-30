@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import CodeMirror, { EditorView } from "@uiw/react-codemirror";
-import { searchPanelOpen, closeSearchPanel } from "@codemirror/search";
 import { PanelRight, X } from "lucide-react";
+import { registerFindBarAccessor } from "../../commands/editorKeybindings";
 import { Button } from "@/components/ui/button";
 import { useFsStore } from "../../stores/fs.store";
 import { useUiStore } from "../../stores/ui.store";
@@ -56,7 +56,6 @@ export function EditorPanel() {
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const projectPath = projects.find((p) => p.id === activeProjectId)?.path;
   const viewRef = useRef<EditorView | null>(null);
-  const lastEscRef = useRef<number>(0);
 
   const extensions = useMemo(
     () => [...languageExtensionsForPath(editorFile?.path ?? ""), ...editorSearchExtensions()],
@@ -68,39 +67,9 @@ export function EditorPanel() {
     viewRef.current?.requestMeasure();
   }, []);
 
-  // Global keyboard-shortcut pattern: one window listener per mounted panel,
-  // live state via getState(), and YIELD to any open Radix dialog.
-  // Capture phase so we beat React input handlers: Esc closes the find bar
-  // first; a second Esc (panel already closed) hides the editor.
   useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (document.querySelector('[role="dialog"],[role="alertdialog"]')) return;
-      if (e.key === "Escape") {
-        const view = viewRef.current;
-        if (view && searchPanelOpen(view.state)) {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          closeSearchPanel(view);
-          return;
-        }
-        const now = Date.now();
-        if (now - lastEscRef.current < 500) {
-          useUiStore.getState().setEditorVisible(false);
-          lastEscRef.current = 0;
-        } else {
-          lastEscRef.current = now;
-        }
-        return;
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
-        e.preventDefault();
-        const fs = useFsStore.getState();
-        const active = fs.openFiles.find((f) => f.path === fs.activePath);
-        if (active?.dirty) void fs.saveFile();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
+    registerFindBarAccessor(() => viewRef.current);
+    return () => registerFindBarAccessor(null);
   }, []);
 
   if (openFiles.length === 0) return null;

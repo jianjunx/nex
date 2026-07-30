@@ -47,6 +47,8 @@ interface AgentStore {
   servers: ServerDescriptor[];
   loading: boolean;
   serversLoading: boolean;
+  /** 上次成功加载 servers 的时间戳（0＝从未加载）。 */
+  serversLoadedAt: number;
   error: string | null;
 
   createSession: (conversationId: string, target: SessionTarget, cwd: string) => Promise<string>;
@@ -151,6 +153,7 @@ export const useAgentStore = create<AgentStore>()(
     servers: [],
     loading: false,
     serversLoading: false,
+    serversLoadedAt: 0,
     error: null,
 
     createSession: async (conversationId, target, cwd) => {
@@ -381,6 +384,7 @@ export const useAgentStore = create<AgentStore>()(
         const servers = await agentListServers();
         set((s) => {
           s.servers = servers;
+          s.serversLoadedAt = Date.now();
         });
       } catch (err) {
         set((s) => {
@@ -401,6 +405,7 @@ export const useAgentStore = create<AgentStore>()(
         const servers = await agentListAllServers();
         set((s) => {
           s.servers = servers;
+          s.serversLoadedAt = Date.now();
         });
       } catch (err) {
         set((s) => {

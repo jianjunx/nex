@@ -16,7 +16,7 @@ function errorMessage(err: unknown): string {
 }
 
 export function AgentsSection() {
-  const { servers, serversLoading, loadAllServers, refreshRegistry, upsertCustom, deleteCustom } = useAgentStore();
+  const { servers, serversLoading, serversLoadedAt, loadAllServers, refreshRegistry, upsertCustom, deleteCustom } = useAgentStore();
 
   const [showForm, setShowForm] = useState(false);
   const [customName, setCustomName] = useState("");
@@ -25,15 +25,19 @@ export function AgentsSection() {
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // The side panel only mounts this tab when it is active; load the merged
-  // agent list on mount (idempotent if another surface already loaded it).
-  useEffect(() => { void loadAllServers(); }, [loadAllServers]);
+  // 页签激活才挂载本组件。仅当列表为空或上次加载超过一分钟才回后端，
+  // 避免每次切到本页签都往返一次；刷新按钮不受此守卫约束。
+  useEffect(() => {
+    if (serversLoading) return;
+    if (servers.length > 0 && Date.now() - serversLoadedAt < 60_000) return;
+    void loadAllServers();
+  }, [servers.length, serversLoading, serversLoadedAt, loadAllServers]);
 
   const handleAddCustom = async () => {
     const name = customName.trim();
     const command = customCommand.trim();
     if (!name || !command) {
-      setError("A name and a command are required for a custom server.");
+      setError("自定义智能体需要填写名称和命令。");
       return;
     }
     // Parse "KEY=VALUE" lines into an env map; blank/malformed lines ignored.
@@ -61,14 +65,14 @@ export function AgentsSection() {
   };
 
   return (
-    // ③ Agents — reuses the agent store; no new backend.
+    // 复用 agent store；无独立后端。
     <section>
       <div className={`flex items-center justify-between ${SECTION_HEADER}`}>
         <Label className="text-xs font-medium uppercase tracking-wide">智能体</Label>
         <Button
           variant="ghost"
           size="sm"
-          title="Refresh agent registry"
+          title="刷新智能体注册表"
           onClick={() => void refreshRegistry().then(() => loadAllServers())}
           disabled={serversLoading}
         >
@@ -96,7 +100,7 @@ export function AgentsSection() {
             {s.kind === "custom" && (
               <button
                 onClick={() => void deleteCustom(s.id)}
-                title="Remove custom server"
+                title="移除自定义智能体"
                 className="p-1 rounded text-[var(--text-tertiary)] hover:text-[var(--error)] hover:bg-[var(--overlay-hover)]"
               >
                 <X size={13} />

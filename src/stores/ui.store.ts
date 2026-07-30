@@ -4,6 +4,12 @@ import { persist } from "zustand/middleware";
 
 export type SidePanelTab = "files" | "git" | "search";
 
+/** Validate a hydrated sidePanelTab value; fall back to "files" for stale/unknown tabs. */
+export function sanitizeSidePanelTab(v: unknown): SidePanelTab {
+  if (v === "files" || v === "git" || v === "search") return v;
+  return "files";
+}
+
 interface UiState {
   sidePanelVisible: boolean;
   sidePanelTab: SidePanelTab;
@@ -77,6 +83,11 @@ export const useUiStore = create<UiState>()(
         editorVisible: s.editorVisible,
         editorWidth: s.editorWidth,
       }),
+      // I-2: 水合时校验 sidePanelTab，防止陈旧持久化值（如旧版 "settings"）导致侧栏空白
+      merge: (persisted, current) => {
+        const merged = { ...current, ...(persisted as Partial<UiState>) };
+        return { ...merged, sidePanelTab: sanitizeSidePanelTab(merged.sidePanelTab) };
+      },
     }
   )
 );

@@ -85,7 +85,7 @@ export function KeybindingsEditor() {
       </div>
       {pendingConflict && (
         <p className="text-xs text-[var(--warning)]">
-          该键位已被「{pendingConflict.conflict.commandTitle}」使用，两者冲突（后触发者生效）。
+          该键位与「{pendingConflict.conflict.commandTitle}」冲突，有自定义覆盖的命令优先响应。
         </p>
       )}
     </div>
@@ -94,7 +94,7 @@ export function KeybindingsEditor() {
 
 /** Records a single combo on the next non-modifier keydown; Esc cancels. */
 function KeyRecorder({ onRecord, onCancel }: { onRecord: (c: KeyCombo) => void; onCancel: () => void }) {
-  const [hint] = useState("请按键…");
+  const [hint, setHint] = useState("请按键…");
   // autoFocus is a no-op on <span> (React only auto-focuses button/input/
   // select/textarea on mount), so focus imperatively after mount.
   const ref = useRef<HTMLSpanElement>(null);
@@ -104,12 +104,16 @@ function KeyRecorder({ onRecord, onCancel }: { onRecord: (c: KeyCombo) => void; 
     if (e.key === "Escape") { e.preventDefault(); onCancel(); return; }
     if (["Control", "Meta", "Shift", "Alt"].includes(e.key)) return;
     e.preventDefault();
-    const combo: KeyCombo = {
-      primary: e.ctrlKey || e.metaKey,
-      alt: e.altKey,
-      shift: e.shiftKey,
-      key: normalize(e.code, e.key),
-    };
+    const key = normalize(e.code, e.key);
+    const primary = e.ctrlKey || e.metaKey;
+    const alt = e.altKey;
+    // C-1: 裸可打印字符（字母/数字/单字符标点）不允许无修饰绑定，避免全局吞键
+    const isTypingKey = key.length === 1 || /^key[a-z]$/.test(key) || /^digit[0-9]$/.test(key);
+    if (isTypingKey && !primary && !alt) {
+      setHint("快捷键需包含 Ctrl/⌘ 或 Alt，避免吞掉普通输入");
+      return;
+    }
+    const combo: KeyCombo = { primary, alt, shift: e.shiftKey, key };
     onRecord(combo);
   };
   return (

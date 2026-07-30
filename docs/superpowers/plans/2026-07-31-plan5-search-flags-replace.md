@@ -346,7 +346,7 @@ pub fn fs_search(project_path: String, query: String, options: Option<SearchOpti
 - Modify: `src-tauri/src/fs/search.rs`（追加类型 + replace_candidates + search_replace + apply_replace）
 - Modify: `src-tauri/src/commands/fs_cmds.rs`（+2 command）
 - Modify: `src-tauri/src/lib.rs`（invoke_handler +2 行）
-- Modify: `src-tauri/tests/fs_test.rs`（+6 测试）
+- Modify: `src-tauri/tests/fs_test.rs`（+7 测试）
 
 **Interfaces:**
 - Produces（契约逐字，T3 桥接依赖）：
@@ -369,6 +369,8 @@ pub fn fs_search(project_path: String, query: String, options: Option<SearchOpti
   - replacement 字符串**原样透传** `regex::Captures::expand`，原生支持 `$1`/`${name}` 捕获组（regex crate 语义；字面 `$` 亦按 crate 语义解释）。
   - 替换只作用于**文件内容**；文件名命中不参与替换。
   - 非 UTF-8 / >1MB 文件跳过（同搜索约束）。
+  - **写盘失败不致命、不回滚**：apply_replace 遍历全部候选文件，个别写盘失败（只读/被占用）收集而不中断；若有失败，末尾返回 `NexError::FileSystem`，消息含已改文件数、失败文件数与首个原因（中文）。成功路径契约不变。部分失败路径的集成测试因 OS 相关（io 故障注入）延后，代码层 collect+continue 为准。
+  - **正则模式面差异（v1 已知限制）**：搜索逐行匹配（`is_match(line)`），替换预览/写盘逐全文匹配（`find_iter`/`replace_all`）。跨行构造（`\n`）与行尾锚定（CRLF 下的 `$`）可能出现「预览/写盘有命中而搜索结果列表不显示」。子串/全词模式两面一致、不受影响；替换确认 dialog 无需特殊文案（错误经 searchError 槽显示）。
 
 - [ ] **Step 1: 先写测试（红）**——在 `src-tauri/tests/fs_test.rs` 末尾追加（复用 T1 的 `opts`/`search_fixture`）：
 
@@ -594,6 +596,10 @@ pub fn search_replace(
 /// - the shared MAX_RESULTS budget keeps capped previews and writes in sync;
 /// - `replacement` is passed through `Captures::expand`, so `$1`/`${name}`
 ///   capture-group backreferences work (regex crate semantics).
+/// - write failures are collected, not fatal: every candidate is attempted,
+///   and if any writes failed the function returns `NexError::FileSystem`
+///   whose message reports files changed vs failed (no rollback — files
+///   already written stay written).
 pub fn apply_replace(
     project_path: &Path,
     query: &str,
@@ -611,6 +617,7 @@ pub fn apply_replace(
     let mut budget = MAX_RESULTS;
     let mut files_changed = 0usize;
     let mut replacements = 0usize;
+    let mut failures: Vec<String> = Vec::new();
 
     for path in replace_candidates(project_path) {
         if budget == 0 {
@@ -638,11 +645,27 @@ pub fn apply_replace(
             dst
         });
         if count > 0 {
-            write_file(&path, &replaced)?;
-            files_changed += 1;
-            replacements += count;
-            budget -= count;
+            match write_file(&path, &replaced) {
+                Ok(()) => {
+                    files_changed += 1;
+                    replacements += count;
+                    budget -= count;
+                }
+                Err(e) => {
+                    // 不中断、不回滚：收集失败，继续写其余文件，末尾汇总报错
+                    failures.push(format!("{}: {e}", path.display()));
+                }
+            }
         }
+    }
+
+    if !failures.is_empty() {
+        return Err(NexError::FileSystem(format!(
+            "替换部分完成：已修改 {} 个文件，{} 个文件写入失败（首个原因：{}）",
+            files_changed,
+            failures.len(),
+            failures[0]
+        )));
     }
 
     Ok(ReplaceResult { files_changed, replacements })
@@ -686,7 +709,7 @@ pub fn fs_apply_replace(project_path: String, query: String, replacement: String
             commands::fs_cmds::fs_apply_replace,
 ```
 
-- [ ] **Step 4: 跑绿**——`cargo test --manifest-path src-tauri/Cargo.toml --test fs_test` 全绿（T1 8 条 + 本任务 7 条 + 既有 2 条）。
+- [ ] **Step 4: 跑绿**——`cargo test --manifest-path src-tauri/Cargo.toml --test fs_test` 全绿（T1 6 条 + 本任务 7 条 + 既有 2 条 = 15）。
 
 - [ ] **Step 5: 提交**——`feat(search): 新增全项目替换预览与写盘命令`
 
@@ -3171,7 +3194,7 @@ group/row search-stagger relative w-full text-left pl-7 pr-7 py-1 rounded-[var(-
 pnpm lint          # 既有 6 条 warning 可接受，不得新增 error
 pnpm build         # 真实类型门槛（tsc -b + vite build）
 pnpm test          # 全量 vitest
-cargo test --manifest-path src-tauri/Cargo.toml   # Rust 全量（含 fs_test.rs 新增 15 条）
+cargo test --manifest-path src-tauri/Cargo.toml   # Rust 全量（fs_test.rs 新增 13 条 / 合计 15 条）
 ```
 
 - [ ] **Step 2: 差异自检（只读，控制器统一提交）**——`git status --short` 与 `git diff --stat` 核对改动文件与 File Structure 表逐一对应；确认无计划外文件（特别注意 `src/features/agent/AgentComposer.tsx` 不得出现在 diff 中——fsSearch 缺省参数应使其零改动）。

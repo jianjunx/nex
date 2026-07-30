@@ -1094,7 +1094,7 @@ git commit -m "feat(git): 凭据 broker 与 git_credential_respond 命令"
   - 模块 `nex_lib::git::network`：
     - `pub fn build_callbacks<'a>(app: &'a AppHandle, broker: &'a GitCredentialBroker) -> git2::RemoteCallbacks<'a>` — credentials 回调顺序：① `broker.lookup_session`（会话缓存）→ ② 首次尝试 `Cred::credential_helper`（https）/ `Cred::ssh_key_from_agent` + 无口令默认私钥（ssh）→ ③ `broker.request_gui` 阻塞等待（取消 → git2 错误 `authentication cancelled by user`）；`kind` 由 `allowed.contains(CredentialType::SSH_KEY)` 判定。
     - `pub fn fetch_remote(repo_path: &Path, remote_name: &str, callbacks: RemoteCallbacks<'_>) -> Result<(), NexError>`
-    - `pub fn push_remote(repo_path: &Path, remote_name: &str, branch: &str, callbacks: RemoteCallbacks<'_>) -> Result<(), NexError>` — `ErrorCode::NonFastForward` 或文案 `non-fastforwardable`（libgit2 1.8.1 无连字符）/`non-fast-forward`/`failed to write ref` → 中文「推送被拒绝：非快进，请先拉取合并」；其余拒绝统一包装「推送失败：<原始消息>」。
+    - `pub fn push_remote(repo_path: &Path, remote_name: &str, branch: &str, callbacks: RemoteCallbacks<'_>) -> Result<(), NexError>` — `ErrorCode::NotFastForward`（git2 0.19 变体名，对应 libgit2 GIT_ENONFASTFORWARD）或文案 `non-fastforwardable`（libgit2 1.8.1 无连字符）/`non-fast-forward`/`failed to write ref` → 中文「推送被拒绝：非快进，请先拉取合并」；其余拒绝统一包装「推送失败：<原始消息>」。
     - `pub fn pull_remote(repo_path: &Path, remote_name: &str, callbacks: RemoteCallbacks<'_>) -> Result<(), NexError>` — fetch + merge_analysis：up-to-date 直接返回；fast-forward 前先 `worktree_is_dirty` 检查（dirty → 中文「请先提交或存储改动后再拉取」，防 force checkout 丢改），通过后走 `set_target`+`checkout_head(force)`；否则真实 merge，有冲突报中文「合并存在冲突，请手动解决」，无冲突自动产生 merge commit。
     - `pub fn clone_repo(url: &str, dest: &Path, callbacks: RemoteCallbacks<'_>) -> Result<(), NexError>` — `RepoBuilder::fetch_options` 挂 callbacks。
     - `pub fn default_ssh_private_key() -> Option<PathBuf>` — 依次探测 `~/.ssh/id_ed25519`、`id_ecdsa`、`id_rsa`（home 取 `USERPROFILE` 或 `HOME`）。
@@ -1226,10 +1226,10 @@ pub fn push_remote(
     let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
     remote.push(&[refspec], Some(&mut opts)).map_err(|e| {
         // libgit2 1.8.1 非快进消息为 "cannot push non-fastforwardable reference"
-        //（无连字符）+ ErrorCode::NonFastForward；码判优先，文案兜底，其余拒绝
-        // 原因（hook/权限/保护分支）统一中文包装透传
+        //（无连字符）+ ErrorCode::NotFastForward（git2 0.19 变体名）；码判优先，
+        // 文案兜底，其余拒绝原因（hook/权限/保护分支）统一中文包装透传
         let msg = e.message();
-        if e.code() == git2::ErrorCode::NonFastForward
+        if e.code() == git2::ErrorCode::NotFastForward
             || msg.contains("non-fastforwardable")
             || msg.contains("non-fast-forward")
             || msg.contains("failed to write ref")
@@ -1285,7 +1285,8 @@ pub fn pull_remote(
 
     // Non-fast-forward: perform a real merge. Conflicts are surfaced, not
     // resolved here (no rebase/conflict UI in v1).
-    repo.merge(&[&fetch_commit], None, Some(git2::build::CheckoutBuilder::default()))?;
+    // NB: repo.merge 第三参是 Option<&mut CheckoutBuilder>，对临时值取可变借用。
+    repo.merge(&[&fetch_commit], None, Some(&mut git2::build::CheckoutBuilder::default()))?;
     if repo.index()?.has_conflicts() {
         return Err(NexError::Git("合并存在冲突，请手动解决".to_string()));
     }

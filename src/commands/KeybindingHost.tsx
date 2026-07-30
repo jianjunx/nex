@@ -38,7 +38,8 @@ export function KeybindingHost() {
       const { resolve } = useKeybindingsStore.getState();
       for (const cmd of listCommands()) {
         if (comboToCanonical(resolve(cmd.id)) !== canonical) continue;
-        if ((inInput || dlg) && !ALLOW_IN_INPUT.has(cmd.id)) continue;
+        if (dlg) continue; // 模态对话框打开时全局键位全部让行（Esc 交给 radix）
+        if (inInput && !ALLOW_IN_INPUT.has(cmd.id)) continue;
         if (cmd.when && !cmd.when()) continue;
         e.preventDefault();
         e.stopImmediatePropagation();

@@ -14,6 +14,7 @@ vi.mock("../stores/keybindings.store", () => ({
         // Mirror a couple of defaults so the host can match without the real registry store.
         if (id === "view.toggleSidebar") return { primary: true, key: "keyb" };
         if (id === "editor.save") return { primary: true, key: "keys" };
+        if (id === "editor.close") return { key: "escape" };
         return null;
       },
     }),
@@ -22,10 +23,12 @@ vi.mock("../stores/keybindings.store", () => ({
 
 const toggle = vi.fn();
 const save = vi.fn();
+const close = vi.fn();
 vi.mock("../commands/registry", () => ({
   listCommands: () => [
     { id: "view.toggleSidebar", title: "t", category: "c", defaultKey: null, run: toggle },
     { id: "editor.save", title: "s", category: "c", defaultKey: null, run: save },
+    { id: "editor.close", title: "c", category: "c", defaultKey: null, run: close },
   ],
   getCommand: () => undefined,
 }));
@@ -76,6 +79,15 @@ describe("KeybindingHost", () => {
     document.body.appendChild(dlg);
     fire(window, { key: "b", code: "KeyB", ctrlKey: true });
     expect(toggle).not.toHaveBeenCalled();
+  });
+
+  it("yields bare Escape to an open dialog even for allow-listed editor.close", () => {
+    const dlg = document.createElement("div");
+    dlg.setAttribute("role", "dialog");
+    document.body.appendChild(dlg);
+    fire(window, { key: "Escape", code: "Escape" });
+    expect(close).not.toHaveBeenCalled();
+    dlg.remove();
   });
 
   it("isInputContext recognises editable elements", () => {

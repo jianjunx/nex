@@ -1,5 +1,5 @@
 // src/features/settings/KeybindingsEditor.tsx
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Pencil, RotateCcw } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -95,6 +95,10 @@ export function KeybindingsEditor() {
 /** Records a single combo on the next non-modifier keydown; Esc cancels. */
 function KeyRecorder({ onRecord, onCancel }: { onRecord: (c: KeyCombo) => void; onCancel: () => void }) {
   const [hint] = useState("请按键…");
+  // autoFocus is a no-op on <span> (React only auto-focuses button/input/
+  // select/textarea on mount), so focus imperatively after mount.
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => { ref.current?.focus(); }, []);
   // Capture locally so the global host (which yields to dialogs) won't steal it.
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") { e.preventDefault(); onCancel(); return; }
@@ -109,10 +113,10 @@ function KeyRecorder({ onRecord, onCancel }: { onRecord: (c: KeyCombo) => void; 
     onRecord(combo);
   };
   return (
-    // autofocus + tabIndex so it receives key events without a real input element.
+    // tabIndex + mount-time focus so it receives key events without a real input element.
     <span
+      ref={ref}
       tabIndex={0}
-      autoFocus
       onKeyDown={onKey}
       className="inline-block outline-none text-xs text-[var(--accent)] animate-pulse"
     >

@@ -20,13 +20,14 @@
 
 **技术背景（勘察与实测结论，实现者必读）：**
 
-- `src/components/ui/tabs.tsx:67-70` 的 TabsTrigger 内置了 `group-data-[variant=line]/tabs-list:bg-transparent`、`group-data-[variant=line]/tabs-list:data-[state=active]:bg-transparent`、`group-data-[variant=line]/tabs-list:data-[state=active]:shadow-none`、`group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-100` 等类，其 CSS 特异性（0,4,0）高于裸 `data-[state=active]:*` 类（0,2,0）。**浏览器实测（2026-07-31，vite dev + computed style）**：当前线上激活页签 `backgroundColor` 透明、`boxShadow` 全零——即现状激活指示基本不可见。因此 Task 3 的 className 里一切激活态样式与 hover 背景均带 `group-data-[variant=line]/tabs-list:` 前缀；`cn()`（tailwind-merge）会把同前缀的内置冲突类直接丢弃、保留我们的后参数类。Task 3 的完整 className 已实测生效（激活玻璃底/1px 内高光/描边/12px 圆角/左侧强调条、非激活 hover 上浮+显底显边、激活 hover 不浮、dark media 模拟下同样成立），**照抄勿改前缀**。
+- `src/components/ui/tabs.tsx:67-70` 的 TabsTrigger 内置了 `group-data-[variant=line]/tabs-list:bg-transparent`、`group-data-[variant=line]/tabs-list:data-[state=active]:bg-transparent`、`group-data-[variant=line]/tabs-list:data-[state=active]:shadow-none`、`group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-100` 等类，其 CSS 特异性（0,4,0）高于裸 `data-[state=active]:*` 类（0,2,0）。**浏览器实测（2026-07-31，vite dev + computed style）**：当前线上激活页签 `backgroundColor` 透明、`boxShadow` 全零——即现状激活指示基本不可见。因此 Task 3 的 className 里一切激活态样式与 hover 背景均带 `group-data-[variant=line]/tabs-list:` 前缀；`cn()`（tailwind-merge）会把同前缀的内置冲突类直接丢弃、保留我们的后参数类。Task 3 的完整 className 已实测生效（激活玻璃底/1px 内高光/描边/12px 圆角/左侧强调条、非激活 hover 上浮+显底显边、激活 hover 不浮）。**dark 主题另需显式对偶类**：`ui/tabs.tsx` 内置了 `dark:group-data-[variant=line]/tabs-list:data-[state=active]:bg-transparent` 与 `...:border-transparent`，dark 变体（`@custom-variant dark (&:where([data-theme="dark"], …))`，零特异性但级联序靠后）会在 dark 下把我们的 plain 玻璃底/描边盖回透明，故 className 同时给出 `dark:` 前缀对偶类经 twMerge 精确丢弃内置 dark 类；**照抄勿改前缀**。
 - 渐隐遮罩的起始色用 `var(--glass-1-surface)`（TopBar 实际玻璃底）；仓库无 `--bg-app` 变量。
 - `DropdownMenuContent` 已玻璃化（`bg-[var(--glass-3-surface)] backdrop-blur-xl`），直接用；Radix 下拉键盘导航/Esc/焦点陷阱/portal 全自带。
+- **触发器开关路径（Playwright/Chromium 实测，绑定全部下拉测试）**：Radix DropdownMenuTrigger 只经 `onPointerDown`/`onKeyDown` 开合（react-dropdown-menu 2.1.24 dist L77-90，无 onClick 路径），开合经 `onOpenChange` 汇回 store 标志。**严禁给触发器另接 onClick toggle**：真机里 pointerdown 翻转一次后 click 会再翻转一次（实测：被 preventDefault 的 pointerdown 之后 click 照常派发），按钮真机无法开关；而 jsdom 的 `fireEvent.click` 只派发 click、暴露不了此缺陷，故一切「点开下拉」的测试一律用 `fireEvent.pointerDown(trigger)`。菜单**项**选择经 onClick（react-menu dist L397）→ `fireEvent.click` 正确；`onSelect` 内 `e.preventDefault()` 阻止点项默认关菜单（dist L384-389）。
 - agent 数据链已齐：`servers: ServerDescriptor[]`（`{ id, name, version, description, icon, kind: "registry" | "custom" }`）+ `serversLoading` + `serversLoadedAt` + `loadAllServers()` + `refreshRegistry()` + `createSession(conversationId, target, cwd)`，均在 `src/stores/agent.store.ts`。
 - 创建语义来源 `src/features/projects/NewConversationModal.tsx:50-74`（`handleCreate`）：`createConversation(projectId, agentType)` 立即建会话并开标签激活 → 关面板 → fire-and-forget `createSession`（`SessionTarget` 由 `kind` 映射 `{type:"custom"|"registry", id}`；失败写 `agent.store.error`）。`closeTab(id)` 负责回滚。
 - 测试环境：`vite.config.ts` test.environment 默认 node；jsdom 文件必须自带 docblock（约束 4）。zustand 真 store 在 jsdom 下可用（persist 有 localStorage）；store 的 **action 可用 `setState` 注入 mock**（本计划测试采用"模块级可变 let 持有 mock action + beforeEach 经 setState 注入真 store"模式——约束 4 模式的 zustand 变体，避免整模块 mock zustand）。
-- `workbench.newConversation` 命令已注册于 `src/commands/registry.ts:85-95`（no-op 占位，默认键 `Ctrl/Cmd+Shift+N`），本计划只接线其 `run`。
+- `workbench.newConversation` 命令已注册于 `src/commands/registry.ts:85-95`（no-op 占位，默认键 `Ctrl/Cmd+Shift+N`），本计划只接线其 `run`。**行号时效性（执行必读）**：执行顺序为 Plan 3→4→5→6，Plan 3 会向 COMMANDS 增 `scm.commit`、Plan 5 会改 `search.focus` 的 run，届时该命令的绝对行号会漂移——Task 2 一律以命令 id `workbench.newConversation` 定位整条命令再替换，勿按绝对行号机械粘贴（已验证 ui.store 的锚点与 Plan 5 的插入互不冲突）。同理凡「既有 N 例」的例数文字均以执行时实跑为准（Plan 5 会向 ui.settings.test.ts +1 例）。
 
 ---
 
@@ -42,7 +43,7 @@
 | `src/features/layout/TopBar.test.tsx` | Create（T3 建 F5 断言，T5 扩 F6 集成例） | 轮廓类断言、遮罩类断言、点 `+` 开下拉、Esc 关、命令开、点行即建 |
 | `src/features/projects/NewConversationDropdown.tsx` | Create | 受控下拉：`+` Trigger + 头部"选择智能体"+刷新、列表行（名称/版本/kind 徽标/描述截断）、点行即建、防连点、空态/加载、错误行、管理智能体…、stagger 入场 |
 | `src/features/projects/NewConversationDropdown.test.tsx` | Create | 创建链路、kind 映射、成功关面板、失败错误行、回滚 closeTab、防连点、新鲜度守卫、空态/加载、管理智能体定向 |
-| `src/features/settings/SettingsDialog.tsx` | Modify | 打开时一次性消费 `ui.store.settingsSection`（定位页签后立即清空） |
+| `src/features/settings/SettingsDialog.tsx` | Modify | 打开时一次性消费 `ui.store.settingsSection`（定位页签后立即清空）；普通打开（false→true 无定向）重置回「外观」（R2） |
 | `src/features/settings/SettingsDialog.test.tsx` | Create | 默认定位外观；settingsSection 一次性消费 |
 | `src/features/projects/NewConversationModal.tsx` | Delete | 旧模态框（Task 5 删，全仓残留清零） |
 
@@ -168,7 +169,7 @@ export type SettingsSection =
 - [ ] **Step 4: 跑测试确认绿**
 
 Run: `pnpm vitest run src/stores/ui.store.test.ts src/stores/ui.settings.test.ts`
-Expected: PASS（ui.settings.test.ts 既有 4 例不受影响）
+Expected: PASS（ui.settings.test.ts 既有用例不受影响；其例数以执行时实跑为准——Plan 5 先执行会 +1 例）
 
 - [ ] **Step 5: 提交**
 
@@ -182,7 +183,7 @@ git commit -m "feat(store): 新增新建会话下拉开关与设置分区定向�
 ### Task 2: registry — workbench.newConversation 接线
 
 **Files:**
-- Modify: `src/commands/registry.ts:85-95`
+- Modify: `src/commands/registry.ts`（`workbench.newConversation` 整条命令；撰写时位于 L85-95，执行时以命令 id 定位，见技术背景行号时效性说明）
 - Test: `src/commands/registry.test.ts`（追加 1 例 + 1 行 import）
 
 **Interfaces:**
@@ -212,11 +213,11 @@ import { useUiStore } from "../stores/ui.store";
 - [ ] **Step 2: 跑测试确认红**
 
 Run: `pnpm vitest run src/commands/registry.test.ts`
-Expected: FAIL（新用例断言 `true` 得 `false`——run 仍是 no-op；既有 4 例仍绿）
+Expected: FAIL（新用例断言 `true` 得 `false`——run 仍是 no-op；既有用例仍绿，绝对数以执行时实跑为准）
 
 - [ ] **Step 3: 接线 run**
 
-替换 `src/commands/registry.ts` 中 `workbench.newConversation` 整条命令（第 85-95 行）为：
+替换 `src/commands/registry.ts` 中 `workbench.newConversation` 整条命令（以命令 id 定位；撰写时在第 85-95 行）为：
 
 ```ts
   {
@@ -233,7 +234,7 @@ Expected: FAIL（新用例断言 `true` 得 `false`——run 仍是 no-op；既�
 - [ ] **Step 4: 跑测试确认绿**
 
 Run: `pnpm vitest run src/commands/registry.test.ts`
-Expected: PASS（5 例全绿，含唯一键位/默认键位既有断言——满足约束 5）
+Expected: PASS（既有全部 + 新增 1 例全绿，含唯一键位/默认键位既有断言——满足约束 5；绝对数以执行时实跑为准）
 
 - [ ] **Step 5: 提交**
 
@@ -330,6 +331,13 @@ describe("conversation tab outline (F5)", () => {
     // line 变体内置 after 下划线保持关闭
     expect(active.className).toContain(
       "group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-0"
+    );
+    // dark 对偶类必须在场（R1：顶掉 ui/tabs.tsx 内置 dark:bg-transparent/border-transparent）
+    expect(active.className).toContain(
+      "dark:group-data-[variant=line]/tabs-list:data-[state=active]:bg-[var(--glass-2-surface)]"
+    );
+    expect(active.className).toContain(
+      "dark:group-data-[variant=line]/tabs-list:data-[state=active]:border-[color:var(--border-default)]"
     );
   });
 
@@ -430,13 +438,14 @@ new_string：
 替换为（一行，照抄——每个激活态类都带 group-data 前缀，已实测生效）：
 
 ```tsx
-                    className={`${isMac ? "h-7 text-xs " : ""}flex-none gap-2 rounded-[var(--radius-md)] border border-transparent px-2.5 font-normal text-[var(--text-secondary)] transition-all duration-150 hover:-translate-y-px hover:border-[color:var(--border-subtle)] group-data-[variant=line]/tabs-list:hover:bg-[var(--overlay-hover)] hover:text-[var(--text-primary)] data-[state=active]:hover:translate-y-0 group-data-[variant=line]/tabs-list:data-[state=active]:bg-[var(--glass-2-surface)] group-data-[variant=line]/tabs-list:data-[state=active]:border-[color:var(--border-default)] group-data-[variant=line]/tabs-list:data-[state=active]:text-[var(--text-primary)] group-data-[variant=line]/tabs-list:data-[state=active]:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] before:absolute before:left-0 before:top-1/4 before:bottom-1/4 before:w-0 before:rounded before:bg-[var(--accent)] before:opacity-0 before:transition-all before:duration-150 group-data-[variant=line]/tabs-list:data-[state=active]:before:w-0.5 group-data-[variant=line]/tabs-list:data-[state=active]:before:opacity-100 group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-0`}
+                    className={`${isMac ? "h-7 text-xs " : ""}flex-none gap-2 rounded-[var(--radius-md)] border border-transparent px-2.5 font-normal text-[var(--text-secondary)] transition-all duration-150 hover:-translate-y-px hover:border-[color:var(--border-subtle)] group-data-[variant=line]/tabs-list:hover:bg-[var(--overlay-hover)] hover:text-[var(--text-primary)] data-[state=active]:hover:translate-y-0 group-data-[variant=line]/tabs-list:data-[state=active]:bg-[var(--glass-2-surface)] group-data-[variant=line]/tabs-list:data-[state=active]:border-[color:var(--border-default)] dark:group-data-[variant=line]/tabs-list:data-[state=active]:bg-[var(--glass-2-surface)] dark:group-data-[variant=line]/tabs-list:data-[state=active]:border-[color:var(--border-default)] group-data-[variant=line]/tabs-list:data-[state=active]:text-[var(--text-primary)] group-data-[variant=line]/tabs-list:data-[state=active]:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] before:absolute before:left-0 before:top-1/4 before:bottom-1/4 before:w-0 before:rounded before:bg-[var(--accent)] before:opacity-0 before:transition-all before:duration-150 group-data-[variant=line]/tabs-list:data-[state=active]:before:w-0.5 group-data-[variant=line]/tabs-list:data-[state=active]:before:opacity-100 group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-0`}
 ```
 
 类集释义（供 review）：
 - 形状/占位：`rounded-[var(--radius-md)]` + `border border-transparent`（非激活透明占位边框，防布局抖动）+ `transition-all duration-150`
 - 非激活 hover：`hover:-translate-y-px`（上浮 1px）+ `hover:border-[color:var(--border-subtle)]`（透明→显色）+ `group-data-[variant=line]/tabs-list:hover:bg-[var(--overlay-hover)]`（前缀压过内置 `bg-transparent`）+ `hover:text-[var(--text-primary)]`
 - 激活：`group-data-...:data-[state=active]:bg-[var(--glass-2-surface)]`（玻璃面）+ `:border-[color:var(--border-default)]`（整圈描边）+ `:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]`（顶部极淡内高光）+ `:text-[var(--text-primary)]`；**旧底部线 `shadow-[inset_0_-2px_0_0_var(--accent)]` 已删**
+- dark 对偶（R1 修复）：`dark:group-data-[variant=line]/tabs-list:data-[state=active]:bg-[var(--glass-2-surface)]` + `:border-[color:var(--border-default)]`——与 `ui/tabs.tsx` 内置的 dark 变体 `bg-transparent`/`border-transparent` 修饰符栈逐字相同，经 twMerge 丢弃内置 dark 类；缺之则 dark 主题下激活页签被级联序靠后的内置 dark 类盖回透明底/无描边
 - 激活 hover 不位移：`data-[state=active]:hover:translate-y-0`
 - 左侧 2px 强调边：`before:` 伪元素（TabsTrigger 内置 `relative`），非激活 `before:w-0 before:opacity-0`，激活 `:before:w-0.5 :before:opacity-100`，`before:transition-all before:duration-150` 宽度/透明度过渡滑入
 - after 下划线保持关闭：`group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-0`（twMerge 顶掉内置 opacity-100）
@@ -464,7 +473,7 @@ git commit -m "feat(topbar): 对话页签胶囊轮廓与溢出渐隐遮罩"
 - Modify: `src/features/settings/SettingsDialog.tsx`
 
 **Interfaces:**
-- Consumes: Task 1 的 `newConversationOpen`/`openNewConversation`/`closeNewConversation`/`toggleNewConversation`/`openSettings`/`setSettingsSection`/`SettingsSection`；`agent.store` 的 `servers`/`serversLoading`/`serversLoadedAt`/`loadAllServers`/`refreshRegistry`/`createSession`；`conversation.store` 的 `createConversation`/`closeTab`；`project.store` 的 `projects`/`activeProjectId`；`bridge/tauri` 类型 `Conversation`/`ServerDescriptor`/`SessionTarget`；`ui/dropdown-menu` 的 `DropdownMenu`/`DropdownMenuTrigger`/`DropdownMenuContent`/`DropdownMenuItem`/`DropdownMenuLabel`/`DropdownMenuSeparator`
+- Consumes: Task 1 的 `newConversationOpen`/`openNewConversation`/`closeNewConversation`/`openSettings`/`setSettingsSection`/`SettingsSection`；`agent.store` 的 `servers`/`serversLoading`/`serversLoadedAt`/`loadAllServers`/`refreshRegistry`/`createSession`；`conversation.store` 的 `createConversation`/`closeTab`；`project.store` 的 `projects`/`activeProjectId`；`bridge/tauri` 类型 `Conversation`/`ServerDescriptor`/`SessionTarget`；`ui/dropdown-menu` 的 `DropdownMenu`/`DropdownMenuTrigger`/`DropdownMenuContent`/`DropdownMenuItem`/`DropdownMenuLabel`/`DropdownMenuSeparator`
 - Produces: `<NewConversationDropdown triggerSize={"icon" | "icon-sm"} />` —— 渲染 `+` 触发按钮（ghost Button + `Plus size={14}`，外观与原 TopBar `+` 按钮一致）+ 受控面板。Task 5 在 TopBar 以 `<NewConversationDropdown triggerSize={iconSize} />` 挂载。
 
 - [ ] **Step 1: 写失败测试（下拉组件）**
@@ -541,18 +550,20 @@ beforeEach(() => {
 });
 afterEach(() => cleanup());
 
+// Radix 触发器无 onClick 路径：pointerDown 才匹配真机事件流（技术背景实测条目；
+// fireEvent.click 开菜单是本计划曾踩的 Blocker——jsdom 全绿、真机双触发失效）。
 function openDropdown() {
   render(<NewConversationDropdown triggerSize="icon" />);
-  fireEvent.click(screen.getByRole("button", { name: "新建会话" }));
+  fireEvent.pointerDown(screen.getByRole("button", { name: "新建会话" }));
 }
 
 describe("NewConversationDropdown", () => {
   it("the + trigger toggles the controlled panel", () => {
     render(<NewConversationDropdown triggerSize="icon" />);
-    fireEvent.click(screen.getByRole("button", { name: "新建会话" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "新建会话" }));
     expect(useUiStore.getState().newConversationOpen).toBe(true);
     expect(screen.getByText("选择智能体")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "新建会话" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "新建会话" }));
     expect(useUiStore.getState().newConversationOpen).toBe(false);
   });
 
@@ -588,6 +599,19 @@ describe("NewConversationDropdown", () => {
     expect(closeTabMock).not.toHaveBeenCalled();
   });
 
+  it("clears the stale error row when the panel reopens (R4)", async () => {
+    createConversationMock.mockRejectedValueOnce({ message: "旧错误" });
+    const utils = render(<NewConversationDropdown triggerSize="icon" />);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "新建会话" }));
+    fireEvent.click(screen.getByText("Claude Code"));
+    await screen.findByText("旧错误");
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    await waitFor(() => expect(useUiStore.getState().newConversationOpen).toBe(false));
+    utils.rerender(<NewConversationDropdown triggerSize="icon" />);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "新建会话" }));
+    expect(screen.queryByText("旧错误")).toBeNull();
+  });
+
   it("rolls the tab back (closeTab) when a post-creation sync step fails", async () => {
     // 契约：标签已建之后的任何同步失败都必须回滚标签。
     useUiStore.setState({
@@ -617,7 +641,7 @@ describe("NewConversationDropdown", () => {
     useAgentStore.setState({ serversLoadedAt: Date.now() - 120_000 });
     render(<NewConversationDropdown triggerSize="icon" />);
     expect(loadAllServersMock).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "新建会话" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "新建会话" }));
     expect(loadAllServersMock).toHaveBeenCalledTimes(1);
   });
 
@@ -659,8 +683,9 @@ describe("NewConversationDropdown", () => {
 /**
  * @vitest-environment jsdom
  */
+import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 // 六个分区组件各自依赖 store/时间线，全部打桩成可识别文本。
 vi.mock("./sections/AppearanceSection", () => ({ AppearanceSection: () => <div data-testid="sec">外观</div> }));
@@ -691,6 +716,17 @@ describe("SettingsDialog section targeting", () => {
     expect(screen.getByTestId("sec").textContent).toBe("智能体");
     expect(useUiStore.getState().settingsSection).toBeNull();
   });
+
+  it("a plain reopen returns to appearance even after the tab was changed (R2)", () => {
+    render(<SettingsDialog />);
+    // Radix TabsTrigger 的选择走 onMouseDown（react-tabs 1.1.19 dist L123，
+    // 条件 button===0 && !ctrlKey），fireEvent.click 不会切换页签。
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "智能体" }));
+    expect(screen.getByTestId("sec").textContent).toBe("智能体");
+    act(() => useUiStore.setState({ settingsOpen: false }));
+    act(() => useUiStore.setState({ settingsOpen: true }));
+    expect(screen.getByTestId("sec").textContent).toBe("外观");
+  });
 });
 ```
 
@@ -710,7 +746,7 @@ import { useState } from "react";
 ```
 改为：
 ```tsx
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 ```
 
 编辑 2 —— ui.store import 与 TabId 类型：
@@ -735,13 +771,23 @@ type TabId = SettingsSection;
 
 ```tsx
   const settingsSection = useUiStore((s) => s.settingsSection);
+  const prevOpen = useRef(open);
 
-  // 一次性定向（如新建会话下拉的"管理智能体…"）：打开时落到目标页签并立即清空，
-  // 下次普通打开仍回到默认页签。
+  // 打开时两条路径：1) 带 settingsSection 的一次性定向（如"管理智能体…"）——
+  // 落到目标页签并立即清空标志；2) 普通打开（open 由 false→true 且无定向）——
+  // 重置回默认页签。组件在 App.tsx 无条件常驻挂载，useState 不随关窗重建，
+  // 不重置则上次定向的页签会跨开合残留（与冒烟项 6 承诺矛盾，R2）。
+  // prevOpen 用来区分"普通打开"与"定向后清空 settingsSection 引发的 effect
+  // 再触发"——后者 wasOpen=true，走空分支，避免把刚定向的页签盖回外观。
   useEffect(() => {
-    if (open && settingsSection) {
+    const wasOpen = prevOpen.current;
+    prevOpen.current = open;
+    if (!open) return;
+    if (settingsSection) {
       setTab(settingsSection);
       useUiStore.getState().setSettingsSection(null);
+    } else if (!wasOpen) {
+      setTab("appearance");
     }
   }, [open, settingsSection]);
 ```
@@ -791,7 +837,6 @@ export function NewConversationDropdown({ triggerSize }: Props) {
   const open = useUiStore((s) => s.newConversationOpen);
   const openNewConversation = useUiStore((s) => s.openNewConversation);
   const closeNewConversation = useUiStore((s) => s.closeNewConversation);
-  const toggleNewConversation = useUiStore((s) => s.toggleNewConversation);
   const openSettings = useUiStore((s) => s.openSettings);
   const setSettingsSection = useUiStore((s) => s.setSettingsSection);
   const servers = useAgentStore((s) => s.servers);
@@ -853,17 +898,22 @@ export function NewConversationDropdown({ triggerSize }: Props) {
   return (
     <DropdownMenu
       open={open}
-      onOpenChange={(o) => (o ? openNewConversation() : closeNewConversation())}
+      onOpenChange={(o) => {
+        if (o) {
+          setError(null); // R4：每次打开清空上次残留的错误行
+          openNewConversation();
+        } else {
+          closeNewConversation();
+        }
+      }}
     >
-      {/* + 按钮显式 toggle（与命令同一路径）；Radix 触发器自身的开合经
-          onOpenChange 汇回同一 store 标志，两路计算同一目标值，不冲突。 */}
+      {/* Radix 触发器只经 onPointerDown/onKeyDown 开合并经 onOpenChange 汇回
+          store（react-dropdown-menu dist L77-90，无 onClick 路径）。
+          严禁另接 onClick toggle：真机里 pointerdown 翻转一次后 click 会再翻转
+          一次，按钮无法开关（Playwright 实测；jsdom fireEvent.click 暴露不了，
+          故测试一律用 fireEvent.pointerDown，见技术背景实测条目）。 */}
       <DropdownMenuTrigger asChild>
-        <Button
-          size={triggerSize}
-          variant="ghost"
-          aria-label="新建会话"
-          onClick={toggleNewConversation}
-        >
+        <Button size={triggerSize} variant="ghost" aria-label="新建会话">
           <Plus size={14} />
         </Button>
       </DropdownMenuTrigger>
@@ -963,7 +1013,7 @@ export function NewConversationDropdown({ triggerSize }: Props) {
 - [ ] **Step 6: 跑测试确认绿**
 
 Run: `pnpm vitest run src/features/projects/NewConversationDropdown.test.tsx src/features/settings/SettingsDialog.test.tsx`
-Expected: PASS（下拉 11 例 + 弹窗 2 例）
+Expected: PASS（下拉 12 例 + 弹窗 3 例）
 
 - [ ] **Step 7: 提交**
 
@@ -1111,6 +1161,13 @@ describe("conversation tab outline (F5)", () => {
     expect(active.className).toContain(
       "group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-0"
     );
+    // dark 对偶类必须在场（R1：顶掉 ui/tabs.tsx 内置 dark:bg-transparent/border-transparent）
+    expect(active.className).toContain(
+      "dark:group-data-[variant=line]/tabs-list:data-[state=active]:bg-[var(--glass-2-surface)]"
+    );
+    expect(active.className).toContain(
+      "dark:group-data-[variant=line]/tabs-list:data-[state=active]:border-[color:var(--border-default)]"
+    );
   });
 
   it("legacy bottom-line shadow and small radius are gone", () => {
@@ -1144,7 +1201,7 @@ describe("conversation tab outline (F5)", () => {
 describe("new-conversation dropdown wiring (F6)", () => {
   it("clicking + opens the dropdown; Esc closes it", async () => {
     render(<TopBar />);
-    fireEvent.click(screen.getByRole("button", { name: "新建会话" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "新建会话" }));
     expect(screen.getByText("选择智能体")).toBeTruthy();
     fireEvent.keyDown(document.body, { key: "Escape" });
     await waitFor(() => expect(screen.queryByText("选择智能体")).toBeNull());
@@ -1161,7 +1218,7 @@ describe("new-conversation dropdown wiring (F6)", () => {
 
   it("clicking an agent row creates a conversation and shows the tab immediately", async () => {
     render(<TopBar />);
-    fireEvent.click(screen.getByRole("button", { name: "新建会话" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "新建会话" }));
     fireEvent.click(screen.getByText("Claude Code"));
     await waitFor(() =>
       expect(createConversationMock).toHaveBeenCalledWith("p1", "claude-code")
@@ -1245,7 +1302,7 @@ Expected: 输出 `CLEAN`
 - [ ] **Step 6: 跑测试确认绿**
 
 Run: `pnpm vitest run src/features/layout/TopBar.test.tsx src/features/projects/NewConversationDropdown.test.tsx`
-Expected: PASS（TopBar 7 例 + 下拉 11 例）
+Expected: PASS（TopBar 7 例 + 下拉 12 例）
 
 - [ ] **Step 7: 提交**
 
@@ -1286,7 +1343,7 @@ Expected: `CLEAN-1` 与 `CLEAN-2` 均输出（旧底部线阴影类在 src 内�
 
 1. `Ctrl+Shift+N` 打开下拉，再按一次关闭；`+` 按钮开合一致。
 2. 点任一智能体行：新页签**立即**出现并激活，下拉随即关闭，状态点进入 starting/running（后台握手）；无任何中间选中态。
-3. 激活页签：玻璃底 + 整圈描边 + 顶部极淡高光 + 左侧 2px 强调边；非激活 hover 上浮 1px + 显底 + 边框淡入；激活页签 hover 不位移。
+3. 激活页签：玻璃底 + 整圈描边 + 顶部极淡高光 + 左侧 2px 强调边；非激活 hover 上浮 1px + 显底 + 边框淡入；激活页签 hover 不位移。**dark 复验（R1）**：把根节点 `data-theme` 临时改为 `dark`（或经外观分区主题设置），激活页签仍是玻璃底 + 整圈描边，不回退透明底/无描边。
 4. 开 10+ 页签：横向滚动、滚动条不可见、左右渐隐遮罩常驻。
 5. 停掉后端再点行：下拉内出现红字错误行，下拉保持打开，页签无残留幽灵标签；恢复后端后可重试成功。
 6. 「管理智能体…」：设置弹窗打开并直接落在「智能体」分区；关闭后再次普通打开设置回到「外观」。

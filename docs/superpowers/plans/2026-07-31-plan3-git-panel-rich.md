@@ -167,8 +167,10 @@ fn create_branch_rejects_duplicate_name() {
 fn checkout_refuses_dirty_worktree_on_conflicting_paths() {
     let dir = tempdir().unwrap();
     init_repo(dir.path());
-    let main_branch = head_name(dir.path());
     commit_file(dir.path(), "a.txt", "v1", "init");
+    // NB: read the default branch name only after the first commit —
+    // git_repository_head returns ENOTFOUND on an unborn HEAD.
+    let main_branch = head_name(dir.path());
     repository::create_branch(dir.path(), "dev").unwrap();
     repository::checkout_branch(dir.path(), "dev").unwrap();
     commit_file(dir.path(), "a.txt", "v2-on-dev", "dev change");
@@ -688,21 +690,22 @@ pub fn stash_list(repo_path: &Path) -> Result<Vec<StashEntry>, NexError> {
     Ok(out)
 }
 
+// NB: git2 0.19 的 stash_apply/pop/drop 形参是 usize；外部保持 u32，调用点无损转换。
 pub fn stash_apply(repo_path: &Path, index: u32) -> Result<(), NexError> {
     let mut repo = Repository::open(repo_path)?;
-    repo.stash_apply(index, None)?;
+    repo.stash_apply(index as usize, None)?;
     Ok(())
 }
 
 pub fn stash_pop(repo_path: &Path, index: u32) -> Result<(), NexError> {
     let mut repo = Repository::open(repo_path)?;
-    repo.stash_pop(index, None)?;
+    repo.stash_pop(index as usize, None)?;
     Ok(())
 }
 
 pub fn stash_drop(repo_path: &Path, index: u32) -> Result<(), NexError> {
     let mut repo = Repository::open(repo_path)?;
-    repo.stash_drop(index)?;
+    repo.stash_drop(index as usize)?;
     Ok(())
 }
 ```

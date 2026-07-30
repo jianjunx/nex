@@ -1889,6 +1889,18 @@ describe("git.store push guard", () => {
     expect(gitPushMock).not.toHaveBeenCalled();
     expect(useGitStore.getState().error).toBe("无法确定当前分支名，不能推送");
   });
+
+  it("discard with an empty file list skips the backend entirely", async () => {
+    const ok = await useGitStore.getState().discard("/p", []);
+    expect(ok).toBe(false);
+    expect(gitDiscardMock).not.toHaveBeenCalled();
+  });
+
+  it("revertStaged with an empty file list skips the backend entirely", async () => {
+    const ok = await useGitStore.getState().revertStaged("/p", []);
+    expect(ok).toBe(false);
+    expect(gitRevertStagedMock).not.toHaveBeenCalled();
+  });
 });
 ```
 
@@ -2173,12 +2185,14 @@ export const useGitStore = create<GitStore>()(
       },
 
       discard: async (projectPath, files) => {
+        if (files.length === 0) return false; // 后端 checkout_index 空 paths = 全仓库，严禁下传空数组
         const ok = await runOp("丢弃更改", () => gitDiscard(projectPath, files));
         if (ok) await get().refresh(projectPath);
         return ok;
       },
 
       revertStaged: async (projectPath, files) => {
+        if (files.length === 0) return false; // 后端 reset_default 空 paths = 全仓库，严禁下传空数组
         const ok = await runOp("撤销暂存更改", () => gitRevertStaged(projectPath, files));
         if (ok) await get().refresh(projectPath);
         return ok;
@@ -4603,7 +4617,7 @@ pnpm lint && pnpm build && pnpm test
 ```
 
 预期：
-- `pnpm test` 报 **153 个用例全过**＝既有基线 108 + 本计划新增 45。新增分布逐文件核对：T7 `src/stores/git.store.test.ts` +9（loading 粒度 2 / opLog 3 / commitWith 3 / push 守卫 1）+ T13 同文件再 +2（loadHistory 成功/失败）；T8 `GitCredentialModal.test.tsx` +6；T9 `BranchSelector.test.tsx` +4；T10 `CommitSection.test.tsx` +4、`registry.run.test.ts` +3、`KeybindingHost.test.tsx` +2；T11 `ChangesSection.test.tsx` +6；T12 `GitActionsMenu.test.tsx` +4；T13 `HistorySection.test.tsx` +5（含 R1 跨项目重载锁定）。任一文件用例数与此不符，说明前序任务有漏写，回对应任务补齐再重跑。
+- `pnpm test` 报 **155 个用例全过**＝既有基线 108 + 本计划新增 47。新增分布逐文件核对：T7 `src/stores/git.store.test.ts` +11（loading 粒度 2 / opLog 3 / commitWith 3 / push 守卫 1 / 空数组守卫 2）+ T13 同文件再 +2（loadHistory 成功/失败）；T8 `GitCredentialModal.test.tsx` +6；T9 `BranchSelector.test.tsx` +4；T10 `CommitSection.test.tsx` +4、`registry.run.test.ts` +3、`KeybindingHost.test.tsx` +2；T11 `ChangesSection.test.tsx` +6；T12 `GitActionsMenu.test.tsx` +4；T13 `HistorySection.test.tsx` +5（含 R1 跨项目重载锁定）。任一文件用例数与此不符，说明前序任务有漏写，回对应任务补齐再重跑。
 - `pnpm lint` warning 数保持 **6**（既有基线），零新增 error。
 - `pnpm build`（tsc + vite）零错误——T6 四处命名契约（git_cmds.rs / lib.rs / commands.ts / tauri.ts）的类型一致性在此最终把关。
 

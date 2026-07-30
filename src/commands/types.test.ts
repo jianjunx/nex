@@ -1,4 +1,3 @@
-// src/commands/types.test.ts
 import { describe, expect, it } from "vitest";
 import {
   canonicalToCombo,

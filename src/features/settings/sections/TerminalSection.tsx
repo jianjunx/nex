@@ -17,7 +17,7 @@ export function TerminalSection() {
   } = useSettingsStore();
 
   return (
-    // ② Terminal — values persist now; xterm wiring follows in task 8.
+    // 终端偏好；新打开的终端实例读取这些值。
     <section>
       <div className={SECTION_HEADER}>终端</div>
       <div className="space-y-3">

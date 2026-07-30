@@ -57,7 +57,7 @@ describe("fs.store multi-tab editor", () => {
     fsReadFile
       .mockResolvedValueOnce({ is_text: true, content: "a", size: 1 })
       .mockResolvedValueOnce({ is_text: true, content: "b", size: 1 });
-    // Pin: 预览模式会用下一个未固定页签替换首个未固定页签，固定后两个页签才并存。
+    // pin:true —— 固定标签，避免被预览模式（未固定单开）替换
     await useFsStore.getState().openFile("/p/a.ts", true);
     await useFsStore.getState().openFile("/p/b.ts");
     expect(useFsStore.getState().openFiles.map((f) => f.path)).toEqual(["/p/a.ts", "/p/b.ts"]);
@@ -83,7 +83,7 @@ describe("fs.store multi-tab editor", () => {
     fsReadFile
       .mockResolvedValueOnce({ is_text: true, content: "a", size: 1 })
       .mockResolvedValueOnce({ is_text: true, content: "b", size: 1 });
-    // Pin: 预览模式会替换首个未固定页签，固定 a.ts 后 b.ts 才能作为第二个页签并存。
+    // pin:true —— 固定标签，避免被预览模式（未固定单开）替换
     await useFsStore.getState().openFile("/p/a.ts", true);
     await useFsStore.getState().openFile("/p/b.ts");
     useFsStore.getState().setDraft("b!");
@@ -194,7 +194,7 @@ describe("fs.store multi-tab editor", () => {
     fsReadFile
       .mockResolvedValueOnce({ is_text: true, content: "a", size: 1 })
       .mockResolvedValueOnce({ is_text: true, content: "b", size: 1 });
-    // Pin: 预览模式会替换首个未固定页签，固定 a.ts 后两个页签并存才可来回切换。
+    // pin:true —— 固定标签，避免被预览模式（未固定单开）替换
     await useFsStore.getState().openFile("/p/a.ts", true);
     await useFsStore.getState().openFile("/p/b.ts");
     await useFsStore.getState().switchFile("/p/a.ts");

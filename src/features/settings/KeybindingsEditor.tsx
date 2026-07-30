@@ -1,4 +1,3 @@
-// src/features/settings/KeybindingsEditor.tsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Pencil, RotateCcw } from "lucide-react";
 import { Input } from "@/components/ui/input";

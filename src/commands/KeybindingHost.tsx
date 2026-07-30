@@ -1,4 +1,3 @@
-// src/commands/KeybindingHost.tsx
 import { useEffect } from "react";
 import {
   comboToCanonical,

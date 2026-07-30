@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 
-// detectPlatform 在模块加载期被调用——用可变绑定 + 部分 mock 控制平台。
+// mock detectPlatform 以按用例切换平台；可变绑定在渲染期延迟读取。
 let platform: "mac" | "other" = "other";
 vi.mock("../../commands/types", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../commands/types")>();

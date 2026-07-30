@@ -1,7 +1,6 @@
 /**
  * @vitest-environment jsdom
  */
-// src/commands/KeybindingHost.test.tsx
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "@testing-library/react";
 import { KeybindingHost, isInputContext } from "./KeybindingHost";

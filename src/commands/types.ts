@@ -1,4 +1,3 @@
-// src/commands/types.ts
 export type Platform = "mac" | "other";
 
 /** Cross-platform logical combo. `primary` = Ctrl on win/linux, Cmd on mac. `key` null = unbound. */

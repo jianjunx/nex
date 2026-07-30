@@ -6,7 +6,7 @@ export function LayoutSection() {
   const resetLayoutDims = useUiStore((s) => s.resetLayoutDims);
 
   return (
-    // ④ Layout — sizes only; panel visibility is never touched.
+    // 仅重置尺寸，从不改面板可见性。
     <section>
       <div className={SECTION_HEADER}>布局</div>
       <div className="space-y-1.5">

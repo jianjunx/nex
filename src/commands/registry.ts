@@ -1,4 +1,3 @@
-// src/commands/registry.ts
 import type { Command, KeyCombo } from "./types";
 import { isFindBarOpen } from "./editorKeybindings";
 import { noteCloseEsc } from "./keybindingHostState";

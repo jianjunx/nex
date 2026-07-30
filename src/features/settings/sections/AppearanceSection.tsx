@@ -7,7 +7,7 @@ export function AppearanceSection() {
   const { theme, setTheme } = useSettingsStore();
 
   return (
-    // ① Appearance — CSS-only this commit; OS glass re-tint lands later.
+    // 主题经 CSS 变量生效；系统玻璃染色的自动同步尚未实现。
     <section>
       <div className={SECTION_HEADER}>外观</div>
       <div className="space-y-1.5">

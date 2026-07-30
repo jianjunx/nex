@@ -1,4 +1,3 @@
-// src/features/settings/SettingsDialog.tsx
 import { useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useUiStore } from "../../stores/ui.store";

@@ -1,4 +1,3 @@
-// src/commands/keybindingHostState.ts
 // Double-Esc-to-close-editor timing, lifted out of EditorPanel so the migrated
 // editor.close command (and its unit test) can drive it.
 const DOUBLE_ESC_MS = 500;

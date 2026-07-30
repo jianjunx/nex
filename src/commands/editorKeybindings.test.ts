@@ -1,4 +1,3 @@
-// src/commands/editorKeybindings.test.ts
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@codemirror/search", () => ({ searchPanelOpen: () => true }));
@@ -13,7 +12,7 @@ describe("editor find-bar accessor", () => {
   });
   it("delegates to the registered view", () => {
     registerFindBarAccessor(() => ({ state: {} } as never));
-    // searchPanelOpen on an empty state is false; assert wiring returns a boolean.
-    expect(typeof isFindBarOpen()).toBe("boolean");
+    // searchPanelOpen is mocked to always return true; assert the accessor forwards it.
+    expect(isFindBarOpen()).toBe(true);
   });
 });

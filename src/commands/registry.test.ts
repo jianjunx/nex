@@ -1,4 +1,3 @@
-// src/commands/registry.test.ts
 import { describe, expect, it } from "vitest";
 import { comboToCanonical } from "./types";
 import { getCommand, listCommands } from "./registry";

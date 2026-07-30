@@ -1,4 +1,3 @@
-// src/stores/keybindings.store.test.ts
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const setMock = vi.fn();

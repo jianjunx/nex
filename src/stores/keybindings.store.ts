@@ -1,4 +1,3 @@
-// src/stores/keybindings.store.ts
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { LazyStore } from "@tauri-apps/plugin-store";

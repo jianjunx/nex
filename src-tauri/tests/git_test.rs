@@ -178,3 +178,83 @@ fn revert_staged_on_unborn_head_clears_index_and_disk() {
     assert!(!dir.path().join("new.txt").exists());
     assert!(repository::get_status(dir.path()).unwrap().files.is_empty());
 }
+
+#[test]
+fn stash_save_clears_workdir_including_untracked() {
+    let dir = tempdir().unwrap();
+    init_repo(dir.path());
+    commit_file(dir.path(), "a.txt", "v1", "init");
+    fs::write(dir.path().join("a.txt"), "dirty").unwrap();
+    fs::write(dir.path().join("new.txt"), "untracked").unwrap();
+
+    repository::stash_save(dir.path(), "my stash").unwrap();
+
+    assert!(repository::get_status(dir.path()).unwrap().files.is_empty());
+    let list = repository::stash_list(dir.path()).unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].index, 0);
+    assert!(list[0].message.contains("my stash"));
+}
+
+#[test]
+fn stash_save_empty_message_synthesizes_default() {
+    let dir = tempdir().unwrap();
+    init_repo(dir.path());
+    commit_file(dir.path(), "a.txt", "v1", "init");
+    fs::write(dir.path().join("a.txt"), "dirty").unwrap();
+
+    repository::stash_save(dir.path(), "  ").unwrap();
+
+    let list = repository::stash_list(dir.path()).unwrap();
+    assert!(list[0].message.contains("WIP on"));
+}
+
+#[test]
+fn stash_pop_restores_changes_and_drops_entry() {
+    let dir = tempdir().unwrap();
+    init_repo(dir.path());
+    commit_file(dir.path(), "a.txt", "v1", "init");
+    fs::write(dir.path().join("a.txt"), "dirty").unwrap();
+    repository::stash_save(dir.path(), "wip").unwrap();
+
+    repository::stash_pop(dir.path(), 0).unwrap();
+
+    assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "dirty");
+    assert!(repository::stash_list(dir.path()).unwrap().is_empty());
+}
+
+#[test]
+fn stash_apply_restores_but_keeps_entry() {
+    let dir = tempdir().unwrap();
+    init_repo(dir.path());
+    commit_file(dir.path(), "a.txt", "v1", "init");
+    fs::write(dir.path().join("a.txt"), "dirty").unwrap();
+    repository::stash_save(dir.path(), "wip").unwrap();
+
+    repository::stash_apply(dir.path(), 0).unwrap();
+
+    assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "dirty");
+    assert_eq!(repository::stash_list(dir.path()).unwrap().len(), 1);
+}
+
+#[test]
+fn stash_drop_removes_entry_without_restoring() {
+    let dir = tempdir().unwrap();
+    init_repo(dir.path());
+    commit_file(dir.path(), "a.txt", "v1", "init");
+    fs::write(dir.path().join("a.txt"), "dirty").unwrap();
+    repository::stash_save(dir.path(), "wip").unwrap();
+
+    repository::stash_drop(dir.path(), 0).unwrap();
+
+    assert!(repository::stash_list(dir.path()).unwrap().is_empty());
+    assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "v1");
+}
+
+#[test]
+fn stash_save_on_unborn_head_errors() {
+    let dir = tempdir().unwrap();
+    init_repo(dir.path());
+    let err = repository::stash_save(dir.path(), "wip").unwrap_err();
+    assert!(err.to_string().contains("unborn HEAD"));
+}

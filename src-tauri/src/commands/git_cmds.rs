@@ -62,3 +62,28 @@ pub fn git_discard(project_path: String, files: Vec<String>) -> Result<(), NexEr
 pub fn git_revert_staged(project_path: String, files: Vec<String>) -> Result<(), NexError> {
     repository::revert_staged(Path::new(&project_path), &files)
 }
+
+#[tauri::command]
+pub fn git_stash_save(project_path: String, message: String) -> Result<(), NexError> {
+    repository::stash_save(Path::new(&project_path), &message)
+}
+
+#[tauri::command]
+pub fn git_stash_list(project_path: String) -> Result<Vec<StashEntry>, NexError> {
+    repository::stash_list(Path::new(&project_path))
+}
+
+#[tauri::command]
+pub fn git_stash_apply(project_path: String, index: u32) -> Result<(), NexError> {
+    repository::stash_apply(Path::new(&project_path), index)
+}
+
+#[tauri::command]
+pub fn git_stash_pop(project_path: String, index: u32) -> Result<(), NexError> {
+    repository::stash_pop(Path::new(&project_path), index)
+}
+
+#[tauri::command]
+pub fn git_stash_drop(project_path: String, index: u32) -> Result<(), NexError> {
+    repository::stash_drop(Path::new(&project_path), index)
+}

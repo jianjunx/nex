@@ -314,3 +314,50 @@ pub fn revert_staged(repo_path: &Path, files: &[String]) -> Result<(), NexError>
     }
     Ok(())
 }
+
+pub fn stash_save(repo_path: &Path, message: &str) -> Result<(), NexError> {
+    // git2 0.19 的 stash_* 全系 &mut self
+    let mut repo = Repository::open(repo_path)?;
+    let sig = repo.signature()?;
+    if repo.head().and_then(|h| h.peel_to_commit()).is_err() {
+        return Err(NexError::Git(
+            "cannot stash on an unborn HEAD: commit something first".to_string(),
+        ));
+    }
+    // libgit2 stores an empty message verbatim; synthesize git's default.
+    let fallback = match repo.head().ok().and_then(|h| h.shorthand().map(|s| s.to_string())) {
+        Some(branch) => format!("WIP on {branch}"),
+        None => "WIP on HEAD".to_string(),
+    };
+    let msg = if message.trim().is_empty() { fallback.as_str() } else { message };
+    repo.stash_save(&sig, msg, Some(git2::StashFlags::INCLUDE_UNTRACKED))?;
+    Ok(())
+}
+
+pub fn stash_list(repo_path: &Path) -> Result<Vec<StashEntry>, NexError> {
+    let mut repo = Repository::open(repo_path)?;
+    let mut out = Vec::new();
+    repo.stash_foreach(|index, message, _oid| {
+        out.push(StashEntry { index: index as u32, message: message.to_string() });
+        true
+    })?;
+    Ok(out)
+}
+
+pub fn stash_apply(repo_path: &Path, index: u32) -> Result<(), NexError> {
+    let mut repo = Repository::open(repo_path)?;
+    repo.stash_apply(index as usize, None)?;
+    Ok(())
+}
+
+pub fn stash_pop(repo_path: &Path, index: u32) -> Result<(), NexError> {
+    let mut repo = Repository::open(repo_path)?;
+    repo.stash_pop(index as usize, None)?;
+    Ok(())
+}
+
+pub fn stash_drop(repo_path: &Path, index: u32) -> Result<(), NexError> {
+    let mut repo = Repository::open(repo_path)?;
+    repo.stash_drop(index as usize)?;
+    Ok(())
+}

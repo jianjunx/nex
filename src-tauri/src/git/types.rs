@@ -32,3 +32,9 @@ pub struct BranchInfo {
     pub ahead: Option<u32>,
     pub behind: Option<u32>,
 }
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StashEntry {
+    pub index: u32,
+    pub message: String,
+}

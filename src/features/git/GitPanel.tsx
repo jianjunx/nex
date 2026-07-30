@@ -6,7 +6,7 @@ import { useGitStore } from "../../stores/git.store";
 import { useProjectStore } from "../../stores/project.store";
 
 export function GitPanel() {
-  const { status, diff, diffFile, loading, error, refresh, viewDiff, stage, unstage, commit } = useGitStore();
+  const { status, diff, diffFile, statusLoading, opRunning, error, refresh, viewDiff, stage, unstage, commit } = useGitStore();
   const projects = useProjectStore((s) => s.projects);
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const project = projects.find((p) => p.id === activeProjectId);
@@ -20,9 +20,11 @@ export function GitPanel() {
 
   const handleCommit = async () => {
     if (!commitMsg.trim()) return;
-    await commit(project.path, commitMsg);
-    setCommitMsg("");
-    refresh(project.path);
+    const ok = await commit(project.path, commitMsg);
+    if (ok) {
+      setCommitMsg("");
+      refresh(project.path);
+    }
   };
 
   const handleStage = async (files: string[]) => {
@@ -55,7 +57,7 @@ export function GitPanel() {
           <div className="mb-4">
             <div className="flex items-center justify-between px-2 py-1.5 text-xs text-[var(--text-tertiary)]">
               <span>Changes ({unstaged.length})</span>
-              <Button size="sm" variant="ghost" disabled={loading} onClick={() => handleStage(unstaged.map((f) => f.path))}>
+              <Button size="sm" variant="ghost" disabled={statusLoading || !!opRunning} onClick={() => handleStage(unstaged.map((f) => f.path))}>
                 <Plus size={10} />
               </Button>
             </div>
@@ -71,7 +73,7 @@ export function GitPanel() {
           <div>
             <div className="flex items-center justify-between px-2 py-1.5 text-xs text-[var(--text-tertiary)]">
               <span>Staged ({staged.length})</span>
-              <Button size="sm" variant="ghost" disabled={loading} onClick={() => handleUnstage(staged.map((f) => f.path))}>
+              <Button size="sm" variant="ghost" disabled={statusLoading || !!opRunning} onClick={() => handleUnstage(staged.map((f) => f.path))}>
                 <Minus size={10} />
               </Button>
             </div>
@@ -98,7 +100,7 @@ export function GitPanel() {
         <Button
           variant="ghost"
           className="mt-3 w-full h-auto py-2.5 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] dark:bg-[var(--accent)] dark:text-white dark:hover:bg-[var(--accent-hover)]"
-          disabled={loading || !commitMsg.trim()}
+          disabled={statusLoading || !!opRunning || !commitMsg.trim()}
           onClick={handleCommit}
         >
           <Check size={14} className="mr-2" /> Commit

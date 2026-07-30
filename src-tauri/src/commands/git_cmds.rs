@@ -1,7 +1,9 @@
 use crate::error::NexError;
+use crate::git::credentials::GitCredentialBroker;
 use crate::git::repository;
 use crate::git::types::*;
 use std::path::Path;
+use tauri::State;
 
 #[tauri::command]
 pub fn git_status(project_path: String) -> Result<GitStatus, NexError> {
@@ -86,4 +88,15 @@ pub fn git_stash_pop(project_path: String, index: u32) -> Result<(), NexError> {
 #[tauri::command]
 pub fn git_stash_drop(project_path: String, index: u32) -> Result<(), NexError> {
     repository::stash_drop(Path::new(&project_path), index)
+}
+
+#[tauri::command]
+pub fn git_credential_respond(
+    broker: State<GitCredentialBroker>,
+    request_id: String,
+    username: Option<String>,
+    password: Option<String>,
+    remember: bool,
+) -> Result<(), NexError> {
+    broker.respond(&request_id, username, password, remember)
 }

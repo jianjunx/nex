@@ -1,4 +1,5 @@
 use git2::Repository;
+use nex_lib::git::credentials::{host_of, session_key, GitCredentialBroker};
 use nex_lib::git::repository;
 use std::fs;
 use std::path::Path;
@@ -257,4 +258,57 @@ fn stash_save_on_unborn_head_errors() {
     init_repo(dir.path());
     let err = repository::stash_save(dir.path(), "wip").unwrap_err();
     assert!(err.to_string().contains("unborn HEAD"));
+}
+
+#[test]
+fn host_of_parses_common_remote_shapes() {
+    assert_eq!(host_of("https://github.com/owner/repo.git"), "github.com");
+    assert_eq!(host_of("https://user@codeberg.org:443/o/r"), "codeberg.org");
+    assert_eq!(host_of("ssh://git@gitlab.com:22/group/proj.git"), "gitlab.com");
+    assert_eq!(host_of("git@github.com:owner/repo.git"), "github.com");
+}
+
+#[test]
+fn session_key_scopes_cache_by_kind_and_host() {
+    assert_eq!(session_key("https://github.com/a/b", "https"), "https:github.com");
+    assert_ne!(
+        session_key("https://github.com/a/b", "https"),
+        session_key("https://github.com/a/b", "ssh-passphrase"),
+    );
+}
+
+#[tokio::test]
+async fn respond_delivers_answer_to_pending_receiver() {
+    let broker = GitCredentialBroker::new();
+    let (id, rx) = broker.register_pending("https://github.com/a/b", "https");
+    broker.respond(&id, Some("u".into()), Some("p".into()), false).unwrap();
+    let answer = rx.await.unwrap().expect("answer");
+    assert_eq!(answer.username.as_deref(), Some("u"));
+    assert_eq!(answer.secret.as_deref(), Some("p"));
+}
+
+#[tokio::test]
+async fn respond_without_credentials_means_cancel() {
+    let broker = GitCredentialBroker::new();
+    let (id, rx) = broker.register_pending("https://github.com/a/b", "https");
+    broker.respond(&id, None, None, false).unwrap();
+    assert!(rx.await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn remember_caches_for_same_host_and_kind_only() {
+    let broker = GitCredentialBroker::new();
+    let (id, rx) = broker.register_pending("https://github.com/a/b", "https");
+    broker.respond(&id, Some("u".into()), Some("p".into()), true).unwrap();
+    let _ = rx.await;
+    assert!(broker.lookup_session("https://github.com/other/repo", "https").is_some());
+    assert!(broker.lookup_session("https://gitlab.com/a/b", "https").is_none());
+    assert!(broker.lookup_session("https://github.com/a/b", "ssh-passphrase").is_none());
+}
+
+#[test]
+fn respond_unknown_request_id_errors() {
+    let broker = GitCredentialBroker::new();
+    let err = broker.respond("nope", Some("u".into()), Some("p".into()), false).unwrap_err();
+    assert!(err.to_string().contains("no pending credential request"));
 }

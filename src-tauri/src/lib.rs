@@ -12,6 +12,7 @@ pub mod terminal;
 
 use agent::AgentSessionManager;
 use db::Database;
+use git::credentials::GitCredentialBroker;
 use state::AppState;
 use std::sync::Arc;
 use terminal::pty::TerminalManager;
@@ -59,6 +60,7 @@ pub fn run() {
             commands::git_cmds::git_stash_apply,
             commands::git_cmds::git_stash_pop,
             commands::git_cmds::git_stash_drop,
+            commands::git_cmds::git_credential_respond,
             commands::terminal_cmds::terminal_create,
             commands::terminal_cmds::terminal_write,
             commands::terminal_cmds::terminal_resize,
@@ -119,6 +121,10 @@ pub fn run() {
                 agent_manager: AgentSessionManager::new(&app_data_dir),
                 watcher_manager: WatcherManager::new(),
             });
+
+            // In-memory git credential broker for the GUI auth dialog
+            // (Plan 3). Independent State: AppState stays untouched.
+            app.manage(GitCredentialBroker::new());
 
             Ok(())
         })

@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { COMMANDS } from "./commands";
-import { EVENTS, type AgentNotificationPayload, type AgentPermissionRequestPayload, type TerminalOutputPayload, type TerminalExitedPayload, type FsChangedPayload, type GitStatusChangedPayload } from "./events";
+import { EVENTS, type AgentNotificationPayload, type AgentPermissionRequestPayload, type TerminalOutputPayload, type TerminalExitedPayload, type FsChangedPayload, type GitStatusChangedPayload, type GitCredentialRequestPayload } from "./events";
 
 // --- Projects ---
 export interface Project {
@@ -236,6 +236,99 @@ export async function gitCommit(projectPath: string, message: string): Promise<s
   return invoke(COMMANDS.GIT_COMMIT, { projectPath, message });
 }
 
+export interface BranchInfo {
+  name: string;
+  isHead: boolean;
+  isRemote: boolean;
+  ahead: number | null;
+  behind: number | null;
+}
+
+export interface StashEntry {
+  index: number;
+  message: string;
+}
+
+export interface CommitInfo {
+  hash: string;
+  message: string;
+  author: string;
+  time: number;
+}
+
+export async function gitLog(projectPath: string, limit: number): Promise<CommitInfo[]> {
+  return invoke(COMMANDS.GIT_LOG, { projectPath, limit });
+}
+
+export async function gitListBranches(projectPath: string): Promise<BranchInfo[]> {
+  return invoke(COMMANDS.GIT_LIST_BRANCHES, { projectPath });
+}
+
+export async function gitCheckout(projectPath: string, name: string): Promise<void> {
+  return invoke(COMMANDS.GIT_CHECKOUT, { projectPath, name });
+}
+
+export async function gitCreateBranch(projectPath: string, name: string): Promise<void> {
+  return invoke(COMMANDS.GIT_CREATE_BRANCH, { projectPath, name });
+}
+
+export async function gitDeleteBranch(projectPath: string, name: string): Promise<void> {
+  return invoke(COMMANDS.GIT_DELETE_BRANCH, { projectPath, name });
+}
+
+export async function gitDiscard(projectPath: string, files: string[]): Promise<void> {
+  return invoke(COMMANDS.GIT_DISCARD, { projectPath, files });
+}
+
+export async function gitRevertStaged(projectPath: string, files: string[]): Promise<void> {
+  return invoke(COMMANDS.GIT_REVERT_STAGED, { projectPath, files });
+}
+
+export async function gitStashSave(projectPath: string, message: string): Promise<void> {
+  return invoke(COMMANDS.GIT_STASH_SAVE, { projectPath, message });
+}
+
+export async function gitStashList(projectPath: string): Promise<StashEntry[]> {
+  return invoke(COMMANDS.GIT_STASH_LIST, { projectPath });
+}
+
+export async function gitStashApply(projectPath: string, index: number): Promise<void> {
+  return invoke(COMMANDS.GIT_STASH_APPLY, { projectPath, index });
+}
+
+export async function gitStashPop(projectPath: string, index: number): Promise<void> {
+  return invoke(COMMANDS.GIT_STASH_POP, { projectPath, index });
+}
+
+export async function gitStashDrop(projectPath: string, index: number): Promise<void> {
+  return invoke(COMMANDS.GIT_STASH_DROP, { projectPath, index });
+}
+
+export async function gitFetch(projectPath: string, remote: string): Promise<void> {
+  return invoke(COMMANDS.GIT_FETCH, { projectPath, remote });
+}
+
+export async function gitPull(projectPath: string, remote: string): Promise<void> {
+  return invoke(COMMANDS.GIT_PULL, { projectPath, remote });
+}
+
+export async function gitPush(projectPath: string, remote: string, branch: string): Promise<void> {
+  return invoke(COMMANDS.GIT_PUSH, { projectPath, remote, branch });
+}
+
+export async function gitClone(url: string, dest: string): Promise<void> {
+  return invoke(COMMANDS.GIT_CLONE, { url, dest });
+}
+
+export async function gitCredentialRespond(
+  requestId: string,
+  username: string | null,
+  password: string | null,
+  remember: boolean,
+): Promise<void> {
+  return invoke(COMMANDS.GIT_CREDENTIAL_RESPOND, { requestId, username, password, remember });
+}
+
 // --- Terminal ---
 export async function terminalCreate(projectPath: string, shell?: string): Promise<string> {
   return invoke(COMMANDS.TERMINAL_CREATE, { projectPath, shell });
@@ -331,4 +424,8 @@ export function onFsChanged(cb: (payload: FsChangedPayload) => void): Promise<Un
 
 export function onGitStatusChanged(cb: (payload: GitStatusChangedPayload) => void): Promise<UnlistenFn> {
   return listen(EVENTS.GIT_STATUS_CHANGED, (e) => cb(e.payload as GitStatusChangedPayload));
+}
+
+export function onGitCredentialRequest(cb: (payload: GitCredentialRequestPayload) => void): Promise<UnlistenFn> {
+  return listen(EVENTS.GIT_CREDENTIAL_REQUEST, (e) => cb(e.payload as GitCredentialRequestPayload));
 }

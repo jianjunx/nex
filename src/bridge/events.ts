@@ -7,6 +7,7 @@ export const EVENTS = {
   TERMINAL_OUTPUT: "terminal-output",
   TERMINAL_EXITED: "terminal-exited",
   FS_CHANGED: "fs-changed",
+  GIT_CREDENTIAL_REQUEST: "git-credential-request",
 } as const;
 
 export interface AgentNotificationPayload {
@@ -23,6 +24,13 @@ export interface AgentPermissionRequestPayload {
 
 export interface GitStatusChangedPayload {
   projectPath: string;
+}
+
+export interface GitCredentialRequestPayload {
+  requestId: string;
+  url: string;
+  usernameHint: string | null;
+  kind: "https" | "ssh-passphrase";
 }
 
 export interface TerminalOutputPayload {

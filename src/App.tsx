@@ -13,6 +13,7 @@ import { restoreProjectConversationTabs } from "./features/projects/restoreProje
 import { useTerminalStore } from "./stores/terminal.store";
 import { KeybindingHost } from "./commands/KeybindingHost";
 import { useKeybindingsStore } from "./stores/keybindings.store";
+import { SettingsDialog } from "./features/settings/SettingsDialog";
 
 /** Path of the currently active project, if any. */
 function activeProjectPath(): string | undefined {
@@ -96,7 +97,7 @@ function App() {
   return (
     <>
       <KeybindingHost />
-      <SettingsDialogStub />
+      <SettingsDialog />
       <MainLayout
         mainContent={<ChatArea />}
         editorPanel={hasOpenEditors && editorVisible ? <EditorPanel /> : null}
@@ -104,18 +105,6 @@ function App() {
       />
     </>
   );
-}
-
-function SettingsDialogStub() {
-  const open = useUiStore((s) => s.settingsOpen);
-  const close = useUiStore((s) => s.closeSettings);
-  return open ? (
-    <div role="dialog" className="fixed inset-0 z-50 grid place-items-center bg-black/20" onClick={close}>
-      <div className="rounded-lg border bg-background p-6" onClick={(e) => e.stopPropagation()}>
-        设置弹窗（Task 8 实现）
-      </div>
-    </div>
-  ) : null;
 }
 
 export default App;

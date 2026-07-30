@@ -74,11 +74,13 @@ const COMMANDS: Command[] = [
     run: () => useUiStore.getState().setSidePanelTab("files"),
   },
   {
-    id: "view.toggleSettings",
+    id: "view.openSettings",
     title: "打开设置",
     category: "视图",
     defaultKey: k(",", { primary: true }),
-    run: () => useUiStore.getState().toggleSettings(),
+    // 只有"打开"：关闭交给 Esc/遮罩（radix）。对话框打开时 host 全让行，
+    // 一个"切换"命令的关半永远不可达，故命名为 open。
+    run: () => useUiStore.getState().openSettings(),
   },
   {
     id: "workbench.newConversation",

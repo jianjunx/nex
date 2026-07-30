@@ -30,7 +30,6 @@ interface UiState {
   resetLayoutDims: () => void;
   openSettings: () => void;
   closeSettings: () => void;
-  toggleSettings: () => void;
 }
 
 // Persist layout state so the window reopens exactly as the user left it
@@ -69,7 +68,6 @@ export const useUiStore = create<UiState>()(
       }),
       openSettings: () => set((s) => { s.settingsOpen = true; }),
       closeSettings: () => set((s) => { s.settingsOpen = false; }),
-      toggleSettings: () => set((s) => { s.settingsOpen = !s.settingsOpen; }),
     })),
     {
       name: "nex-ui",

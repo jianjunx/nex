@@ -1,4 +1,4 @@
-import type { Message } from "../../bridge/tauri";
+import type { Message } from "../../../bridge/tauri";
 import type { ThreadEntry } from "./types";
 
 /** Convert persisted flat messages into Thread entries for ThreadView. */

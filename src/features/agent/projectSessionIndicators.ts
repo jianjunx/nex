@@ -1,4 +1,4 @@
-export type SessionStatusLike = "idle" | "running" | "waiting";
+export type SessionStatusLike = "starting" | "idle" | "running" | "waiting";
 
 export function projectSessionIndicators(
   conversationIds: string[],

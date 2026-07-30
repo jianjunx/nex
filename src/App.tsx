@@ -11,6 +11,8 @@ import { useGitStore } from "./stores/git.store";
 import { useUiStore } from "./stores/ui.store";
 import { restoreProjectConversationTabs } from "./features/projects/restoreProjectConversationTabs";
 import { useTerminalStore } from "./stores/terminal.store";
+import { KeybindingHost } from "./commands/KeybindingHost";
+import { useKeybindingsStore } from "./stores/keybindings.store";
 
 /** Path of the currently active project, if any. */
 function activeProjectPath(): string | undefined {
@@ -22,6 +24,7 @@ function App() {
   const initListeners = useAgentStore((s) => s.initListeners);
   const loadProjects = useProjectStore((s) => s.loadProjects);
   useEffect(() => {
+    void useKeybindingsStore.getState().load();
     const cleanup = initListeners();
     const cleanupTerminal = useTerminalStore.getState().initListeners();
     // Restore the last session: re-open the previously active project, its
@@ -91,12 +94,28 @@ function App() {
   const editorVisible = useUiStore((s) => s.editorVisible);
 
   return (
-    <MainLayout
-      mainContent={<ChatArea />}
-      editorPanel={hasOpenEditors && editorVisible ? <EditorPanel /> : null}
-      sidePanel={<SidePanel />}
-    />
+    <>
+      <KeybindingHost />
+      <SettingsDialogStub />
+      <MainLayout
+        mainContent={<ChatArea />}
+        editorPanel={hasOpenEditors && editorVisible ? <EditorPanel /> : null}
+        sidePanel={<SidePanel />}
+      />
+    </>
   );
+}
+
+function SettingsDialogStub() {
+  const open = useUiStore((s) => s.settingsOpen);
+  const close = useUiStore((s) => s.closeSettings);
+  return open ? (
+    <div role="dialog" className="fixed inset-0 z-50 grid place-items-center bg-black/20" onClick={close}>
+      <div className="rounded-lg border bg-background p-6" onClick={(e) => e.stopPropagation()}>
+        设置弹窗（Task 8 实现）
+      </div>
+    </div>
+  ) : null;
 }
 
 export default App;

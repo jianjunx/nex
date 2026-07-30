@@ -8,6 +8,7 @@ import { TerminalSection } from "./sections/TerminalSection";
 import { AgentsSection } from "./sections/AgentsSection";
 import { KeybindingsEditor } from "./KeybindingsEditor";
 import { LayoutSection } from "./sections/LayoutSection";
+import { isRecordingActive } from "./recordingState";
 
 type TabId = "appearance" | "editor" | "terminal" | "agents" | "keybindings" | "layout";
 const TABS: { id: TabId; label: string }[] = [
@@ -26,7 +27,13 @@ export function SettingsDialog() {
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) close(); }}>
-      <DialogContent className="sm:max-w-3xl h-[70vh] flex flex-col p-0 gap-0 overflow-hidden">
+      <DialogContent
+        className="sm:max-w-3xl h-[70vh] flex flex-col p-0 gap-0 overflow-hidden"
+        onEscapeKeyDown={(e) => {
+          // 录制快捷键期间挂起 Esc 关窗——这一记 Esc 属于录制器（取消录制）
+          if (isRecordingActive()) e.preventDefault();
+        }}
+      >
         <DialogHeader className="px-6 pt-5 pb-3 border-b border-[color:var(--border-subtle)]">
           <DialogTitle>设置</DialogTitle>
           <DialogDescription className="sr-only">应用设置</DialogDescription>

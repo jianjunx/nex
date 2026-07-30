@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { listCommands } from "../../commands/registry";
 import { useKeybindingsStore, type ConflictRef } from "../../stores/keybindings.store";
 import { comboToCanonical, comboToLabel, detectPlatform, type KeyCombo } from "../../commands/types";
+import { setRecordingActive } from "./recordingState";
 
 const platform = detectPlatform();
 
@@ -98,7 +99,11 @@ function KeyRecorder({ onRecord, onCancel }: { onRecord: (c: KeyCombo) => void; 
   // autoFocus is a no-op on <span> (React only auto-focuses button/input/
   // select/textarea on mount), so focus imperatively after mount.
   const ref = useRef<HTMLSpanElement>(null);
-  useEffect(() => { ref.current?.focus(); }, []);
+  useEffect(() => {
+    setRecordingActive(true);
+    ref.current?.focus();
+    return () => setRecordingActive(false);
+  }, []);
   // Capture locally so the global host (which yields to dialogs) won't steal it.
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") { e.preventDefault(); onCancel(); return; }

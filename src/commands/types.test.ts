@@ -25,6 +25,11 @@ describe("combo canonical round-trip", () => {
     expect(comboToCanonical({ key: null })).toBeNull();
     expect(canonicalToCombo(null)).toEqual({ key: null });
   });
+
+  it("canonical form lowercases the key token (case-insensitive hand-edited JSON)", () => {
+    expect(comboToCanonical({ primary: true, key: "KeyS" })).toBe("primary+keys");
+    expect(comboToCanonical({ key: "Escape" })).toBe("escape");
+  });
 });
 
 describe("normalizeKeyToken", () => {
@@ -76,5 +81,11 @@ describe("comboToLabel", () => {
   });
   it("unbound shows placeholder", () => {
     expect(comboToLabel({ key: null }, "mac")).toBe("—");
+  });
+
+  it('labels the literal-space token as "Space"', () => {
+    // Space 键的 event.key 是 " "，normalizeKeyToken 得 token=" "（非 "space"）
+    expect(comboToLabel({ key: " " }, "other")).toBe("Space");
+    expect(comboToLabel({ primary: true, key: " " }, "other")).toBe("Ctrl+Space");
   });
 });

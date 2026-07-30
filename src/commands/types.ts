@@ -31,7 +31,7 @@ export function comboToCanonical(c: KeyCombo | null): string | null {
   if (!c || c.key == null) return null;
   const parts: string[] = [];
   for (const m of ORDER) if (c[m]) parts.push(m);
-  parts.push(c.key);
+  parts.push(c.key.toLowerCase());
   return parts.join("+");
 }
 
@@ -77,7 +77,7 @@ function labelKey(token: string): string {
   if (/^digit[0-9]$/.test(token)) return token.slice(5);
   if (token === "enter") return "↵";
   if (token === "escape") return "Esc";
-  if (token === "space") return "Space";
+  if (token === " ") return "Space";
   if (token === "arrowup") return "↑";
   if (token === "arrowdown") return "↓";
   if (token === "arrowleft") return "←";

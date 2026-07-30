@@ -15,6 +15,7 @@ export interface ConflictRef {
 }
 
 interface KeybindingsState {
+  /** load() 完成后置位。当前仅测试 mock 消费；保留以维持 mock 形状稳定。 */
   loaded: boolean;
   /** commandId -> canonical string | null (null = explicitly unbound). Absent = use default. */
   overrides: Record<string, string | null>;

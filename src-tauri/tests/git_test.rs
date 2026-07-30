@@ -1,5 +1,7 @@
+use git2::RemoteCallbacks;
 use git2::Repository;
 use nex_lib::git::credentials::{host_of, session_key, GitCredentialBroker};
+use nex_lib::git::network;
 use nex_lib::git::repository;
 use std::fs;
 use std::path::Path;
@@ -311,4 +313,74 @@ fn respond_unknown_request_id_errors() {
     let broker = GitCredentialBroker::new();
     let err = broker.respond("nope", Some("u".into()), Some("p".into()), false).unwrap_err();
     assert!(err.to_string().contains("no pending credential request"));
+}
+
+/// file:// URL for the local transport (works on Windows and Unix alike).
+fn file_url(p: &Path) -> String {
+    let s = p.to_str().unwrap().replace('\\', "/");
+    if s.starts_with('/') { format!("file://{s}") } else { format!("file:///{s}") }
+}
+
+/// Clones inherit objects but not identity config; set it on any repo we
+/// intend to commit in.
+fn set_ident(repo: &Repository) {
+    let mut cfg = repo.config().unwrap();
+    cfg.set_str("user.name", "Nex Test").unwrap();
+    cfg.set_str("user.email", "test@nex.dev").unwrap();
+}
+
+#[test]
+fn push_pull_round_trip_over_local_bare_remote() {
+    // Seed repo with one commit and a bare "remote".
+    let seed = tempdir().unwrap();
+    init_repo(seed.path());
+    commit_file(seed.path(), "a.txt", "v1", "init");
+    let branch = head_name(seed.path());
+    let bare = tempdir().unwrap();
+    Repository::init_bare(bare.path()).unwrap();
+    {
+        let repo = Repository::open(seed.path()).unwrap();
+        repo.remote("origin", &file_url(bare.path())).unwrap();
+    }
+    network::push_remote(seed.path(), "origin", &branch, RemoteCallbacks::new()).unwrap();
+
+    // Clone the bare remote (local transport: no credentials callback fires).
+    let work = tempdir().unwrap();
+    let work_path = work.path().join("clone");
+    network::clone_repo(&file_url(bare.path()), &work_path, RemoteCallbacks::new()).unwrap();
+    assert_eq!(fs::read_to_string(work_path.join("a.txt")).unwrap(), "v1");
+    {
+        let repo = Repository::open(&work_path).unwrap();
+        set_ident(&repo);
+    }
+
+    // Advance the seed; the clone fetches + pulls (fast-forward path).
+    commit_file(seed.path(), "a.txt", "v2", "second");
+    network::push_remote(seed.path(), "origin", &branch, RemoteCallbacks::new()).unwrap();
+    network::fetch_remote(&work_path, "origin", RemoteCallbacks::new()).unwrap();
+    network::pull_remote(&work_path, "origin", RemoteCallbacks::new()).unwrap();
+    assert_eq!(fs::read_to_string(work_path.join("a.txt")).unwrap(), "v2");
+
+    // Diverge the clone, let the seed push again, then expect a readable
+    // non-fast-forward rejection.
+    commit_file(&work_path, "a.txt", "v3-diverge", "third");
+    commit_file(seed.path(), "a.txt", "v4", "fourth");
+    network::push_remote(seed.path(), "origin", &branch, RemoteCallbacks::new()).unwrap();
+    let err = network::push_remote(&work_path, "origin", &branch, RemoteCallbacks::new())
+        .unwrap_err();
+    assert!(err.to_string().contains("推送被拒绝"));
+}
+
+#[test]
+fn clone_creates_working_copy() {
+    let seed = tempdir().unwrap();
+    init_repo(seed.path());
+    commit_file(seed.path(), "README.md", "# hi", "init");
+
+    let dest_parent = tempdir().unwrap();
+    let dest = dest_parent.path().join("fresh-clone");
+    network::clone_repo(&file_url(seed.path()), &dest, RemoteCallbacks::new()).unwrap();
+
+    assert!(dest.join(".git").exists());
+    assert_eq!(fs::read_to_string(dest.join("README.md")).unwrap(), "# hi");
 }

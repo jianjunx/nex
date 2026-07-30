@@ -1,9 +1,10 @@
 use crate::error::NexError;
 use crate::git::credentials::GitCredentialBroker;
+use crate::git::network;
 use crate::git::repository;
 use crate::git::types::*;
-use std::path::Path;
-use tauri::State;
+use std::path::{Path, PathBuf};
+use tauri::{AppHandle, State};
 
 #[tauri::command]
 pub fn git_status(project_path: String) -> Result<GitStatus, NexError> {
@@ -99,4 +100,73 @@ pub fn git_credential_respond(
     remember: bool,
 ) -> Result<(), NexError> {
     broker.respond(&request_id, username, password, remember)
+}
+
+#[tauri::command]
+pub async fn git_fetch(
+    app: AppHandle,
+    broker: State<'_, GitCredentialBroker>,
+    project_path: String,
+    remote: String,
+) -> Result<(), NexError> {
+    let broker = broker.inner().clone();
+    let path = PathBuf::from(project_path);
+    tokio::task::spawn_blocking(move || {
+        let cb = network::build_callbacks(&app, &broker);
+        network::fetch_remote(&path, &remote, cb)
+    })
+    .await
+    .map_err(|e| NexError::Internal(format!("task join failed: {e}")))?
+}
+
+#[tauri::command]
+pub async fn git_pull(
+    app: AppHandle,
+    broker: State<'_, GitCredentialBroker>,
+    project_path: String,
+    remote: String,
+) -> Result<(), NexError> {
+    let broker = broker.inner().clone();
+    let path = PathBuf::from(project_path);
+    tokio::task::spawn_blocking(move || {
+        let cb = network::build_callbacks(&app, &broker);
+        network::pull_remote(&path, &remote, cb)
+    })
+    .await
+    .map_err(|e| NexError::Internal(format!("task join failed: {e}")))?
+}
+
+#[tauri::command]
+pub async fn git_push(
+    app: AppHandle,
+    broker: State<'_, GitCredentialBroker>,
+    project_path: String,
+    remote: String,
+    branch: String,
+) -> Result<(), NexError> {
+    let broker = broker.inner().clone();
+    let path = PathBuf::from(project_path);
+    tokio::task::spawn_blocking(move || {
+        let cb = network::build_callbacks(&app, &broker);
+        network::push_remote(&path, &remote, &branch, cb)
+    })
+    .await
+    .map_err(|e| NexError::Internal(format!("task join failed: {e}")))?
+}
+
+#[tauri::command]
+pub async fn git_clone(
+    app: AppHandle,
+    broker: State<'_, GitCredentialBroker>,
+    url: String,
+    dest: String,
+) -> Result<(), NexError> {
+    let broker = broker.inner().clone();
+    let dest = PathBuf::from(dest);
+    tokio::task::spawn_blocking(move || {
+        let cb = network::build_callbacks(&app, &broker);
+        network::clone_repo(&url, &dest, cb)
+    })
+    .await
+    .map_err(|e| NexError::Internal(format!("task join failed: {e}")))?
 }

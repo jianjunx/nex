@@ -50,7 +50,7 @@ const COMMANDS: Command[] = [
     id: "terminal.toggle",
     title: "切换终端",
     category: "视图",
-    defaultKey: k("backquote", { primary: true }),
+    defaultKey: k("`", { primary: true }),
     run: () => useUiStore.getState().toggleTerminal(),
   },
   {
@@ -73,6 +73,13 @@ const COMMANDS: Command[] = [
     category: "视图",
     defaultKey: k("keye", { primary: true, shift: true }),
     run: () => useUiStore.getState().setSidePanelTab("files"),
+  },
+  {
+    id: "view.toggleSettings",
+    title: "打开设置",
+    category: "视图",
+    defaultKey: k(",", { primary: true }),
+    run: () => useUiStore.getState().toggleSettings(),
   },
   {
     id: "workbench.newConversation",

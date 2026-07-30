@@ -5,12 +5,19 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { listCommands } from "../../commands/registry";
 import { useKeybindingsStore, type ConflictRef } from "../../stores/keybindings.store";
-import { comboToCanonical, comboToLabel, detectPlatform, type KeyCombo } from "../../commands/types";
+import {
+  comboToCanonical,
+  comboToLabel,
+  detectPlatform,
+  eventToLogicalCombo,
+  isModifierOnly,
+  type KeyCombo,
+  type Platform,
+} from "../../commands/types";
 import { setRecordingActive } from "./recordingState";
 
-const platform = detectPlatform();
-
 export function KeybindingsEditor() {
+  const platform = detectPlatform();
   const resolve = useKeybindingsStore((s) => s.resolve);
   const overrides = useKeybindingsStore((s) => s.overrides);
   const setOverride = useKeybindingsStore((s) => s.setOverride);
@@ -19,7 +26,7 @@ export function KeybindingsEditor() {
 
   const [query, setQuery] = useState("");
   const [recordingId, setRecordingId] = useState<string | null>(null);
-  const [pendingConflict, setPendingConflict] = useState<{ id: string; conflict: ConflictRef } | null>(null);
+  const [pendingConflict, setPendingConflict] = useState<ConflictRef | null>(null);
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -56,10 +63,11 @@ export function KeybindingsEditor() {
                 <div className="text-right">
                   {recording ? (
                     <KeyRecorder
+                      platform={platform}
                       onRecord={(combo) => {
                         const { conflict: c } = setOverride(cmd.id, combo);
                         setRecordingId(null);
-                        if (c) setPendingConflict({ id: cmd.id, conflict: c });
+                        if (c) setPendingConflict(c);
                       }}
                       onCancel={() => setRecordingId(null)}
                     />
@@ -86,16 +94,25 @@ export function KeybindingsEditor() {
       </div>
       {pendingConflict && (
         <p className="text-xs text-[var(--warning)]">
-          该键位与「{pendingConflict.conflict.commandTitle}」冲突，有自定义覆盖的命令优先响应。
+          该键位与「{pendingConflict.commandTitle}」冲突，有自定义覆盖的命令优先响应。
         </p>
       )}
     </div>
   );
 }
 
-/** Records a single combo on the next non-modifier keydown; Esc cancels. */
-function KeyRecorder({ onRecord, onCancel }: { onRecord: (c: KeyCombo) => void; onCancel: () => void }) {
-  const [hint, setHint] = useState("请按键…");
+/** Records a single combo on the next non-modifier keydown; Esc or blur cancels. */
+function KeyRecorder({
+  platform,
+  onRecord,
+  onCancel,
+}: {
+  platform: Platform;
+  onRecord: (c: KeyCombo) => void;
+  onCancel: () => void;
+}) {
+  // 「请按键…」常驻；hint 非空时作为子元素追加（拒绝提示不抹掉主提示，录制继续）。
+  const [hint, setHint] = useState<string | null>(null);
   // autoFocus is a no-op on <span> (React only auto-focuses button/input/
   // select/textarea on mount), so focus imperatively after mount.
   const ref = useRef<HTMLSpanElement>(null);
@@ -107,35 +124,33 @@ function KeyRecorder({ onRecord, onCancel }: { onRecord: (c: KeyCombo) => void; 
   // Capture locally so the global host (which yields to dialogs) won't steal it.
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") { e.preventDefault(); onCancel(); return; }
-    if (["Control", "Meta", "Shift", "Alt"].includes(e.key)) return;
+    if (isModifierOnly(e)) return;
     e.preventDefault();
-    const key = normalize(e.code, e.key);
-    const primary = e.ctrlKey || e.metaKey;
-    const alt = e.altKey;
+    // M-3: 与全局分发器共用同一归一化——录制结果即分发器能匹配的组合
+    // （mac 上 Ctrl≠primary，仅 Cmd 是；录 ⌃K 不再被误存成 ⌘K）。
+    const combo = eventToLogicalCombo(e, platform);
+    if (!combo || combo.key === null) return;
     // C-1: 裸可打印字符（字母/数字/单字符标点）不允许无修饰绑定，避免全局吞键
-    const isTypingKey = key.length === 1 || /^key[a-z]$/.test(key) || /^digit[0-9]$/.test(key);
-    if (isTypingKey && !primary && !alt) {
+    const isTypingKey =
+      combo.key.length === 1 || /^key[a-z]$/.test(combo.key) || /^digit[0-9]$/.test(combo.key);
+    if (isTypingKey && !combo.primary && !combo.alt) {
       setHint("快捷键需包含 Ctrl/⌘ 或 Alt，避免吞掉普通输入");
       return;
     }
-    const combo: KeyCombo = { primary, alt, shift: e.shiftKey, key };
     onRecord(combo);
   };
   return (
-    // tabIndex + mount-time focus so it receives key events without a real input element.
+    // tabIndex + mount-time focus so it receives key events without a real
+    // input element; blur cancels so a click elsewhere can't leave a
+    // silent "recording" that swallows nothing (M-4).
     <span
       ref={ref}
       tabIndex={0}
       onKeyDown={onKey}
-      className="inline-block outline-none text-xs text-[var(--accent)] animate-pulse"
+      onBlur={() => onCancel()}
+      className="inline-block rounded-sm text-xs text-[var(--accent)] animate-pulse outline-none focus:ring-1 focus:ring-[var(--accent)]"
     >
-      {hint}
+      请按键…{hint && <span className="ml-2 text-[var(--warning)]">{hint}</span>}
     </span>
   );
-}
-
-function normalize(code: string, key: string): string {
-  if (/^Key[A-Z]$/.test(code)) return code.toLowerCase();
-  if (/^Digit[0-9]$/.test(code)) return code.toLowerCase();
-  return key.toLowerCase();
 }

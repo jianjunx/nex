@@ -35,9 +35,24 @@
 - `editor.close` = 双 Esc 而非 spec 的 Ctrl+W：计划明文规定，保留既有 UX，Ctrl+W 有关掉 Tauri 窗口的风险。
 - `workbench.newConversation` 空实现占位：为 Plan 6 预留 Ctrl+Shift+N。
 
+## Plan 2 已关闭（2026-07-31，分支 feat/vscode-ux-plan2）
+
+本 backlog 中由 Plan 2 落实的条目：M-7 迁移行为测试（T1）、录制期 Esc 双关（T2）、M-3 录制器 mac 分歧（T3）、M-4 blur/焦点环（T3）、M-10 死状态（T3）、M-5 英文文案（T4）、M-6 陈旧守卫（T4，最终评审再修守卫语义 @649e687）、M-9 陈旧注释群（T5）、M-2 toggle 名不副实→改名 view.openSettings（T6）、M-1 loaded 注记（T7）、labelKey "space" 死分支（T7）、comboToCanonical 小写归一（T7）。
+
+## Plan 2 延后事项（最终评审 triage，均 OK-TO-DEFER）
+
+- **registry.run.test.ts 双 Esc 节奏耦合基准时间**：复位断言隐式依赖 `vi.setSystemTime(10_000) > 500ms`；改基准时间需先 `advanceTimersByTime(600)` 脱窗。测试维护陷阱，零生产影响。
+- **SettingsDialog.test.tsx 缺 DOM cleanup**：afterEach 仅复位 store + 录制标志，未调 RTL `cleanup()`（偏离全局约束，当前靠 store 驱动关窗卸载 portal，顺序敏感）。补一行即可。
+- **TTL 60_000 边界未锁**：`<` vs `<=` 由实现单方面决定，无用例锁定。
+- **StrictMode 双挂载首载两次并发 loadAllServers**：闭包捕获旧 serversLoading 所致；dev-only、幂等无害，生产单挂载不受影响。记录备查。
+- **混合大小写 canonical 的标签回落**：手改 JSON 注入 `primary+KeyS` 现已匹配生效，但 `labelKey` 正则仅识小写（types.ts:76），标签显示原始 token（`Ctrl+KeyS`）至重新录制。纯外观、边缘。
+- **任务书 Step 5 预期数 103 陈旧**（纯文档；台账记实际链 102→104→108）。
+- **docs/ 历史文档残留 toggleSettings 字样**：记录性文档描述当时状态，src/ 已清零，历史档案不追改。
+
 ## 待用户执行
 
 - **Plan 1 手动冒烟**（任务书 Task 11 Step 2 清单，桌面端 `pnpm tauri dev`）：齿轮/Ctrl+, 开弹窗、六页签、Esc/遮罩关；快捷键页签搜索/录制/冲突/重置；改键即时生效与让行；Ctrl+S 输入框内保存、双 Esc 关面板；Ctrl+Shift+F/G/E 与 Ctrl+` 切换；重启后 keybindings.json 持久化。
+- **Plan 2 手动冒烟**（9 项清单在 `.superpowers/sdd/2026-07-31-plan2-settings-polish-keybinding-recording/task-8-report.md`）：录制期 Esc 只取消录制不关弹窗、失焦取消、焦点环、mac 语义、智能体 60s TTL 与无英文残留、Ctrl+, 只开、Space 标签、Plan 1 回归（双 Esc / Ctrl+S）。
 
 ## 流程注记（供后续会话）
 

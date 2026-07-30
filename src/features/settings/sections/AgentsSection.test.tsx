@@ -52,6 +52,12 @@ describe("AgentsSection mount loading (M-6)", () => {
     render(<AgentsSection />);
     expect(loadAllServers).toHaveBeenCalledTimes(1);
   });
+
+  it("skips loading when a load is already in flight", () => {
+    fakeAgent = { servers: [], serversLoading: true, serversLoadedAt: 0 };
+    render(<AgentsSection />);
+    expect(loadAllServers).not.toHaveBeenCalled();
+  });
 });
 
 describe("AgentsSection copy (M-5)", () => {

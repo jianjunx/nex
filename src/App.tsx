@@ -14,6 +14,7 @@ import { useTerminalStore } from "./stores/terminal.store";
 import { KeybindingHost } from "./commands/KeybindingHost";
 import { useKeybindingsStore } from "./stores/keybindings.store";
 import { SettingsDialog } from "./features/settings/SettingsDialog";
+import { GitCredentialModal } from "./features/git/GitCredentialModal";
 
 /** Path of the currently active project, if any. */
 function activeProjectPath(): string | undefined {
@@ -98,6 +99,7 @@ function App() {
     <>
       <KeybindingHost />
       <SettingsDialog />
+      <GitCredentialModal />
       <MainLayout
         mainContent={<ChatArea />}
         editorPanel={hasOpenEditors && editorVisible ? <EditorPanel /> : null}

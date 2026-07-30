@@ -245,3 +245,72 @@ pub fn delete_branch(repo_path: &Path, name: &str) -> Result<(), NexError> {
     branch.delete()?;
     Ok(())
 }
+
+pub fn discard_changes(repo_path: &Path, files: &[String]) -> Result<(), NexError> {
+    let repo = Repository::open(repo_path)?;
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| NexError::Git("cannot discard changes in a bare repository".to_string()))?
+        .to_path_buf();
+
+    // Untracked paths have no index entry: delete them from disk directly.
+    for file in files {
+        if let Ok(s) = repo.status_file(Path::new(file)) {
+            if s.is_wt_new() {
+                let abs = workdir.join(file);
+                if abs.is_dir() {
+                    std::fs::remove_dir_all(&abs)?;
+                } else if abs.exists() {
+                    std::fs::remove_file(&abs)?;
+                }
+            }
+        }
+    }
+
+    // Force-checkout the index over the workdir for everything else, so a
+    // discarded file lands on its staged version (HEAD when nothing staged).
+    let mut co = git2::build::CheckoutBuilder::new();
+    co.force();
+    for file in files {
+        co.path(file);
+    }
+    repo.checkout_index(None, Some(&mut co))?;
+    Ok(())
+}
+
+pub fn revert_staged(repo_path: &Path, files: &[String]) -> Result<(), NexError> {
+    let repo = Repository::open(repo_path)?;
+    match repo.head() {
+        Ok(head) => {
+            // 1) Reset index entries back to HEAD (unstage)…
+            let target = head.peel(git2::ObjectType::Commit)?;
+            repo.reset_default(Some(&target), files.iter().map(String::as_str))?;
+            // 2) …and restore the workdir to the HEAD version of each file.
+            let head_tree = repo.revparse_single("HEAD^{tree}")?;
+            let mut co = git2::build::CheckoutBuilder::new();
+            co.force();
+            for file in files {
+                co.path(file);
+            }
+            repo.checkout_tree(&head_tree, Some(&mut co))?;
+        }
+        Err(_) => {
+            // Unborn HEAD: there is no version to revert to — drop the index
+            // entries and remove the files so the change fully disappears.
+            let mut index = repo.index()?;
+            for file in files {
+                index.remove_path(Path::new(file))?;
+            }
+            index.write()?;
+            if let Some(workdir) = repo.workdir() {
+                for file in files {
+                    let abs = workdir.join(file);
+                    if abs.is_file() {
+                        std::fs::remove_file(&abs)?;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}

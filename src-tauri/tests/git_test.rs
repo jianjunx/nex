@@ -117,3 +117,64 @@ fn delete_head_branch_is_rejected() {
     let err = repository::delete_branch(dir.path(), &current).unwrap_err();
     assert!(err.to_string().contains("不能删除当前分支"));
 }
+
+#[test]
+fn discard_restores_tracked_and_removes_untracked() {
+    let dir = tempdir().unwrap();
+    init_repo(dir.path());
+    commit_file(dir.path(), "a.txt", "v1", "init");
+    fs::write(dir.path().join("a.txt"), "modified").unwrap();
+    fs::write(dir.path().join("scratch.tmp"), "junk").unwrap();
+
+    repository::discard_changes(
+        dir.path(),
+        &["a.txt".to_string(), "scratch.tmp".to_string()],
+    )
+    .unwrap();
+
+    assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "v1");
+    assert!(!dir.path().join("scratch.tmp").exists());
+    assert!(repository::get_status(dir.path()).unwrap().files.is_empty());
+}
+
+#[test]
+fn discard_restores_to_staged_version_not_head() {
+    let dir = tempdir().unwrap();
+    init_repo(dir.path());
+    commit_file(dir.path(), "a.txt", "v1", "init");
+    fs::write(dir.path().join("a.txt"), "v2").unwrap();
+    repository::stage_files(dir.path(), &["a.txt".to_string()]).unwrap();
+    fs::write(dir.path().join("a.txt"), "v3").unwrap();
+
+    repository::discard_changes(dir.path(), &["a.txt".to_string()]).unwrap();
+
+    // Index held v2 → workdir must land on v2, not HEAD's v1.
+    assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "v2");
+}
+
+#[test]
+fn revert_staged_undoes_index_and_workdir_to_head() {
+    let dir = tempdir().unwrap();
+    init_repo(dir.path());
+    commit_file(dir.path(), "a.txt", "v1", "init");
+    fs::write(dir.path().join("a.txt"), "v2").unwrap();
+    repository::stage_files(dir.path(), &["a.txt".to_string()]).unwrap();
+
+    repository::revert_staged(dir.path(), &["a.txt".to_string()]).unwrap();
+
+    assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "v1");
+    assert!(repository::get_status(dir.path()).unwrap().files.is_empty());
+}
+
+#[test]
+fn revert_staged_on_unborn_head_clears_index_and_disk() {
+    let dir = tempdir().unwrap();
+    init_repo(dir.path());
+    fs::write(dir.path().join("new.txt"), "fresh").unwrap();
+    repository::stage_files(dir.path(), &["new.txt".to_string()]).unwrap();
+
+    repository::revert_staged(dir.path(), &["new.txt".to_string()]).unwrap();
+
+    assert!(!dir.path().join("new.txt").exists());
+    assert!(repository::get_status(dir.path()).unwrap().files.is_empty());
+}

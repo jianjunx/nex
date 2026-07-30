@@ -52,6 +52,8 @@ pub fn run() {
             commands::git_cmds::git_checkout,
             commands::git_cmds::git_create_branch,
             commands::git_cmds::git_delete_branch,
+            commands::git_cmds::git_discard,
+            commands::git_cmds::git_revert_staged,
             commands::terminal_cmds::terminal_create,
             commands::terminal_cmds::terminal_write,
             commands::terminal_cmds::terminal_resize,

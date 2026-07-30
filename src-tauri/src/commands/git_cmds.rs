@@ -52,3 +52,13 @@ pub fn git_create_branch(project_path: String, name: String) -> Result<(), NexEr
 pub fn git_delete_branch(project_path: String, name: String) -> Result<(), NexError> {
     repository::delete_branch(Path::new(&project_path), &name)
 }
+
+#[tauri::command]
+pub fn git_discard(project_path: String, files: Vec<String>) -> Result<(), NexError> {
+    repository::discard_changes(Path::new(&project_path), &files)
+}
+
+#[tauri::command]
+pub fn git_revert_staged(project_path: String, files: Vec<String>) -> Result<(), NexError> {
+    repository::revert_staged(Path::new(&project_path), &files)
+}

@@ -67,4 +67,11 @@ describe("keybindings store", () => {
     expect(useKeybindingsStore.getState().overrides["editor.save"]).toBeNull();
     expect(useKeybindingsStore.getState().loaded).toBe(true);
   });
+
+  it("setOverride collapses to default when the combo equals the default", () => {
+    // 先污染一个覆盖，再录回默认键（editor.save 默认 primary+keys）→ 覆盖应被删除
+    useKeybindingsStore.setState({ overrides: { "editor.save": "primary+alt+keys" } });
+    useKeybindingsStore.getState().setOverride("editor.save", { primary: true, key: "keys" });
+    expect("editor.save" in useKeybindingsStore.getState().overrides).toBe(false);
+  });
 });

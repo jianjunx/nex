@@ -141,4 +141,17 @@ describe("KeybindingHost", () => {
     expect(save).toHaveBeenCalledTimes(1);
     expect(toggle).not.toHaveBeenCalled();
   });
+
+  it("yields allowlisted editor.save when a dialog is open, even from an input", () => {
+    // 对话框优先于白名单：dlg 打开时 host 全让行，Esc 交给 radix、Ctrl+S 不触发
+    const dlg = document.createElement("div");
+    dlg.setAttribute("role", "dialog");
+    document.body.appendChild(dlg);
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
+    fire(window, { key: "s", code: "KeyS", ctrlKey: true });
+    expect(save).not.toHaveBeenCalled();
+    dlg.remove();
+  });
 });

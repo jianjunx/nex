@@ -9,7 +9,7 @@ const tabs: { id: SidePanelTab; icon: typeof FolderTree; label: string }[] = [
 ];
 
 export function IconBar() {
-  const { sidePanelTab, setSidePanelTab, terminalVisible, toggleTerminal } = useUiStore();
+  const { sidePanelTab, setSidePanelTab, terminalVisible, toggleTerminal, settingsOpen, openSettings } = useUiStore();
 
   return (
     <div className="flex flex-col items-center py-3 gap-1.5 w-12 border-l border-[color:var(--border-subtle)] bg-[var(--glass-1-surface)] mr-1.5 rounded-l-[var(--radius-md)]">
@@ -47,9 +47,9 @@ export function IconBar() {
         variant="ghost"
         size="icon-sm"
         title="设置"
-        onClick={() => setSidePanelTab("settings")}
+        onClick={() => openSettings()}
         className={`transition-colors duration-150 ${
-          sidePanelTab === "settings"
+          settingsOpen
             ? "bg-[var(--accent)]/15 text-[var(--accent)]"
             : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
         }`}

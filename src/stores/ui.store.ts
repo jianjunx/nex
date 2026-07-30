@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { persist } from "zustand/middleware";
 
-export type SidePanelTab = "files" | "git" | "search" | "settings";
+export type SidePanelTab = "files" | "git" | "search";
 
 interface UiState {
   sidePanelVisible: boolean;

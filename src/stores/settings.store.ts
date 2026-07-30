@@ -13,7 +13,7 @@ export type Theme = "light" | "dark";
 // NOT the zustand persist middleware.
 const settingsStore = new LazyStore("settings.json", { autoSave: 300 });
 
-// Keys are pinned — task 8 and future batches read the same names.
+// Keys are pinned — all consumers read the same persisted names.
 const KEYS = {
   theme: "appearance.theme",
   shell: "terminal.shell",

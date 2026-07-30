@@ -156,3 +156,92 @@ pub fn commit(repo_path: &Path, message: &str) -> Result<String, NexError> {
     let oid = repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &parent_refs)?;
     Ok(oid.to_string())
 }
+
+pub fn list_branches(repo_path: &Path) -> Result<Vec<BranchInfo>, NexError> {
+    let repo = Repository::open(repo_path)?;
+    let mut out = Vec::new();
+
+    for entry in repo.branches(Some(git2::BranchType::Local))? {
+        let (branch, _) = entry?;
+        let name = branch.name()?.unwrap_or("").to_string();
+        let is_head = branch.is_head();
+        // ahead/behind is only meaningful for the HEAD branch against its
+        // upstream; every other branch reports None (UI shows badges once).
+        let (ahead, behind) = if is_head {
+            branch
+                .upstream()
+                .ok()
+                .and_then(|u| u.get().target())
+                .and_then(|u| branch.get().target().map(|l| (l, u)))
+                .map(|(l, u)| {
+                    let (a, b) = repo.graph_ahead_behind(l, u).unwrap_or((0, 0));
+                    (Some(a as u32), Some(b as u32))
+                })
+                .unwrap_or((None, None))
+        } else {
+            (None, None)
+        };
+        out.push(BranchInfo { name, is_head, is_remote: false, ahead, behind });
+    }
+
+    for entry in repo.branches(Some(git2::BranchType::Remote))? {
+        let (branch, _) = entry?;
+        let name = branch.name()?.unwrap_or("").to_string();
+        out.push(BranchInfo { name, is_head: false, is_remote: true, ahead: None, behind: None });
+    }
+
+    Ok(out)
+}
+
+pub fn checkout_branch(repo_path: &Path, name: &str) -> Result<(), NexError> {
+    let repo = Repository::open(repo_path)?;
+    let (object, reference) = repo
+        .revparse_ext(name)
+        .map_err(|e| NexError::Git(format!("branch not found: {name} ({e})")))?;
+    repo.checkout_tree(&object, Some(git2::build::CheckoutBuilder::new().safe()))
+        .map_err(|e| {
+            // libgit2 1.8.1 脏冲突消息为 "N conflict(s) prevent checkout"；
+            // 错误码判定（GIT_ECONFLICT）比文案匹配更稳，文案作兜底
+            if e.code() == git2::ErrorCode::Conflict
+                || (e.message().contains("conflict") && e.message().contains("prevent checkout"))
+            {
+                NexError::Git("无法切换分支：工作区有未提交的更改".to_string())
+            } else {
+                NexError::Git(e.message().to_string())
+            }
+        })?;
+    match reference {
+        Some(r) => {
+            let refname = r
+                .name()
+                .ok_or_else(|| NexError::Git("invalid reference name".to_string()))?;
+            repo.set_head(refname)?;
+        }
+        None => repo.set_head_detached(object.id())?,
+    }
+    Ok(())
+}
+
+pub fn create_branch(repo_path: &Path, name: &str) -> Result<(), NexError> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(NexError::Git("分支名不能为空".to_string()));
+    }
+    let repo = Repository::open(repo_path)?;
+    let head = repo
+        .head()
+        .and_then(|h| h.peel_to_commit())
+        .map_err(|_| NexError::Git("cannot create a branch on an unborn HEAD".to_string()))?;
+    repo.branch(trimmed, &head, false)?;
+    Ok(())
+}
+
+pub fn delete_branch(repo_path: &Path, name: &str) -> Result<(), NexError> {
+    let repo = Repository::open(repo_path)?;
+    let mut branch = repo.find_branch(name, git2::BranchType::Local)?;
+    if branch.is_head() {
+        return Err(NexError::Git("不能删除当前分支".to_string()));
+    }
+    branch.delete()?;
+    Ok(())
+}

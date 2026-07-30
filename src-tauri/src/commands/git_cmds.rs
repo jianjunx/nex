@@ -32,3 +32,23 @@ pub fn git_unstage(project_path: String, files: Vec<String>) -> Result<(), NexEr
 pub fn git_commit(project_path: String, message: String) -> Result<String, NexError> {
     repository::commit(Path::new(&project_path), &message)
 }
+
+#[tauri::command]
+pub fn git_list_branches(project_path: String) -> Result<Vec<BranchInfo>, NexError> {
+    repository::list_branches(Path::new(&project_path))
+}
+
+#[tauri::command]
+pub fn git_checkout(project_path: String, name: String) -> Result<(), NexError> {
+    repository::checkout_branch(Path::new(&project_path), &name)
+}
+
+#[tauri::command]
+pub fn git_create_branch(project_path: String, name: String) -> Result<(), NexError> {
+    repository::create_branch(Path::new(&project_path), &name)
+}
+
+#[tauri::command]
+pub fn git_delete_branch(project_path: String, name: String) -> Result<(), NexError> {
+    repository::delete_branch(Path::new(&project_path), &name)
+}

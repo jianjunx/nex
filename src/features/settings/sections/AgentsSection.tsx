@@ -25,8 +25,8 @@ export function AgentsSection() {
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // 页签激活才挂载本组件。仅当列表为空或上次加载超过一分钟才回后端，
-  // 避免每次切到本页签都往返一次；刷新按钮不受此守卫约束。
+  // 页签激活才挂载本组件。60 秒内尝试过全量加载（无论成败）则跳过；
+  // 白名单加载（loadServers）不打点，不构成跳过理由；手动刷新走 refreshRegistry。
   useEffect(() => {
     if (serversLoading) return;
     if (servers.length > 0 && Date.now() - serversLoadedAt < 60_000) return;

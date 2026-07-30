@@ -53,6 +53,14 @@ describe("AgentsSection mount loading (M-6)", () => {
     expect(loadAllServers).toHaveBeenCalledTimes(1);
   });
 
+  it("loads when a whitelist subset is present but no full attempt was ever made (Important-1)", () => {
+    // loadServers（白名单，不含自定义）不打点；serversLoadedAt===0 即从未全量尝试，
+    // 守卫不得把白名单子集误判为新鲜全量而跳过。
+    fakeAgent = { servers: [SERVER], serversLoading: false, serversLoadedAt: 0 };
+    render(<AgentsSection />);
+    expect(loadAllServers).toHaveBeenCalledTimes(1);
+  });
+
   it("skips loading when a load is already in flight", () => {
     fakeAgent = { servers: [], serversLoading: true, serversLoadedAt: 0 };
     render(<AgentsSection />);

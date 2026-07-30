@@ -47,7 +47,7 @@ interface AgentStore {
   servers: ServerDescriptor[];
   loading: boolean;
   serversLoading: boolean;
-  /** 上次成功加载 servers 的时间戳（0＝从未加载）。 */
+  /** 上次 loadAllServers 尝试（成败均计）的时间戳（0＝从未尝试）。失败也打点，防守卫以 IPC 为节拍自激重试；手动重试走 refreshRegistry。 */
   serversLoadedAt: number;
   error: string | null;
 
@@ -384,7 +384,6 @@ export const useAgentStore = create<AgentStore>()(
         const servers = await agentListServers();
         set((s) => {
           s.servers = servers;
-          s.serversLoadedAt = Date.now();
         });
       } catch (err) {
         set((s) => {
@@ -405,7 +404,6 @@ export const useAgentStore = create<AgentStore>()(
         const servers = await agentListAllServers();
         set((s) => {
           s.servers = servers;
-          s.serversLoadedAt = Date.now();
         });
       } catch (err) {
         set((s) => {
@@ -414,6 +412,7 @@ export const useAgentStore = create<AgentStore>()(
       } finally {
         set((s) => {
           s.serversLoading = false;
+          s.serversLoadedAt = Date.now();
         });
       }
     },

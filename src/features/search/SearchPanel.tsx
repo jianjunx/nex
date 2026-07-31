@@ -1,7 +1,17 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronRight, ChevronsDownUp, ChevronsUpDown, FileCode, Loader2, RefreshCw, Search, X } from "lucide-react";
+import { ChevronRight, ChevronsDownUp, ChevronsUpDown, FileCode, Loader2, RefreshCw, Replace, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useFsStore } from "../../stores/fs.store";
 import { useProjectStore } from "../../stores/project.store";
 import { relativeToProject } from "../editor/pathUtils";
@@ -61,6 +71,8 @@ function Highlighted({ text, ranges }: { text: string; ranges: MatchRange[] }) {
 export function SearchPanel() {
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [replacement, setReplacement] = useState("");
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const searchResults = useFsStore((s) => s.searchResults);
   const searching = useFsStore((s) => s.searching);
   const searchError = useFsStore((s) => s.searchError);
@@ -69,6 +81,10 @@ export function SearchPanel() {
   const clearSearch = useFsStore((s) => s.clearSearch);
   const setSearchOptions = useFsStore((s) => s.setSearchOptions);
   const openFile = useFsStore((s) => s.openFile);
+  const replacePreview = useFsStore((s) => s.replacePreview);
+  const replacing = useFsStore((s) => s.replacing);
+  const previewReplace = useFsStore((s) => s.previewReplace);
+  const applyReplace = useFsStore((s) => s.applyReplace);
   const projects = useProjectStore((s) => s.projects);
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const project = projects.find((p) => p.id === activeProjectId);
@@ -131,6 +147,43 @@ export function SearchPanel() {
     () => new Set(searchResults.map((m) => m.path)).size,
     [searchResults],
   );
+
+  // 替换后自动重搜：写盘 → fs-changed → syncExternalChange 静默/stale 同步
+  // 已打开文件（不抑制 watcher）；面板随即用同一 query/options 刷新结果。
+  const reSearch = () => {
+    const path = activeProjectPath();
+    if (path && query.trim()) void search(path, query);
+  };
+
+  const startReplaceAll = async () => {
+    const path = activeProjectPath();
+    if (!path || !query.trim() || inlineError) return;
+    await previewReplace(path, query, replacement);
+    const preview = useFsStore.getState().replacePreview;
+    if (preview && preview.total > 0) setConfirmOpen(true);
+  };
+
+  const confirmReplaceAll = async () => {
+    setConfirmOpen(false);
+    const path = activeProjectPath();
+    if (!path) return;
+    const result = await applyReplace(path, query, replacement, undefined); // 显式 undefined=全项目（paths=null）
+    if (result) reSearch();
+  };
+
+  const replaceInFile = async (filePath: string) => {
+    const path = activeProjectPath();
+    if (!path || !query.trim() || inlineError) return;
+    const result = await applyReplace(path, query, replacement, { paths: [filePath] });
+    if (result) reSearch();
+  };
+
+  const replaceFirstInFile = async (filePath: string) => {
+    const path = activeProjectPath();
+    if (!path || !query.trim() || inlineError) return;
+    const result = await applyReplace(path, query, replacement, { paths: [filePath], limitPerFile: 1 });
+    if (result) reSearch();
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -197,6 +250,28 @@ export function SearchPanel() {
         )}
       </div>
 
+      {/* 替换行 */}
+      <div className="px-1 pb-1">
+        <div className="flex items-center gap-1">
+          <Input
+            value={replacement}
+            onChange={(e) => setReplacement(e.target.value)}
+            placeholder="替换…（正则模式支持 $1 / ${name}）"
+            aria-label="替换"
+          />
+          <Button
+            size="sm"
+            variant="ghost"
+            title="替换全部"
+            disabled={replacing || !query.trim() || !!inlineError}
+            onClick={() => void startReplaceAll()}
+          >
+            替换全部
+          </Button>
+        </div>
+        <p className="mt-1 px-1 text-[11px] text-[var(--text-tertiary)]">已打开的未保存文件会标记为过期</p>
+      </div>
+
       {/* 可选过滤行预留位（glob，v1 不接后端） */}
       <div className="px-1 pb-2">
         <Input
@@ -238,7 +313,7 @@ export function SearchPanel() {
               const isCollapsed = collapsed.has(g.path);
               const rowOffset = groups.slice(0, gi).reduce((n, x) => n + x.matches.length, 0);
               return (
-                <div key={g.path} className="mb-1">
+                <div key={g.path} className="group/header relative mb-1">
                   {/* 组头：折叠箭头 + 图标 + 名称 + 相对路径 + 计数徽标 */}
                   <button
                     type="button"
@@ -252,6 +327,17 @@ export function SearchPanel() {
                     <span className="truncate text-xs text-[var(--text-tertiary)]">{relativeToProject(g.path, project?.path)}</span>
                     <span data-count-badge className="ml-auto flex-none rounded-full bg-[var(--overlay-ghost)] px-1.5 text-xs text-[var(--text-secondary)]">{g.matches.length}</span>
                   </button>
+                  {/* 整文件替换：悬浮显示，直写该文件全部匹配 */}
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    title="替换本文件全部匹配"
+                    disabled={replacing}
+                    className="absolute right-1 top-1 opacity-0 group-hover/header:opacity-100"
+                    onClick={() => void replaceInFile(g.path)}
+                  >
+                    <Replace size={12} />
+                  </Button>
                   {/* 折叠高度过渡：grid-rows 技巧（CSS 见 globals.css，T10） */}
                   <div className="search-collapse" style={{ gridTemplateRows: isCollapsed ? "0fr" : "1fr" }}>
                     <div className="search-collapse-inner">
@@ -259,7 +345,7 @@ export function SearchPanel() {
                         <button
                           key={`${m.path}:${m.line ?? 0}:${i}`}
                           onClick={() => void openFile(m.path, m.line != null ? { line: m.line } : undefined)}
-                          className="search-stagger w-full text-left pl-7 pr-3 py-1 rounded-[var(--radius-sm)] hover:bg-[var(--glass-2-surface)] transition-colors"
+                          className="group/row search-stagger relative w-full text-left pl-7 pr-7 py-1 rounded-[var(--radius-sm)] hover:bg-[var(--glass-2-surface)] transition-colors"
                           style={{ animationDelay: `${Math.min(rowOffset + i, 19) * 25}ms` }}
                         >
                           {m.line != null ? (
@@ -272,6 +358,17 @@ export function SearchPanel() {
                           ) : (
                             <span className="text-xs text-[var(--text-tertiary)] italic">文件名匹配</span>
                           )}
+                          <span
+                            role="button"
+                            title="替换本文件首个匹配"
+                            className="absolute right-1 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] opacity-0 group-hover/row:opacity-100 hover:text-[var(--text-primary)]"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void replaceFirstInFile(g.path);
+                            }}
+                          >
+                            <Replace size={11} />
+                          </span>
                         </button>
                       ))}
                     </div>
@@ -282,6 +379,27 @@ export function SearchPanel() {
           </div>
         )}
       </div>
+
+      {/* 替换全部确认 */}
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>替换全部</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-1">
+                <p>将修改 {replacePreview?.files.length ?? 0} 个文件共 {replacePreview?.total ?? 0} 处。此操作直接写盘，请确认。</p>
+                {replacePreview?.truncated && (
+                  <p className="text-[var(--warning)]">结果已达上限，仅替换前 {replacePreview.total} 处所在文件。</p>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void confirmReplaceAll()}>确认替换</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

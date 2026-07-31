@@ -30,6 +30,20 @@ async function flushAutoSave(path: string) {
   if (file?.dirty) await useFsStore.getState().saveFile(path);
 }
 
+/** 只读 diff 标签载荷。mode=merge：双版本统一合并视图；mode=patch：提交补丁全文。 */
+export type DiffMode = "merge" | "patch";
+
+export type DiffPayload = {
+  mode: DiffMode;
+  /** 标签名，如 "src/a.ts（已暂存）" 或 "提交 abc1234"。 */
+  title: string;
+  /** 语法高亮的文件路径提示（合成路径不能用于语言检测）。 */
+  languageHint: string;
+  original: string;
+  revised: string;
+  binary: boolean;
+};
+
 export type EditorFile = {
   path: string;
   content: string | null; // disk snapshot at last load/save
@@ -39,6 +53,8 @@ export type EditorFile = {
   dirty: boolean;         // draft !== disk snapshot
   stale: boolean;         // file changed on disk while dirty
   pinned: boolean;        // true = permanent tab, false = preview (replaced on next single-click)
+  /** 存在即为只读 diff 标签：合成路径（diff: 前缀）、永久固定、永不 dirty、不进冷恢复持久化。 */
+  diff?: DiffPayload;
 };
 
 /** Persisted per-project editor layout — only file paths, content is re-read from disk on restore. */
@@ -67,6 +83,8 @@ interface FsStore {
   collapseDir: (dirPath: string) => void;
   collapseAll: (projectPath: string) => void;
   openFile: (filePath: string, pin?: boolean) => Promise<void>;
+  /** 打开只读 diff 标签（upsert：同 id 重开就地替换载荷并激活）。合成路径 diff: 前缀，不进冷恢复持久化。 */
+  openDiffTab: (id: string, payload: DiffPayload) => void;
   switchFile: (filePath: string) => Promise<void>;
   closeFile: (filePath: string) => Promise<void>;
   closeEditor: () => Promise<void>;
@@ -224,6 +242,33 @@ export const useFsStore = create<FsStore>()(
       }
     },
 
+    openDiffTab: (id, payload) => {
+      // 与 openFile 同契：切走前冲刷上一个活动文件的自动保存。
+      const previous = get().activePath;
+      if (previous && previous !== id) void flushAutoSave(previous);
+      const existingIndex = get().openFiles.findIndex((f) => f.path === id);
+      set((s) => {
+        if (existingIndex >= 0) {
+          // 重开同一 diff：暂存状态可能已变，就地替换载荷，标签保持一个。
+          s.openFiles[existingIndex].diff = payload;
+        } else {
+          s.openFiles.push({
+            path: id,
+            content: null,
+            isText: true,
+            size: 0,
+            draft: "",
+            dirty: false,
+            stale: false,
+            pinned: true, // diff 标签永远固定，不参与预览替换
+            diff: payload,
+          });
+        }
+        s.activePath = id;
+      });
+      useUiStore.getState().setEditorVisible(true);
+    },
+
     switchFile: async (filePath: string) => {
       if (!get().openFiles.some((f) => f.path === filePath)) return;
       const previous = get().activePath;
@@ -288,7 +333,7 @@ export const useFsStore = create<FsStore>()(
       let dirty = false;
       set((s) => {
         const active = s.activePath ? findOpenFile(s.openFiles, s.activePath) : undefined;
-        if (!active) return;
+        if (!active || active.diff) return; // diff 标签只读：绝不写 draft、绝不 dirty
         active.draft = draft;
         const wasDirty = active.dirty;
         active.dirty = active.isText && draft !== (active.content ?? "");
@@ -396,7 +441,7 @@ export const useFsStore = create<FsStore>()(
       const activePath = get().activePath;
       if (!activePath) return;
       const cur = findOpenFile(get().openFiles, activePath);
-      if (!cur) return;
+      if (!cur || cur.diff) return; // diff 标签无对应磁盘文件，重载会产生无效读取错误
       try {
         const result = await fsReadFile(cur.path);
         // Unconditional: the draft is discarded whatever it contained.
@@ -463,7 +508,7 @@ export const useFsStore = create<FsStore>()(
         };
         // Persist only paths — content is re-read from disk on cold restore.
         s.editorLayoutByProject[projectId] = {
-          paths: s.openFiles.map((f) => f.path),
+          paths: s.openFiles.filter((f) => !f.diff).map((f) => f.path), // diff 标签不进冷恢复
           activePath: s.activePath,
         };
       });
@@ -521,7 +566,7 @@ export const useFsStore = create<FsStore>()(
       const { openFiles, activePath } = get();
       set((s) => {
         s.editorLayoutByProject[projectId] = {
-          paths: openFiles.map((f) => f.path),
+          paths: openFiles.filter((f) => !f.diff).map((f) => f.path), // diff 标签不进冷恢复
           activePath,
         };
       });

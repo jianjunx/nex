@@ -221,3 +221,67 @@ describe("fs.store multi-tab editor", () => {
     editorAutoSave = false;
   });
 });
+
+describe("fs.store diff tabs", () => {
+  const PAYLOAD = {
+    mode: "merge" as const,
+    title: "a.txt（已暂存）",
+    languageHint: "a.txt",
+    original: "v1",
+    revised: "v2",
+    binary: false,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    editorAutoSave = false;
+    clearAllAutoSaveTimers();
+    useFsStore.setState({ openFiles: [], activePath: null, error: null, loading: false });
+  });
+
+  it("openDiffTab adds a permanently pinned diff tab and activates it", () => {
+    useFsStore.getState().openDiffTab("diff:staged:a.txt", PAYLOAD);
+    const s = useFsStore.getState();
+    expect(s.openFiles).toHaveLength(1);
+    expect(s.openFiles[0].diff).toEqual(PAYLOAD);
+    expect(s.openFiles[0].pinned).toBe(true);
+    expect(s.activePath).toBe("diff:staged:a.txt");
+    expect(setEditorVisible).toHaveBeenCalledWith(true);
+  });
+
+  it("re-opening the same diff id updates the payload in place without adding a tab", () => {
+    useFsStore.getState().openDiffTab("diff:staged:a.txt", PAYLOAD);
+    useFsStore.getState().openDiffTab("diff:staged:a.txt", { ...PAYLOAD, revised: "v3" });
+    const s = useFsStore.getState();
+    expect(s.openFiles).toHaveLength(1);
+    expect(s.openFiles[0].diff?.revised).toBe("v3");
+    expect(s.activePath).toBe("diff:staged:a.txt");
+  });
+
+  it("setDraft is a no-op on the active diff tab", () => {
+    useFsStore.getState().openDiffTab("diff:staged:a.txt", PAYLOAD);
+    useFsStore.getState().setDraft("hacked");
+    const f = useFsStore.getState().openFiles[0];
+    expect(f.draft).toBe("");
+    expect(f.dirty).toBe(false);
+  });
+
+  it("saveCurrentEditorState excludes diff tabs from persisted paths but keeps them in the session cache", async () => {
+    fsReadFile.mockResolvedValueOnce({ is_text: true, content: "x", size: 1 });
+    await useFsStore.getState().openFile("/p/x.ts", true);
+    useFsStore.getState().openDiffTab("diff:staged:a.txt", PAYLOAD);
+
+    await useFsStore.getState().saveCurrentEditorState("proj-1");
+    const s = useFsStore.getState();
+    expect(s.editorLayoutByProject["proj-1"].paths).toEqual(["/p/x.ts"]);
+    expect(s.editorCacheByProject["proj-1"].openFiles).toHaveLength(2);
+  });
+
+  it("reloadEditor on a diff tab is a no-op (no disk read)", async () => {
+    useFsStore.getState().openDiffTab("diff:staged:a.txt", PAYLOAD);
+    fsReadFile.mockClear();
+    await useFsStore.getState().reloadEditor();
+    expect(fsReadFile).not.toHaveBeenCalled();
+    expect(useFsStore.getState().openFiles[0].diff?.revised).toBe("v2");
+  });
+});

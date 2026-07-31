@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { persist } from "zustand/middleware";
 import { enableMapSet } from "immer";
-import { fsReadTree, fsExpandDir, fsReadFile, fsSearch, fsWriteFile, fsCreateFile, fsCreateDir, type FsNode, type SearchMatch } from "../bridge/tauri";
+import { fsReadTree, fsExpandDir, fsReadFile, fsSearch, fsSearchReplace, fsApplyReplace, fsWriteFile, fsCreateFile, fsCreateDir, type FsNode, type SearchMatch, type SearchOptions, type ReplacePreview, type ReplaceResult } from "../bridge/tauri";
 import { useUiStore } from "./ui.store";
 import { useSettingsStore } from "./settings.store";
 import {
@@ -63,6 +63,12 @@ export type EditorLayout = { paths: string[]; activePath: string | null };
 /** In-memory per-project editor cache — full EditorFile[] preserving dirty drafts within a session. */
 export type EditorCache = { openFiles: EditorFile[]; activePath: string | null };
 
+/** 「打开并跳到行」的待消费目标；EditorPanel 读出即清。 */
+export type PendingLine = { path: string; line: number };
+
+/** openFile 第二参的对象形式（布尔形式保持后向兼容）。 */
+export type OpenFileOptions = { pin?: boolean; line?: number };
+
 interface FsStore {
   nodesByDir: Record<string, FsNode[]>;
   expandedDirs: Set<string>;
@@ -71,6 +77,11 @@ interface FsStore {
   selectedPath: string | null;
   searchResults: SearchMatch[];
   searching: boolean;
+  searchOptions: SearchOptions;
+  searchError: string | null;
+  replacePreview: ReplacePreview | null;
+  replacing: boolean;
+  pendingLine: PendingLine | null;
   loading: boolean;
   error: string | null;
   /** Per-project open-file paths + active path, persisted to localStorage. */
@@ -82,7 +93,7 @@ interface FsStore {
   expandDir: (dirPath: string) => Promise<void>;
   collapseDir: (dirPath: string) => void;
   collapseAll: (projectPath: string) => void;
-  openFile: (filePath: string, pin?: boolean) => Promise<void>;
+  openFile: (filePath: string, opts?: boolean | OpenFileOptions) => Promise<void>;
   /** 打开只读 diff 标签（upsert：同 id 重开就地替换载荷并激活）。合成路径 diff: 前缀，不进冷恢复持久化。 */
   openDiffTab: (id: string, payload: DiffPayload) => void;
   switchFile: (filePath: string) => Promise<void>;
@@ -100,6 +111,11 @@ interface FsStore {
   dismissStale: () => void;
   search: (projectPath: string, query: string) => Promise<void>;
   clearSearch: () => void;
+  setSearchOptions: (patch: Partial<SearchOptions>) => void;
+  previewReplace: (projectPath: string, query: string, replacement: string) => Promise<void>;
+  applyReplace: (projectPath: string, query: string, replacement: string, scope?: { paths?: string[]; limitPerFile?: number }) => Promise<ReplaceResult | null>;
+  clearReplacePreview: () => void;
+  consumePendingLine: () => PendingLine | null;
   clearError: () => void;
   /** Flush dirty files, cache full EditorFile[] + paths for the project. Call before switching away. */
   saveCurrentEditorState: (projectId: string) => Promise<void>;
@@ -131,6 +147,11 @@ export const useFsStore = create<FsStore>()(
     selectedPath: null,
     searchResults: [],
     searching: false,
+    searchOptions: { caseSensitive: false, wholeWord: false, regex: false },
+    searchError: null,
+    replacePreview: null,
+    replacing: false,
+    pendingLine: null,
     loading: false,
     error: null,
     editorLayoutByProject: {},
@@ -177,7 +198,10 @@ export const useFsStore = create<FsStore>()(
       });
     },
 
-    openFile: async (filePath: string, pin = false) => {
+    openFile: async (filePath, opts) => {
+      const { pin, line } = typeof opts === "boolean"
+        ? { pin: opts, line: undefined as number | undefined }
+        : { pin: opts?.pin ?? false, line: opts?.line };
       // Re-showing an already-open file must not clobber the draft/undo
       // history (B4: Esc hides, re-click re-shows, edits survive). Disk
       // freshness for an open file is syncExternalChange's job; a forced
@@ -192,6 +216,7 @@ export const useFsStore = create<FsStore>()(
         set((s) => {
           s.activePath = filePath;
           if (pin) s.openFiles[existingIndex].pinned = true;
+          if (line != null) s.pendingLine = { path: filePath, line };
         });
         useUiStore.getState().setEditorVisible(true);
         return;
@@ -215,6 +240,7 @@ export const useFsStore = create<FsStore>()(
                 pinned: false,
               };
               s.activePath = filePath;
+              if (line != null) s.pendingLine = { path: filePath, line };
             });
             useUiStore.getState().setEditorVisible(true);
             return;
@@ -232,6 +258,7 @@ export const useFsStore = create<FsStore>()(
             pinned: pin,
           });
           s.activePath = filePath;
+          if (line != null) s.pendingLine = { path: filePath, line };
         });
         // Opening a file always reveals the panel, even if Esc hid it.
         useUiStore.getState().setEditorVisible(true);
@@ -387,6 +414,9 @@ export const useFsStore = create<FsStore>()(
       if (!target) return true;
       const cur = findOpenFile(get().openFiles, target);
       if (!cur || !cur.dirty) return true;
+      // R1：stale＝外部改动（替换/拉取/外部进程）待决策；任何写盘（含 autosave）
+      // 都会静默回滚该改动——用户须先在黄条上「重新加载/保留」，故直接拒绝
+      if (cur.stale) return false;
       const intendedDraft = cur.draft;
       set((s) => { s.loading = true; s.error = null; });
       try {
@@ -469,22 +499,74 @@ export const useFsStore = create<FsStore>()(
 
     search: async (projectPath: string, query: string) => {
       if (!query.trim()) {
-        set((s) => { s.searchResults = []; s.searching = false; });
+        set((s) => { s.searchResults = []; s.searching = false; s.searchError = null; });
         return;
       }
-      set((s) => { s.searching = true; s.error = null; });
+      set((s) => { s.searching = true; s.searchError = null; });
       try {
-        const results = await fsSearch(projectPath, query.trim());
+        const results = await fsSearch(projectPath, query.trim(), get().searchOptions);
         set((s) => { s.searchResults = results; });
       } catch (err) {
-        set((s) => { s.error = errorMessage(err); });
+        // 独立错误槽：共享 error 会在 EditorPanel 渲染红条，搜索错误不该出现在那里。
+        set((s) => { s.searchError = errorMessage(err); });
       } finally {
         set((s) => { s.searching = false; });
       }
     },
 
     clearSearch: () => {
-      set((s) => { s.searchResults = []; s.searching = false; });
+      set((s) => { s.searchResults = []; s.searching = false; s.searchError = null; });
+    },
+
+    setSearchOptions: (patch) => {
+      set((s) => { s.searchOptions = { ...s.searchOptions, ...patch }; });
+    },
+
+    previewReplace: async (projectPath, query, replacement) => {
+      if (!query.trim()) {
+        set((s) => { s.replacePreview = null; });
+        return;
+      }
+      set((s) => { s.replacing = true; s.searchError = null; });
+      try {
+        const preview = await fsSearchReplace(projectPath, query.trim(), replacement, get().searchOptions);
+        set((s) => { s.replacePreview = preview; });
+      } catch (err) {
+        set((s) => { s.searchError = errorMessage(err); s.replacePreview = null; });
+      } finally {
+        set((s) => { s.replacing = false; });
+      }
+    },
+
+    applyReplace: async (projectPath, query, replacement, scope) => {
+      set((s) => { s.replacing = true; s.searchError = null; });
+      try {
+        const result = await fsApplyReplace(
+          projectPath,
+          query.trim(),
+          replacement,
+          get().searchOptions,
+          scope?.paths ?? null,
+          scope?.limitPerFile ?? null,
+        );
+        set((s) => { s.replacePreview = null; });
+        return result;
+      } catch (err) {
+        set((s) => { s.searchError = errorMessage(err); });
+        return null;
+      } finally {
+        set((s) => { s.replacing = false; });
+      }
+    },
+
+    clearReplacePreview: () => {
+      set((s) => { s.replacePreview = null; });
+    },
+
+    consumePendingLine: () => {
+      const cur = get().pendingLine;
+      if (cur) set((s) => { s.pendingLine = null; });
+      return cur;
     },
 
     clearError: () => {

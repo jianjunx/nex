@@ -384,3 +384,88 @@ fn clone_creates_working_copy() {
     assert!(dest.join(".git").exists());
     assert_eq!(fs::read_to_string(dest.join("README.md")).unwrap(), "# hi");
 }
+
+#[test]
+fn diff_contents_staged_shows_head_vs_index() {
+    let dir = tempdir().unwrap();
+    init_repo(dir.path());
+    commit_file(dir.path(), "a.txt", "v1\n", "init");
+    fs::write(dir.path().join("a.txt"), "v2\n").unwrap();
+    repository::stage_files(dir.path(), &["a.txt".to_string()]).unwrap();
+
+    let d = repository::get_diff_contents(dir.path(), "a.txt", true).unwrap();
+    assert_eq!(d.original, "v1\n");
+    assert_eq!(d.revised, "v2\n");
+    assert!(!d.binary);
+}
+
+#[test]
+fn diff_contents_unstaged_shows_index_vs_workdir() {
+    let dir = tempdir().unwrap();
+    init_repo(dir.path());
+    commit_file(dir.path(), "a.txt", "v1\n", "init");
+    fs::write(dir.path().join("a.txt"), "v2\n").unwrap();
+
+    let d = repository::get_diff_contents(dir.path(), "a.txt", false).unwrap();
+    assert_eq!(d.original, "v1\n");
+    assert_eq!(d.revised, "v2\n");
+}
+
+#[test]
+fn diff_contents_untracked_file_has_empty_original() {
+    let dir = tempdir().unwrap();
+    init_repo(dir.path());
+    commit_file(dir.path(), "a.txt", "v1\n", "init");
+    fs::write(dir.path().join("new.txt"), "hello\n").unwrap();
+
+    let d = repository::get_diff_contents(dir.path(), "new.txt", false).unwrap();
+    assert_eq!(d.original, "");
+    assert_eq!(d.revised, "hello\n");
+}
+
+#[test]
+fn diff_contents_staged_new_file_has_empty_original() {
+    let dir = tempdir().unwrap();
+    init_repo(dir.path());
+    commit_file(dir.path(), "a.txt", "v1\n", "init");
+    fs::write(dir.path().join("new.txt"), "hello\n").unwrap();
+    repository::stage_files(dir.path(), &["new.txt".to_string()]).unwrap();
+
+    let d = repository::get_diff_contents(dir.path(), "new.txt", true).unwrap();
+    assert_eq!(d.original, "");
+    assert_eq!(d.revised, "hello\n");
+}
+
+#[test]
+fn diff_contents_workdir_deletion_gives_empty_revised() {
+    let dir = tempdir().unwrap();
+    init_repo(dir.path());
+    commit_file(dir.path(), "a.txt", "v1\n", "init");
+    fs::remove_file(dir.path().join("a.txt")).unwrap();
+
+    let d = repository::get_diff_contents(dir.path(), "a.txt", false).unwrap();
+    assert_eq!(d.original, "v1\n");
+    assert_eq!(d.revised, "");
+}
+
+#[test]
+fn diff_contents_flags_binary_content() {
+    let dir = tempdir().unwrap();
+    init_repo(dir.path());
+    commit_file(dir.path(), "a.txt", "v1\n", "init");
+    fs::write(dir.path().join("a.txt"), b"abc\x00def").unwrap();
+
+    let d = repository::get_diff_contents(dir.path(), "a.txt", false).unwrap();
+    assert!(d.binary);
+}
+
+#[test]
+fn commit_patch_contains_added_lines_and_accepts_short_hash() {
+    let dir = tempdir().unwrap();
+    init_repo(dir.path());
+    let oid = commit_file(dir.path(), "a.txt", "v1\n", "init");
+
+    let patch = repository::get_commit_patch(dir.path(), &oid[..7]).unwrap();
+    assert!(patch.contains("a.txt"), "patch should name the file: {patch}");
+    assert!(patch.contains("+v1"), "patch should contain the added line: {patch}");
+}

@@ -17,6 +17,16 @@ pub fn git_diff(project_path: String, file: String, staged: bool) -> Result<Stri
 }
 
 #[tauri::command]
+pub fn git_diff_contents(project_path: String, file: String, staged: bool) -> Result<DiffContents, NexError> {
+    repository::get_diff_contents(Path::new(&project_path), &file, staged)
+}
+
+#[tauri::command]
+pub fn git_commit_patch(project_path: String, hash: String) -> Result<String, NexError> {
+    repository::get_commit_patch(Path::new(&project_path), &hash)
+}
+
+#[tauri::command]
 pub fn git_log(project_path: String, limit: usize) -> Result<Vec<CommitInfo>, NexError> {
     repository::get_log(Path::new(&project_path), limit)
 }

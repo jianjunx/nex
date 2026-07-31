@@ -38,3 +38,10 @@ pub struct StashEntry {
     pub index: u32,
     pub message: String,
 }
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DiffContents {
+    pub original: String,
+    pub revised: String,
+    pub binary: bool,
+}

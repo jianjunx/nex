@@ -52,6 +52,21 @@ pub fn get_status(repo_path: &Path) -> Result<GitStatus, NexError> {
     Ok(GitStatus { branch, ahead, behind, files })
 }
 
+/// 共享补丁打印器：DiffLine::content() 不含行首来源标记，补回 +/-/空格
+/// 前缀，输出标准补丁文本。get_diff 与 get_commit_patch 共用。
+fn render_patch(diff: &git2::Diff) -> Result<String, NexError> {
+    let mut buf = Vec::new();
+    diff.print(DiffFormat::Patch, |_, _, line| {
+        let origin = line.origin();
+        if origin == '+' || origin == '-' || origin == ' ' {
+            buf.push(origin as u8);
+        }
+        buf.extend_from_slice(line.content());
+        true
+    })?;
+    Ok(String::from_utf8_lossy(&buf).to_string())
+}
+
 pub fn get_diff(repo_path: &Path, file: &str, staged: bool) -> Result<String, NexError> {
     let repo = Repository::open(repo_path)?;
     let mut opts = git2::DiffOptions::new();
@@ -67,19 +82,77 @@ pub fn get_diff(repo_path: &Path, file: &str, staged: bool) -> Result<String, Ne
         repo.diff_index_to_workdir(None, Some(&mut opts))?
     };
 
-    let mut buf = Vec::new();
-    diff.print(DiffFormat::Patch, |_, _, line| {
-        // DiffLine::content() excludes the origin marker; restore the standard
-        // patch prefix so consumers see real patch text (+/-/context).
-        let origin = line.origin();
-        if origin == '+' || origin == '-' || origin == ' ' {
-            buf.push(origin as u8);
-        }
-        buf.extend_from_slice(line.content());
-        true
-    })?;
+    render_patch(&diff)
+}
 
-    Ok(String::from_utf8_lossy(&buf).to_string())
+/// git 的二进制启发式：前 8000 字节出现 NUL 即判二进制。
+fn looks_binary(bytes: &[u8]) -> bool {
+    bytes.iter().take(8000).any(|&b| b == 0)
+}
+
+fn head_entry_id(repo: &Repository, file: &str) -> Option<git2::Oid> {
+    let head = repo.head().ok()?;
+    let tree = head.peel_to_tree().ok()?;
+    tree.get_path(Path::new(file)).ok().map(|e| e.id())
+}
+
+fn index_entry_id(repo: &Repository, file: &str) -> Option<git2::Oid> {
+    let index = repo.index().ok()?;
+    index.get_path(Path::new(file), 0).map(|e| e.id)
+}
+
+fn blob_bytes(repo: &Repository, id: git2::Oid) -> Result<Vec<u8>, NexError> {
+    Ok(repo.find_blob(id)?.content().to_vec())
+}
+
+/// 为合并视图取两个完整文档。staged = HEAD blob vs 索引 blob；
+/// unstaged = 索引 blob（无索引条目回退 HEAD blob）vs 工作区磁盘内容。
+/// 缺失一侧得空串：暂存新增文件 original=""，工作区已删文件 revised=""。
+pub fn get_diff_contents(repo_path: &Path, file: &str, staged: bool) -> Result<DiffContents, NexError> {
+    let repo = Repository::open(repo_path)?;
+
+    let original_id = if staged {
+        head_entry_id(&repo, file)
+    } else {
+        index_entry_id(&repo, file).or_else(|| head_entry_id(&repo, file))
+    };
+    let original = match original_id {
+        Some(id) => blob_bytes(&repo, id)?,
+        None => Vec::new(),
+    };
+
+    let revised = if staged {
+        match index_entry_id(&repo, file) {
+            Some(id) => blob_bytes(&repo, id)?,
+            None => Vec::new(),
+        }
+    } else {
+        let workdir = repo.workdir()
+            .ok_or_else(|| NexError::Git("bare repository has no working directory".to_string()))?;
+        match std::fs::read(workdir.join(Path::new(file))) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => return Err(NexError::from(e)),
+        }
+    };
+
+    let binary = looks_binary(&original) || looks_binary(&revised);
+    Ok(DiffContents {
+        original: String::from_utf8_lossy(&original).into_owned(),
+        revised: String::from_utf8_lossy(&revised).into_owned(),
+        binary,
+    })
+}
+
+/// 整提交对父提交的补丁全文（根提交对空树）；hash 接受短哈希。
+pub fn get_commit_patch(repo_path: &Path, hash: &str) -> Result<String, NexError> {
+    let repo = Repository::open(repo_path)?;
+    let obj = repo.revparse_single(&format!("{hash}^{{commit}}"))?;
+    let commit = obj.peel_to_commit()?;
+    let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
+    let tree = commit.tree()?;
+    let diff = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)?;
+    render_patch(&diff)
 }
 
 pub fn get_log(repo_path: &Path, limit: usize) -> Result<Vec<CommitInfo>, NexError> {

@@ -45,6 +45,8 @@ pub fn run() {
             commands::fs_cmds::fs_create_dir,
             commands::git_cmds::git_status,
             commands::git_cmds::git_diff,
+            commands::git_cmds::git_diff_contents,
+            commands::git_cmds::git_commit_patch,
             commands::git_cmds::git_log,
             commands::git_cmds::git_stage,
             commands::git_cmds::git_unstage,

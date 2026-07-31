@@ -1,13 +1,14 @@
 import { useState, useEffect } from "react";
-import { GitBranch, Plus, Minus, ChevronDown, RefreshCw } from "lucide-react";
+import { GitBranch, ChevronDown, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useGitStore } from "../../stores/git.store";
 import { useProjectStore } from "../../stores/project.store";
 import { BranchSelector } from "./BranchSelector";
+import { ChangesSection } from "./ChangesSection";
 import { CommitSection } from "./CommitSection";
 
 export function GitPanel() {
-  const { status, diff, diffFile, statusLoading, opRunning, error, refresh, viewDiff, stage, unstage, loadBranches, loadStashes } = useGitStore();
+  const { status, diff, diffFile, statusLoading, opRunning, error, refresh, loadBranches, loadStashes } = useGitStore();
   const projects = useProjectStore((s) => s.projects);
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const project = projects.find((p) => p.id === activeProjectId);
@@ -18,19 +19,6 @@ export function GitPanel() {
   }, [project?.path]);
 
   if (!project) return <div className="p-3 text-sm text-[var(--text-tertiary)]">No project</div>;
-
-  const handleStage = async (files: string[]) => {
-    await stage(project.path, files);
-    refresh(project.path);
-  };
-
-  const handleUnstage = async (files: string[]) => {
-    await unstage(project.path, files);
-    refresh(project.path);
-  };
-
-  const staged = status?.files.filter((f) => f.staged) || [];
-  const unstaged = status?.files.filter((f) => !f.staged) || [];
 
   return (
     <div className="flex flex-col h-full text-sm overflow-hidden">
@@ -69,40 +57,7 @@ export function GitPanel() {
       )}
 
       {/* File lists */}
-      <div className="flex-1 overflow-y-auto px-4 py-3">
-        {unstaged.length > 0 && (
-          <div className="mb-4">
-            <div className="flex items-center justify-between px-2 py-1.5 text-xs text-[var(--text-tertiary)]">
-              <span>Changes ({unstaged.length})</span>
-              <Button size="sm" variant="ghost" disabled={statusLoading || !!opRunning} onClick={() => handleStage(unstaged.map((f) => f.path))}>
-                <Plus size={10} />
-              </Button>
-            </div>
-            {unstaged.map((f) => (
-              <div key={f.path} className="flex items-center gap-2 px-2.5 py-1.5 hover:bg-[var(--overlay-hover)] rounded-[var(--radius-sm)] cursor-pointer transition-colors duration-100" onClick={() => viewDiff(project.path, f.path, false)}>
-                <span className="text-[var(--warning)] text-xs w-3">{f.status[0].toUpperCase()}</span>
-                <span className="text-[var(--text-secondary)] truncate">{f.path}</span>
-              </div>
-            ))}
-          </div>
-        )}
-        {staged.length > 0 && (
-          <div>
-            <div className="flex items-center justify-between px-2 py-1.5 text-xs text-[var(--text-tertiary)]">
-              <span>Staged ({staged.length})</span>
-              <Button size="sm" variant="ghost" disabled={statusLoading || !!opRunning} onClick={() => handleUnstage(staged.map((f) => f.path))}>
-                <Minus size={10} />
-              </Button>
-            </div>
-            {staged.map((f) => (
-              <div key={f.path} className="flex items-center gap-2 px-2.5 py-1.5 hover:bg-[var(--overlay-hover)] rounded-[var(--radius-sm)] cursor-pointer transition-colors duration-100" onClick={() => viewDiff(project.path, f.path, true)}>
-                <span className="text-[var(--success)] text-xs w-3">{f.status[0].toUpperCase()}</span>
-                <span className="text-[var(--text-secondary)] truncate">{f.path}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      <ChangesSection projectPath={project.path} />
 
       {/* Commit area */}
       <CommitSection projectPath={project.path} />

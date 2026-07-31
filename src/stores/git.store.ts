@@ -52,7 +52,7 @@ interface GitStore {
   push: (projectPath: string, remote?: string) => Promise<boolean>;
   clone: (url: string, dest: string) => Promise<boolean>;
   loadStashes: (projectPath: string) => Promise<void>;
-  stashSave: (projectPath: string) => Promise<boolean>;
+  stashSave: (projectPath: string, message?: string) => Promise<boolean>;
   stashApply: (projectPath: string, index: number) => Promise<boolean>;
   stashPop: (projectPath: string, index: number) => Promise<boolean>;
   stashDrop: (projectPath: string, index: number) => Promise<boolean>;
@@ -246,8 +246,8 @@ export const useGitStore = create<GitStore>()(
         }
       },
 
-      stashSave: async (projectPath) => {
-        const ok = await runOp("存储", () => gitStashSave(projectPath, ""));
+      stashSave: async (projectPath, message) => {
+        const ok = await runOp("存储", () => gitStashSave(projectPath, message ?? ""));
         if (ok) {
           await get().refresh(projectPath);
           await get().loadStashes(projectPath);

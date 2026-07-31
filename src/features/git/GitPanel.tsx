@@ -6,6 +6,7 @@ import { useProjectStore } from "../../stores/project.store";
 import { BranchSelector } from "./BranchSelector";
 import { ChangesSection } from "./ChangesSection";
 import { CommitSection } from "./CommitSection";
+import { GitActionsMenu, OpLogPanel } from "./GitActionsMenu";
 
 export function GitPanel() {
   const { status, diff, diffFile, statusLoading, opRunning, error, refresh, loadBranches, loadStashes } = useGitStore();
@@ -51,6 +52,7 @@ export function GitPanel() {
         >
           <RefreshCw size={13} className={statusLoading ? "animate-spin" : ""} />
         </Button>
+        <GitActionsMenu projectPath={project.path} onOpenBranchSelector={() => setBranchSelectorOpen(true)} />
       </div>
       {error && (
         <p className="border-b border-[color:var(--border-subtle)] px-4 py-1.5 text-xs text-[var(--error)]">{error}</p>
@@ -79,6 +81,7 @@ export function GitPanel() {
           )}
         </div>
       )}
+      <OpLogPanel />
       <BranchSelector
         projectPath={project.path}
         open={branchSelectorOpen}

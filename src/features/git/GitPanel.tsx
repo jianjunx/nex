@@ -1,16 +1,18 @@
 import { useState, useEffect } from "react";
-import { GitBranch, Plus, Minus, Check } from "lucide-react";
+import { GitBranch, Plus, Minus, Check, ChevronDown, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useGitStore } from "../../stores/git.store";
 import { useProjectStore } from "../../stores/project.store";
+import { BranchSelector } from "./BranchSelector";
 
 export function GitPanel() {
-  const { status, diff, diffFile, statusLoading, opRunning, error, refresh, viewDiff, stage, unstage, commit } = useGitStore();
+  const { status, diff, diffFile, statusLoading, opRunning, error, refresh, viewDiff, stage, unstage, commit, loadBranches, loadStashes } = useGitStore();
   const projects = useProjectStore((s) => s.projects);
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const project = projects.find((p) => p.id === activeProjectId);
   const [commitMsg, setCommitMsg] = useState("");
+  const [branchSelectorOpen, setBranchSelectorOpen] = useState(false);
 
   useEffect(() => {
     if (project) refresh(project.path);
@@ -43,13 +45,38 @@ export function GitPanel() {
   return (
     <div className="flex flex-col h-full text-sm overflow-hidden">
       {/* Header */}
-      <div className="flex items-center gap-2 px-4 py-3.5 border-b border-[color:var(--border-subtle)]">
-        <GitBranch size={14} className="text-[var(--accent)]" />
-        <span className="text-[var(--text-primary)] font-medium">{status?.branch || "—"}</span>
+      <div className="flex items-center gap-1.5 px-3 py-2.5 border-b border-[color:var(--border-subtle)]">
+        <Button
+          variant="ghost"
+          size="xs"
+          className="max-w-[55%] gap-1.5"
+          onClick={() => setBranchSelectorOpen(true)}
+        >
+          <GitBranch size={13} className="shrink-0 text-[var(--accent)]" />
+          <span className="truncate">{status?.branch || "—"}</span>
+          <ChevronDown size={12} className="shrink-0 text-[var(--text-tertiary)]" />
+        </Button>
         {status && (status.ahead > 0 || status.behind > 0) && (
           <span className="text-[var(--text-tertiary)] text-xs">↑{status.ahead} ↓{status.behind}</span>
         )}
+        <div className="flex-1" />
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          title="刷新"
+          disabled={statusLoading || !!opRunning}
+          onClick={() => {
+            refresh(project.path);
+            loadBranches(project.path);
+            loadStashes(project.path);
+          }}
+        >
+          <RefreshCw size={13} className={statusLoading ? "animate-spin" : ""} />
+        </Button>
       </div>
+      {error && (
+        <p className="border-b border-[color:var(--border-subtle)] px-4 py-1.5 text-xs text-[var(--error)]">{error}</p>
+      )}
 
       {/* File lists */}
       <div className="flex-1 overflow-y-auto px-4 py-3">
@@ -85,7 +112,6 @@ export function GitPanel() {
             ))}
           </div>
         )}
-        {error && <p className="text-[var(--error)] text-xs px-2 mt-2">{error}</p>}
       </div>
 
       {/* Commit area */}
@@ -124,6 +150,11 @@ export function GitPanel() {
           )}
         </div>
       )}
+      <BranchSelector
+        projectPath={project.path}
+        open={branchSelectorOpen}
+        onOpenChange={setBranchSelectorOpen}
+      />
     </div>
   );
 }

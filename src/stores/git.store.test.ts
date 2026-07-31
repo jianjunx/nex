@@ -171,3 +171,21 @@ describe("git.store push guard", () => {
     expect(gitRevertStagedMock).not.toHaveBeenCalled();
   });
 });
+
+describe("git.store loadHistory", () => {
+  it("stores commits returned by gitLog", async () => {
+    gitLogMock.mockResolvedValue([{ hash: "abc1234", message: "init", author: "a", time: 1 }]);
+    await useGitStore.getState().loadHistory("/p");
+    expect(gitLogMock).toHaveBeenCalledWith("/p", 20);
+    expect(useGitStore.getState().commits).toHaveLength(1);
+    expect(useGitStore.getState().historyLoading).toBe(false);
+  });
+
+  it("records the backend error on failure", async () => {
+    gitLogMock.mockRejectedValue({ type: "Git", message: "reference not found" });
+    await useGitStore.getState().loadHistory("/p");
+    expect(useGitStore.getState().error).toBe("reference not found");
+    expect(useGitStore.getState().commits).toHaveLength(0);
+    expect(useGitStore.getState().historyLoading).toBe(false);
+  });
+});

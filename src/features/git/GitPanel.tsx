@@ -6,6 +6,7 @@ import { useProjectStore } from "../../stores/project.store";
 import { BranchSelector } from "./BranchSelector";
 import { ChangesSection } from "./ChangesSection";
 import { CommitSection } from "./CommitSection";
+import { HistorySection } from "./HistorySection";
 import { GitActionsMenu, OpLogPanel } from "./GitActionsMenu";
 
 export function GitPanel() {
@@ -81,6 +82,7 @@ export function GitPanel() {
           )}
         </div>
       )}
+      <HistorySection projectPath={project.path} />
       <OpLogPanel />
       <BranchSelector
         projectPath={project.path}

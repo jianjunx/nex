@@ -36,6 +36,7 @@ portable-pty = "0.8"
 notify = "7"
 notify-debouncer-full = "0.4"
 ignore = "0.4"
+regex = "1"
 content_inspector = "0.2"
 rusqlite = { version = "0.32", features = ["bundled"] }
 async-trait = "0.1"

@@ -31,3 +31,84 @@ fn test_write_file_atomic_round_trip() {
     assert!(!tmp.exists());
     fs::remove_file(&path).unwrap();
 }
+
+// ---- Plan 5: search options -----------------------------------------
+use nex_lib::fs::search::{compile_pattern, search, SearchOptions};
+
+fn opts(case_sensitive: bool, whole_word: bool, regex: bool) -> SearchOptions {
+    SearchOptions { case_sensitive, whole_word, regex }
+}
+
+fn search_fixture(dir: &std::path::Path) {
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(dir.join("src/app.ts"), "const Foo = 1;\nlet foo = 2;\nlet food = 3;\n").unwrap();
+    fs::write(dir.join("notes.txt"), "foo cat concat\nFoo Cat\n").unwrap();
+    fs::write(dir.join("foo.md"), "readme\n").unwrap();
+}
+
+#[test]
+fn test_search_default_is_case_insensitive_substring() {
+    let dir = tempdir().unwrap();
+    search_fixture(dir.path());
+    let results = search(dir.path(), "foo", None).unwrap();
+    // foo.md 名称命中（line=None）；app.ts 3 行内容命中；notes.txt 2 行。
+    assert!(results.iter().any(|m| m.name == "foo.md" && m.line.is_none()));
+    let content_hits: Vec<_> = results.iter().filter(|m| m.line.is_some()).collect();
+    assert_eq!(content_hits.len(), 5);
+}
+
+#[test]
+fn test_search_case_sensitive() {
+    let dir = tempdir().unwrap();
+    search_fixture(dir.path());
+    let results = search(dir.path(), "Foo", Some(opts(true, false, false))).unwrap();
+    let content_hits: Vec<_> = results.iter().filter(|m| m.line.is_some()).collect();
+    // app.ts "const Foo = 1;" + notes.txt "Foo Cat"
+    assert_eq!(content_hits.len(), 2);
+    // 小写文件名 foo.md 不得命中大小写敏感的 "Foo"
+    assert!(!results.iter().any(|m| m.name == "foo.md"));
+}
+
+#[test]
+fn test_search_whole_word_excludes_substrings() {
+    let dir = tempdir().unwrap();
+    search_fixture(dir.path());
+    let results = search(dir.path(), "cat", Some(opts(false, true, false))).unwrap();
+    let texts: Vec<_> = results.iter().filter_map(|m| m.line.map(|_| m.text.clone())).collect();
+    // "foo cat concat"（独立词 cat）与 "Foo Cat"（大小写不敏感）；concat 内的 cat 不算
+    assert_eq!(texts.len(), 2);
+    assert!(texts.iter().all(|t| t.to_lowercase().contains(" cat")));
+}
+
+#[test]
+fn test_search_regex_mode() {
+    let dir = tempdir().unwrap();
+    search_fixture(dir.path());
+    // 大小写敏感正则：仅 "const Foo = 1;"（"let foo = 2;" 小写不中，"food" 其后非空白不中）
+    let results = search(dir.path(), r"Foo\s*=\s*\d", Some(opts(true, false, true))).unwrap();
+    let texts: Vec<_> = results.iter().filter_map(|m| m.line.map(|_| m.text.clone())).collect();
+    assert_eq!(texts.len(), 1);
+    assert!(texts[0].contains("const Foo = 1;"));
+}
+
+#[test]
+fn test_search_options_combine() {
+    let dir = tempdir().unwrap();
+    search_fixture(dir.path());
+    // 大小写敏感 + 全词 "Foo"：仅 "const Foo = 1;" 与 "Foo Cat"
+    let results = search(dir.path(), "Foo", Some(opts(true, true, false))).unwrap();
+    let content_hits: Vec<_> = results.iter().filter(|m| m.line.is_some()).collect();
+    assert_eq!(content_hits.len(), 2);
+}
+
+#[test]
+fn test_search_invalid_regex_is_validation_error() {
+    let dir = tempdir().unwrap();
+    search_fixture(dir.path());
+    let err = search(dir.path(), "[unclosed", Some(opts(false, false, true))).unwrap_err();
+    let msg = format!("{err}");
+    assert!(msg.contains("无效的正则表达式"), "unexpected: {msg}");
+    assert!(msg.contains("[unclosed"));
+    // compile_pattern 同样可直测
+    assert!(compile_pattern("(", &opts(false, false, true)).is_err());
+}

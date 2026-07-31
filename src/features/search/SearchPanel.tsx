@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { ChevronRight, ChevronsDownUp, ChevronsUpDown, FileCode, Loader2, RefreshCw, Replace, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +13,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useFsStore } from "../../stores/fs.store";
+import { useUiStore } from "../../stores/ui.store";
 import { useProjectStore } from "../../stores/project.store";
 import { relativeToProject } from "../editor/pathUtils";
 import { buildHighlightRegExp, matchRanges, type MatchRange } from "./searchHighlight";
@@ -73,6 +74,7 @@ export function SearchPanel() {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [replacement, setReplacement] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
   const searchResults = useFsStore((s) => s.searchResults);
   const searching = useFsStore((s) => s.searching);
   const searchError = useFsStore((s) => s.searchError);
@@ -116,6 +118,7 @@ export function SearchPanel() {
     [query, searchOptions],
   );
   const inputRef = useRef<HTMLInputElement>(null);
+  const searchFocusRequest = useUiStore((s) => s.searchFocusRequest);
 
   // 非法正则快速失败：与后端合成规则近似的 JS 预校验，命中则不发起搜索。
   // Rust regex 方言更宽，极少数「Rust 合法 / JS 非法」模式仍会到达后端，
@@ -143,10 +146,38 @@ export function SearchPanel() {
     return () => clearTimeout(timer);
   }, [query, searchOptions, regexError, search, clearSearch]);
 
+  // search.focus 命令经计数触发聚焦；0 为初值，挂载时不抢焦点。
+  useEffect(() => {
+    if (searchFocusRequest > 0) inputRef.current?.focus();
+  }, [searchFocusRequest]);
+
+  // 查询或结果变化时复位导航游标。
+  useEffect(() => {
+    setActiveIndex(-1);
+  }, [query, searchResults]);
+
   const fileCount = useMemo(
     () => new Set(searchResults.map((m) => m.path)).size,
     [searchResults],
   );
+
+  // 面板本地 Enter/Shift+Enter：在扁平化结果序列中移动游标并跳转编辑器。
+  // 全局分发器在输入框焦点下让行，二者不会双触发。
+  const stepResult = (dir: 1 | -1) => {
+    if (searchResults.length === 0) return;
+    const next = (activeIndex + dir + searchResults.length) % searchResults.length;
+    setActiveIndex(next);
+    const m = searchResults[next];
+    void openFile(m.path, m.line != null ? { line: m.line } : undefined);
+  };
+
+  const handleSearchKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    // 带修饰键的 Enter（Ctrl+Alt+Enter 替换全部）交给根容器处理器，这里不介入
+    if (e.key !== "Enter" || e.ctrlKey || e.altKey || e.metaKey) return;
+    e.preventDefault();
+    if (e.shiftKey) stepResult(-1);
+    else stepResult(1);
+  };
 
   // 替换后自动重搜：写盘 → fs-changed → syncExternalChange 静默/stale 同步
   // 已打开文件（不抑制 watcher）；面板随即用同一 query/options 刷新结果。
@@ -186,7 +217,16 @@ export function SearchPanel() {
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div
+      className="flex flex-col h-full"
+      onKeyDown={(e) => {
+        // 面板作用域：替换全部快捷键不进全局注册表
+        if (e.key === "Enter" && e.ctrlKey && e.altKey) {
+          e.preventDefault();
+          void startReplaceAll();
+        }
+      }}
+    >
       {/* 顶工具条 */}
       <div className="flex items-center gap-1 px-2 pt-2">
         <span className="flex-1 text-xs font-medium text-[var(--text-secondary)]">搜索</span>
@@ -219,6 +259,7 @@ export function SearchPanel() {
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={handleSearchKeyDown}
             placeholder="搜索…"
             aria-label="搜索"
             className={inlineError ? "border-[var(--error)] focus-visible:ring-[var(--error)]" : ""}
@@ -345,7 +386,7 @@ export function SearchPanel() {
                         <button
                           key={`${m.path}:${m.line ?? 0}:${i}`}
                           onClick={() => void openFile(m.path, m.line != null ? { line: m.line } : undefined)}
-                          className="group/row search-stagger relative w-full text-left pl-7 pr-7 py-1 rounded-[var(--radius-sm)] hover:bg-[var(--glass-2-surface)] transition-colors"
+                          className={`group/row search-stagger relative w-full text-left pl-7 pr-7 py-1 rounded-[var(--radius-sm)] hover:bg-[var(--glass-2-surface)] transition-colors ${rowOffset + i === activeIndex ? "bg-[var(--overlay-ghost)]" : ""}`}
                           style={{ animationDelay: `${Math.min(rowOffset + i, 19) * 25}ms` }}
                         >
                           {m.line != null ? (

@@ -29,3 +29,18 @@ describe("sanitizeSidePanelTab", () => {
     expect(sanitizeSidePanelTab(undefined)).toBe("files");
   });
 });
+
+describe("search focus request counter", () => {
+  it("requestSearchFocus switches to the search tab, shows the panel and bumps the counter", () => {
+    const before = useUiStore.getState().searchFocusRequest;
+    useUiStore.setState({ sidePanelTab: "files", sidePanelVisible: false });
+    useUiStore.getState().requestSearchFocus();
+    const s = useUiStore.getState();
+    expect(s.sidePanelTab).toBe("search");
+    expect(s.sidePanelVisible).toBe(true);
+    expect(s.searchFocusRequest).toBe(before + 1);
+    // 连续触发必须继续自增（计数而非布尔黏滞）
+    useUiStore.getState().requestSearchFocus();
+    expect(useUiStore.getState().searchFocusRequest).toBe(before + 2);
+  });
+});

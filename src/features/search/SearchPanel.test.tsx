@@ -16,6 +16,8 @@ let fsState: {
   clearSearch: ReturnType<typeof vi.fn>;
   setSearchOptions: ReturnType<typeof vi.fn>;
   openFile: ReturnType<typeof vi.fn>;
+  previewReplace?: ReturnType<typeof vi.fn>;
+  applyReplace?: ReturnType<typeof vi.fn>;
 };
 vi.mock("../../stores/fs.store", () => ({
   useFsStore: Object.assign(
@@ -33,6 +35,7 @@ vi.mock("../../stores/project.store", () => ({
 }));
 
 import { SearchPanel } from "./SearchPanel";
+import { useUiStore } from "../../stores/ui.store";
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -45,6 +48,8 @@ beforeEach(() => {
     clearSearch: vi.fn(),
     setSearchOptions: vi.fn(),
     openFile: vi.fn().mockResolvedValue(undefined),
+    previewReplace: vi.fn().mockResolvedValue(undefined),
+    applyReplace: vi.fn().mockResolvedValue(null),
   };
   projectState = { projects: [{ id: "p1", path: "/proj" }], activeProjectId: "p1" };
 });
@@ -153,5 +158,59 @@ describe("stats bar & toolbar", () => {
     const filter = screen.getByPlaceholderText(/要包含的文件/) as HTMLInputElement;
     expect(filter.disabled).toBe(true);
     expect(filter.getAttribute("title")).toBe("后续版本支持");
+  });
+});
+
+describe("search.focus integration (counter trigger)", () => {
+  beforeEach(() => {
+    useUiStore.setState({ searchFocusRequest: 0, sidePanelTab: "files", sidePanelVisible: true });
+  });
+
+  it("focuses the search input when the counter bumps", () => {
+    render(<SearchPanel />);
+    const input = screen.getByLabelText("搜索");
+    expect(document.activeElement).not.toBe(input);
+    act(() => { useUiStore.getState().requestSearchFocus(); });
+    expect(document.activeElement).toBe(input);
+    expect(useUiStore.getState().sidePanelTab).toBe("search");
+  });
+});
+
+describe("panel-local result navigation", () => {
+  beforeEach(() => {
+    fsState.searchResults = [
+      { path: "/proj/a.ts", name: "a.ts", line: 3, text: "foo one" },
+      { path: "/proj/b.ts", name: "b.ts", line: 7, text: "foo two" },
+    ];
+  });
+
+  it("Enter jumps to the next result (wrapping); Shift+Enter to the previous", () => {
+    render(<SearchPanel />);
+    const input = screen.getByLabelText("搜索");
+    fireEvent.change(input, { target: { value: "foo" } });
+
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(fsState.openFile).toHaveBeenLastCalledWith("/proj/a.ts", { line: 3 });
+
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(fsState.openFile).toHaveBeenLastCalledWith("/proj/b.ts", { line: 7 });
+
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(fsState.openFile).toHaveBeenLastCalledWith("/proj/a.ts", { line: 3 }); // 回卷
+
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+    expect(fsState.openFile).toHaveBeenLastCalledWith("/proj/b.ts", { line: 7 });
+  });
+
+  it("Ctrl+Alt+Enter triggers the replace-all preview from anywhere in the panel", async () => {
+    fsState.previewReplace = vi.fn().mockResolvedValue(undefined);
+    render(<SearchPanel />);
+    const input = screen.getByLabelText("搜索");
+    fireEvent.change(input, { target: { value: "foo" } });
+    fireEvent.keyDown(input, { key: "Enter", ctrlKey: true, altKey: true });
+    await act(async () => {});
+    expect(fsState.previewReplace).toHaveBeenCalledWith("/proj", "foo", "");
+    // 普通 Enter 不得触发替换预览
+    expect(fsState.previewReplace).toHaveBeenCalledTimes(1);
   });
 });

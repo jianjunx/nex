@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // Module-level mutable bindings; mock factories read them lazily (TDZ-safe),
 // same pattern as KeybindingHost.test.tsx.
 let setEditorVisible: ReturnType<typeof vi.fn>;
+let requestSearchFocus: ReturnType<typeof vi.fn>;
 let fsState: {
   openFiles: { path: string; dirty: boolean }[];
   activePath: string | null;
@@ -16,7 +17,7 @@ let projectState: { projects: { id: string; path: string }[]; activeProjectId: s
 let gitCmdState: { commitWith: ReturnType<typeof vi.fn> };
 
 vi.mock("../stores/ui.store", () => ({
-  useUiStore: { getState: () => ({ setEditorVisible }) },
+  useUiStore: { getState: () => ({ setEditorVisible, requestSearchFocus }) },
 }));
 vi.mock("../stores/fs.store", () => ({
   useFsStore: { getState: () => fsState },
@@ -42,6 +43,7 @@ beforeEach(() => {
   vi.setSystemTime(10_000);
   _resetCloseEscForTest();
   setEditorVisible = vi.fn();
+  requestSearchFocus = vi.fn();
   fsState = { openFiles: [], activePath: null, saveFile: vi.fn() };
   findBarOpen = false;
   projectState = { projects: [], activeProjectId: null };
@@ -132,5 +134,12 @@ describe("scm.commit run", () => {
     other.focus();
     expect(when()).toBe(false);
     document.body.innerHTML = "";
+  });
+});
+
+describe("search.focus run", () => {
+  it("requests search focus through the ui store (counter trigger)", () => {
+    getCommand("search.focus")!.run();
+    expect(requestSearchFocus).toHaveBeenCalledTimes(1);
   });
 });

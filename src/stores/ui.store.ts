@@ -19,6 +19,8 @@ interface UiState {
   editorVisible: boolean;
   editorWidth: number;
   settingsOpen: boolean;
+  /** 自增计数触发搜索面板聚焦；不持久化（partialize 未收录即生效）。 */
+  searchFocusRequest: number;
 
   toggleSidePanel: () => void;
   setSidePanelTab: (tab: SidePanelTab) => void;
@@ -30,6 +32,7 @@ interface UiState {
   resetLayoutDims: () => void;
   openSettings: () => void;
   closeSettings: () => void;
+  requestSearchFocus: () => void;
 }
 
 // Persist layout state so the window reopens exactly as the user left it
@@ -45,6 +48,7 @@ export const useUiStore = create<UiState>()(
       editorVisible: false,
       editorWidth: 480,
       settingsOpen: false,
+      searchFocusRequest: 0,
 
       toggleSidePanel: () => set((s) => { s.sidePanelVisible = !s.sidePanelVisible; }),
       setSidePanelTab: (tab) => set((s) => { s.sidePanelTab = tab; s.sidePanelVisible = true; }),
@@ -68,6 +72,11 @@ export const useUiStore = create<UiState>()(
       }),
       openSettings: () => set((s) => { s.settingsOpen = true; }),
       closeSettings: () => set((s) => { s.settingsOpen = false; }),
+      requestSearchFocus: () => set((s) => {
+        s.sidePanelTab = "search";
+        s.sidePanelVisible = true;
+        s.searchFocusRequest += 1;
+      }),
     })),
     {
       name: "nex-ui",

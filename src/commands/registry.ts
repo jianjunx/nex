@@ -59,7 +59,7 @@ const COMMANDS: Command[] = [
     title: "聚焦搜索",
     category: "搜索",
     defaultKey: k("keyf", { primary: true, shift: true }),
-    run: () => useUiStore.getState().setSidePanelTab("search"),
+    run: () => useUiStore.getState().requestSearchFocus(),
   },
   {
     id: "scm.focus",

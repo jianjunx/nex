@@ -9,7 +9,7 @@ import { listCommands } from "./registry";
 import { useKeybindingsStore } from "../stores/keybindings.store";
 
 // Commands that must work even while typing (VSCode semantics).
-const ALLOW_IN_INPUT = new Set(["editor.save", "editor.close"]);
+const ALLOW_IN_INPUT = new Set(["editor.save", "editor.close", "scm.commit"]);
 
 export const INPUT_SELECTOR = "input, textarea, select, [contenteditable=''], [contenteditable='true']";
 

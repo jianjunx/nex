@@ -12,6 +12,8 @@ let fsState: {
   saveFile: ReturnType<typeof vi.fn>;
 };
 let findBarOpen = false;
+let projectState: { projects: { id: string; path: string }[]; activeProjectId: string | null };
+let gitCmdState: { commitWith: ReturnType<typeof vi.fn> };
 
 vi.mock("../stores/ui.store", () => ({
   useUiStore: { getState: () => ({ setEditorVisible }) },
@@ -21,6 +23,12 @@ vi.mock("../stores/fs.store", () => ({
 }));
 vi.mock("./editorKeybindings", () => ({
   isFindBarOpen: () => findBarOpen,
+}));
+vi.mock("../stores/project.store", () => ({
+  useProjectStore: { getState: () => projectState },
+}));
+vi.mock("../stores/git.store", () => ({
+  useGitStore: { getState: () => gitCmdState },
 }));
 
 import { getCommand } from "./registry";
@@ -36,6 +44,8 @@ beforeEach(() => {
   setEditorVisible = vi.fn();
   fsState = { openFiles: [], activePath: null, saveFile: vi.fn() };
   findBarOpen = false;
+  projectState = { projects: [], activeProjectId: null };
+  gitCmdState = { commitWith: vi.fn() };
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -94,5 +104,33 @@ describe("editor.save run", () => {
     fsState.activePath = null;
     runSave();
     expect(fsState.saveFile).not.toHaveBeenCalled();
+  });
+});
+
+describe("scm.commit run", () => {
+  it("commits via the git store for the active project", () => {
+    projectState = { projects: [{ id: "p1", path: "/proj" }], activeProjectId: "p1" };
+    getCommand("scm.commit")!.run();
+    expect(gitCmdState.commitWith).toHaveBeenCalledWith("/proj", "commit");
+  });
+
+  it("is a no-op without an active project", () => {
+    getCommand("scm.commit")!.run();
+    expect(gitCmdState.commitWith).not.toHaveBeenCalled();
+  });
+
+  it("when() matches only the commit input", () => {
+    const commitInput = document.createElement("input");
+    commitInput.setAttribute("data-scm-commit-input", "");
+    document.body.appendChild(commitInput);
+    const other = document.createElement("input");
+    document.body.appendChild(other);
+
+    const when = getCommand("scm.commit")!.when!;
+    commitInput.focus();
+    expect(when()).toBe(true);
+    other.focus();
+    expect(when()).toBe(false);
+    document.body.innerHTML = "";
   });
 });

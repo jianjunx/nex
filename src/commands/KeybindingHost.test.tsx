@@ -20,6 +20,7 @@ vi.mock("../stores/keybindings.store", () => ({
         if (id === "view.toggleSidebar") return { primary: true, key: "keyb" };
         if (id === "editor.save") return { primary: true, key: "keys" };
         if (id === "editor.close") return { key: "escape" };
+        if (id === "scm.commit") return { primary: true, key: "enter" };
         return null;
       },
     }),
@@ -29,11 +30,20 @@ vi.mock("../stores/keybindings.store", () => ({
 const toggle = vi.fn();
 const save = vi.fn();
 const close = vi.fn();
+const scmCommit = vi.fn();
 vi.mock("../commands/registry", () => ({
   listCommands: () => [
     { id: "view.toggleSidebar", title: "t", category: "c", defaultKey: null, run: toggle },
     { id: "editor.save", title: "s", category: "c", defaultKey: null, run: save },
     { id: "editor.close", title: "c", category: "c", defaultKey: null, run: close },
+    {
+      id: "scm.commit",
+      title: "k",
+      category: "c",
+      defaultKey: null,
+      when: () => !!document.activeElement?.closest("[data-scm-commit-input]"),
+      run: scmCommit,
+    },
   ],
   getCommand: () => undefined,
 }));
@@ -139,6 +149,23 @@ describe("KeybindingHost", () => {
     fire(window, { key: "s", code: "KeyS", ctrlKey: true });
     expect(save).toHaveBeenCalledTimes(1);
     expect(toggle).not.toHaveBeenCalled();
+  });
+
+  it("scm.commit fires on Ctrl+Enter from the commit input", () => {
+    const input = document.createElement("input");
+    input.setAttribute("data-scm-commit-input", "");
+    document.body.appendChild(input);
+    input.focus();
+    fire(window, { key: "Enter", code: "Enter", ctrlKey: true });
+    expect(scmCommit).toHaveBeenCalledTimes(1);
+  });
+
+  it("scm.commit does not fire from an unrelated input", () => {
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
+    fire(window, { key: "Enter", code: "Enter", ctrlKey: true });
+    expect(scmCommit).not.toHaveBeenCalled();
   });
 
   it("yields allowlisted editor.save when a dialog is open, even from an input", () => {

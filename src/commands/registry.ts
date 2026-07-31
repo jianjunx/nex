@@ -3,6 +3,8 @@ import { isFindBarOpen } from "./editorKeybindings";
 import { noteCloseEsc } from "./keybindingHostState";
 import { useUiStore } from "../stores/ui.store";
 import { useFsStore } from "../stores/fs.store";
+import { useProjectStore } from "../stores/project.store";
+import { useGitStore } from "../stores/git.store";
 
 const k = (key: string, o: { primary?: boolean; alt?: boolean; shift?: boolean } = {}): KeyCombo => ({
   key,
@@ -65,6 +67,20 @@ const COMMANDS: Command[] = [
     category: "Git",
     defaultKey: k("keyg", { primary: true, shift: true }),
     run: () => useUiStore.getState().setSidePanelTab("git"),
+  },
+  {
+    id: "scm.commit",
+    title: "提交（提交框）",
+    category: "Git",
+    defaultKey: k("enter", { primary: true }),
+    // Only meaningful while the SCM commit input is focused; doubles as a
+    // guard so a user-rebound bare "enter" cannot eat Return in other inputs.
+    when: () => !!document.activeElement?.closest("[data-scm-commit-input]"),
+    run: () => {
+      const { projects, activeProjectId } = useProjectStore.getState();
+      const path = projects.find((p) => p.id === activeProjectId)?.path;
+      if (path) void useGitStore.getState().commitWith(path, "commit");
+    },
   },
   {
     id: "files.focus",

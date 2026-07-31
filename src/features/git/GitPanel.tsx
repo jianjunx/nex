@@ -1,17 +1,16 @@
 import { useState, useEffect } from "react";
-import { GitBranch, Plus, Minus, Check, ChevronDown, RefreshCw } from "lucide-react";
+import { GitBranch, Plus, Minus, ChevronDown, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { useGitStore } from "../../stores/git.store";
 import { useProjectStore } from "../../stores/project.store";
 import { BranchSelector } from "./BranchSelector";
+import { CommitSection } from "./CommitSection";
 
 export function GitPanel() {
-  const { status, diff, diffFile, statusLoading, opRunning, error, refresh, viewDiff, stage, unstage, commit, loadBranches, loadStashes } = useGitStore();
+  const { status, diff, diffFile, statusLoading, opRunning, error, refresh, viewDiff, stage, unstage, loadBranches, loadStashes } = useGitStore();
   const projects = useProjectStore((s) => s.projects);
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const project = projects.find((p) => p.id === activeProjectId);
-  const [commitMsg, setCommitMsg] = useState("");
   const [branchSelectorOpen, setBranchSelectorOpen] = useState(false);
 
   useEffect(() => {
@@ -19,15 +18,6 @@ export function GitPanel() {
   }, [project?.path]);
 
   if (!project) return <div className="p-3 text-sm text-[var(--text-tertiary)]">No project</div>;
-
-  const handleCommit = async () => {
-    if (!commitMsg.trim()) return;
-    const ok = await commit(project.path, commitMsg);
-    if (ok) {
-      setCommitMsg("");
-      refresh(project.path);
-    }
-  };
 
   const handleStage = async (files: string[]) => {
     await stage(project.path, files);
@@ -115,23 +105,7 @@ export function GitPanel() {
       </div>
 
       {/* Commit area */}
-      <div className="p-4 border-t border-[color:var(--border-subtle)]">
-        <Input
-          value={commitMsg}
-          onChange={(e) => setCommitMsg(e.target.value)}
-          placeholder="Commit message..."
-          className="font-normal text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)]"
-          onKeyDown={(e) => e.key === "Enter" && handleCommit()}
-        />
-        <Button
-          variant="ghost"
-          className="mt-3 w-full h-auto py-2.5 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] dark:bg-[var(--accent)] dark:text-white dark:hover:bg-[var(--accent-hover)]"
-          disabled={statusLoading || !!opRunning || !commitMsg.trim()}
-          onClick={handleCommit}
-        >
-          <Check size={14} className="mr-2" /> Commit
-        </Button>
-      </div>
+      <CommitSection projectPath={project.path} />
 
       {/* Diff viewer */}
       {diff && diffFile && (

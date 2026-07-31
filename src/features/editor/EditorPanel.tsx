@@ -42,6 +42,22 @@ const editorTheme = EditorView.theme({
   ".cm-searchMatch.cm-searchMatch-selected": { backgroundColor: "color-mix(in srgb, var(--accent) 55%, transparent)" },
 });
 
+// Plan 5 行定位：搜索跳转携带 pendingLine。视图就绪后选中并滚动到目标行，
+// 然后消费掉 pending 防止重复触发。两条入口：新视图走 onCreateEditor，
+// 已存在视图（同文件再次跳转，不按 path 重建）走组件内 effect。
+const applyPendingLine = (view: EditorView) => {
+  const fs = useFsStore.getState();
+  const pending = fs.pendingLine;
+  if (!pending || pending.path !== fs.activePath) return;
+  const line = Math.min(Math.max(1, pending.line), view.state.doc.lines);
+  const pos = view.state.doc.line(line).from;
+  view.dispatch({
+    selection: { anchor: pos },
+    effects: EditorView.scrollIntoView(pos, { y: "center" }),
+  });
+  fs.consumePendingLine();
+};
+
 export function EditorPanel() {
   const openFiles = useFsStore((s) => s.openFiles);
   const activePath = useFsStore((s) => s.activePath);
@@ -57,6 +73,7 @@ export function EditorPanel() {
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const projectPath = projects.find((p) => p.id === activeProjectId)?.path;
   const viewRef = useRef<EditorView | null>(null);
+  const pendingLine = useFsStore((s) => s.pendingLine);
 
   // diff 标签用合成路径（diff: 前缀），语言检测须走载荷中的 languageHint。
   const langPath = editorFile?.diff ? editorFile.diff.languageHint : (editorFile?.path ?? "");
@@ -75,6 +92,11 @@ export function EditorPanel() {
     registerFindBarAccessor(() => viewRef.current);
     return () => registerFindBarAccessor(null);
   }, []);
+
+  useEffect(() => {
+    const v = viewRef.current;
+    if (v) applyPendingLine(v);
+  }, [pendingLine, editorFile?.path]);
 
   if (openFiles.length === 0) return null;
 
@@ -152,7 +174,7 @@ export function EditorPanel() {
               key={editorFile.path}
               value={editorFile.draft}
               onChange={setDraft}
-              onCreateEditor={(view) => { viewRef.current = view; }}
+              onCreateEditor={(view) => { viewRef.current = view; applyPendingLine(view); }}
               theme={editorTheme}
               extensions={extensions}
               height="100%"

@@ -9,6 +9,7 @@ import { useProjectStore } from "../../stores/project.store";
 import { fileBasename, relativeToProject } from "./pathUtils";
 import { languageExtensionsForPath } from "./language";
 import { editorSearchExtensions } from "./editorSearch";
+import { DiffView } from "./DiffView";
 
 // CSS variables are resolved at paint time, so a light/dark theme switch
 // restyles the editor with zero reconstruction — no editor re-theme needed.
@@ -57,9 +58,12 @@ export function EditorPanel() {
   const projectPath = projects.find((p) => p.id === activeProjectId)?.path;
   const viewRef = useRef<EditorView | null>(null);
 
+  // diff 标签用合成路径（diff: 前缀），语言检测须走载荷中的 languageHint。
+  const langPath = editorFile?.diff ? editorFile.diff.languageHint : (editorFile?.path ?? "");
+
   const extensions = useMemo(
-    () => [...languageExtensionsForPath(editorFile?.path ?? ""), ...editorSearchExtensions()],
-    [editorFile?.path],
+    () => [...languageExtensionsForPath(langPath), ...editorSearchExtensions()],
+    [langPath],
   );
 
   // CodeMirror measured at zero size while hidden; force a re-measure on mount.
@@ -87,10 +91,10 @@ export function EditorPanel() {
                   ? "bg-[var(--glass-2-surface)] text-[var(--text-primary)]"
                   : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
               }`}
-              title={relativeToProject(f.path, projectPath)}
+              title={f.diff ? f.diff.title : relativeToProject(f.path, projectPath)}
               onClick={() => void switchFile(f.path)}
             >
-              <span className={`truncate ${!f.pinned ? "italic" : ""}`}>{fileBasename(f.path)}</span>
+              <span className={`truncate ${!f.pinned ? "italic" : ""}`}>{f.diff ? f.diff.title : fileBasename(f.path)}</span>
               {f.dirty && <span className="text-[var(--accent)]" title="未保存的修改">●</span>}
               <span
                 role="button"
@@ -133,7 +137,15 @@ export function EditorPanel() {
         </div>
       )}
       <div className="flex-1 min-h-0 overflow-hidden">
-        {editorFile?.isText ? (
+        {editorFile?.diff ? (
+          <DiffView
+            key={editorFile.path}
+            payload={editorFile.diff}
+            theme={editorTheme}
+            extensions={extensions}
+            onCreateEditor={(view) => { viewRef.current = view; }}
+          />
+        ) : editorFile?.isText ? (
           <div className="h-full min-h-0">
             {/* key = one EditorView per file: without it the undo stack survives a file switch and Ctrl+Z can resurrect the previous file's content — a wrong-path save hazard. Esc-hide is unaffected (same path, CSS-only hide), so undo/scroll preservation across hide/re-show still holds. */}
             <CodeMirror

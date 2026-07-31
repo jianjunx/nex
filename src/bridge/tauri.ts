@@ -395,8 +395,53 @@ export interface SearchMatch {
   text: string;
 }
 
-export async function fsSearch(projectPath: string, query: string): Promise<SearchMatch[]> {
-  return invoke(COMMANDS.FS_SEARCH, { projectPath, query });
+/** Match-rule toggles; all false = case-insensitive substring (the default). */
+export interface SearchOptions {
+  caseSensitive: boolean;
+  wholeWord: boolean;
+  regex: boolean;
+}
+
+/** Per-file replacement count in a preview (no disk writes). */
+export interface ReplaceFilePreview {
+  path: string;
+  count: number;
+}
+
+export interface ReplacePreview {
+  files: ReplaceFilePreview[];
+  total: number;
+  /** MAX_RESULTS budget exhausted — files beyond the cap were not visited. */
+  truncated: boolean;
+}
+
+export interface ReplaceResult {
+  filesChanged: number;
+  replacements: number;
+}
+
+export async function fsSearch(projectPath: string, query: string, options: SearchOptions | null = null): Promise<SearchMatch[]> {
+  return invoke(COMMANDS.FS_SEARCH, { projectPath, query, options });
+}
+
+export async function fsSearchReplace(
+  projectPath: string,
+  query: string,
+  replacement: string,
+  options: SearchOptions | null = null,
+): Promise<ReplacePreview> {
+  return invoke(COMMANDS.FS_SEARCH_REPLACE, { projectPath, query, replacement, options });
+}
+
+export async function fsApplyReplace(
+  projectPath: string,
+  query: string,
+  replacement: string,
+  options: SearchOptions | null = null,
+  paths: string[] | null = null,
+  limitPerFile: number | null = null,
+): Promise<ReplaceResult> {
+  return invoke(COMMANDS.FS_APPLY_REPLACE, { projectPath, query, replacement, options, paths, limitPerFile });
 }
 
 export async function fsWatchStart(projectPath: string): Promise<void> {

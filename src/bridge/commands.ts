@@ -61,6 +61,8 @@ export const COMMANDS = {
   FS_WRITE_FILE: "fs_write_file",
   FS_WATCH_START: "fs_watch_start",
   FS_SEARCH: "fs_search",
+  FS_SEARCH_REPLACE: "fs_search_replace",
+  FS_APPLY_REPLACE: "fs_apply_replace",
   FS_CREATE_FILE: "fs_create_file",
   FS_CREATE_DIR: "fs_create_dir",
   // Appearance

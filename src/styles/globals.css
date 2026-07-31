@@ -231,3 +231,23 @@ html, body {
 .xterm .xterm-helper-textarea {
   background: transparent !important;
 }
+/* Search panel micro-interactions (Plan 5) — restraint: 150ms, no new deps. */
+
+/* 结果行 stagger 渐显；animation-delay 由行内样式按索引给出（上限前 20 条）。 */
+@keyframes search-stagger-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: none; }
+}
+.search-stagger {
+  animation: search-stagger-in 150ms ease-out both;
+}
+
+/* 组折叠高度过渡：grid-template-rows 0fr ↔ 1fr 技巧（150ms）。 */
+.search-collapse {
+  display: grid;
+  transition: grid-template-rows 150ms ease-out;
+}
+.search-collapse-inner {
+  overflow: hidden;
+  min-height: 0;
+}

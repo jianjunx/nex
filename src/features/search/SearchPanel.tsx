@@ -333,7 +333,9 @@ export function SearchPanel() {
               <span>搜索中…</span>
             </>
           ) : (
-            <span>{searchResults.length} 个结果 / {fileCount} 个文件</span>
+            <span key={`${searchResults.length}:${fileCount}`} className="animate-in fade-in-0 duration-150">
+              {searchResults.length} 个结果 / {fileCount} 个文件
+            </span>
           )}
         </div>
       )}

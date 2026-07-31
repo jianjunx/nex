@@ -224,6 +224,20 @@ export async function gitDiff(projectPath: string, file: string, staged: boolean
   return invoke(COMMANDS.GIT_DIFF, { projectPath, file, staged });
 }
 
+export interface DiffContents {
+  original: string;
+  revised: string;
+  binary: boolean;
+}
+
+export async function gitDiffContents(projectPath: string, file: string, staged: boolean): Promise<DiffContents> {
+  return invoke(COMMANDS.GIT_DIFF_CONTENTS, { projectPath, file, staged });
+}
+
+export async function gitCommitPatch(projectPath: string, hash: string): Promise<string> {
+  return invoke(COMMANDS.GIT_COMMIT_PATCH, { projectPath, hash });
+}
+
 export async function gitStage(projectPath: string, files: string[]): Promise<void> {
   return invoke(COMMANDS.GIT_STAGE, { projectPath, files });
 }

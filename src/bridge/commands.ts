@@ -27,6 +27,8 @@ export const COMMANDS = {
   // Git
   GIT_STATUS: "git_status",
   GIT_DIFF: "git_diff",
+  GIT_DIFF_CONTENTS: "git_diff_contents",
+  GIT_COMMIT_PATCH: "git_commit_patch",
   GIT_LOG: "git_log",
   GIT_STAGE: "git_stage",
   GIT_UNSTAGE: "git_unstage",

@@ -41,6 +41,8 @@ pub fn run() {
             commands::fs_cmds::fs_write_file,
             commands::fs_cmds::fs_watch_start,
             commands::fs_cmds::fs_search,
+            commands::fs_cmds::fs_search_replace,
+            commands::fs_cmds::fs_apply_replace,
             commands::fs_cmds::fs_create_file,
             commands::fs_cmds::fs_create_dir,
             commands::git_cmds::git_status,

@@ -112,3 +112,114 @@ fn test_search_invalid_regex_is_validation_error() {
     // compile_pattern 同样可直测
     assert!(compile_pattern("(", &opts(false, false, true)).is_err());
 }
+
+// ---- Plan 5: search & replace (disk) --------------------------------
+use nex_lib::fs::search::{apply_replace, search_replace};
+
+#[test]
+fn test_search_replace_preview_counts_without_writing() {
+    let dir = tempdir().unwrap();
+    search_fixture(dir.path());
+    let preview = search_replace(dir.path(), "foo", "bar", None).unwrap();
+    // app.ts: Foo/foo/food = 3; notes.txt: foo/Foo = 2; foo.md 名称命中不计
+    assert_eq!(preview.total, 5);
+    assert!(!preview.truncated);
+    assert_eq!(preview.files.len(), 2);
+    let app = preview.files.iter().find(|f| f.path.ends_with("app.ts")).unwrap();
+    assert_eq!(app.count, 3);
+    // 预览不得写盘
+    assert!(fs::read_to_string(dir.path().join("src/app.ts")).unwrap().contains("const Foo = 1;"));
+}
+
+#[test]
+fn test_apply_replace_writes_all_matches() {
+    let dir = tempdir().unwrap();
+    search_fixture(dir.path());
+    let result = apply_replace(dir.path(), "foo", "bar", None, None, None).unwrap();
+    assert_eq!(result.files_changed, 2);
+    assert_eq!(result.replacements, 5);
+    let app = fs::read_to_string(dir.path().join("src/app.ts")).unwrap();
+    assert!(app.contains("const bar = 1;"));
+    assert!(app.contains("let bar = 2;"));
+    assert!(app.contains("let bard = 3;"));
+    let notes = fs::read_to_string(dir.path().join("notes.txt")).unwrap();
+    assert!(notes.contains("bar cat concat"));
+    assert!(notes.contains("bar Cat"));
+    // foo.md 仅名称命中，内容不得被改
+    assert_eq!(fs::read_to_string(dir.path().join("foo.md")).unwrap(), "readme\n");
+}
+
+#[test]
+fn test_apply_replace_single_file_scope() {
+    let dir = tempdir().unwrap();
+    search_fixture(dir.path());
+    let only = dir.path().join("notes.txt").to_string_lossy().to_string();
+    let result = apply_replace(dir.path(), "foo", "bar", None, Some(vec![only]), None).unwrap();
+    assert_eq!(result.files_changed, 1);
+    assert_eq!(result.replacements, 2);
+    assert!(fs::read_to_string(dir.path().join("src/app.ts")).unwrap().contains("const Foo = 1;"));
+}
+
+#[test]
+fn test_apply_replace_limit_per_file_replaces_first_only() {
+    let dir = tempdir().unwrap();
+    search_fixture(dir.path());
+    // 注意：join 单段再 join 文件名，确保路径分隔符与 walker 产出一致（Windows 为 \）
+    let only = dir.path().join("src").join("app.ts").to_string_lossy().to_string();
+    let result = apply_replace(dir.path(), "foo", "bar", None, Some(vec![only]), Some(1)).unwrap();
+    assert_eq!(result.files_changed, 1);
+    assert_eq!(result.replacements, 1);
+    let app = fs::read_to_string(dir.path().join("src/app.ts")).unwrap();
+    // 首个匹配（第 1 行 "Foo"）被替换，其余保留
+    assert!(app.contains("const bar = 1;"));
+    assert!(app.contains("let foo = 2;"));
+    assert!(app.contains("let food = 3;"));
+}
+
+#[test]
+fn test_apply_replace_supports_capture_groups() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("users.txt"), "alice@corp bob@corp\n").unwrap();
+    let result = apply_replace(
+        dir.path(),
+        r"(\w+)@(\w+)",
+        "$2/$1",
+        Some(opts(false, false, true)),
+        None,
+        None,
+    ).unwrap();
+    assert_eq!(result.files_changed, 1);
+    assert_eq!(result.replacements, 2);
+    assert_eq!(fs::read_to_string(dir.path().join("users.txt")).unwrap(), "corp/alice corp/bob\n");
+}
+
+#[test]
+fn test_replace_honors_max_results_budget() {
+    let dir = tempdir().unwrap();
+    // 单文件 250 行命中 → 上限 200，truncated
+    let body: String = (0..250).map(|i| format!("needle line {i}\n")).collect();
+    fs::write(dir.path().join("big.txt"), body).unwrap();
+
+    let preview = search_replace(dir.path(), "needle", "hit", None).unwrap();
+    assert_eq!(preview.total, 200);
+    assert!(preview.truncated);
+    assert_eq!(preview.files[0].count, 200);
+
+    // 写盘受同一预算约束：恰好替换前 200 处
+    let result = apply_replace(dir.path(), "needle", "hit", None, None, None).unwrap();
+    assert_eq!(result.files_changed, 1);
+    assert_eq!(result.replacements, 200);
+    let content = fs::read_to_string(dir.path().join("big.txt")).unwrap();
+    assert_eq!(content.lines().filter(|l| l.starts_with("hit line")).count(), 200);
+    assert_eq!(content.lines().filter(|l| l.starts_with("needle line")).count(), 50);
+}
+
+#[test]
+fn test_apply_replace_invalid_regex_is_validation_error() {
+    let dir = tempdir().unwrap();
+    search_fixture(dir.path());
+    let err = apply_replace(dir.path(), "(broken", "x", Some(opts(false, false, true)), None, None).unwrap_err();
+    assert!(format!("{err}").contains("无效的正则表达式"));
+    let err = search_replace(dir.path(), "(broken", "x", Some(opts(false, false, true))).unwrap_err();
+    assert!(format!("{err}").contains("无效的正则表达式"));
+}

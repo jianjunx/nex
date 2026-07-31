@@ -3,7 +3,7 @@ use crate::fs::tree::{FsNode, read_tree, expand_dir};
 use crate::fs::read::{FileContent, read_file};
 use crate::fs::write::write_file;
 use crate::fs::create::{create_file, create_dir};
-use crate::fs::search::{SearchMatch, SearchOptions, search};
+use crate::fs::search::{SearchMatch, SearchOptions, ReplacePreview, ReplaceResult, search, search_replace, apply_replace};
 use crate::state::AppState;
 use std::path::Path;
 use tauri::{AppHandle, State};
@@ -41,6 +41,24 @@ pub fn fs_watch_start(app: AppHandle, state: State<AppState>, project_path: Stri
 #[tauri::command]
 pub fn fs_search(project_path: String, query: String, options: Option<SearchOptions>) -> Result<Vec<SearchMatch>, NexError> {
     search(Path::new(&project_path), &query, options)
+}
+
+/// Project-wide replace PREVIEW: per-file replacement counts, writes nothing.
+/// Honors the same MAX_RESULTS/.gitignore/size constraints as search.
+#[tauri::command]
+pub fn fs_search_replace(project_path: String, query: String, replacement: String, options: Option<SearchOptions>) -> Result<ReplacePreview, NexError> {
+    search_replace(Path::new(&project_path), &query, &replacement, options)
+}
+
+/// Project-wide replace: writes to disk atomically (fs/write.rs).
+/// `paths` limits the scope to explicit files (single-file replace);
+/// `limit_per_file` caps replacements per file (single-match = Some(1)).
+/// After the write, the existing fs-changed watcher syncs open editors
+/// (clean → silent reload, dirty → stale banner) — intentionally not
+/// suppressed.
+#[tauri::command]
+pub fn fs_apply_replace(project_path: String, query: String, replacement: String, options: Option<SearchOptions>, paths: Option<Vec<String>>, limit_per_file: Option<usize>) -> Result<ReplaceResult, NexError> {
+    apply_replace(Path::new(&project_path), &query, &replacement, options, paths, limit_per_file)
 }
 
 #[tauri::command]

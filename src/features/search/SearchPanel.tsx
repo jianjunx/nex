@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { FileCode, Loader2, RefreshCw, Search, X } from "lucide-react";
+import { ChevronRight, ChevronsDownUp, ChevronsUpDown, FileCode, Loader2, RefreshCw, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useFsStore } from "../../stores/fs.store";
 import { useProjectStore } from "../../stores/project.store";
+import { relativeToProject } from "../editor/pathUtils";
+import { buildHighlightRegExp, matchRanges, type MatchRange } from "./searchHighlight";
 
 const DEBOUNCE_MS = 300;
 
@@ -38,13 +40,27 @@ function FlagToggle({ pressed, title, onClick, children }: {
   );
 }
 
+/** 按区间把行文本切成普通段 + <mark> 高亮段。 */
+function Highlighted({ text, ranges }: { text: string; ranges: MatchRange[] }) {
+  if (ranges.length === 0) return <>{text}</>;
+  const parts: ReactNode[] = [];
+  let cursor = 0;
+  for (const [start, end] of ranges) {
+    if (start > cursor) parts.push(text.slice(cursor, start));
+    parts.push(
+      <mark key={start} className="rounded-[2px] bg-[color-mix(in_srgb,var(--accent)_28%,transparent)] text-[var(--text-primary)]">
+        {text.slice(start, end)}
+      </mark>,
+    );
+    cursor = end;
+  }
+  if (cursor < text.length) parts.push(text.slice(cursor));
+  return <>{parts}</>;
+}
+
 export function SearchPanel() {
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  // 折叠态供 T7 分组视图消费；本任务结果区保持平铺，暂不读取。
-  // 显式引用以免 tsc noUnusedLocals / lint unused-vars 门槛报错。
-  void collapsed;
-  void setCollapsed;
   const searchResults = useFsStore((s) => s.searchResults);
   const searching = useFsStore((s) => s.searching);
   const searchError = useFsStore((s) => s.searchError);
@@ -56,6 +72,33 @@ export function SearchPanel() {
   const projects = useProjectStore((s) => s.projects);
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const project = projects.find((p) => p.id === activeProjectId);
+
+  const groups = useMemo(() => {
+    const map = new Map<string, { path: string; name: string; matches: typeof searchResults }>();
+    for (const m of searchResults) {
+      let g = map.get(m.path);
+      if (!g) {
+        g = { path: m.path, name: m.name, matches: [] };
+        map.set(m.path, g);
+      }
+      g.matches.push(m);
+    }
+    return [...map.values()];
+  }, [searchResults]);
+
+  const toggleGroup = (path: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
+
+  const highlightRe = useMemo(
+    () => buildHighlightRegExp(query.trim(), searchOptions),
+    [query, searchOptions],
+  );
   const inputRef = useRef<HTMLInputElement>(null);
 
   // 非法正则快速失败：与后端合成规则近似的 JS 预校验，命中则不发起搜索。
@@ -107,6 +150,12 @@ export function SearchPanel() {
         </Button>
         <Button variant="ghost" size="icon-xs" title="清除" onClick={() => setQuery("")}>
           <X size={13} />
+        </Button>
+        <Button variant="ghost" size="icon-xs" title="折叠全部" onClick={() => setCollapsed(new Set(groups.map((g) => g.path)))}>
+          <ChevronsDownUp size={13} />
+        </Button>
+        <Button variant="ghost" size="icon-xs" title="展开全部" onClick={() => setCollapsed(new Set())}>
+          <ChevronsUpDown size={13} />
         </Button>
       </div>
 
@@ -173,7 +222,7 @@ export function SearchPanel() {
         </div>
       )}
 
-      {/* 结果区（T7 换成分组视图） */}
+      {/* 结果区（按文件分组视图） */}
       <div className="flex-1 overflow-y-auto pb-4 px-1">
         {!project ? (
           <p className="text-sm text-[var(--text-tertiary)] px-2 py-1">打开项目后即可搜索。</p>
@@ -184,26 +233,52 @@ export function SearchPanel() {
         ) : searchResults.length === 0 && !searching ? (
           <p className="text-sm text-[var(--text-tertiary)] px-2 py-1">无结果。</p>
         ) : (
-          <div className="space-y-1" data-testid="search-result-list">
-            {searchResults.map((m, i) => (
-              <button
-                key={`${m.path}:${m.line ?? 0}:${i}`}
-                onClick={() => void openFile(m.path)}
-                className="w-full text-left px-3 py-2 rounded-[var(--radius-md)] hover:bg-[var(--glass-2-surface)] transition-colors"
-              >
-                <div className="flex items-center gap-2 text-sm text-[var(--text-primary)]">
-                  <FileCode size={13} className="flex-none text-[var(--text-tertiary)]" />
-                  <span className="truncate">{m.name}</span>
-                  {m.line != null && (
-                    <span className="flex-none text-xs text-[var(--text-tertiary)]">:{m.line}</span>
-                  )}
+          <div data-testid="search-result-list">
+            {groups.map((g, gi) => {
+              const isCollapsed = collapsed.has(g.path);
+              const rowOffset = groups.slice(0, gi).reduce((n, x) => n + x.matches.length, 0);
+              return (
+                <div key={g.path} className="mb-1">
+                  {/* 组头：折叠箭头 + 图标 + 名称 + 相对路径 + 计数徽标 */}
+                  <button
+                    type="button"
+                    aria-expanded={!isCollapsed}
+                    onClick={() => toggleGroup(g.path)}
+                    className="flex w-full items-center gap-1.5 px-2 py-1 rounded-[var(--radius-sm)] hover:bg-[var(--overlay-hover)] text-left"
+                  >
+                    <ChevronRight size={12} className={`flex-none text-[var(--text-tertiary)] transition-transform ${isCollapsed ? "" : "rotate-90"}`} />
+                    <FileCode size={13} className="flex-none text-[var(--text-tertiary)]" />
+                    <span className="flex-none max-w-[40%] truncate text-sm text-[var(--text-primary)]">{g.name}</span>
+                    <span className="truncate text-xs text-[var(--text-tertiary)]">{relativeToProject(g.path, project?.path)}</span>
+                    <span data-count-badge className="ml-auto flex-none rounded-full bg-[var(--overlay-ghost)] px-1.5 text-xs text-[var(--text-secondary)]">{g.matches.length}</span>
+                  </button>
+                  {/* 折叠高度过渡：grid-rows 技巧（CSS 见 globals.css，T10） */}
+                  <div className="search-collapse" style={{ gridTemplateRows: isCollapsed ? "0fr" : "1fr" }}>
+                    <div className="search-collapse-inner">
+                      {g.matches.map((m, i) => (
+                        <button
+                          key={`${m.path}:${m.line ?? 0}:${i}`}
+                          onClick={() => void openFile(m.path, m.line != null ? { line: m.line } : undefined)}
+                          className="search-stagger w-full text-left pl-7 pr-3 py-1 rounded-[var(--radius-sm)] hover:bg-[var(--glass-2-surface)] transition-colors"
+                          style={{ animationDelay: `${Math.min(rowOffset + i, 19) * 25}ms` }}
+                        >
+                          {m.line != null ? (
+                            <>
+                              <span className="mr-2 text-xs text-[var(--text-tertiary)]">{m.line}</span>
+                              <span className="text-xs font-mono text-[var(--text-secondary)]">
+                                <Highlighted text={m.text} ranges={matchRanges(m.text, highlightRe)} />
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-xs text-[var(--text-tertiary)] italic">文件名匹配</span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
-                <div className="pl-5 text-xs text-[var(--text-tertiary)] truncate">{m.path}</div>
-                {m.text && (
-                  <div className="pl-5 text-xs font-mono text-[var(--text-secondary)] truncate">{m.text}</div>
-                )}
-              </button>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

@@ -10,7 +10,7 @@ import { HistorySection } from "./HistorySection";
 import { GitActionsMenu, OpLogPanel } from "./GitActionsMenu";
 
 export function GitPanel() {
-  const { status, diff, diffFile, statusLoading, opRunning, error, refresh, loadBranches, loadStashes } = useGitStore();
+  const { status, statusLoading, opRunning, error, refresh, loadBranches, loadStashes } = useGitStore();
   const projects = useProjectStore((s) => s.projects);
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const project = projects.find((p) => p.id === activeProjectId);
@@ -65,23 +65,6 @@ export function GitPanel() {
       {/* Commit area */}
       <CommitSection projectPath={project.path} />
 
-      {/* Diff viewer */}
-      {diff && diffFile && (
-        <div className="border-t border-[color:var(--border-subtle)] max-h-[200px] overflow-auto">
-          <div className="px-4 py-2 text-xs text-[var(--text-tertiary)]">{diffFile}</div>
-          {diff.includes("Binary files ") || diff.includes("GIT binary patch") ? (
-            <div className="px-4 pb-4 text-xs text-[var(--text-tertiary)]">二进制文件 — 无法显示文本差异</div>
-          ) : (
-            <pre className="px-4 pb-4 text-xs font-mono text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed">
-              {diff.split("\n").map((line, i) => (
-                <div key={i} className={line.startsWith("+") ? "text-[var(--success)]" : line.startsWith("-") ? "text-[var(--error)]" : ""}>
-                  {line}
-                </div>
-              ))}
-            </pre>
-          )}
-        </div>
-      )}
       <HistorySection projectPath={project.path} />
       <OpLogPanel />
       <BranchSelector

@@ -70,8 +70,6 @@ export function HistorySection({ projectPath }: { projectPath: string }) {
               }`}
               onClick={() => {
                 setSelectedCommit(c.hash);
-                // Plan 4 将把 T7 的占位实现替换为编辑器只读 diff 标签
-                //（git_diff_commit + fs.store.diffTabs）；现状转发内联 diff 槽。
                 openCommitDiff(projectPath, c.hash);
               }}
             >

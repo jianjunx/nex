@@ -55,17 +55,13 @@ interface FileRowProps {
 function FileRow({ projectPath, file, display, busy, onDiscard }: FileRowProps) {
   const stage = useGitStore((s) => s.stage);
   const unstage = useGitStore((s) => s.unstage);
-  const viewDiff = useGitStore((s) => s.viewDiff);
+  const openDiffInEditor = useGitStore((s) => s.openDiffInEditor);
 
   return (
     <div
       data-testid={`row-${file.path}`}
       className="group flex cursor-pointer items-center gap-2 rounded-[var(--radius-sm)] px-2.5 py-1.5 transition-colors duration-100 hover:bg-[var(--overlay-hover)]"
-      onClick={() =>
-        // Plan 4 将此调用点改为 openDiffInEditor（编辑器只读 diff 标签）；
-        // 本计划沿用 GitPanel 底部内联 diff 窗格。
-        void viewDiff(projectPath, file.path, file.staged)
-      }
+      onClick={() => void openDiffInEditor(projectPath, file.path, file.staged)}
     >
       <span className="w-3 shrink-0 text-center text-xs" style={{ color: STATUS_COLORS[file.status] }}>
         {file.status[0].toUpperCase()}
@@ -91,8 +87,7 @@ function FileRow({ projectPath, file, display, busy, onDiscard }: FileRowProps) 
           className={ICON_BUTTON}
           onClick={(e) => {
             e.stopPropagation();
-            // Plan 4 改为 openDiffInEditor。
-            void viewDiff(projectPath, file.path, file.staged);
+            void openDiffInEditor(projectPath, file.path, file.staged);
           }}
         >
           <FileDiff size={13} />

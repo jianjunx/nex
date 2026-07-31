@@ -19,7 +19,7 @@ let gitState: {
   unstage: ReturnType<typeof vi.fn>;
   discard: ReturnType<typeof vi.fn>;
   revertStaged: ReturnType<typeof vi.fn>;
-  viewDiff: ReturnType<typeof vi.fn>;
+  openDiffInEditor: ReturnType<typeof vi.fn>;
 };
 vi.mock("../../stores/git.store", () => ({
   useGitStore: (selector?: (s: typeof gitState) => unknown) => (selector ? selector(gitState) : gitState),
@@ -50,7 +50,7 @@ beforeEach(() => {
     unstage: vi.fn().mockResolvedValue(undefined),
     discard: vi.fn().mockResolvedValue(true),
     revertStaged: vi.fn().mockResolvedValue(true),
-    viewDiff: vi.fn().mockResolvedValue(undefined),
+    openDiffInEditor: vi.fn().mockResolvedValue(undefined),
   };
 });
 afterEach(() => cleanup());
@@ -101,9 +101,9 @@ describe("ChangesSection", () => {
     expect(screen.getByTestId("row-src/app.ts")).toBeTruthy();
   });
 
-  it("row click opens the inline diff (Plan 4 will swap this call site)", () => {
+  it("row click opens the file diff in the editor panel", () => {
     render(<ChangesSection projectPath="/p" />);
     fireEvent.click(screen.getByTestId("row-a.txt"));
-    expect(gitState.viewDiff).toHaveBeenCalledWith("/p", "a.txt", false);
+    expect(gitState.openDiffInEditor).toHaveBeenCalledWith("/p", "a.txt", false);
   });
 });

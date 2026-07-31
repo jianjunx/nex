@@ -1,13 +1,15 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import {
-  gitStatus, gitDiff, gitStage, gitUnstage, gitCommit, gitLog,
+  gitStatus, gitStage, gitUnstage, gitCommit, gitLog,
   gitListBranches, gitCheckout, gitCreateBranch, gitDeleteBranch,
   gitDiscard, gitRevertStaged,
   gitStashSave, gitStashList, gitStashApply, gitStashPop, gitStashDrop,
   gitFetch, gitPull, gitPush, gitClone,
+  gitDiffContents, gitCommitPatch,
   type GitStatus, type BranchInfo, type CommitInfo, type StashEntry,
 } from "../bridge/tauri";
+import { useFsStore } from "./fs.store";
 
 const OP_LOG_MAX = 100;
 
@@ -19,8 +21,6 @@ function timeStamp(): string {
 
 interface GitStore {
   status: GitStatus | null;
-  diff: string | null;
-  diffFile: string | null;
   branches: BranchInfo[];
   commits: CommitInfo[];
   stashes: StashEntry[];
@@ -37,7 +37,7 @@ interface GitStore {
   opLogOpen: boolean;
 
   refresh: (projectPath: string) => Promise<void>;
-  viewDiff: (projectPath: string, file: string, staged: boolean) => Promise<void>;
+  openDiffInEditor: (projectPath: string, file: string, staged: boolean) => Promise<void>;
   stage: (projectPath: string, files: string[]) => Promise<void>;
   unstage: (projectPath: string, files: string[]) => Promise<void>;
   commit: (projectPath: string, message: string) => Promise<boolean>;
@@ -59,7 +59,7 @@ interface GitStore {
   discard: (projectPath: string, files: string[]) => Promise<boolean>;
   revertStaged: (projectPath: string, files: string[]) => Promise<boolean>;
   loadHistory: (projectPath: string) => Promise<void>;
-  openCommitDiff: (projectPath: string, commitHash: string, path?: string) => void;
+  openCommitDiff: (projectPath: string, commitHash: string) => void;
   appendLog: (line: string) => void;
   clearLog: () => void;
   setTreeView: (v: boolean) => void;
@@ -119,8 +119,6 @@ export const useGitStore = create<GitStore>()(
 
     return {
       status: null,
-      diff: null,
-      diffFile: null,
       branches: [],
       commits: [],
       stashes: [],
@@ -142,11 +140,21 @@ export const useGitStore = create<GitStore>()(
           set((s) => { s.status = status; });
         }),
 
-      viewDiff: async (projectPath, file, staged) =>
-        loadStatus(async () => {
-          const diff = await gitDiff(projectPath, file, staged);
-          set((s) => { s.diff = diff; s.diffFile = file; });
-        }),
+      openDiffInEditor: async (projectPath, file, staged) => {
+        try {
+          const contents = await gitDiffContents(projectPath, file, staged);
+          useFsStore.getState().openDiffTab(`diff:${staged ? "staged" : "unstaged"}:${file}`, {
+            mode: "merge",
+            title: staged ? `${file}（已暂存）` : file,
+            languageHint: file,
+            original: contents.original,
+            revised: contents.revised,
+            binary: contents.binary,
+          });
+        } catch (err) {
+          set((s) => { s.error = errorMessage(err); });
+        }
+      },
 
       stage: async (projectPath, files) =>
         loadStatus(async () => {
@@ -302,11 +310,22 @@ export const useGitStore = create<GitStore>()(
         }
       },
 
-      openCommitDiff: (projectPath, _commitHash, path) => {
-        // Plan 4 replaces this with a real read-only diff tab in the editor
-        // panel (fs.store.diffTabs + git_diff_commit). Until then, reuse the
-        // existing inline diff slot so the click is not dead.
-        void get().viewDiff(projectPath, path ?? "", false);
+      openCommitDiff: (projectPath, commitHash) => {
+        void (async () => {
+          try {
+            const patch = await gitCommitPatch(projectPath, commitHash);
+            useFsStore.getState().openDiffTab(`diff:commit:${commitHash}`, {
+              mode: "patch",
+              title: `提交 ${commitHash}`,
+              languageHint: "",
+              original: "",
+              revised: patch,
+              binary: false,
+            });
+          } catch (err) {
+            set((s) => { s.error = errorMessage(err); });
+          }
+        })();
       },
 
       appendLog: (line) =>

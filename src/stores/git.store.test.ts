@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const gitStatusMock = vi.fn();
-const gitDiffMock = vi.fn();
+const gitDiffContentsMock = vi.fn();
+const gitCommitPatchMock = vi.fn();
 const gitStageMock = vi.fn();
 const gitUnstageMock = vi.fn();
 const gitCommitMock = vi.fn();
@@ -24,7 +25,8 @@ const gitCloneMock = vi.fn();
 
 vi.mock("../bridge/tauri", () => ({
   gitStatus: (...a: unknown[]) => gitStatusMock(...a),
-  gitDiff: (...a: unknown[]) => gitDiffMock(...a),
+  gitDiffContents: (...a: unknown[]) => gitDiffContentsMock(...a),
+  gitCommitPatch: (...a: unknown[]) => gitCommitPatchMock(...a),
   gitStage: (...a: unknown[]) => gitStageMock(...a),
   gitUnstage: (...a: unknown[]) => gitUnstageMock(...a),
   gitCommit: (...a: unknown[]) => gitCommitMock(...a),
@@ -46,14 +48,17 @@ vi.mock("../bridge/tauri", () => ({
   gitClone: (...a: unknown[]) => gitCloneMock(...a),
 }));
 
+const openDiffTabMock = vi.fn();
+vi.mock("./fs.store", () => ({
+  useFsStore: { getState: () => ({ openDiffTab: openDiffTabMock }) },
+}));
+
 import { useGitStore } from "./git.store";
 
 beforeEach(() => {
   vi.clearAllMocks();
   useGitStore.setState({
     status: null,
-    diff: null,
-    diffFile: null,
     branches: [],
     commits: [],
     stashes: [],
@@ -187,5 +192,36 @@ describe("git.store loadHistory", () => {
     expect(useGitStore.getState().error).toBe("reference not found");
     expect(useGitStore.getState().commits).toHaveLength(0);
     expect(useGitStore.getState().historyLoading).toBe(false);
+  });
+});
+
+describe("git.store diff tabs", () => {
+  it("openDiffInEditor opens a merge diff tab from the two-version command", async () => {
+    gitDiffContentsMock.mockResolvedValue({ original: "v1", revised: "v2", binary: false });
+    await useGitStore.getState().openDiffInEditor("/p", "a.txt", false);
+    expect(gitDiffContentsMock).toHaveBeenCalledWith("/p", "a.txt", false);
+    expect(openDiffTabMock).toHaveBeenCalledWith("diff:unstaged:a.txt", {
+      mode: "merge",
+      title: "a.txt",
+      languageHint: "a.txt",
+      original: "v1",
+      revised: "v2",
+      binary: false,
+    });
+  });
+
+  it("openCommitDiff opens a patch tab from the commit patch command", async () => {
+    gitCommitPatchMock.mockResolvedValue("+v1\n");
+    useGitStore.getState().openCommitDiff("/p", "abc1234");
+    await vi.waitFor(() => expect(openDiffTabMock).toHaveBeenCalled());
+    expect(gitCommitPatchMock).toHaveBeenCalledWith("/p", "abc1234");
+    expect(openDiffTabMock).toHaveBeenCalledWith("diff:commit:abc1234", {
+      mode: "patch",
+      title: "提交 abc1234",
+      languageHint: "",
+      original: "",
+      revised: "+v1\n",
+      binary: false,
+    });
   });
 });

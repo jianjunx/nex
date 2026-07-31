@@ -71,7 +71,7 @@ describe("HistorySection", () => {
     expect(gitState.setHistoryOpen).toHaveBeenCalledWith(false);
   });
 
-  it("clicking a commit highlights it and invokes the Plan 4 placeholder", () => {
+  it("clicking a commit highlights it and opens the commit patch in the editor", () => {
     gitState.commits = [COMMIT];
     render(<HistorySection projectPath="/p" />);
     fireEvent.click(screen.getByTestId("commit-abc1234"));

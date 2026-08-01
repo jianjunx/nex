@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { useUiStore } from "../../stores/ui.store";
+import { useUiStore, type SettingsSection } from "../../stores/ui.store";
 import { AppearanceSection } from "./sections/AppearanceSection";
 import { EditorSection } from "./sections/EditorSection";
 import { TerminalSection } from "./sections/TerminalSection";
@@ -9,7 +9,7 @@ import { KeybindingsEditor } from "./KeybindingsEditor";
 import { LayoutSection } from "./sections/LayoutSection";
 import { isRecordingActive } from "./recordingState";
 
-type TabId = "appearance" | "editor" | "terminal" | "agents" | "keybindings" | "layout";
+type TabId = SettingsSection;
 const TABS: { id: TabId; label: string }[] = [
   { id: "appearance", label: "外观" },
   { id: "editor", label: "编辑器" },
@@ -23,6 +23,26 @@ export function SettingsDialog() {
   const open = useUiStore((s) => s.settingsOpen);
   const close = useUiStore((s) => s.closeSettings);
   const [tab, setTab] = useState<TabId>("appearance");
+  const settingsSection = useUiStore((s) => s.settingsSection);
+  const prevOpen = useRef(open);
+
+  // 打开时两条路径：1) 带 settingsSection 的一次性定向（如"管理智能体…"）——
+  // 落到目标页签并立即清空标志；2) 普通打开（open 由 false→true 且无定向）——
+  // 重置回默认页签。组件在 App.tsx 无条件常驻挂载，useState 不随关窗重建，
+  // 不重置则上次定向的页签会跨开合残留（与冒烟项 6 承诺矛盾，R2）。
+  // prevOpen 用来区分"普通打开"与"定向后清空 settingsSection 引发的 effect
+  // 再触发"——后者 wasOpen=true，走空分支，避免把刚定向的页签盖回外观。
+  useEffect(() => {
+    const wasOpen = prevOpen.current;
+    prevOpen.current = open;
+    if (!open) return;
+    if (settingsSection) {
+      setTab(settingsSection);
+      useUiStore.getState().setSettingsSection(null);
+    } else if (!wasOpen) {
+      setTab("appearance");
+    }
+  }, [open, settingsSection]);
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) close(); }}>

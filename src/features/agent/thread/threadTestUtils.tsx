@@ -132,3 +132,31 @@ export function makeEntries(count: number): ThreadEntry[] {
         },
   ) as ThreadEntry[];
 }
+
+/**
+ * 性能验证种子:2000 条 entries、约 1/6 为展开态 edit 卡(含真实 diff 文本)。
+ * 用于 pnpm dev 下手动压测;留存为测试夹具。
+ */
+export function seedSyntheticThread(conversationId: string, count = 2000) {
+  const oldText = "const a = 1;\n".repeat(40);
+  const newText = "const a = 2;\n".repeat(40);
+  const entries: ThreadEntry[] = Array.from({ length: count }, (_, i) => {
+    if (i % 6 === 3) {
+      return {
+        id: `e${i}`, kind: "tool_call", toolCallId: `tc${i}`,
+        title: `Edit file_${i}.ts`, toolKind: "edit", status: "completed",
+        timestamp: i,
+        content: [{ type: "diff", path: `src/file_${i}.ts`, oldText, newText }],
+      };
+    }
+    if (i % 2 === 0) {
+      return { id: `e${i}`, kind: "user_message", text: `用户消息 ${i}`, timestamp: i };
+    }
+    return {
+      id: `e${i}`, kind: "assistant_message",
+      chunks: [{ type: "message", text: `助手回复 ${i}\n\n一些内容。`.repeat(3) }],
+      timestamp: i,
+    };
+  }) as ThreadEntry[];
+  useAgentStore.getState().hydrateEntries(conversationId, entries);
+}

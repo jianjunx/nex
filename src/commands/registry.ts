@@ -102,12 +102,10 @@ const COMMANDS: Command[] = [
     id: "workbench.newConversation",
     title: "新建会话",
     category: "会话",
-    // Opens the new-conversation dropdown in Plan 6; for now it is a no-op
-    // placeholder so the binding shows in the editor and is reserveable.
     defaultKey: k("keyn", { primary: true, shift: true }),
-    run: () => {
-      /* wired in Plan 6 */
-    },
+    // 下拉由 TopBar 内的 NewConversationDropdown 受控渲染（ui.store.newConversationOpen
+    // 为唯一事实源）；命令只翻转标志位，Ctrl/Cmd+Shift+N 即可全局开关。
+    run: () => useUiStore.getState().toggleNewConversation(),
   },
 ];
 

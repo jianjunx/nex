@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { comboToCanonical } from "./types";
 import { getCommand, listCommands } from "./registry";
+import { useUiStore } from "../stores/ui.store";
 
 describe("command registry", () => {
   it("has unique ids", () => {
@@ -37,5 +38,13 @@ describe("command registry", () => {
       expect(seen.has(k), `combo ${k} duplicated by ${c.id} and ${seen.get(k)}`).toBe(false);
       seen.set(k, c.id);
     }
+  });
+
+  it("workbench.newConversation toggles the new-conversation dropdown flag", () => {
+    useUiStore.setState({ newConversationOpen: false });
+    getCommand("workbench.newConversation")!.run();
+    expect(useUiStore.getState().newConversationOpen).toBe(true);
+    getCommand("workbench.newConversation")!.run();
+    expect(useUiStore.getState().newConversationOpen).toBe(false);
   });
 });

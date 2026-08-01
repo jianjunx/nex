@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, type ClipboardEvent, type KeyboardEvent } from "react";
-import { Send, Square, X, AtSign, ChevronDown } from "lucide-react";
+import { Send, Square, X, AtSign } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useAgentStore } from "../../stores/agent.store";
@@ -10,6 +10,7 @@ import {
   useConversationStore,
 } from "../../stores/conversation.store";
 import { fsSearch, fsReadFile, type PromptBlock, type SearchMatch, type SessionTarget } from "../../bridge/tauri";
+import { ComposerOptionMenu } from "./ComposerOptionMenu";
 import { PlanBar } from "./thread/PlanBar";
 
 // Text area only — toolbar lives inside the same chrome below this.
@@ -52,6 +53,8 @@ export function AgentComposer() {
   const setMode = useAgentStore((s) => s.setMode);
   const setModel = useAgentStore((s) => s.setModel);
   const setConfigOption = useAgentStore((s) => s.setConfigOption);
+  const setAuthMode = useAgentStore((s) => s.setAuthMode);
+  const sessionPrefsByConversation = useAgentStore((s) => s.sessionPrefsByConversation);
   const autoTitleFromFirstMessage = useConversationStore((s) => s.autoTitleFromFirstMessage);
 
   const session = activeTabId ? sessions[activeTabId] : null;
@@ -65,6 +68,9 @@ export function AgentComposer() {
   );
   const activeConversation = conversations.find((c) => c.id === activeTabId) ?? null;
   const canSend = (!!text.trim() || images.length > 0) && !!activeTabId && !isStarting;
+  const isCursorAgent = activeConversation?.agent_type === "cursor";
+  const authMode =
+    (activeTabId ? sessionPrefsByConversation[activeTabId]?.authMode : undefined) ?? "menu";
 
   // Revoke leftover object URLs on unmount.
   useEffect(() => {
@@ -420,6 +426,17 @@ export function AgentComposer() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="ml-auto flex items-center gap-0.5 min-w-0">
+              {isCursorAgent && activeTabId && (
+                <ComposerOptionMenu
+                  ariaLabel="Authorization"
+                  value={authMode}
+                  options={[
+                    { id: "allow", name: "Allow" },
+                    { id: "menu", name: "Menu" },
+                  ]}
+                  onSelect={(id) => setAuthMode(activeTabId, id as "allow" | "menu")}
+                />
+              )}
               {session?.sessionId && meta && (() => {
                 const configOpts = (meta.configOptions ?? []).filter((o) => o.options.length > 0);
                 const hasConfigMode = configOpts.some(
@@ -428,62 +445,32 @@ export function AgentComposer() {
                 const hasConfigModel = configOpts.some(
                   (o) => o.id === "model" || o.category === "model",
                 );
-                const selectClass =
-                  "appearance-none bg-transparent hover:bg-[var(--glass-2-surface)] rounded-md pl-1.5 pr-4 py-1 text-xs text-[var(--text-secondary)] w-auto max-w-[12rem] cursor-pointer";
                 return (
                   <>
                     {!hasConfigMode && meta.modes.length > 0 && (
-                      <label className="relative inline-flex items-center text-xs text-[var(--text-secondary)] shrink-0">
-                        <select
-                          className={selectClass}
-                          value={meta.currentModeId ?? ""}
-                          onChange={(e) => void setMode(session.sessionId, e.target.value)}
-                        >
-                          {meta.modes.map((m) => (
-                            <option key={m.id} value={m.id}>
-                              {m.name}
-                            </option>
-                          ))}
-                        </select>
-                        <ChevronDown size={12} className="absolute right-0.5 pointer-events-none opacity-50" />
-                      </label>
+                      <ComposerOptionMenu
+                        ariaLabel="Mode"
+                        value={meta.currentModeId ?? ""}
+                        options={meta.modes.map((m) => ({ id: m.id, name: m.name }))}
+                        onSelect={(id) => void setMode(session.sessionId, id)}
+                      />
                     )}
                     {!hasConfigModel && meta.models.length > 0 && (
-                      <label className="relative inline-flex items-center text-xs text-[var(--text-secondary)] shrink-0">
-                        <select
-                          className={selectClass}
-                          value={meta.currentModelId ?? ""}
-                          onChange={(e) => void setModel(session.sessionId, e.target.value)}
-                        >
-                          {meta.models.map((m) => (
-                            <option key={m.id} value={m.id}>
-                              {m.name}
-                            </option>
-                          ))}
-                        </select>
-                        <ChevronDown size={12} className="absolute right-0.5 pointer-events-none opacity-50" />
-                      </label>
+                      <ComposerOptionMenu
+                        ariaLabel="Model"
+                        value={meta.currentModelId ?? ""}
+                        options={meta.models.map((m) => ({ id: m.id, name: m.name }))}
+                        onSelect={(id) => void setModel(session.sessionId, id)}
+                      />
                     )}
                     {configOpts.map((opt) => (
-                      <label
+                      <ComposerOptionMenu
                         key={opt.id}
-                        className="relative inline-flex items-center text-xs text-[var(--text-secondary)] shrink-0"
-                      >
-                        <select
-                          className={selectClass}
-                          value={opt.currentValueId}
-                          onChange={(e) =>
-                            void setConfigOption(session.sessionId, opt.id, e.target.value)
-                          }
-                        >
-                          {opt.options.map((o) => (
-                            <option key={o.id} value={o.id}>
-                              {o.name}
-                            </option>
-                          ))}
-                        </select>
-                        <ChevronDown size={12} className="absolute right-0.5 pointer-events-none opacity-50" />
-                      </label>
+                        ariaLabel={opt.name || opt.id}
+                        value={opt.currentValueId}
+                        options={opt.options.map((o) => ({ id: o.id, name: o.name }))}
+                        onSelect={(id) => void setConfigOption(session.sessionId, opt.id, id)}
+                      />
                     ))}
                   </>
                 );

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
+import { persist } from "zustand/middleware";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
   agentCreateSession,
@@ -26,6 +27,7 @@ import {
   type CreateSessionResult,
 } from "../bridge/tauri";
 import type { AgentPermissionRequestPayload } from "../bridge/events";
+import { pickAllowOptionId } from "../features/agent/pickAllowOptionId";
 import { applySessionUpdate, emptySessionMeta } from "../features/agent/thread/applySessionUpdate";
 import { assistantTextAfterLastUser } from "../features/agent/thread/messagesToThreadEntries";
 import type { SessionMeta, ThreadEntry, ToolCallEntry } from "../features/agent/thread/types";
@@ -37,10 +39,22 @@ export interface AgentSession {
   status: "starting" | "idle" | "running" | "waiting";
 }
 
+export type AuthMode = "allow" | "menu";
+
+/** Per-conversation composer choices restored after ACP session recreate. */
+export interface SessionPrefs {
+  modeId?: string;
+  modelId?: string;
+  configValues?: Record<string, string>;
+  authMode?: AuthMode;
+}
+
 interface AgentStore {
   sessions: Record<string, AgentSession>;
   entriesByConversation: Record<string, ThreadEntry[]>;
   metaByConversation: Record<string, SessionMeta>;
+  /** Persisted mode/model/config/auth choices keyed by conversation id. */
+  sessionPrefsByConversation: Record<string, SessionPrefs>;
   permissionQueues: Record<string, AgentPermissionRequestPayload[]>;
   pendingPermission: AgentPermissionRequestPayload | null;
   /** Shown on a tool card — exclude from PermissionModal fallback. */
@@ -67,6 +81,7 @@ interface AgentStore {
   setMode: (sessionId: string, modeId: string) => Promise<void>;
   setModel: (sessionId: string, modelId: string) => Promise<void>;
   setConfigOption: (sessionId: string, configId: string, value: string) => Promise<void>;
+  setAuthMode: (conversationId: string, authMode: AuthMode) => void;
   loadServers: () => Promise<void>;
   /** Settings: whitelist + custom + other registry agents. */
   loadAllServers: () => Promise<void>;
@@ -131,7 +146,7 @@ function markToolWaiting(
   entries: ThreadEntry[],
   toolCallId: string | null | undefined,
   requestId: string,
-  options: { optionId: string; label: string }[],
+  options: { optionId: string; label: string; kind?: string | null }[],
 ): boolean {
   if (!toolCallId) return false;
   for (let i = entries.length - 1; i >= 0; i--) {
@@ -157,11 +172,139 @@ function clearToolWaiting(entries: ThreadEntry[], requestId: string): void {
   }
 }
 
+function patchPrefs(
+  set: (fn: (s: AgentStore) => void) => void,
+  conversationId: string,
+  patch: Partial<SessionPrefs>,
+): void {
+  set((s) => {
+    const prev = s.sessionPrefsByConversation[conversationId] ?? {};
+    s.sessionPrefsByConversation[conversationId] = { ...prev, ...patch };
+  });
+}
+
+function clearPrefKey(
+  set: (fn: (s: AgentStore) => void) => void,
+  conversationId: string,
+  key: keyof SessionPrefs,
+): void {
+  set((s) => {
+    const prev = s.sessionPrefsByConversation[conversationId];
+    if (!prev) return;
+    const next = { ...prev };
+    delete next[key];
+    if (Object.keys(next).length === 0) delete s.sessionPrefsByConversation[conversationId];
+    else s.sessionPrefsByConversation[conversationId] = next;
+  });
+}
+
+function clearConfigPref(
+  set: (fn: (s: AgentStore) => void) => void,
+  conversationId: string,
+  configId: string,
+): void {
+  set((s) => {
+    const prev = s.sessionPrefsByConversation[conversationId];
+    if (!prev?.configValues?.[configId]) return;
+    const configValues = { ...prev.configValues };
+    delete configValues[configId];
+    const next: SessionPrefs = { ...prev, configValues };
+    if (Object.keys(configValues).length === 0) delete next.configValues;
+    if (Object.keys(next).length === 0) delete s.sessionPrefsByConversation[conversationId];
+    else s.sessionPrefsByConversation[conversationId] = next;
+  });
+}
+
+/** Re-apply saved composer choices after ACP session/new. Invalid ids are dropped quietly. */
+async function restorePrefsToLiveSession(
+  set: (fn: (s: AgentStore) => void) => void,
+  get: () => AgentStore,
+  conversationId: string,
+  sessionId: string,
+): Promise<void> {
+  const prefs = get().sessionPrefsByConversation[conversationId];
+  if (!prefs) return;
+  const meta = get().metaByConversation[conversationId];
+  if (!meta) return;
+
+  if (prefs.modeId && prefs.modeId !== meta.currentModeId) {
+    const inModes = meta.modes.some((m) => m.id === prefs.modeId);
+    const modeOpt = meta.configOptions.find((o) => o.id === "mode" || o.category === "mode");
+    const inConfig = modeOpt?.options.some((o) => o.id === prefs.modeId) ?? false;
+    if (inModes || inConfig) {
+      try {
+        await agentSetSessionMode(sessionId, prefs.modeId);
+        set((s) => {
+          const m = s.metaByConversation[conversationId];
+          if (m) m.currentModeId = prefs.modeId!;
+        });
+      } catch {
+        clearPrefKey(set, conversationId, "modeId");
+      }
+    } else {
+      clearPrefKey(set, conversationId, "modeId");
+    }
+  }
+
+  if (prefs.modelId && prefs.modelId !== meta.currentModelId) {
+    const inModels = meta.models.some((m) => m.id === prefs.modelId);
+    const modelOpt = meta.configOptions.find((o) => o.id === "model" || o.category === "model");
+    const inConfig = modelOpt?.options.some((o) => o.id === prefs.modelId) ?? false;
+    if (inModels || inConfig) {
+      try {
+        await agentSetSessionModel(sessionId, prefs.modelId);
+        set((s) => {
+          const m = s.metaByConversation[conversationId];
+          if (m) m.currentModelId = prefs.modelId!;
+        });
+      } catch {
+        clearPrefKey(set, conversationId, "modelId");
+      }
+    } else {
+      clearPrefKey(set, conversationId, "modelId");
+    }
+  }
+
+  const configValues = prefs.configValues ?? {};
+  for (const [configId, valueId] of Object.entries(configValues)) {
+    const opt = meta.configOptions.find((o) => o.id === configId);
+    if (!opt || !opt.options.some((o) => o.id === valueId) || opt.currentValueId === valueId) {
+      if (!opt || !opt.options.some((o) => o.id === valueId)) {
+        clearConfigPref(set, conversationId, configId);
+      }
+      continue;
+    }
+    try {
+      const next = await agentSetSessionConfigOption(sessionId, configId, valueId);
+      set((s) => {
+        const m = s.metaByConversation[conversationId];
+        if (!m) return;
+        if (next && next.length > 0) {
+          m.configOptions = next.map((o) => ({
+            id: o.id,
+            name: o.name,
+            category: o.category ?? undefined,
+            currentValueId: o.currentValueId,
+            options: o.options.map((x) => ({ id: x.id, name: x.name })),
+          }));
+        } else {
+          const local = m.configOptions.find((o) => o.id === configId);
+          if (local) local.currentValueId = valueId;
+        }
+      });
+    } catch {
+      clearConfigPref(set, conversationId, configId);
+    }
+  }
+}
+
 export const useAgentStore = create<AgentStore>()(
-  immer((set, get) => ({
+  persist(
+    immer((set, get) => ({
     sessions: {},
     entriesByConversation: {},
     metaByConversation: {},
+    sessionPrefsByConversation: {},
     permissionQueues: {},
     pendingPermission: null,
     inlinePermissionIds: {},
@@ -193,6 +336,7 @@ export const useAgentStore = create<AgentStore>()(
           if (!s.entriesByConversation[conversationId]) s.entriesByConversation[conversationId] = [];
           s.metaByConversation[conversationId] = applyCreateMeta(result);
         });
+        await restorePrefsToLiveSession(set, get, conversationId, result.sessionId);
         return result.sessionId;
       } catch (err) {
         set((s) => {
@@ -401,6 +545,7 @@ export const useAgentStore = create<AgentStore>()(
             const meta = s.metaByConversation[session.conversationId];
             if (meta) meta.currentModeId = modeId;
           });
+          patchPrefs(set, session.conversationId, { modeId });
         }
       } catch (err) {
         set((s) => {
@@ -418,6 +563,7 @@ export const useAgentStore = create<AgentStore>()(
             const meta = s.metaByConversation[session.conversationId];
             if (meta) meta.currentModelId = modelId;
           });
+          patchPrefs(set, session.conversationId, { modelId });
         }
       } catch (err) {
         set((s) => {
@@ -458,12 +604,31 @@ export const useAgentStore = create<AgentStore>()(
               if (opt) opt.currentValueId = value;
             }
           });
+          const metaAfter = get().metaByConversation[session.conversationId];
+          const optMeta = metaAfter?.configOptions.find((o) => o.id === configId);
+          const isMode = configId === "mode" || optMeta?.category === "mode";
+          const isModel = configId === "model" || optMeta?.category === "model";
+          if (isMode) patchPrefs(set, session.conversationId, { modeId: value });
+          else if (isModel) patchPrefs(set, session.conversationId, { modelId: value });
+          else {
+            set((s) => {
+              const prev = s.sessionPrefsByConversation[session.conversationId] ?? {};
+              s.sessionPrefsByConversation[session.conversationId] = {
+                ...prev,
+                configValues: { ...(prev.configValues ?? {}), [configId]: value },
+              };
+            });
+          }
         }
       } catch (err) {
         set((s) => {
           s.error = errorMessage(err);
         });
       }
+    },
+
+    setAuthMode: (conversationId, authMode) => {
+      patchPrefs(set, conversationId, { authMode });
     },
 
     loadServers: async () => {
@@ -603,14 +768,26 @@ export const useAgentStore = create<AgentStore>()(
       });
 
       onAgentPermissionRequest((payload) => {
+        const session = Object.values(get().sessions).find((ss) => ss.sessionId === payload.sessionId);
+        const authMode = session
+          ? get().sessionPrefsByConversation[session.conversationId]?.authMode
+          : undefined;
+        if (authMode === "allow") {
+          const optionId = pickAllowOptionId(payload.options);
+          if (optionId) {
+            void get().respondPermission(payload.requestId, optionId);
+            return;
+          }
+        }
+
         set((s) => {
           if (!s.permissionQueues[payload.sessionId]) s.permissionQueues[payload.sessionId] = [];
           s.permissionQueues[payload.sessionId].push(payload);
 
-          const session = Object.values(s.sessions).find((ss) => ss.sessionId === payload.sessionId);
-          if (session) {
-            session.status = "waiting";
-            const entries = s.entriesByConversation[session.conversationId] ?? [];
+          const live = Object.values(s.sessions).find((ss) => ss.sessionId === payload.sessionId);
+          if (live) {
+            live.status = "waiting";
+            const entries = s.entriesByConversation[live.conversationId] ?? [];
             const attached = markToolWaiting(
               entries,
               payload.toolCallId,
@@ -652,4 +829,11 @@ export const useAgentStore = create<AgentStore>()(
       return listenerTeardown;
     },
   })),
+    {
+      name: "nex-agent",
+      partialize: (s) => ({
+        sessionPrefsByConversation: s.sessionPrefsByConversation,
+      }),
+    },
+  ),
 );

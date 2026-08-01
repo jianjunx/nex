@@ -14,6 +14,7 @@ export type ToolCallStatus =
 export interface ToolPermissionOption {
   optionId: string;
   label: string;
+  kind?: string | null;
   requestId?: string;
 }
 

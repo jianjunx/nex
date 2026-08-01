@@ -19,7 +19,7 @@ export interface AgentPermissionRequestPayload {
   sessionId: string;
   requestId: string;
   toolCallId?: string | null;
-  options: { optionId: string; label: string }[];
+  options: { optionId: string; label: string; kind?: string | null }[];
 }
 
 export interface GitStatusChangedPayload {

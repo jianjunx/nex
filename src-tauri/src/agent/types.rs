@@ -36,6 +36,9 @@ pub struct AgentPermissionRequest {
 pub struct PermissionOption {
     pub option_id: String,
     pub label: String,
+    /// ACP `PermissionOptionKind` as snake_case (`allow_once`, `allow_always`, …).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
 }
 
 /// Payload of the `agent-session-terminated` event, emitted when the agent

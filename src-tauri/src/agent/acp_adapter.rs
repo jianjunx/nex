@@ -31,6 +31,15 @@ const AGENT_SESSION_TERMINATED_EVENT: &str = "agent-session-terminated";
 const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 const STDERR_TAIL_LINES: usize = 50;
 
+fn permission_option_kind_str(kind: acp::PermissionOptionKind) -> &'static str {
+    match kind {
+        acp::PermissionOptionKind::AllowOnce => "allow_once",
+        acp::PermissionOptionKind::AllowAlways => "allow_always",
+        acp::PermissionOptionKind::RejectOnce => "reject_once",
+        acp::PermissionOptionKind::RejectAlways => "reject_always",
+    }
+}
+
 struct PendingPermission {
     session_key: String,
     tx: oneshot::Sender<acp::RequestPermissionOutcome>,
@@ -82,7 +91,11 @@ impl acp::Client for NexAcpClient {
         let options = args
             .options
             .iter()
-            .map(|o| PermissionOption { option_id: o.id.to_string(), label: o.name.clone() })
+            .map(|o| PermissionOption {
+                option_id: o.id.to_string(),
+                label: o.name.clone(),
+                kind: Some(permission_option_kind_str(o.kind).to_string()),
+            })
             .collect();
         let _ = self.app.emit(
             AGENT_PERMISSION_REQUEST_EVENT,

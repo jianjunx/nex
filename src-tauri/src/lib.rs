@@ -1,14 +1,14 @@
 use tauri::Manager;
 
-mod error;
-mod state;
-mod watcher;
-mod commands;
 pub mod agent;
+mod commands;
 pub mod db;
+mod error;
 pub mod fs;
 pub mod git;
+mod state;
 pub mod terminal;
+mod watcher;
 
 use agent::AgentSessionManager;
 use db::Database;
@@ -24,7 +24,6 @@ pub fn run() {
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_liquid_glass::init())
         .invoke_handler(tauri::generate_handler![
             commands::project_cmds::project_open,
             commands::project_cmds::project_list,
@@ -73,7 +72,6 @@ pub fn run() {
             commands::terminal_cmds::terminal_write,
             commands::terminal_cmds::terminal_resize,
             commands::terminal_cmds::terminal_kill,
-            commands::appearance_cmds::appearance_set_theme,
             commands::agent_cmds::agent_list_servers,
             commands::agent_cmds::agent_list_all_servers,
             commands::agent_cmds::agent_refresh_registry,
@@ -88,37 +86,21 @@ pub fn run() {
             commands::agent_cmds::agent_custom_delete,
         ])
         .setup(|app| {
-            #[cfg(target_os = "macos")]
-            {
-                use tauri_plugin_liquid_glass::{LiquidGlassConfig, LiquidGlassExt};
-                let window = app.get_webview_window("main").expect("main window not found");
-                // macOS 26+: native NSGlassEffectView; the plugin falls back to
-                // NSVisualEffectView on older macOS, superseding apply_vibrancy.
-                if let Err(e) = app.liquid_glass().set_effect(
-                    &window,
-                    LiquidGlassConfig { enabled: true, ..Default::default() },
-                ) {
-                    eprintln!("liquid glass set_effect failed: {e}");
-                }
-            }
-
             #[cfg(target_os = "windows")]
             {
-                use window_vibrancy::apply_acrylic;
-                let window = app.get_webview_window("main").expect("main window not found");
-                // Tint is RGBA. The OS blurs the desktop wallpaper behind the
-                // (transparent) Tauri window and applies this tint, producing a
-                // real frosted-glass effect that CSS backdrop-filter cannot
-                // achieve. Light tint matches the default light theme; tune the
-                // alpha (4th byte) to adjust opacity.
-                let _ = apply_acrylic(&window, Some((245, 246, 250, 180)));
+                let window = app
+                    .get_webview_window("main")
+                    .expect("main window not found");
                 // Hide the native title bar on Windows; we draw our own tab bar
                 // with custom window controls in the frontend.
                 let _ = window.set_decorations(false);
             }
 
             // Initialize database
-            let app_data_dir = app.path().app_data_dir().expect("failed to get app data dir");
+            let app_data_dir = app
+                .path()
+                .app_data_dir()
+                .expect("failed to get app data dir");
             std::fs::create_dir_all(&app_data_dir).ok();
             let db_path = app_data_dir.join("nex.db");
             let db = Database::new(&db_path).expect("failed to initialize database");

@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { LazyStore } from "@tauri-apps/plugin-store";
-import { appearanceSetTheme } from "../bridge/tauri";
 import { clearAllAutoSaveTimers } from "./editorAutosave";
 import { useTerminalStore } from "./terminal.store";
 
@@ -86,9 +85,6 @@ export const useSettingsStore = create<SettingsState>()(
       }
       // Apply the resolved theme so the panel and the CSS can never fight.
       document.documentElement.setAttribute("data-theme", get().theme);
-      // Startup catch-up: lib.rs applied the LIGHT glass tint at launch;
-      // a persisted dark theme must re-tint the OS window once here.
-      if (get().theme === "dark") void appearanceSetTheme("dark").catch(() => {});
     },
 
     setTheme: (theme) => {
@@ -96,10 +92,7 @@ export const useSettingsStore = create<SettingsState>()(
       // CSS theming is driven entirely by this attribute (globals.css
       // @custom-variant dark + [data-theme="light"] overrides).
       document.documentElement.setAttribute("data-theme", theme);
-      // Re-tint the OS glass (fire-and-forget — a failing acrylic refresh,
-      // e.g. Windows 10, must never block the CSS theme switch) and rebuild
-      // the terminal so its snapshotted theme colors follow the new theme.
-      void appearanceSetTheme(theme).catch(() => {});
+      // Rebuild the terminal so its snapshotted theme colors follow the new theme.
       useTerminalStore.getState().bumpSettingsVersion();
       void settingsStore.set(KEYS.theme, theme).catch(() => {});
     },

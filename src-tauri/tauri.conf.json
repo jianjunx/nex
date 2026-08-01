@@ -18,7 +18,7 @@
         "height": 900,
         "minWidth": 900,
         "minHeight": 600,
-        "transparent": true,
+        "transparent": false,
         "decorations": true,
         "titleBarStyle": "Overlay"
       }
@@ -30,6 +30,12 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": []
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
   }
 }

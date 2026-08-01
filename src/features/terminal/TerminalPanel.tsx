@@ -35,7 +35,7 @@ export function TerminalPanel() {
     if (!termRef.current) return;
 
     // Terminal foreground/cursor follow the active theme so text stays
-    // readable on both light and dark glass backgrounds.
+    // readable on both light and dark app backgrounds.
     const cs = getComputedStyle(document.documentElement);
     const foreground = cs.getPropertyValue("--text-primary").trim() || "rgba(255,255,255,0.9)";
     const cursor = cs.getPropertyValue("--accent").trim() || "rgba(124,138,255,1)";
@@ -49,12 +49,12 @@ export function TerminalPanel() {
       fontFamily: terminalFontFamily,
       scrollback: terminalScrollback,
       allowTransparency: true,
-      // Transparent background so the glass shows through. NOTE: OMITTING the
-      // background key does NOT give transparency — xterm then paints its
-      // default OPAQUE black, which on the light theme hides the dark
-      // foreground (black-on-black). The CSS keyword "transparent" is rejected
-      // by xterm's color parser; an 8-bit-alpha rgba is accepted and, with
-      // allowTransparency, renders the canvas see-through.
+      // Transparent background so the app surface underneath shows through.
+      // NOTE: OMITTING the background key does NOT give transparency — xterm
+      // then paints its default OPAQUE black, which on the light theme hides
+      // the dark foreground (black-on-black). The CSS keyword "transparent"
+      // is rejected by xterm's color parser; an 8-bit-alpha rgba is accepted
+      // and, with allowTransparency, renders the canvas see-through.
       theme: { foreground, cursor, background: "rgba(0,0,0,0)" },
       cursorBlink: true,
     });

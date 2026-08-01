@@ -185,7 +185,10 @@ html, body {
   height: 100%;
   width: 100%;
   overflow: hidden;
-  background: transparent !important;
+  /* Opaque app background (no window transparency — the former see-through
+     surface hurt readability). var(--background) follows the light/dark
+     theme via the token overrides above. */
+  background: var(--background) !important;
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
   color: var(--text-primary);
 }
@@ -211,8 +214,8 @@ html, body {
   background: var(--scrollbar-thumb-hover);
 }
 
-/* xterm.js Liquid Glass overrides — replace the default black background
-   with a transparent surface so the native vibrancy/acrylic shows through. */
+/* xterm.js overrides — replace the default opaque black background with a
+   transparent surface so the surrounding app background shows through. */
 .xterm {
   background: transparent !important;
 }

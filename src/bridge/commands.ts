@@ -65,6 +65,4 @@ export const COMMANDS = {
   FS_APPLY_REPLACE: "fs_apply_replace",
   FS_CREATE_FILE: "fs_create_file",
   FS_CREATE_DIR: "fs_create_dir",
-  // Appearance
-  APPEARANCE_SET_THEME: "appearance_set_theme",
 } as const;

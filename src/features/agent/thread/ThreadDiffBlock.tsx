@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { EditorView } from "@codemirror/view";
 import { oneDark } from "@codemirror/theme-one-dark";
 import type { Extension } from "@codemirror/state";
@@ -78,6 +78,14 @@ export function ThreadDiffBlock({
     [path, oldText, newText],
   );
 
+  // 延迟挂载:进入可视区后先占位,停留 ~120ms 再建 CodeMirror。
+  // 快速滚过的行在计时器触发前已被虚拟化卸载,昂贵的 merge 计算不会发生。
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setReady(true), 120);
+    return () => clearTimeout(t);
+  }, []);
+
   return (
     <div className="rounded bg-[var(--glass-2-surface)] overflow-hidden">
       {path ? (
@@ -85,13 +93,17 @@ export function ThreadDiffBlock({
           {path}
         </div>
       ) : null}
-      <DiffView
-        payload={payload}
-        theme={theme}
-        extensions={extensions}
-        height="auto"
-        maxHeight="320px"
-      />
+      {ready ? (
+        <DiffView
+          payload={payload}
+          theme={theme}
+          extensions={extensions}
+          height="auto"
+          maxHeight="320px"
+        />
+      ) : (
+        <div style={{ minHeight: 96 }} aria-hidden="true" />
+      )}
     </div>
   );
 }

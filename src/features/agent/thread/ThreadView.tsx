@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
-import { ListChecks } from "lucide-react";
+import { ListChecks, Loader2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { useAgentStore } from "../../../stores/agent.store";
 import { useProjectStore } from "../../../stores/project.store";
@@ -19,12 +19,33 @@ function lastUserMessageId(entries: ThreadEntry[]): string | null {
   return null;
 }
 
+/**
+ * Show a thread-level waiting indicator while the agent is busy but has not
+ * yet produced the next visible turn item (message / thought / in-flight tool).
+ */
+function shouldShowAgentLoading(
+  status: "starting" | "idle" | "running" | "waiting" | undefined,
+  entries: ThreadEntry[],
+): boolean {
+  if (status !== "running" && status !== "starting") return false;
+  if (entries.length === 0) return false;
+  const last = entries[entries.length - 1];
+  if (last.kind === "user_message" || last.kind === "completed_plan") return true;
+  if (last.kind === "tool_call") {
+    // Tool card already animates in-flight / permission states.
+    return last.status === "completed" || last.status === "failed";
+  }
+  return false;
+}
+
 export function ThreadView() {
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const activeTabId = useConversationStore((s) => selectProjectActiveTabId(s, activeProjectId));
   const entriesByConversation = useAgentStore((s) => s.entriesByConversation);
+  const sessions = useAgentStore((s) => s.sessions);
   const entries = activeTabId ? (entriesByConversation[activeTabId] ?? []) : [];
-
+  const sessionStatus = activeTabId ? sessions[activeTabId]?.status : undefined;
+  const showLoading = shouldShowAgentLoading(sessionStatus, entries);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
@@ -62,7 +83,7 @@ export function ThreadView() {
       return;
     }
     if (stickToBottomRef.current) scrollToBottom();
-  }, [entries, scrollToBottom]);
+  }, [entries, showLoading, scrollToBottom]);
 
   // 流式内容增高时，若仍处于跟随态则继续贴底。
   useEffect(() => {
@@ -90,7 +111,21 @@ export function ThreadView() {
         {entries.map((entry) => (
           <EntryView key={entry.id} entry={entry} />
         ))}
+        {showLoading && <AgentLoadingIndicator />}
       </div>
+    </div>
+  );
+}
+
+function AgentLoadingIndicator() {
+  return (
+    <div
+      className="flex items-center gap-2 max-w-[90%] text-sm text-[var(--text-tertiary)]"
+      role="status"
+      aria-live="polite"
+    >
+      <Loader2 size={14} className="animate-spin text-[var(--accent)] shrink-0" />
+      <span>正在思考…</span>
     </div>
   );
 }

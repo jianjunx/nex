@@ -197,7 +197,18 @@ export function AgentComposer() {
     );
 
     const sessionId = await ensureLiveSession();
-    if (!sessionId) return;
+    if (!sessionId) {
+      // appendUserMessage may have flipped idle → running; clear it if we never send.
+      const sess = useAgentStore.getState().sessions[activeTabId];
+      if (sess?.status === "running") {
+        useAgentStore.setState((s) => {
+          if (s.sessions[activeTabId]?.status === "running") {
+            s.sessions[activeTabId].status = "idle";
+          }
+        });
+      }
+      return;
+    }
 
     const blocks: PromptBlock[] = [];
     if (content.trim()) blocks.push({ type: "text", text: content });
@@ -221,7 +232,14 @@ export function AgentComposer() {
         blocks.push({ type: "resource_link", uri: pathToFileUri(m.path), name: m.name });
       }
     }
-    if (blocks.length === 0) return;
+    if (blocks.length === 0) {
+      useAgentStore.setState((s) => {
+        if (s.sessions[activeTabId]?.status === "running") {
+          s.sessions[activeTabId].status = "idle";
+        }
+      });
+      return;
+    }
     await sendPrompt(sessionId, blocks);
   };
 

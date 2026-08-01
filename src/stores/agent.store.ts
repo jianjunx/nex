@@ -233,6 +233,10 @@ export const useAgentStore = create<AgentStore>()(
           ...(images && images.length > 0 ? { images } : {}),
           timestamp: Date.now(),
         });
+        // Optimistic busy flag so ThreadView can show loading during
+        // ensureLiveSession / file-mention reads before sendPrompt runs.
+        const session = s.sessions[conversationId];
+        if (session?.status === "idle") session.status = "running";
       });
       const persistText =
         text.trim() ||

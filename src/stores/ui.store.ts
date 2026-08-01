@@ -10,6 +10,15 @@ export function sanitizeSidePanelTab(v: unknown): SidePanelTab {
   return "files";
 }
 
+/** 设置弹窗六分区；供 ui.store.settingsSection 一次性定向导航（如"管理智能体…"）。 */
+export type SettingsSection =
+  | "appearance"
+  | "editor"
+  | "terminal"
+  | "agents"
+  | "keybindings"
+  | "layout";
+
 interface UiState {
   sidePanelVisible: boolean;
   sidePanelTab: SidePanelTab;
@@ -19,6 +28,9 @@ interface UiState {
   editorVisible: boolean;
   editorWidth: number;
   settingsOpen: boolean;
+  newConversationOpen: boolean;
+  /** 一次性设置弹窗定向：置位后由 SettingsDialog 打开时消费并清空。 */
+  settingsSection: SettingsSection | null;
   /** 自增计数触发搜索面板聚焦；不持久化（partialize 未收录即生效）。 */
   searchFocusRequest: number;
 
@@ -32,6 +44,10 @@ interface UiState {
   resetLayoutDims: () => void;
   openSettings: () => void;
   closeSettings: () => void;
+  openNewConversation: () => void;
+  closeNewConversation: () => void;
+  toggleNewConversation: () => void;
+  setSettingsSection: (section: SettingsSection | null) => void;
   requestSearchFocus: () => void;
 }
 
@@ -48,6 +64,8 @@ export const useUiStore = create<UiState>()(
       editorVisible: false,
       editorWidth: 480,
       settingsOpen: false,
+      newConversationOpen: false,
+      settingsSection: null,
       searchFocusRequest: 0,
 
       toggleSidePanel: () => set((s) => { s.sidePanelVisible = !s.sidePanelVisible; }),
@@ -72,6 +90,10 @@ export const useUiStore = create<UiState>()(
       }),
       openSettings: () => set((s) => { s.settingsOpen = true; }),
       closeSettings: () => set((s) => { s.settingsOpen = false; }),
+      openNewConversation: () => set((s) => { s.newConversationOpen = true; }),
+      closeNewConversation: () => set((s) => { s.newConversationOpen = false; }),
+      toggleNewConversation: () => set((s) => { s.newConversationOpen = !s.newConversationOpen; }),
+      setSettingsSection: (section) => set((s) => { s.settingsSection = section; }),
       requestSearchFocus: () => set((s) => {
         s.sidePanelTab = "search";
         s.sidePanelVisible = true;

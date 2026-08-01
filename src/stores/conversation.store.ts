@@ -64,6 +64,9 @@ interface ConversationStore {
 const EMPTY_TABS: string[] = [];
 const EMPTY_CONVERSATIONS: Conversation[] = [];
 
+/** loadMessages 分页大小:与 bridge 默认 limit 一致,循环翻页取完全部历史。 */
+const MESSAGE_PAGE_SIZE = 50;
+
 export function selectProjectOpenTabs(
   s: Pick<ConversationStore, "tabsByProject">,
   projectId: string | null | undefined,
@@ -264,9 +267,17 @@ export const useConversationStore = create<ConversationStore>()(
           s.error = null;
         });
         try {
-          const msgs = await conversationGetMessages(conversationId);
+          // 分页取完全部历史:旧实现只取首页 50 条,长会话旧消息静默丢失。
+          const all: Message[] = [];
+          let offset = 0;
+          for (;;) {
+            const page = await conversationGetMessages(conversationId, MESSAGE_PAGE_SIZE, offset);
+            all.push(...page);
+            if (page.length < MESSAGE_PAGE_SIZE) break;
+            offset += MESSAGE_PAGE_SIZE;
+          }
           set((s) => {
-            s.messagesByConversation[conversationId] = msgs;
+            s.messagesByConversation[conversationId] = all;
           });
         } catch (err) {
           set((s) => {

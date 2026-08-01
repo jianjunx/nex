@@ -157,4 +157,41 @@ describe("conversation.store project-scoped tabs", () => {
     expect(next.activeTabByProject).toEqual({});
     expect(next.legacyTabsMigration).toEqual({ tabs: ["x"], activeId: "x" });
   });
+
+  it("loadMessages 分页取完全部历史(修复 50 条截断)", async () => {
+    const mk = (i: number) =>
+      ({ id: `m${i}`, conversationId: "c1", role: "user", content: `msg ${i}`, createdAt: i }) as never;
+    conversationGetMessages.mockImplementation(async (_id: string, _limit: number, offset: number) => {
+      if (offset < 100) return Array.from({ length: 50 }, (_, i) => mk(offset + i));
+      return Array.from({ length: 20 }, (_, i) => mk(offset + i));
+    });
+
+    await useConversationStore.getState().loadMessages("c1");
+
+    expect(conversationGetMessages).toHaveBeenCalledTimes(3);
+    expect(conversationGetMessages.mock.calls.map((c) => c[2])).toEqual([0, 50, 100]);
+    expect(useConversationStore.getState().messagesByConversation["c1"]).toHaveLength(120);
+  });
+
+  it("loadMessages 单页不足一页即停止分页", async () => {
+    const mk = (i: number) =>
+      ({ id: `m${i}`, conversationId: "c1", role: "user", content: `msg ${i}`, createdAt: i }) as never;
+    conversationGetMessages.mockImplementation(async () => Array.from({ length: 30 }, (_, i) => mk(i)));
+
+    await useConversationStore.getState().loadMessages("c1");
+
+    expect(conversationGetMessages).toHaveBeenCalledTimes(1);
+    expect(conversationGetMessages.mock.calls.map((c) => c[2])).toEqual([0]);
+    expect(useConversationStore.getState().messagesByConversation["c1"]).toHaveLength(30);
+  });
+
+  it("loadMessages 空会话只取一页并写入空数组", async () => {
+    conversationGetMessages.mockImplementation(async () => []);
+
+    await useConversationStore.getState().loadMessages("c1");
+
+    expect(conversationGetMessages).toHaveBeenCalledTimes(1);
+    expect(conversationGetMessages.mock.calls.map((c) => c[2])).toEqual([0]);
+    expect(useConversationStore.getState().messagesByConversation["c1"]).toEqual([]);
+  });
 });

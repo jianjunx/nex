@@ -158,8 +158,8 @@ describe("conversation tab outline (F5)", () => {
   it("renders scrollbar-hidden overflow with left/right fade masks", () => {
     const { container } = render(<TopBar />);
     expect(container.innerHTML).toContain("overflow-x-auto scrollbar-none");
-    expect(container.innerHTML).toContain("bg-gradient-to-r from-[var(--glass-1-surface)] to-transparent");
-    expect(container.innerHTML).toContain("bg-gradient-to-l from-[var(--glass-1-surface)] to-transparent");
+    expect(container.innerHTML).toContain("bg-gradient-to-r from-[var(--background)] to-transparent");
+    expect(container.innerHTML).toContain("bg-gradient-to-l from-[var(--background)] to-transparent");
     expect(container.innerHTML).toContain("pointer-events-none");
   });
 });

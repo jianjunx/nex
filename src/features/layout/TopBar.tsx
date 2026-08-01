@@ -101,7 +101,7 @@ export function TopBar() {
     <div
       onMouseDown={handleMouseDown}
       onDoubleClick={handleDoubleClick}
-      className={`flex items-center border-b border-[color:var(--border-subtle)] bg-[var(--glass-1-surface)] backdrop-blur-xl ${sizing} ${pad}`}
+      className={`flex items-center border-b border-[color:var(--border-subtle)] bg-[var(--background)] ${sizing} ${pad}`}
     >
       {/* Project selector */}
       <ProjectSelector />
@@ -163,9 +163,9 @@ export function TopBar() {
           </Tabs>
         )}
         </div>
-        {/* 溢出渐隐遮罩：常驻（v1 不做滚动位置感知，YAGNI）。起始色＝TopBar 玻璃底。 */}
-        <div className="pointer-events-none absolute inset-y-0 left-0 w-6 bg-gradient-to-r from-[var(--glass-1-surface)] to-transparent" />
-        <div className="pointer-events-none absolute inset-y-0 right-0 w-6 bg-gradient-to-l from-[var(--glass-1-surface)] to-transparent" />
+        {/* 溢出渐隐遮罩：常驻（v1 不做滚动位置感知，YAGNI）。起始色＝TopBar 底色。 */}
+        <div className="pointer-events-none absolute inset-y-0 left-0 w-6 bg-gradient-to-r from-[var(--background)] to-transparent" />
+        <div className="pointer-events-none absolute inset-y-0 right-0 w-6 bg-gradient-to-l from-[var(--background)] to-transparent" />
       </div>
 
       {/* Panel toggle */}

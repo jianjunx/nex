@@ -99,7 +99,7 @@ export function MainLayout({ mainContent, editorPanel, sidePanel }: MainLayoutPr
               className="w-1 flex-none cursor-col-resize hover:bg-[var(--accent)]/40 active:bg-[var(--accent)]/60 transition-colors duration-100"
             />
             <div
-              className="flex min-h-0 shrink-0 flex-col self-stretch border-l border-[color:var(--border-subtle)] overflow-hidden rounded-l-[var(--radius-md)] animate-in fade-in slide-in-from-right-2"
+              className="flex min-h-0 shrink-0 flex-col self-stretch border-l border-[color:var(--border-subtle)] bg-[var(--background)] overflow-hidden rounded-l-[var(--radius-md)] animate-in fade-in slide-in-from-right-2"
               style={{ width: liveEditorWidth ?? editorWidth }}
             >
               <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -117,7 +117,7 @@ export function MainLayout({ mainContent, editorPanel, sidePanel }: MainLayoutPr
               className="w-1 flex-none cursor-col-resize hover:bg-[var(--accent)]/40 active:bg-[var(--accent)]/60 transition-colors duration-100"
             />
             <div
-              className="flex shrink-0 flex-col border-l border-[color:var(--border-subtle)] overflow-hidden rounded-l-[var(--radius-md)] animate-in fade-in slide-in-from-right-2"
+              className="flex shrink-0 flex-col border-l border-[color:var(--border-subtle)] bg-[var(--surface-sidebar)] overflow-hidden rounded-l-[var(--radius-md)] animate-in fade-in slide-in-from-right-2"
               style={{ width: liveSideWidth ?? sidePanelWidth }}
             >
               <div className="flex-1 overflow-hidden">

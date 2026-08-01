@@ -1,21 +1,41 @@
 import { useEffect, useMemo, useRef } from "react";
 import CodeMirror, { EditorView } from "@uiw/react-codemirror";
+import { oneDark } from "@codemirror/theme-one-dark";
+import type { Extension } from "@codemirror/state";
 import { PanelRight, X } from "lucide-react";
 import { registerFindBarAccessor } from "../../commands/editorKeybindings";
 import { Button } from "@/components/ui/button";
 import { useFsStore } from "../../stores/fs.store";
 import { useUiStore } from "../../stores/ui.store";
 import { useProjectStore } from "../../stores/project.store";
+import { useSettingsStore } from "../../stores/settings.store";
 import { fileBasename, relativeToProject } from "./pathUtils";
 import { languageExtensionsForPath } from "./language";
 import { editorSearchExtensions } from "./editorSearch";
 import { DiffView } from "./DiffView";
 
-// CSS variables are resolved at paint time, so a light/dark theme switch
-// restyles the editor with zero reconstruction — no editor re-theme needed.
-// height/overflow on & + .cm-scroller is required for mouse-wheel scrolling
-// when the parent gives a fixed flex height (otherwise the doc grows the view).
-const editorTheme = EditorView.theme({
+/** Shared layout chrome (height / panels / fonts). Colors come from oneDark or lightTheme. */
+const editorLayoutTheme = EditorView.theme({
+  "&": {
+    height: "100%",
+    fontSize: "13px",
+  },
+  ".cm-scroller": { overflow: "auto" },
+  ".cm-content": { fontFamily: "JetBrains Mono, Menlo, Consolas, monospace" },
+  // Host the custom find bar at the top without CodeMirror's default panel chrome.
+  ".cm-panels.cm-panels-top": {
+    backgroundColor: "transparent",
+    borderBottom: "1px solid var(--border-subtle)",
+  },
+  ".cm-panel": {
+    backgroundColor: "transparent",
+    padding: "0",
+    boxShadow: "none",
+  },
+});
+
+// Light theme: CSS variables resolve at paint time so switching restyles without rebuild.
+const editorLightTheme = EditorView.theme({
   "&": {
     height: "100%",
     backgroundColor: "transparent",
@@ -28,7 +48,6 @@ const editorTheme = EditorView.theme({
   "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": { backgroundColor: "var(--overlay-active)" },
   ".cm-gutters": { backgroundColor: "transparent", color: "var(--text-tertiary)", borderRight: "1px solid var(--border-subtle)" },
   ".cm-activeLine": { backgroundColor: "var(--overlay-ghost)" },
-  // Host the custom find bar at the top without CodeMirror's default panel chrome.
   ".cm-panels.cm-panels-top": {
     backgroundColor: "transparent",
     borderBottom: "1px solid var(--border-subtle)",
@@ -41,6 +60,10 @@ const editorTheme = EditorView.theme({
   ".cm-searchMatch": { backgroundColor: "color-mix(in srgb, var(--accent) 28%, transparent)" },
   ".cm-searchMatch.cm-searchMatch-selected": { backgroundColor: "color-mix(in srgb, var(--accent) 55%, transparent)" },
 });
+
+function editorThemeFor(appTheme: "light" | "dark"): Extension {
+  return appTheme === "dark" ? [oneDark, editorLayoutTheme] : editorLightTheme;
+}
 
 // Plan 5 行定位：搜索跳转携带 pendingLine。视图就绪后选中并滚动到目标行，
 // 然后消费掉 pending 防止重复触发。两条入口：新视图走 onCreateEditor，
@@ -72,6 +95,8 @@ export function EditorPanel() {
   const projects = useProjectStore((s) => s.projects);
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const projectPath = projects.find((p) => p.id === activeProjectId)?.path;
+  const appTheme = useSettingsStore((s) => s.theme);
+  const editorTheme = useMemo(() => editorThemeFor(appTheme), [appTheme]);
   const viewRef = useRef<EditorView | null>(null);
   const pendingLine = useFsStore((s) => s.pendingLine);
 

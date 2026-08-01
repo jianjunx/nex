@@ -67,7 +67,7 @@ export function SidePanel() {
             className="h-1 flex-none cursor-row-resize hover:bg-[var(--accent)]/40 active:bg-[var(--accent)]/60 transition-colors duration-100"
           />
           <div
-            className="border-t border-[color:var(--border-subtle)] bg-[var(--glass-1-surface)] shrink-0 overflow-hidden"
+            className="border-t border-[color:var(--border-subtle)] bg-[var(--surface-sidebar)] shrink-0 overflow-hidden"
             style={{ height: liveHeight ?? terminalHeight }}
           >
             <TerminalPanel />

@@ -19,7 +19,8 @@ export function groupThreadEntries(entries: ThreadEntry[]): ThreadRenderItem[] {
     items.push({
       type: "tool_group",
       entries: toolBuf,
-      key: toolBuf.map((e) => e.id).join(":"),
+      // 首个 id 作 key:成员流式追加时 key 不变,避免整组 remount 丢展开态。
+      key: toolBuf[0].id,
     });
     toolBuf = [];
   };

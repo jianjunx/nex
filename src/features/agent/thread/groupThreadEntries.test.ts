@@ -61,4 +61,20 @@ describe("groupThreadEntries", () => {
     });
     expect(items[2]).toMatchObject({ type: "tool_group" });
   });
+
+  it("tool_group key 在成员流式追加时保持不变", () => {
+    const two: ThreadEntry[] = [
+      tool({ id: "t1", toolKind: "search", title: "grep" }),
+      tool({ id: "t2", toolKind: "read", title: "Read File" }),
+    ];
+    const three: ThreadEntry[] = [...two, tool({ id: "t3", toolKind: "read", title: "Read File" })];
+
+    const items2 = groupThreadEntries(two);
+    const items3 = groupThreadEntries(three);
+    expect(items2[0]?.type).toBe("tool_group");
+    expect(items3[0]?.type).toBe("tool_group");
+    if (items2[0].type === "tool_group" && items3[0].type === "tool_group") {
+      expect(items3[0].key).toBe(items2[0].key);
+    }
+  });
 });

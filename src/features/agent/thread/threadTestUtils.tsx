@@ -2,6 +2,7 @@
  * 线程视图的测试/开发基建。仅被 .test.tsx 与 DEV-only 动态 import 引用,
  * 不进生产 bundle。
  */
+import { vi } from "vitest";
 import { useAgentStore } from "../../../stores/agent.store";
 import { useProjectStore } from "../../../stores/project.store";
 import { useConversationStore } from "../../../stores/conversation.store";
@@ -20,4 +21,114 @@ export function setupThreadStores(
   useAgentStore.setState((s) => {
     s.entriesByConversation = entriesByConversation;
   });
+}
+
+/* ---------- jsdom 布局 mock:让 useVirtualizer 在无真实布局环境下工作 ---------- */
+
+const mockHeights = new WeakMap<Element, number>();
+const mockScrollHeights = new WeakMap<Element, number>();
+const mockScrollTops = new WeakMap<Element, number>();
+
+export function setMockScrollHeight(el: Element, h: number) {
+  mockScrollHeights.set(el, h);
+}
+
+/** 取 ThreadView 的滚动容器。 */
+export function getScroller(container: HTMLElement): HTMLElement {
+  const el = container.querySelector<HTMLElement>(".overflow-y-auto");
+  if (!el) throw new Error("未找到 .overflow-y-auto 滚动容器");
+  return el;
+}
+
+/**
+ * 安装虚拟列表所需的布局 mock。规则:
+ * - 带 data-index 的行元素 → rowHeight(默认 60)
+ * - classList 含 overflow-y-auto 的滚动容器 → viewportHeight(默认 600)
+ * - 显式 setMockScrollHeight 设置过的 → 该值
+ * 若 @tanstack/virtual-core 版本的取数 API 与上述不符(用 scrollLeft/其他读法),
+ * 调试方法:render 后打印 virtualizer.scrollRect / scrollOffset / range,
+ * 看哪个读数为 0,再按 node_modules/@tanstack/virtual-core 源码调整本 mock。
+ */
+export function installVirtualListMocks(opts?: { viewportHeight?: number; rowHeight?: number }) {
+  const viewportHeight = opts?.viewportHeight ?? 600;
+  const rowHeight = opts?.rowHeight ?? 60;
+
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+
+  vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+    this: Element,
+  ) {
+    let h = mockHeights.get(this);
+    if (h === undefined) {
+      if (this instanceof HTMLElement && this.classList.contains("overflow-y-auto")) {
+        h = viewportHeight;
+      } else if (this.hasAttribute("data-index")) {
+        h = rowHeight;
+      } else {
+        h = 0;
+      }
+    }
+    return {
+      x: 0, y: 0, top: 0, left: 0, width: 800, height: h, right: 800, bottom: h,
+      toJSON() { return this; },
+    } as DOMRect;
+  });
+
+  Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+    configurable: true,
+    get(this: HTMLElement) {
+      return Math.round(this.getBoundingClientRect().height);
+    },
+  });
+  Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+    configurable: true,
+    get(this: HTMLElement) {
+      return Math.round(this.getBoundingClientRect().height);
+    },
+  });
+  Object.defineProperty(Element.prototype, "scrollHeight", {
+    configurable: true,
+    get(this: Element) {
+      return mockScrollHeights.get(this) ?? 0;
+    },
+  });
+  Object.defineProperty(Element.prototype, "scrollTop", {
+    configurable: true,
+    get(this: Element) {
+      return mockScrollTops.get(this) ?? 0;
+    },
+    set(this: Element, v: number) {
+      mockScrollTops.set(this, v);
+    },
+  });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (Element.prototype as any).scrollTo = function (
+    this: Element,
+    xOrOpts: number | ScrollToOptions,
+    y?: number,
+  ) {
+    const top = typeof xOrOpts === "number" ? (y ?? 0) : (xOrOpts?.top ?? 0);
+    mockScrollTops.set(this, top);
+  };
+}
+
+/** 生成交替的 user/assistant 合成条目。 */
+export function makeEntries(count: number): ThreadEntry[] {
+  return Array.from({ length: count }, (_, i) =>
+    i % 2 === 0
+      ? { id: `e${i}`, kind: "user_message", text: `消息 ${i}`, timestamp: i }
+      : {
+          id: `e${i}`,
+          kind: "assistant_message",
+          chunks: [{ type: "message", text: `回复 ${i}` }],
+          timestamp: i,
+        },
+  ) as ThreadEntry[];
 }

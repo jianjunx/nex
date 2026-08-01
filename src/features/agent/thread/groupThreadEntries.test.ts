@@ -39,4 +39,26 @@ describe("groupThreadEntries", () => {
     }
     expect(items[4]).toMatchObject({ type: "entry", entry: { id: "a1" } });
   });
+
+  it("keeps permission-waiting tools standalone so questions stay visible", () => {
+    const entries: ThreadEntry[] = [
+      tool({ id: "t1", toolKind: "search", title: "grep" }),
+      tool({
+        id: "t2",
+        toolKind: "other",
+        title: "AskUserQuestion",
+        status: "waiting_for_confirmation",
+      }),
+      tool({ id: "t3", toolKind: "read", title: "Read File" }),
+    ];
+
+    const items = groupThreadEntries(entries);
+    expect(items).toHaveLength(3);
+    expect(items[0]).toMatchObject({ type: "tool_group" });
+    expect(items[1]).toMatchObject({
+      type: "entry",
+      entry: { id: "t2", status: "waiting_for_confirmation" },
+    });
+    expect(items[2]).toMatchObject({ type: "tool_group" });
+  });
 });

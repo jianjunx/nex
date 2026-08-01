@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { applySessionUpdate, emptySessionMeta } from "./applySessionUpdate";
+import {
+  applyPermissionRequestToEntries,
+  applySessionUpdate,
+  emptySessionMeta,
+} from "./applySessionUpdate";
 import type { ThreadEntry } from "./types";
 
 describe("applySessionUpdate", () => {
@@ -66,5 +70,30 @@ describe("applySessionUpdate", () => {
     });
     expect(r.completedPlanSnapshot).toHaveLength(1);
     expect(meta.plan).toBeNull();
+  });
+
+  it("creates a waiting tool card from permission payload when none exists", () => {
+    const entries: ThreadEntry[] = [];
+    const attached = applyPermissionRequestToEntries(entries, {
+      requestId: "req-1",
+      toolCallId: "ask-1",
+      toolTitle: "Which approach?",
+      toolKind: "other",
+      toolContent: [{ type: "content", content: { type: "text", text: "Pick A or B" } }],
+      toolRawInput: { questions: [{ question: "Pick one" }] },
+      options: [
+        { optionId: "a", label: "Option A" },
+        { optionId: "b", label: "Option B" },
+      ],
+    });
+    expect(attached).toBe(true);
+    expect(entries).toHaveLength(1);
+    if (entries[0].kind === "tool_call") {
+      expect(entries[0].status).toBe("waiting_for_confirmation");
+      expect(entries[0].title).toBe("Which approach?");
+      expect(entries[0].content[0]).toEqual({ type: "text", text: "Pick A or B" });
+      expect(entries[0].options?.map((o) => o.optionId)).toEqual(["a", "b"]);
+      expect(entries[0].permissionRequestId).toBe("req-1");
+    }
   });
 });

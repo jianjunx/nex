@@ -28,6 +28,18 @@ pub struct AgentPermissionRequest {
     /// ACP tool call id when the permission is tied to a tool invocation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// Human-readable tool title from the permission's `toolCall` update.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_title: Option<String>,
+    /// ACP `ToolKind` as snake_case when present on the update.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_kind: Option<String>,
+    /// Serialized `ToolCallContent[]` from the update (AskUserQuestion text, diffs, …).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_content: Option<serde_json::Value>,
+    /// Raw tool input (often holds structured question payloads).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_raw_input: Option<serde_json::Value>,
     pub options: Vec<PermissionOption>,
 }
 

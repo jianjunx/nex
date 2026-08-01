@@ -60,6 +60,8 @@ export interface ToolCallEntry extends ThreadEntryBase {
   toolKind: string;
   status: ToolCallStatus;
   content: ToolCallContentBlock[];
+  /** Structured tool args (e.g. AskUserQuestion payload) when content is empty. */
+  rawInput?: unknown;
   options?: ToolPermissionOption[];
   permissionRequestId?: string;
 }

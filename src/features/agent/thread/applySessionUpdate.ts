@@ -55,6 +55,17 @@ function mapToolContent(raw: unknown): ToolCallContentBlock[] {
   return out;
 }
 
+/** Pretty-print structured tool input for AskUserQuestion-style payloads. */
+export function formatToolRawInput(raw: unknown): string | null {
+  if (raw == null) return null;
+  if (typeof raw === "string") return raw.trim() ? raw : null;
+  try {
+    return JSON.stringify(raw, null, 2);
+  } catch {
+    return String(raw);
+  }
+}
+
 function mapPlanEntries(raw: unknown): PlanEntry[] {
   if (!raw || typeof raw !== "object") return [];
   const entries = (raw as Record<string, unknown>).entries;
@@ -125,6 +136,12 @@ function upsertToolCall(entries: ThreadEntry[], update: Record<string, unknown>,
   const status = update.status !== undefined ? mapToolStatus(update.status) : existing?.status ?? "pending";
   const content =
     update.content !== undefined ? mapToolContent(update.content) : existing?.content ?? [];
+  const rawInput =
+    update.rawInput !== undefined
+      ? update.rawInput
+      : update.raw_input !== undefined
+        ? update.raw_input
+        : existing?.rawInput;
 
   if (existing) {
     existing.title = title;
@@ -133,6 +150,7 @@ function upsertToolCall(entries: ThreadEntry[], update: Record<string, unknown>,
       existing.status = status;
     }
     existing.content = content;
+    if (rawInput !== undefined) existing.rawInput = rawInput;
     return;
   }
 
@@ -145,7 +163,65 @@ function upsertToolCall(entries: ThreadEntry[], update: Record<string, unknown>,
     toolKind,
     status,
     content,
+    ...(rawInput !== undefined ? { rawInput } : {}),
   });
+}
+
+/**
+ * Ensure the tool card for a permission request exists and is waiting.
+ * ACP may send `session/request_permission` with full toolCall fields before
+ * (or instead of) a separate tool_call sessionUpdate — Claude AskUserQuestion
+ * relies on this path to surface the question text.
+ */
+export function applyPermissionRequestToEntries(
+  entries: ThreadEntry[],
+  payload: {
+    requestId: string;
+    toolCallId?: string | null;
+    toolTitle?: string | null;
+    toolKind?: string | null;
+    toolContent?: unknown;
+    toolRawInput?: unknown;
+    options: { optionId: string; label: string; kind?: string | null }[];
+  },
+): boolean {
+  const toolCallId = payload.toolCallId;
+  if (!toolCallId) return false;
+
+  const options = payload.options.map((o) => ({ ...o, requestId: payload.requestId }));
+  const content =
+    payload.toolContent !== undefined && payload.toolContent !== null
+      ? mapToolContent(payload.toolContent)
+      : null;
+  const existing = findTool(entries, toolCallId);
+
+  if (existing) {
+    if (payload.toolTitle) existing.title = payload.toolTitle;
+    if (payload.toolKind) existing.toolKind = payload.toolKind;
+    if (content && content.length > 0) existing.content = content;
+    if (payload.toolRawInput !== undefined && payload.toolRawInput !== null) {
+      existing.rawInput = payload.toolRawInput;
+    }
+    existing.status = "waiting_for_confirmation";
+    existing.permissionRequestId = payload.requestId;
+    existing.options = options;
+    return true;
+  }
+
+  entries.push({
+    id: crypto.randomUUID(),
+    kind: "tool_call",
+    timestamp: Date.now(),
+    toolCallId,
+    title: payload.toolTitle?.trim() || "Permission required",
+    toolKind: payload.toolKind?.trim() || "other",
+    status: "waiting_for_confirmation",
+    content: content ?? [],
+    ...(payload.toolRawInput != null ? { rawInput: payload.toolRawInput } : {}),
+    permissionRequestId: payload.requestId,
+    options,
+  });
+  return true;
 }
 
 export function emptySessionMeta(): SessionMeta {

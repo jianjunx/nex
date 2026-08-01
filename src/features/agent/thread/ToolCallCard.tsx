@@ -3,6 +3,7 @@ import { CheckCircle2, ChevronRight, Circle, Loader2, Pencil, Wrench } from "luc
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { ToolCallEntry } from "./types";
+import { formatToolRawInput } from "./applySessionUpdate";
 import { isEditTool } from "./toolCallUtils";
 import { useAgentStore } from "../../../stores/agent.store";
 
@@ -20,6 +21,7 @@ export function ToolCallCard({
   );
   const respondPermission = useAgentStore((s) => s.respondPermission);
   const Icon = isEdit ? Pencil : Wrench;
+  const rawInputText = formatToolRawInput(entry.rawInput);
 
   // Permission prompts must surface even if the card started collapsed.
   useEffect(() => {
@@ -64,6 +66,12 @@ export function ToolCallCard({
                 {c.text}
               </pre>
             ),
+          )}
+
+          {entry.content.length === 0 && rawInputText && (
+            <pre className="text-xs overflow-x-auto p-2 rounded bg-[var(--glass-2-surface)] text-[var(--text-secondary)] whitespace-pre-wrap">
+              {rawInputText}
+            </pre>
           )}
 
           {waiting && entry.options && entry.permissionRequestId && (

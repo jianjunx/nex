@@ -28,9 +28,13 @@ import {
 } from "../bridge/tauri";
 import type { AgentPermissionRequestPayload } from "../bridge/events";
 import { pickAllowOptionId } from "../features/agent/pickAllowOptionId";
-import { applySessionUpdate, emptySessionMeta } from "../features/agent/thread/applySessionUpdate";
+import {
+  applyPermissionRequestToEntries,
+  applySessionUpdate,
+  emptySessionMeta,
+} from "../features/agent/thread/applySessionUpdate";
 import { assistantTextAfterLastUser } from "../features/agent/thread/messagesToThreadEntries";
-import type { SessionMeta, ThreadEntry, ToolCallEntry } from "../features/agent/thread/types";
+import type { SessionMeta, ThreadEntry } from "../features/agent/thread/types";
 import { useConversationStore } from "./conversation.store";
 
 export interface AgentSession {
@@ -140,26 +144,6 @@ function applyCreateMeta(result: CreateSessionResult): SessionMeta {
     }));
   }
   return meta;
-}
-
-function markToolWaiting(
-  entries: ThreadEntry[],
-  toolCallId: string | null | undefined,
-  requestId: string,
-  options: { optionId: string; label: string; kind?: string | null }[],
-): boolean {
-  if (!toolCallId) return false;
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const e = entries[i];
-    if (e.kind === "tool_call" && e.toolCallId === toolCallId) {
-      const tool = e as ToolCallEntry;
-      tool.status = "waiting_for_confirmation";
-      tool.permissionRequestId = requestId;
-      tool.options = options.map((o) => ({ ...o, requestId }));
-      return true;
-    }
-  }
-  return false;
 }
 
 function clearToolWaiting(entries: ThreadEntry[], requestId: string): void {
@@ -787,13 +771,11 @@ export const useAgentStore = create<AgentStore>()(
           const live = Object.values(s.sessions).find((ss) => ss.sessionId === payload.sessionId);
           if (live) {
             live.status = "waiting";
-            const entries = s.entriesByConversation[live.conversationId] ?? [];
-            const attached = markToolWaiting(
-              entries,
-              payload.toolCallId,
-              payload.requestId,
-              payload.options,
-            );
+            if (!s.entriesByConversation[live.conversationId]) {
+              s.entriesByConversation[live.conversationId] = [];
+            }
+            const entries = s.entriesByConversation[live.conversationId];
+            const attached = applyPermissionRequestToEntries(entries, payload);
             if (attached) s.inlinePermissionIds[payload.requestId] = true;
             s.pendingPermission = nextPendingPermission(s.permissionQueues, s.inlinePermissionIds);
           } else if (!s.pendingPermission) {

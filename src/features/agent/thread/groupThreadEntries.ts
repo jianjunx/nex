@@ -7,7 +7,8 @@ export type ThreadRenderItem =
 
 /**
  * Collapse adjacent non-edit tool_call entries into a single group item.
- * Edit tools and all other entry kinds stay as standalone items.
+ * Edit tools, permission-waiting tools, and all other entry kinds stay standalone
+ * so AskUserQuestion / permission prompts remain visible.
  */
 export function groupThreadEntries(entries: ThreadEntry[]): ThreadRenderItem[] {
   const items: ThreadRenderItem[] = [];
@@ -24,7 +25,9 @@ export function groupThreadEntries(entries: ThreadEntry[]): ThreadRenderItem[] {
   };
 
   for (const entry of entries) {
-    if (entry.kind === "tool_call" && !isEditTool(entry)) {
+    const waiting =
+      entry.kind === "tool_call" && entry.status === "waiting_for_confirmation";
+    if (entry.kind === "tool_call" && !isEditTool(entry) && !waiting) {
       toolBuf.push(entry);
       continue;
     }

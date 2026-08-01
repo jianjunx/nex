@@ -40,6 +40,21 @@ fn permission_option_kind_str(kind: acp::PermissionOptionKind) -> &'static str {
     }
 }
 
+fn tool_kind_str(kind: acp::ToolKind) -> &'static str {
+    match kind {
+        acp::ToolKind::Read => "read",
+        acp::ToolKind::Edit => "edit",
+        acp::ToolKind::Delete => "delete",
+        acp::ToolKind::Move => "move",
+        acp::ToolKind::Search => "search",
+        acp::ToolKind::Execute => "execute",
+        acp::ToolKind::Think => "think",
+        acp::ToolKind::Fetch => "fetch",
+        acp::ToolKind::SwitchMode => "switch_mode",
+        acp::ToolKind::Other => "other",
+    }
+}
+
 struct PendingPermission {
     session_key: String,
     tx: oneshot::Sender<acp::RequestPermissionOutcome>,
@@ -88,6 +103,14 @@ impl acp::Client for NexAcpClient {
         );
 
         let tool_call_id = Some(args.tool_call.id.0.to_string());
+        let fields = &args.tool_call.fields;
+        let tool_title = fields.title.clone();
+        let tool_kind = fields.kind.map(tool_kind_str).map(str::to_string);
+        let tool_content = fields
+            .content
+            .as_ref()
+            .and_then(|c| serde_json::to_value(c).ok());
+        let tool_raw_input = fields.raw_input.clone();
         let options = args
             .options
             .iter()
@@ -103,6 +126,10 @@ impl acp::Client for NexAcpClient {
                 session_id: self.session_key.clone(),
                 request_id,
                 tool_call_id,
+                tool_title,
+                tool_kind,
+                tool_content,
+                tool_raw_input,
                 options,
             },
         );

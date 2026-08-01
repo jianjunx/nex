@@ -1,22 +1,48 @@
-import { CheckCircle2, Circle, ListTodo, Loader2 } from "lucide-react";
+import { useState } from "react";
+import { CheckCircle2, ChevronRight, Circle, ListTodo, Loader2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import type { PlanEntry } from "./types";
 
 export function PlanBar({ entries }: { entries: PlanEntry[] }) {
+  const [open, setOpen] = useState(true);
   if (entries.length === 0) return null;
+
+  const completed = entries.filter((e) => e.status === "completed").length;
+  const inProgress = entries.some((e) => e.status === "in_progress");
+
   return (
     <div className="mx-6 mb-2 rounded-[var(--radius-md)] border border-[color:var(--border-subtle)] bg-[var(--glass-2-surface)] px-3 py-2">
-      <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)] mb-1.5">
-        <ListTodo size={14} />
+      <button
+        type="button"
+        className="w-full flex items-center gap-2 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        <ListTodo size={14} className="shrink-0" />
         <span className="font-medium">Plan</span>
-      </div>
-      <ul className="space-y-1">
-        {entries.map((e, i) => (
-          <li key={i} className="flex items-start gap-2 text-xs text-[var(--text-primary)]">
-            <PlanStatusIcon status={e.status} />
-            <span className={e.status === "completed" ? "line-through opacity-60" : ""}>{e.content}</span>
-          </li>
-        ))}
-      </ul>
+        <span className="text-[var(--text-tertiary)]">
+          {completed}/{entries.length}
+        </span>
+        {inProgress && !open && (
+          <Loader2 size={12} className="animate-spin text-[var(--accent)] shrink-0" />
+        )}
+        <ChevronRight
+          size={12}
+          className={cn("ml-auto shrink-0 transition-transform", open && "rotate-90")}
+        />
+      </button>
+      {open && (
+        <ul className="space-y-1 mt-1.5">
+          {entries.map((e, i) => (
+            <li key={i} className="flex items-start gap-2 text-xs text-[var(--text-primary)]">
+              <PlanStatusIcon status={e.status} />
+              <span className={e.status === "completed" ? "line-through opacity-60" : ""}>
+                {e.content}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

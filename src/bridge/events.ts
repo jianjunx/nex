@@ -19,6 +19,11 @@ export interface AgentPermissionRequestPayload {
   sessionId: string;
   requestId: string;
   toolCallId?: string | null;
+  toolTitle?: string | null;
+  toolKind?: string | null;
+  /** Serialized ACP ToolCallContent[] */
+  toolContent?: unknown;
+  toolRawInput?: unknown;
   options: { optionId: string; label: string; kind?: string | null }[];
 }
 

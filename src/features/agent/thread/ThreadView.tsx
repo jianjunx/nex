@@ -15,6 +15,14 @@ const EMPTY_ENTRIES: ThreadEntry[] = [];
 /** 距底部小于此阈值视为「仍在底部」,恢复自动跟随。 */
 const NEAR_BOTTOM_PX = 80;
 
+/**
+ * 行级实测高缓存(模块级,随会话累积;每行仅一个 number,量级极小)。
+ * 键为 rowKey,不含会话 id:跨会话同 id 碰撞仅影响估值精度,measureElement 实测即自纠(接受)。
+ * 作用:已见过但被虚拟化卸载、再次滚回的行不再用固定估值定位,直接复现真实高度,
+ * 消除「估值→实测纠正」引起的 totalSize/位置突变(抖动)。
+ */
+const measuredHeights = new Map<string, number>();
+
 /** 行高估值:只影响滚动条精度,measureElement 实测持续校正。 */
 function estimateRowHeight(item: ThreadRenderItem | undefined): number {
   if (!item) return 40; // 加载指示器行
@@ -22,7 +30,8 @@ function estimateRowHeight(item: ThreadRenderItem | undefined): number {
   const e = item.entry;
   // edit 卡行高估值贴近「内容区封顶 350 + 头/边距」实测(~386),首帧布局即准,减小上滚首测 delta。
   if (e.kind === "tool_call") return isEditTool(e) ? 386 : 48;
-  return 96;
+  // 64:贴近单行气泡实测(用户/助手消息行多在 40~80px),降低「首次上滚未见行」的首滚 delta。
+  return 64;
 }
 
 function rowKey(item: ThreadRenderItem | undefined): string {
@@ -77,10 +86,21 @@ export function ThreadView() {
   const virtualizer = useVirtualizer({
     count,
     getScrollElement: () => scrollerRef.current,
-    estimateSize: (i) => estimateRowHeight(renderItems[i]),
+    estimateSize: (i) => {
+      const item = renderItems[i];
+      // 命中实测缓存用真实高度,否则回退估值。
+      return measuredHeights.get(rowKey(item)) ?? estimateRowHeight(item);
+    },
     overscan: 5,
     // 显式用 getBoundingClientRect:兼容小数高度,且是测试 mock 的确定接缝。
-    measureElement: (el) => el.getBoundingClientRect().height,
+    // 测量后把高度写入模块级缓存:卸载再滚回的行可复现真实高度,不再估值跳变。
+    measureElement: (el) => {
+      const h = el.getBoundingClientRect().height;
+      const item = renderItems[Number(el.dataset.index)];
+      const key = rowKey(item);
+      if (key && h > 0) measuredHeights.set(key, h);
+      return h;
+    },
   });
 
   const totalSize = virtualizer.getTotalSize();

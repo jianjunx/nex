@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { EditorView } from "@codemirror/view";
 import { oneDark } from "@codemirror/theme-one-dark";
 import type { Extension } from "@codemirror/state";
@@ -53,12 +53,32 @@ function themeFor(appTheme: "light" | "dark"): Extension {
   return appTheme === "dark" ? [oneDark, threadDiffLayout] : threadDiffLight;
 }
 
+/**
+ * diff 槽实测高缓存(模块级):就绪后实测写入,占位命中即复现 →
+ * 回看该卡时占位与就绪同高,虚拟器零尺寸变化。键由调用方传入(会话条目级唯一)。
+ */
+const diffHeights = new Map<string, number>();
+
+/** 按 diff 行数预估就绪高度:首次揭示无缓存时贴近 CM 自然高度,压低占位↔就绪首跳。封顶 320(外层 max-h-[350px] 减去路径头/内边距)。 */
+export function estimateDiffHeight(oldText?: string, newText?: string): number {
+  const LINE_PX = 18;
+  const MAX = 320;
+  const FLOOR = 48;
+  const lines = Math.max(
+    oldText ? oldText.split("\n").length : 0,
+    newText ? newText.split("\n").length : 0,
+  );
+  return Math.min(MAX, Math.max(FLOOR, lines * LINE_PX));
+}
+
 /** 对话面板内嵌的只读文件编辑 diff：按路径语言上色 + unified merge。 */
 export function ThreadDiffBlock({
+  cacheKey,
   path,
   oldText,
   newText,
 }: {
+  cacheKey: string;
   path?: string;
   oldText?: string;
   newText?: string;
@@ -86,6 +106,18 @@ export function ThreadDiffBlock({
     return () => clearTimeout(t);
   }, []);
 
+  // 就绪且 CM 布局完成后,把槽(不含路径头)实测高写入缓存:回看时占位即可复现该高度。
+  const slotRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (ready && slotRef.current) {
+      const h = slotRef.current.getBoundingClientRect().height;
+      if (h > 0) diffHeights.set(cacheKey, h);
+    }
+  }, [ready, cacheKey]);
+
+  // 占位高度:命中缓存复现就绪高度(回看零跳);否则按行数预估(首次揭示贴近自然高度)。
+  const placeholderH = diffHeights.get(cacheKey) ?? estimateDiffHeight(oldText, newText);
+
   return (
     <div className="rounded bg-[var(--glass-2-surface)] overflow-hidden">
       {path ? (
@@ -93,21 +125,20 @@ export function ThreadDiffBlock({
           {path}
         </div>
       ) : null}
-      {ready ? (
-        // 不传 maxHeight:卡片外层 max-h-[350px] 作唯一滚动容器,diff 自动撑高后被其封顶,
-        // 避免 DiffView 内部 .cm-scroller 再起一条滚动条(双滚动条)。
-        <DiffView
-          payload={payload}
-          theme={theme}
-          extensions={extensions}
-          height="auto"
-        />
-      ) : (
-        // 占位顶满 edit 内容区封顶高度(350):使「占位帧」与「就绪帧」行高恒等(均被
-        // 外层 max-h-[350px] 封顶),measureElement 在延迟挂载前后测得同高,虚拟器零尺寸
-        // 变化 → 消除上滚抖动;同时快速滚过的行仍不会触发昂贵的 merge 计算。
-        <div style={{ minHeight: 350 }} aria-hidden="true" />
-      )}
+      <div ref={slotRef}>
+        {ready ? (
+          // 不传 maxHeight:卡片外层 max-h-[350px] 作唯一滚动容器,diff 自动撑高后被其封顶,
+          // 避免 DiffView 内部 .cm-scroller 再起一条滚动条(双滚动条)。
+          <DiffView
+            payload={payload}
+            theme={theme}
+            extensions={extensions}
+            height="auto"
+          />
+        ) : (
+          <div style={{ minHeight: placeholderH }} aria-hidden="true" />
+        )}
+      </div>
     </div>
   );
 }

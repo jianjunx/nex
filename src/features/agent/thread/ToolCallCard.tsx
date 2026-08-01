@@ -54,6 +54,7 @@ export function ToolCallCard({
             c.type === "diff" ? (
               <ThreadDiffBlock
                 key={i}
+                cacheKey={`${entry.id}:${i}`}
                 path={c.path}
                 oldText={c.oldText}
                 newText={c.newText}

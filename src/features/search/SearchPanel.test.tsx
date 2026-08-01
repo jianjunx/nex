@@ -153,11 +153,21 @@ describe("stats bar & toolbar", () => {
     expect(fsState.search).toHaveBeenCalledWith("/proj", "foo");
   });
 
-  it("renders a disabled glob filter placeholder (v1 预留位)", () => {
+  it("replace row is collapsed by default and expands on toggle", () => {
     render(<SearchPanel />);
-    const filter = screen.getByPlaceholderText(/要包含的文件/) as HTMLInputElement;
-    expect(filter.disabled).toBe(true);
-    expect(filter.getAttribute("title")).toBe("后续版本支持");
+    expect(screen.queryByLabelText("替换")).toBeNull();
+    fireEvent.click(screen.getByLabelText("展开替换"));
+    expect(screen.getByLabelText("替换")).toBeTruthy();
+    expect(screen.getByPlaceholderText("替换…")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("折叠替换"));
+    expect(screen.queryByLabelText("替换")).toBeNull();
+  });
+
+  it("search input placeholder describes what to type", () => {
+    render(<SearchPanel />);
+    expect((screen.getByLabelText("搜索") as HTMLInputElement).placeholder).toBe(
+      "输入关键词搜索文件名与内容。",
+    );
   });
 });
 

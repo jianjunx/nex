@@ -70,6 +70,7 @@ afterEach(() => {
 
 function fillQueryAndReplacement() {
   render(<SearchPanel />);
+  fireEvent.click(screen.getByLabelText("展开替换"));
   fireEvent.change(screen.getByLabelText("搜索"), { target: { value: "foo" } });
   fireEvent.change(screen.getByLabelText("替换"), { target: { value: "bar" } });
 }
@@ -116,12 +117,14 @@ describe("replace-all flow", () => {
 
   it("replace-all is disabled without a query", () => {
     render(<SearchPanel />);
+    fireEvent.click(screen.getByLabelText("展开替换"));
     expect((screen.getByRole("button", { name: "替换全部" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("explains the stale-banner behavior under the replace row", () => {
+  it("replace row stays hidden until expanded", () => {
     render(<SearchPanel />);
-    expect(screen.getByText("已打开的未保存文件会标记为过期")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "替换全部" })).toBeNull();
+    expect(screen.queryByText("已打开的未保存文件会标记为过期")).toBeNull();
   });
 });
 

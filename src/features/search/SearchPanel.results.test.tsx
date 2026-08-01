@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 
 type SearchOptions = { caseSensitive: boolean; wholeWord: boolean; regex: boolean };
 type SearchMatch = { path: string; name: string; line: number | null; text: string };
@@ -62,12 +62,17 @@ function renderWithQuery() {
   return utils;
 }
 
+function groupHeaders() {
+  return within(screen.getByTestId("search-result-list"))
+    .getAllByRole("button")
+    .filter((b) => b.hasAttribute("aria-expanded"));
+}
+
 describe("grouped results", () => {
   it("groups by file with name / relative path / count badge", () => {
     const { container } = renderWithQuery();
     // 三个分组：a.ts(2) / b.ts(1) / readme.md(1 名称命中)
-    const headers = screen.getAllByRole("button").filter((b) => b.hasAttribute("aria-expanded"));
-    expect(headers).toHaveLength(3);
+    expect(groupHeaders()).toHaveLength(3);
     expect(screen.getByText("src/a.ts")).toBeTruthy();
     const badges = [...container.querySelectorAll("[data-count-badge]")].map((n) => n.textContent);
     expect(badges).toEqual(["2", "1", "1"]);
@@ -82,9 +87,7 @@ describe("grouped results", () => {
 
   it("collapses and expands a group via its header", () => {
     renderWithQuery();
-    const header = screen.getAllByRole("button").find(
-      (b) => b.hasAttribute("aria-expanded") && b.textContent?.includes("a.ts"),
-    )!;
+    const header = groupHeaders().find((b) => b.textContent?.includes("a.ts"))!;
     expect(header.getAttribute("aria-expanded")).toBe("true");
     fireEvent.click(header);
     expect(header.getAttribute("aria-expanded")).toBe("false");
@@ -95,10 +98,9 @@ describe("grouped results", () => {
   it("collapse-all / expand-all toolbar buttons toggle every group", () => {
     renderWithQuery();
     fireEvent.click(screen.getByTitle("折叠全部"));
-    const headers = () => screen.getAllByRole("button").filter((b) => b.hasAttribute("aria-expanded"));
-    expect(headers().every((h) => h.getAttribute("aria-expanded") === "false")).toBe(true);
+    expect(groupHeaders().every((h) => h.getAttribute("aria-expanded") === "false")).toBe(true);
     fireEvent.click(screen.getByTitle("展开全部"));
-    expect(headers().every((h) => h.getAttribute("aria-expanded") === "true")).toBe(true);
+    expect(groupHeaders().every((h) => h.getAttribute("aria-expanded") === "true")).toBe(true);
   });
 
   it("clicking a content row opens the file at that line", () => {

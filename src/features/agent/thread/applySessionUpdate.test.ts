@@ -96,4 +96,84 @@ describe("applySessionUpdate", () => {
       expect(entries[0].permissionRequestId).toBe("req-1");
     }
   });
+
+  it("starts a new assistant bubble after a later user message (does not prepend above it)", () => {
+    const entries: ThreadEntry[] = [
+      {
+        id: "u1",
+        kind: "user_message",
+        text: "first",
+        timestamp: 1,
+      },
+      {
+        id: "a1",
+        kind: "assistant_message",
+        timestamp: 2,
+        chunks: [{ type: "message", text: "reply-1" }],
+      },
+      {
+        id: "u2",
+        kind: "user_message",
+        text: "second",
+        timestamp: 3,
+      },
+    ];
+    const meta = emptySessionMeta();
+    applySessionUpdate(entries, meta, {
+      sessionUpdate: "agent_thought_chunk",
+      content: { type: "text", text: "thinking-2" },
+    });
+    applySessionUpdate(entries, meta, {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "reply-2" },
+    });
+
+    expect(entries.map((e) => e.kind)).toEqual([
+      "user_message",
+      "assistant_message",
+      "user_message",
+      "assistant_message",
+    ]);
+    if (entries[1].kind === "assistant_message") {
+      expect(entries[1].chunks).toEqual([{ type: "message", text: "reply-1" }]);
+    }
+    if (entries[3].kind === "assistant_message") {
+      expect(entries[3].chunks).toEqual([
+        { type: "thought", text: "thinking-2" },
+        { type: "message", text: "reply-2" },
+      ]);
+    }
+  });
+
+  it("starts a new assistant bubble after tool calls (completion appears below tools)", () => {
+    const entries: ThreadEntry[] = [];
+    const meta = emptySessionMeta();
+    applySessionUpdate(entries, meta, {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "先改搜索面板。" },
+    });
+    applySessionUpdate(entries, meta, {
+      sessionUpdate: "tool_call",
+      toolCallId: "t1",
+      title: "Edit SearchPanel",
+      kind: "edit",
+      status: "completed",
+    });
+    applySessionUpdate(entries, meta, {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "已按你的要求改完。" },
+    });
+
+    expect(entries.map((e) => e.kind)).toEqual([
+      "assistant_message",
+      "tool_call",
+      "assistant_message",
+    ]);
+    if (entries[0].kind === "assistant_message") {
+      expect(entries[0].chunks).toEqual([{ type: "message", text: "先改搜索面板。" }]);
+    }
+    if (entries[2].kind === "assistant_message") {
+      expect(entries[2].chunks).toEqual([{ type: "message", text: "已按你的要求改完。" }]);
+    }
+  });
 });

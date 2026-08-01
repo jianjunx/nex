@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { ChevronRight, ChevronsDownUp, ChevronsUpDown, FileCode, Loader2, RefreshCw, Replace, Search, X } from "lucide-react";
+import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, FileCode, Loader2, RefreshCw, Replace, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -72,6 +72,7 @@ function Highlighted({ text, ranges }: { text: string; ranges: MatchRange[] }) {
 export function SearchPanel() {
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [showReplace, setShowReplace] = useState(false);
   const [replacement, setReplacement] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -252,15 +253,25 @@ export function SearchPanel() {
         </Button>
       </div>
 
-      {/* 搜索行 + 三枚匹配规则开关 */}
+      {/* 搜索行 + 展开替换 + 三枚匹配规则开关 */}
       <div className="py-2 px-1">
         <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            title={showReplace ? "折叠替换" : "展开替换"}
+            aria-expanded={showReplace}
+            aria-label={showReplace ? "折叠替换" : "展开替换"}
+            onClick={() => setShowReplace((v) => !v)}
+          >
+            {showReplace ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+          </Button>
           <Input
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleSearchKeyDown}
-            placeholder="搜索…"
+            placeholder="输入关键词搜索文件名与内容。"
             aria-label="搜索"
             className={inlineError ? "border-[var(--error)] focus-visible:ring-[var(--error)]" : ""}
           />
@@ -291,38 +302,28 @@ export function SearchPanel() {
         )}
       </div>
 
-      {/* 替换行 */}
-      <div className="px-1 pb-1">
-        <div className="flex items-center gap-1">
-          <Input
-            value={replacement}
-            onChange={(e) => setReplacement(e.target.value)}
-            placeholder="替换…（正则模式支持 $1 / ${name}）"
-            aria-label="替换"
-          />
-          <Button
-            size="sm"
-            variant="ghost"
-            title="替换全部"
-            disabled={replacing || !query.trim() || !!inlineError}
-            onClick={() => void startReplaceAll()}
-          >
-            替换全部
-          </Button>
+      {/* 替换行：默认折叠，由搜索行左侧箭头展开 */}
+      {showReplace && (
+        <div className="px-1 pb-2 pl-7">
+          <div className="flex items-center gap-1">
+            <Input
+              value={replacement}
+              onChange={(e) => setReplacement(e.target.value)}
+              placeholder="替换…"
+              aria-label="替换"
+            />
+            <Button
+              size="sm"
+              variant="ghost"
+              title="替换全部"
+              disabled={replacing || !query.trim() || !!inlineError}
+              onClick={() => void startReplaceAll()}
+            >
+              替换全部
+            </Button>
+          </div>
         </div>
-        <p className="mt-1 px-1 text-[11px] text-[var(--text-tertiary)]">已打开的未保存文件会标记为过期</p>
-      </div>
-
-      {/* 可选过滤行预留位（glob，v1 不接后端） */}
-      <div className="px-1 pb-2">
-        <Input
-          disabled
-          placeholder="要包含的文件（glob）— 后续版本支持"
-          title="后续版本支持"
-          aria-label="文件过滤"
-          className="opacity-60"
-        />
-      </div>
+      )}
 
       {/* 统计条 */}
       {query.trim() && !regexError && (
@@ -344,11 +345,7 @@ export function SearchPanel() {
       <div className="flex-1 overflow-y-auto pb-4 px-1">
         {!project ? (
           <p className="text-sm text-[var(--text-tertiary)] px-2 py-1">打开项目后即可搜索。</p>
-        ) : !query.trim() ? (
-          <p className="flex items-center gap-2 text-sm text-[var(--text-tertiary)] px-2 py-1">
-            <Search size={14} /> 输入关键词搜索文件名与内容。
-          </p>
-        ) : searchResults.length === 0 && !searching ? (
+        ) : !query.trim() ? null : searchResults.length === 0 && !searching ? (
           <p className="text-sm text-[var(--text-tertiary)] px-2 py-1">无结果。</p>
         ) : (
           <div data-testid="search-result-list">

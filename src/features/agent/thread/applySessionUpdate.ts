@@ -79,12 +79,10 @@ function mapPlanEntries(raw: unknown): PlanEntry[] {
     }));
 }
 
+/** Only continue the trailing assistant bubble; anything after it (tools, user, …) starts a new one. */
 function lastAssistant(entries: ThreadEntry[]): AssistantMessageEntry | null {
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const e = entries[i];
-    if (e.kind === "assistant_message") return e;
-  }
-  return null;
+  const last = entries[entries.length - 1];
+  return last?.kind === "assistant_message" ? last : null;
 }
 
 function findTool(entries: ThreadEntry[], toolCallId: string): ToolCallEntry | null {

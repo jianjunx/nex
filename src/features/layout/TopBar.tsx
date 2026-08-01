@@ -113,9 +113,10 @@ export function TopBar() {
       </Button>
 
       {/* Conversation tabs */}
-      <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-x-auto">
+      <div className="relative flex-1 min-w-0">
+        <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none">
         {openTabs.length === 0 ? (
-          <span className="text-xs text-[var(--text-tertiary)] px-2">No conversations</span>
+          <span className="text-xs text-[var(--text-tertiary)] px-2">暂无会话</span>
         ) : (
           <Tabs value={activeTabId ?? ""} onValueChange={switchTab} className="min-w-0">
             <TabsList variant="line" className={`h-8 gap-1 ${isMac ? "h-8" : "h-8"}`}>
@@ -125,7 +126,7 @@ export function TopBar() {
                   <TabsTrigger
                     key={tabId}
                     value={tabId}
-                    className={`${isMac ? "h-7 text-xs " : ""}flex-none gap-2 rounded-[var(--radius-sm)] px-2.5 font-normal text-[var(--text-secondary)] transition-colors duration-150 hover:text-[var(--text-primary)] data-[state=active]:bg-[var(--glass-2-surface)] data-[state=active]:text-[var(--text-primary)] data-[state=active]:shadow-[inset_0_-2px_0_0_var(--accent)] group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-0`}
+                    className={`${isMac ? "h-7 text-xs " : ""}flex-none gap-2 rounded-[var(--radius-md)] border border-transparent px-2.5 font-normal text-[var(--text-secondary)] transition-all duration-150 hover:-translate-y-px hover:border-[color:var(--border-subtle)] group-data-[variant=line]/tabs-list:hover:bg-[var(--overlay-hover)] hover:text-[var(--text-primary)] data-[state=active]:hover:translate-y-0 group-data-[variant=line]/tabs-list:data-[state=active]:bg-[var(--glass-2-surface)] group-data-[variant=line]/tabs-list:data-[state=active]:border-[color:var(--border-default)] dark:group-data-[variant=line]/tabs-list:data-[state=active]:bg-[var(--glass-2-surface)] dark:group-data-[variant=line]/tabs-list:data-[state=active]:border-[color:var(--border-default)] group-data-[variant=line]/tabs-list:data-[state=active]:text-[var(--text-primary)] group-data-[variant=line]/tabs-list:data-[state=active]:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] before:absolute before:left-0 before:top-1/4 before:bottom-1/4 before:w-0 before:rounded before:bg-[var(--accent)] before:opacity-0 before:transition-all before:duration-150 group-data-[variant=line]/tabs-list:data-[state=active]:before:w-0.5 group-data-[variant=line]/tabs-list:data-[state=active]:before:opacity-100 group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-0`}
                   >
                     {status && status !== "idle" && (
                       <span
@@ -164,6 +165,10 @@ export function TopBar() {
             </TabsList>
           </Tabs>
         )}
+        </div>
+        {/* 溢出渐隐遮罩：常驻（v1 不做滚动位置感知，YAGNI）。起始色＝TopBar 玻璃底。 */}
+        <div className="pointer-events-none absolute inset-y-0 left-0 w-6 bg-gradient-to-r from-[var(--glass-1-surface)] to-transparent" />
+        <div className="pointer-events-none absolute inset-y-0 right-0 w-6 bg-gradient-to-l from-[var(--glass-1-surface)] to-transparent" />
       </div>
 
       {/* Panel toggle */}

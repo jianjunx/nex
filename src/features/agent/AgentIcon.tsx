@@ -27,18 +27,25 @@ function agentColor(agentType: string): string {
   }
 }
 
+/** Idle state: light muted gray, visible on both light & dark backgrounds. */
+const IDLE_COLOR = "#9ca3af";
+
 /**
  * Renders a small agent logo icon for use in session tabs.
  *
- * - Always shows the agent icon (even when idle).
- * - When `status === "running"`, the icon pulses/glows as the "running" indicator.
- * - When `status === "waiting"`, the icon uses a muted/warning tint.
+ * - Idle: muted gray (subtle, doesn't compete with title text).
+ * - Running: brand color + glow + pulse as the "running" indicator.
+ * - Waiting: warning color.
  */
-export function AgentIcon({ agentType, status, size = 14 }: AgentIconProps) {
+export function AgentIcon({ agentType, status, size = 12 }: AgentIconProps) {
   const isRunning = status === "running";
   const isWaiting = status === "waiting";
 
-  const color = isWaiting ? "var(--warning)" : agentColor(agentType);
+  const color = isRunning
+    ? agentColor(agentType)
+    : isWaiting
+      ? "var(--warning)"
+      : IDLE_COLOR;
   const filter = isRunning ? `drop-shadow(0 0 2.5px ${color})` : undefined;
 
   switch (agentType) {

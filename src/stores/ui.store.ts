@@ -36,6 +36,8 @@ interface UiState {
 
   toggleSidePanel: () => void;
   setSidePanelTab: (tab: SidePanelTab) => void;
+  /** 点亮态再点同一图标则收起；否则切换 tab 并展开面板。 */
+  toggleSidePanelTab: (tab: SidePanelTab) => void;
   toggleTerminal: () => void;
   setSidePanelWidth: (w: number) => void;
   setTerminalHeight: (h: number) => void;
@@ -70,6 +72,14 @@ export const useUiStore = create<UiState>()(
 
       toggleSidePanel: () => set((s) => { s.sidePanelVisible = !s.sidePanelVisible; }),
       setSidePanelTab: (tab) => set((s) => { s.sidePanelTab = tab; s.sidePanelVisible = true; }),
+      toggleSidePanelTab: (tab) => set((s) => {
+        if (s.sidePanelVisible && s.sidePanelTab === tab) {
+          s.sidePanelVisible = false;
+        } else {
+          s.sidePanelTab = tab;
+          s.sidePanelVisible = true;
+        }
+      }),
       toggleTerminal: () => set((s) => {
         s.terminalVisible = !s.terminalVisible;
         // The terminal tray lives INSIDE the side panel; turning it on while

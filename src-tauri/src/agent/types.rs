@@ -51,6 +51,12 @@ pub struct AgentSessionTerminated {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PromptBlock {
     Text { text: String },
+    Image {
+        data: String,
+        mime_type: String,
+        #[serde(default)]
+        uri: Option<String>,
+    },
     Resource {
         uri: String,
         #[serde(default)]

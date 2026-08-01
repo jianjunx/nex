@@ -36,9 +36,15 @@ export interface ThreadEntryBase {
   timestamp: number;
 }
 
+export interface UserMessageImage {
+  mimeType: string;
+  data: string;
+}
+
 export interface UserMessageEntry extends ThreadEntryBase {
   kind: "user_message";
   text: string;
+  images?: UserMessageImage[];
 }
 
 export interface AssistantMessageEntry extends ThreadEntryBase {

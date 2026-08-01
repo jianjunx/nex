@@ -119,6 +119,15 @@ fn prompt_blocks_to_acp(blocks: Vec<PromptBlock>) -> Vec<acp::ContentBlock> {
         .into_iter()
         .map(|b| match b {
             PromptBlock::Text { text } => acp::ContentBlock::from(text),
+            PromptBlock::Image { data, mime_type, uri } => acp::ContentBlock::Image(
+                acp::ImageContent {
+                    annotations: None,
+                    data,
+                    mime_type,
+                    uri,
+                    meta: None,
+                },
+            ),
             PromptBlock::Resource { uri, mime_type, text } => acp::ContentBlock::Resource(
                 acp::EmbeddedResource {
                     annotations: None,

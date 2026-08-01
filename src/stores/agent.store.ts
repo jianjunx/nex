@@ -55,7 +55,11 @@ interface AgentStore {
   removeSession: (conversationId: string) => Promise<void>;
   /** Replace in-memory thread with hydrated history (used on cold restore). */
   hydrateEntries: (conversationId: string, entries: ThreadEntry[]) => void;
-  appendUserMessage: (conversationId: string, text: string) => void;
+  appendUserMessage: (
+    conversationId: string,
+    text: string,
+    images?: { mimeType: string; data: string }[],
+  ) => void;
   sendPrompt: (sessionId: string, blocks: PromptBlock[]) => Promise<void>;
   cancel: (sessionId: string) => Promise<void>;
   respondPermission: (requestId: string, optionId: string | null) => Promise<void>;
@@ -219,17 +223,23 @@ export const useAgentStore = create<AgentStore>()(
       });
     },
 
-    appendUserMessage: (conversationId, text) => {
+    appendUserMessage: (conversationId, text, images) => {
       set((s) => {
         if (!s.entriesByConversation[conversationId]) s.entriesByConversation[conversationId] = [];
         s.entriesByConversation[conversationId].push({
           id: crypto.randomUUID(),
           kind: "user_message",
           text,
+          ...(images && images.length > 0 ? { images } : {}),
           timestamp: Date.now(),
         });
       });
-      void useConversationStore.getState().persistMessage(conversationId, "user", text);
+      const persistText =
+        text.trim() ||
+        (images && images.length > 0 ? `[图片 ×${images.length}]` : "");
+      if (persistText) {
+        void useConversationStore.getState().persistMessage(conversationId, "user", persistText);
+      }
     },
 
     sendPrompt: async (sessionId, blocks) => {

@@ -9,26 +9,37 @@ const tabs: { id: SidePanelTab; icon: typeof FolderTree; label: string }[] = [
 ];
 
 export function IconBar() {
-  const { sidePanelTab, setSidePanelTab, terminalVisible, toggleTerminal, settingsOpen, openSettings } = useUiStore();
+  const {
+    sidePanelTab,
+    sidePanelVisible,
+    toggleSidePanelTab,
+    terminalVisible,
+    toggleTerminal,
+    settingsOpen,
+    openSettings,
+  } = useUiStore();
 
   return (
     <div className="flex flex-col items-center py-3 gap-1.5 w-12 border-l border-[color:var(--border-subtle)] bg-[var(--glass-1-surface)] mr-1.5 rounded-l-[var(--radius-md)]">
-      {tabs.map(({ id, icon: Icon, label }) => (
-        <Button
-          key={id}
-          variant="ghost"
-          size="icon-sm"
-          title={label}
-          onClick={() => setSidePanelTab(id)}
-          className={`transition-colors duration-150 ${
-            sidePanelTab === id
-              ? "bg-[var(--accent)]/15 text-[var(--accent)]"
-              : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
-          }`}
-        >
-          <Icon size={16} />
-        </Button>
-      ))}
+      {tabs.map(({ id, icon: Icon, label }) => {
+        const active = sidePanelVisible && sidePanelTab === id;
+        return (
+          <Button
+            key={id}
+            variant="ghost"
+            size="icon-sm"
+            title={label}
+            onClick={() => toggleSidePanelTab(id)}
+            className={`transition-colors duration-150 ${
+              active
+                ? "bg-[var(--accent)]/15 text-[var(--accent)]"
+                : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+            }`}
+          >
+            <Icon size={16} />
+          </Button>
+        );
+      })}
       <div className="flex-1" />
       <Button
         variant="ghost"

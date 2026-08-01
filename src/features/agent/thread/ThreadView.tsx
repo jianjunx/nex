@@ -36,8 +36,20 @@ function EntryView({ entry }: { entry: ThreadEntry }) {
           <Card
             className="max-w-[80%] gap-0 px-4 py-2 text-sm shadow-none bg-[var(--accent)]/15 border-[color:var(--accent)]/25"
           >
-            <CardContent className="px-0">
-              <p className="whitespace-pre-wrap">{entry.text}</p>
+            <CardContent className="px-0 space-y-2">
+              {entry.images && entry.images.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {entry.images.map((img, i) => (
+                    <img
+                      key={i}
+                      src={`data:${img.mimeType};base64,${img.data}`}
+                      alt=""
+                      className="max-h-48 max-w-full rounded-[var(--radius-sm)] object-contain"
+                    />
+                  ))}
+                </div>
+              )}
+              {entry.text ? <p className="whitespace-pre-wrap">{entry.text}</p> : null}
             </CardContent>
           </Card>
         </div>

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, type KeyboardEvent } from "react";
+import { useState, useRef, useEffect, useCallback, type ClipboardEvent, type KeyboardEvent } from "react";
 import { Send, Square, X, AtSign, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -21,14 +21,24 @@ interface FileMention {
   name: string;
 }
 
+interface PendingImage {
+  id: string;
+  mimeType: string;
+  data: string;
+  previewUrl: string;
+}
+
 export function AgentComposer() {
   const [text, setText] = useState("");
   const [mentions, setMentions] = useState<FileMention[]>([]);
+  const [images, setImages] = useState<PendingImage[]>([]);
   const [slashOpen, setSlashOpen] = useState(false);
   const [atOpen, setAtOpen] = useState(false);
   const [atQuery, setAtQuery] = useState("");
   const [atResults, setAtResults] = useState<SearchMatch[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const imagesRef = useRef(images);
+  imagesRef.current = images;
 
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const projects = useProjectStore((s) => s.projects);
@@ -53,6 +63,41 @@ export function AgentComposer() {
     selectProjectConversations(s, activeProjectId),
   );
   const activeConversation = conversations.find((c) => c.id === activeTabId) ?? null;
+  const canSend = (!!text.trim() || images.length > 0) && !!activeTabId && !isStarting;
+
+  // Revoke leftover object URLs on unmount.
+  useEffect(() => {
+    return () => {
+      for (const img of imagesRef.current) URL.revokeObjectURL(img.previewUrl);
+    };
+  }, []);
+
+  const removeImage = useCallback((id: string) => {
+    setImages((prev) => {
+      const target = prev.find((x) => x.id === id);
+      if (target) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((x) => x.id !== id);
+    });
+  }, []);
+
+  const addImageFiles = useCallback(async (files: File[]) => {
+    const next: PendingImage[] = [];
+    for (const file of files) {
+      if (!file.type.startsWith("image/")) continue;
+      try {
+        const data = await fileToBase64(file);
+        next.push({
+          id: crypto.randomUUID(),
+          mimeType: file.type || "image/png",
+          data,
+          previewUrl: URL.createObjectURL(file),
+        });
+      } catch {
+        /* skip unreadable clipboard blobs */
+      }
+    }
+    if (next.length > 0) setImages((prev) => [...prev, ...next]);
+  }, []);
 
   /** After restart, tabs restore without a live ACP process — spawn on first send. */
   const ensureLiveSession = async (): Promise<string | null> => {
@@ -129,22 +174,36 @@ export function AgentComposer() {
   });
 
   const handleSend = async () => {
-    if (!text.trim() || !activeTabId || isStarting) return;
+    if ((!text.trim() && images.length === 0) || !activeTabId || isStarting) return;
     const content = text;
     const fileMentions = [...mentions];
+    const pendingImages = [...images];
     setText("");
     setMentions([]);
+    setImages([]);
+    for (const img of pendingImages) URL.revokeObjectURL(img.previewUrl);
     setSlashOpen(false);
     setAtOpen(false);
     requestAnimationFrame(adjustHeight);
 
-    appendUserMessage(activeTabId, content);
-    autoTitleFromFirstMessage(activeTabId, content);
+    const threadImages = pendingImages.map((img) => ({
+      mimeType: img.mimeType,
+      data: img.data,
+    }));
+    appendUserMessage(activeTabId, content, threadImages);
+    autoTitleFromFirstMessage(
+      activeTabId,
+      content.trim() || (threadImages.length > 0 ? "图片" : content),
+    );
 
     const sessionId = await ensureLiveSession();
     if (!sessionId) return;
 
-    const blocks: PromptBlock[] = [{ type: "text", text: content }];
+    const blocks: PromptBlock[] = [];
+    if (content.trim()) blocks.push({ type: "text", text: content });
+    for (const img of pendingImages) {
+      blocks.push({ type: "image", data: img.data, mime_type: img.mimeType });
+    }
     for (const m of fileMentions) {
       try {
         const file = await fsReadFile(m.path);
@@ -162,7 +221,27 @@ export function AgentComposer() {
         blocks.push({ type: "resource_link", uri: pathToFileUri(m.path), name: m.name });
       }
     }
+    if (blocks.length === 0) return;
     await sendPrompt(sessionId, blocks);
+  };
+
+  const handlePaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const dt = e.clipboardData;
+    if (!dt) return;
+    const imageFiles: File[] = [];
+    for (const item of Array.from(dt.items ?? [])) {
+      if (!item.type.startsWith("image/")) continue;
+      const file = item.getAsFile();
+      if (file) imageFiles.push(file);
+    }
+    if (imageFiles.length === 0) {
+      for (const file of Array.from(dt.files ?? [])) {
+        if (file.type.startsWith("image/")) imageFiles.push(file);
+      }
+    }
+    if (imageFiles.length === 0) return;
+    e.preventDefault();
+    void addImageFiles(imageFiles);
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -249,7 +328,7 @@ export function AgentComposer() {
           </div>
         )}
 
-        {mentions.length > 0 && (
+        {(mentions.length > 0 || images.length > 0) && (
           <div className="flex flex-wrap gap-1.5 mb-2">
             {mentions.map((m) => (
               <span
@@ -259,6 +338,22 @@ export function AgentComposer() {
                 <AtSign size={10} />
                 {m.name}
                 <button type="button" onClick={() => setMentions((prev) => prev.filter((x) => x.path !== m.path))}>
+                  <X size={10} />
+                </button>
+              </span>
+            ))}
+            {images.map((img) => (
+              <span
+                key={img.id}
+                className="relative inline-flex rounded-[var(--radius-sm)] border border-[color:var(--border-subtle)] overflow-hidden"
+              >
+                <img src={img.previewUrl} alt="" className="h-14 w-14 object-cover" />
+                <button
+                  type="button"
+                  className="absolute top-0.5 right-0.5 rounded-full bg-black/55 text-white p-0.5"
+                  onClick={() => removeImage(img.id)}
+                  title="移除图片"
+                >
                   <X size={10} />
                 </button>
               </span>
@@ -288,11 +383,12 @@ export function AgentComposer() {
             value={text}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             placeholder={
               isStarting
                 ? "Agent starting…"
                 : activeTabId
-                  ? "Send a message…  / commands  @ files"
+                  ? "Send a message…  / commands  @ files  粘贴图片"
                   : "Start a conversation to chat"
             }
             className="flex-1 min-h-0 border-0 bg-transparent p-1 shadow-none rounded-none text-sm font-normal leading-[21px] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] resize-none overflow-y-auto focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
@@ -377,7 +473,7 @@ export function AgentComposer() {
                 <Button
                   variant="default"
                   size="icon-sm"
-                  disabled={!text.trim() || !activeTabId || isStarting}
+                  disabled={!canSend}
                   onClick={() => void handleSend()}
                   title="Send"
                   className="rounded-full"
@@ -397,4 +493,21 @@ function pathToFileUri(path: string): string {
   const normalized = path.replace(/\\/g, "/");
   if (/^[a-zA-Z]:/.test(normalized)) return `file:///${normalized}`;
   return `file://${normalized}`;
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== "string") {
+        reject(new Error("unexpected FileReader result"));
+        return;
+      }
+      const comma = result.indexOf(",");
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("read failed"));
+    reader.readAsDataURL(file);
+  });
 }

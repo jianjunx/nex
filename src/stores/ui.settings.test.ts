@@ -44,3 +44,28 @@ describe("search focus request counter", () => {
     expect(useUiStore.getState().searchFocusRequest).toBe(before + 2);
   });
 });
+
+describe("toggleSidePanelTab", () => {
+  it("opens the panel and selects the tab when hidden", () => {
+    useUiStore.setState({ sidePanelTab: "files", sidePanelVisible: false });
+    useUiStore.getState().toggleSidePanelTab("git");
+    const s = useUiStore.getState();
+    expect(s.sidePanelTab).toBe("git");
+    expect(s.sidePanelVisible).toBe(true);
+  });
+
+  it("switches tab while keeping the panel open", () => {
+    useUiStore.setState({ sidePanelTab: "files", sidePanelVisible: true });
+    useUiStore.getState().toggleSidePanelTab("search");
+    const s = useUiStore.getState();
+    expect(s.sidePanelTab).toBe("search");
+    expect(s.sidePanelVisible).toBe(true);
+  });
+
+  it("collapses the panel when clicking the active tab again", () => {
+    useUiStore.setState({ sidePanelTab: "git", sidePanelVisible: true });
+    useUiStore.getState().toggleSidePanelTab("git");
+    expect(useUiStore.getState().sidePanelVisible).toBe(false);
+    expect(useUiStore.getState().sidePanelTab).toBe("git");
+  });
+});

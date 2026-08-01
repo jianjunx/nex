@@ -3,6 +3,7 @@
  */
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Mock } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 // TopBar 触碰 Tauri 窗口 API 与重子组件；全部打桩。NewConversationDropdown
@@ -29,13 +30,20 @@ import { useProjectStore } from "../../stores/project.store";
 import { useConversationStore } from "../../stores/conversation.store";
 import { useAgentStore } from "../../stores/agent.store";
 import { useUiStore } from "../../stores/ui.store";
-import type { Conversation, ServerDescriptor } from "../../bridge/tauri";
+import type { Conversation, ServerDescriptor, SessionTarget } from "../../bridge/tauri";
+
+// mock 函数类型与真 store 的动作签名逐一对齐（tsc -b 门槛要求 setState
+// 注入时 Mock<T> 可赋给具体动作类型）。
+type CreateConversationFn = (projectId: string, agentType: string) => Promise<Conversation>;
+type CreateSessionFn = (conversationId: string, target: SessionTarget, cwd: string) => Promise<string>;
+type LoadAllServersFn = () => Promise<void>;
+type RefreshRegistryFn = () => Promise<void>;
 
 // 模块级可变 let 持有 mock action，beforeEach 经 setState 注入真 store。
-let createConversationMock: ReturnType<typeof vi.fn>;
-let createSessionMock: ReturnType<typeof vi.fn>;
-let loadAllServersMock: ReturnType<typeof vi.fn>;
-let refreshRegistryMock: ReturnType<typeof vi.fn>;
+let createConversationMock: Mock<CreateConversationFn>;
+let createSessionMock: Mock<CreateSessionFn>;
+let loadAllServersMock: Mock<LoadAllServersFn>;
+let refreshRegistryMock: Mock<RefreshRegistryFn>;
 
 const SERVER_CLAUDE: ServerDescriptor = {
   id: "claude-code", name: "Claude Code", version: "1.2.3",
@@ -61,10 +69,10 @@ const fakeCreateConversation = async (projectId: string, agentType: string): Pro
 };
 
 beforeEach(() => {
-  createConversationMock = vi.fn().mockImplementation(fakeCreateConversation);
-  createSessionMock = vi.fn().mockResolvedValue("sess-1");
-  loadAllServersMock = vi.fn().mockResolvedValue(undefined);
-  refreshRegistryMock = vi.fn().mockResolvedValue(undefined);
+  createConversationMock = vi.fn<CreateConversationFn>().mockImplementation(fakeCreateConversation);
+  createSessionMock = vi.fn<CreateSessionFn>().mockResolvedValue("sess-1");
+  loadAllServersMock = vi.fn<LoadAllServersFn>().mockResolvedValue(undefined);
+  refreshRegistryMock = vi.fn<RefreshRegistryFn>().mockResolvedValue(undefined);
 
   useUiStore.setState({ newConversationOpen: false });
   useProjectStore.setState({

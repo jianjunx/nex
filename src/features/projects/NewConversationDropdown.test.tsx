@@ -2,6 +2,7 @@
  * @vitest-environment jsdom
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Mock } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { NewConversationDropdown } from "./NewConversationDropdown";
@@ -9,15 +10,23 @@ import { useUiStore } from "../../stores/ui.store";
 import { useAgentStore } from "../../stores/agent.store";
 import { useConversationStore } from "../../stores/conversation.store";
 import { useProjectStore } from "../../stores/project.store";
-import type { Conversation, ServerDescriptor } from "../../bridge/tauri";
+import type { Conversation, ServerDescriptor, SessionTarget } from "../../bridge/tauri";
+
+// mock 函数类型与真 store 的动作签名逐一对齐（tsc -b 门槛要求 setState
+// 注入时 Mock<T> 可赋给具体动作类型）。
+type CreateConversationFn = (projectId: string, agentType: string) => Promise<Conversation>;
+type CreateSessionFn = (conversationId: string, target: SessionTarget, cwd: string) => Promise<string>;
+type CloseTabFn = (id: string) => void;
+type LoadAllServersFn = () => Promise<void>;
+type RefreshRegistryFn = () => Promise<void>;
 
 // 模块级可变 let 持有 mock action，beforeEach 经 setState 注入真 store
 //（约束 4 模式的 zustand 变体：store 实例保持真实，只换动作，数据字段可断言）。
-let createConversationMock: ReturnType<typeof vi.fn>;
-let createSessionMock: ReturnType<typeof vi.fn>;
-let closeTabMock: ReturnType<typeof vi.fn>;
-let loadAllServersMock: ReturnType<typeof vi.fn>;
-let refreshRegistryMock: ReturnType<typeof vi.fn>;
+let createConversationMock: Mock<CreateConversationFn>;
+let createSessionMock: Mock<CreateSessionFn>;
+let closeTabMock: Mock<CloseTabFn>;
+let loadAllServersMock: Mock<LoadAllServersFn>;
+let refreshRegistryMock: Mock<RefreshRegistryFn>;
 
 const realCloseNewConversation = useUiStore.getState().closeNewConversation;
 
@@ -35,11 +44,11 @@ const CONV: Conversation = {
 };
 
 beforeEach(() => {
-  createConversationMock = vi.fn().mockResolvedValue(CONV);
-  createSessionMock = vi.fn().mockResolvedValue("sess-1");
-  closeTabMock = vi.fn();
-  loadAllServersMock = vi.fn().mockResolvedValue(undefined);
-  refreshRegistryMock = vi.fn().mockResolvedValue(undefined);
+  createConversationMock = vi.fn<CreateConversationFn>().mockResolvedValue(CONV);
+  createSessionMock = vi.fn<CreateSessionFn>().mockResolvedValue("sess-1");
+  closeTabMock = vi.fn<CloseTabFn>();
+  loadAllServersMock = vi.fn<LoadAllServersFn>().mockResolvedValue(undefined);
+  refreshRegistryMock = vi.fn<RefreshRegistryFn>().mockResolvedValue(undefined);
 
   useUiStore.setState({
     newConversationOpen: false,

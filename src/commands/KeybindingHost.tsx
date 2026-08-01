@@ -11,10 +11,18 @@ import { useKeybindingsStore } from "../stores/keybindings.store";
 // Commands that must work even while typing (VSCode semantics).
 const ALLOW_IN_INPUT = new Set(["editor.save", "editor.close", "scm.commit"]);
 
+/** Workbench shortcuts still allowed while the integrated terminal is focused. */
+const ALLOW_IN_TERMINAL = new Set(["terminal.toggle"]);
+
 export const INPUT_SELECTOR = "input, textarea, select, [contenteditable=''], [contenteditable='true']";
+export const TERMINAL_SELECTOR = ".xterm, [data-terminal-host]";
 
 export function isInputContext(el: EventTarget | null): boolean {
   return el instanceof HTMLElement ? !!el.closest(INPUT_SELECTOR) : false;
+}
+
+export function isTerminalContext(el: EventTarget | null): boolean {
+  return el instanceof HTMLElement ? !!el.closest(TERMINAL_SELECTOR) : false;
 }
 
 function dialogOpen(): boolean {
@@ -27,6 +35,8 @@ export function KeybindingHost() {
     // Pre-resolve canonical combo -> command each dispatch (cheap; registry is tiny).
     const onKeyDown = (e: KeyboardEvent) => {
       if (isModifierOnly(e)) return;
+      const inTerminal =
+        isTerminalContext(e.target) || isTerminalContext(document.activeElement);
       const inInput = isInputContext(e.target) || isInputContext(document.activeElement);
       const dlg = dialogOpen();
 
@@ -47,9 +57,16 @@ export function KeybindingHost() {
       for (const cmd of cmds) {
         if (comboToCanonical(resolve(cmd.id)) !== canonical) continue;
         if (dlg) continue; // 模态对话框打开时全局键位全部让行（Esc 交给 radix）
-        // 放行条件：命令在白名单，且（带 primary/alt，或键 token 为功能键/非可打印字符）
-        const allowBypass = ALLOW_IN_INPUT.has(cmd.id) && (!isTypingKey || !!combo.primary || !!combo.alt);
-        if (inInput && !allowBypass) continue;
+        // Terminal owns arrow/history/paste keys — only allow a small workbench set.
+        // xterm's helper textarea is also an "input", so terminal checks must win.
+        if (inTerminal) {
+          if (!ALLOW_IN_TERMINAL.has(cmd.id)) continue;
+        } else {
+          // 放行条件：命令在白名单，且（带 primary/alt，或键 token 为功能键/非可打印字符）
+          const allowBypass =
+            ALLOW_IN_INPUT.has(cmd.id) && (!isTypingKey || !!combo.primary || !!combo.alt);
+          if (inInput && !allowBypass) continue;
+        }
         if (cmd.when && !cmd.when()) continue;
         e.preventDefault();
         e.stopImmediatePropagation();

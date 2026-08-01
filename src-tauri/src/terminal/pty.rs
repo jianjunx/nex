@@ -43,6 +43,9 @@ impl TerminalManager {
             None => CommandBuilder::new_default_prog(),
         };
         cmd.cwd(cwd);
+        // So shells recognize CSI arrow sequences for history (↑/↓).
+        cmd.env("TERM", "xterm-256color");
+        cmd.env("COLORTERM", "truecolor");
 
         let child = pair
             .slave

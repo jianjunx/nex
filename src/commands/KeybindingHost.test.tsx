@@ -3,7 +3,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "@testing-library/react";
-import { KeybindingHost, isInputContext } from "./KeybindingHost";
+import { KeybindingHost, isInputContext, isTerminalContext } from "./KeybindingHost";
 
 // Module-level mutable state so individual tests can override bindings (C-1/I-1 cases).
 let bindingOverrides: Record<string, object | null> = {};
@@ -21,6 +21,7 @@ vi.mock("../stores/keybindings.store", () => ({
         if (id === "editor.save") return { primary: true, key: "keys" };
         if (id === "editor.close") return { key: "escape" };
         if (id === "scm.commit") return { primary: true, key: "enter" };
+        if (id === "terminal.toggle") return { primary: true, key: "`" };
         return null;
       },
     }),
@@ -31,6 +32,7 @@ const toggle = vi.fn();
 const save = vi.fn();
 const close = vi.fn();
 const scmCommit = vi.fn();
+const terminalToggle = vi.fn();
 vi.mock("../commands/registry", () => ({
   listCommands: () => [
     { id: "view.toggleSidebar", title: "t", category: "c", defaultKey: null, run: toggle },
@@ -44,6 +46,7 @@ vi.mock("../commands/registry", () => ({
       when: () => !!document.activeElement?.closest("[data-scm-commit-input]"),
       run: scmCommit,
     },
+    { id: "terminal.toggle", title: "term", category: "c", defaultKey: null, run: terminalToggle },
   ],
   getCommand: () => undefined,
 }));
@@ -114,6 +117,39 @@ describe("KeybindingHost", () => {
     expect(isInputContext(ta)).toBe(true);
     expect(isInputContext(ce)).toBe(true);
     expect(isInputContext(document.createElement("div"))).toBe(false);
+  });
+
+  it("isTerminalContext recognises xterm hosts", () => {
+    const host = document.createElement("div");
+    host.setAttribute("data-terminal-host", "");
+    const ta = document.createElement("textarea");
+    host.appendChild(ta);
+    expect(isTerminalContext(ta)).toBe(true);
+    expect(isTerminalContext(document.createElement("div"))).toBe(false);
+  });
+
+  it("does not steal Escape / Ctrl+B from the integrated terminal", () => {
+    const host = document.createElement("div");
+    host.setAttribute("data-terminal-host", "");
+    const ta = document.createElement("textarea");
+    host.appendChild(ta);
+    document.body.appendChild(host);
+    ta.focus();
+    fire(window, { key: "Escape", code: "Escape" });
+    fire(window, { key: "b", code: "KeyB", ctrlKey: true });
+    expect(close).not.toHaveBeenCalled();
+    expect(toggle).not.toHaveBeenCalled();
+  });
+
+  it("still allows terminal.toggle while the terminal is focused", () => {
+    const host = document.createElement("div");
+    host.setAttribute("data-terminal-host", "");
+    const ta = document.createElement("textarea");
+    host.appendChild(ta);
+    document.body.appendChild(host);
+    ta.focus();
+    fire(window, { key: "`", code: "Backquote", ctrlKey: true });
+    expect(terminalToggle).toHaveBeenCalledTimes(1);
   });
 
   // C-1: 裸可打印字符绑定挂在放行白名单命令上不得吞掉正常输入

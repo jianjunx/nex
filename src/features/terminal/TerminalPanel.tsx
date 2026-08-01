@@ -8,8 +8,28 @@ import { useSettingsStore } from "../../stores/settings.store";
 import { useProjectStore } from "../../stores/project.store";
 import { Button } from "@/components/ui/button";
 
+function isPasteKey(ev: KeyboardEvent): boolean {
+  if (ev.type !== "keydown") return false;
+  if (ev.key === "Insert" && ev.shiftKey && !ev.ctrlKey && !ev.metaKey && !ev.altKey) return true;
+  const key = ev.key.toLowerCase();
+  if (key !== "v") return false;
+  // Windows/Linux: Ctrl+V (and Ctrl+Shift+V in some terminals). macOS: Cmd+V.
+  if (ev.altKey) return false;
+  return ev.ctrlKey || ev.metaKey;
+}
+
+async function readClipboardText(): Promise<string | null> {
+  try {
+    const text = await navigator.clipboard.readText();
+    return text || null;
+  } catch {
+    return null;
+  }
+}
+
 export function TerminalPanel() {
   const termRef = useRef<HTMLDivElement>(null);
+  const hostRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const { sessions, activeSessionId, loading, error, create, kill, setActive, clearError } = useTerminalStore();
   const settingsVersion = useTerminalStore((s) => s.settingsVersion);
@@ -62,6 +82,7 @@ export function TerminalPanel() {
     term.loadAddon(fitAddon);
     term.open(termRef.current);
     fitAddon.fit();
+    term.focus();
 
     // Read the session at call time via getState() — never capture
     // activeSessionId/write/resize from render scope (stale closures).
@@ -72,6 +93,17 @@ export function TerminalPanel() {
     term.onResize(({ cols, rows }) => {
       const { activeSessionId, resize } = useTerminalStore.getState();
       if (activeSessionId) resize(activeSessionId, cols, rows);
+    });
+
+    // Tauri/WebView clipboard paste is unreliable via the default DOM path.
+    // Handle paste shortcuts ourselves and feed xterm.paste → PTY.
+    term.attachCustomKeyEventHandler((ev) => {
+      if (!isPasteKey(ev)) return true;
+      ev.preventDefault();
+      void readClipboardText().then((text) => {
+        if (text) term.paste(text);
+      });
+      return false;
     });
 
     xtermRef.current = term;
@@ -103,6 +135,7 @@ export function TerminalPanel() {
     if (!term || !activeSessionId) return;
     term.reset();
     term.write(getReplay(activeSessionId));
+    term.focus();
   }, [activeSessionId, settingsVersion]);
 
   useEffect(() => {
@@ -116,6 +149,10 @@ export function TerminalPanel() {
     // Empty shell = system default ("" -> undefined, the bridge's
     // Option<String> None).
     if (project) void create(project.path, terminalShell || undefined);
+  };
+
+  const focusTerminal = () => {
+    xtermRef.current?.focus();
   };
 
   return (
@@ -145,8 +182,13 @@ export function TerminalPanel() {
           construction is a mount-once effect, so unmounting the host while
           no project is open would leave a dead terminal when one is opened
           later (the effect never re-runs). The empty state overlays it. */}
-      <div className="relative flex-1 overflow-hidden">
-        <div ref={termRef} className="h-full p-3" />
+      <div
+        ref={hostRef}
+        data-terminal-host
+        className="relative flex-1 overflow-hidden min-h-0"
+        onMouseDown={focusTerminal}
+      >
+        <div ref={termRef} className="h-full w-full" />
         {!project && (
           <div className="absolute inset-0 flex items-center justify-center text-sm text-[var(--text-tertiary)]">
             未打开项目

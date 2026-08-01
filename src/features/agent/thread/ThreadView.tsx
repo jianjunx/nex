@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { Loader2 } from "lucide-react";
 import { useAgentStore } from "../../../stores/agent.store";
 import { useProjectStore } from "../../../stores/project.store";
@@ -10,6 +10,9 @@ import type { ThreadEntry } from "./types";
 
 /** 距底部小于此阈值视为「仍在底部」，恢复自动跟随。 */
 const NEAR_BOTTOM_PX = 80;
+
+/** 稳定空数组,避免 useSyncExternalStore 因内联 [] 每次新引用而抖动。 */
+const EMPTY_ENTRIES: ThreadEntry[] = [];
 
 function lastUserMessageId(entries: ThreadEntry[]): string | null {
   for (let i = entries.length - 1; i >= 0; i--) {
@@ -40,12 +43,14 @@ function shouldShowAgentLoading(
 export function ThreadView() {
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const activeTabId = useConversationStore((s) => selectProjectActiveTabId(s, activeProjectId));
-  const entriesByConversation = useAgentStore((s) => s.entriesByConversation);
-  const sessions = useAgentStore((s) => s.sessions);
-  const entries = activeTabId ? (entriesByConversation[activeTabId] ?? []) : [];
-  const sessionStatus = activeTabId ? sessions[activeTabId]?.status : undefined;
+  const entries = useAgentStore((s) =>
+    activeTabId ? (s.entriesByConversation[activeTabId] ?? EMPTY_ENTRIES) : EMPTY_ENTRIES,
+  );
+  const sessionStatus = useAgentStore((s) =>
+    activeTabId ? s.sessions[activeTabId]?.status : undefined,
+  );
   const showLoading = shouldShowAgentLoading(sessionStatus, entries);
-  const renderItems = groupThreadEntries(entries);
+  const renderItems = useMemo(() => groupThreadEntries(entries), [entries]);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);

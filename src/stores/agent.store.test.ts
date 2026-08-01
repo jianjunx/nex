@@ -196,3 +196,29 @@ describe("agent.store Allow 授权模式", () => {
     expect(useAgentStore.getState().sessions["conv-1"]?.status).toBe("running");
   });
 });
+
+describe("entriesByConversation 结构共享", () => {
+  it("更新会话 A 不改变会话 B 的数组引用", () => {
+    useAgentStore.setState((s) => {
+      s.entriesByConversation = {
+        A: [{ id: "a1", kind: "user_message", text: "hi", timestamp: 1 }],
+        B: [{ id: "b1", kind: "user_message", text: "yo", timestamp: 2 }],
+      };
+    });
+    const beforeB = useAgentStore.getState().entriesByConversation["B"];
+    const beforeA = useAgentStore.getState().entriesByConversation["A"];
+
+    useAgentStore.setState((s) => {
+      s.entriesByConversation["A"]?.push({
+        id: "a2",
+        kind: "user_message",
+        text: "more",
+        timestamp: 3,
+      });
+    });
+
+    const after = useAgentStore.getState().entriesByConversation;
+    expect(after["B"]).toBe(beforeB); // B 引用不变 → 收窄 selector 不会重渲染
+    expect(after["A"]).not.toBe(beforeA);
+  });
+});

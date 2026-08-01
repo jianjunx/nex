@@ -20,13 +20,13 @@ export function CommitSection({ projectPath }: { projectPath: string }) {
   const canCommit = commitMessage.trim().length > 0 && !busy;
 
   return (
-    <div className="border-t border-[color:var(--border-subtle)] p-4">
+    <div className="border-t border-[color:var(--border-subtle)] p-3">
       <Input
         data-scm-commit-input
         value={commitMessage}
         onChange={(e) => setCommitMessage(e.target.value)}
         placeholder="提交消息（Enter 提交）"
-        className="font-normal text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)]"
+        className="h-8 font-normal text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)]"
         onKeyDown={(e) => {
           // Ctrl/Cmd+Enter is owned by the scm.commit command (KeybindingHost);
           // the local handler only takes bare Enter, and never mid-IME.
@@ -35,24 +35,26 @@ export function CommitSection({ projectPath }: { projectPath: string }) {
           }
         }}
       />
-      <div className="mt-3 flex gap-1">
+      <div className="mt-2 flex gap-1">
         <Button
-          className="flex-1 h-auto bg-[var(--accent)] py-2.5 text-white hover:bg-[var(--accent-hover)] dark:bg-[var(--accent)] dark:text-white dark:hover:bg-[var(--accent-hover)]"
+          size="sm"
+          className="flex-1 bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] dark:bg-[var(--accent)] dark:text-white dark:hover:bg-[var(--accent-hover)]"
           disabled={!canCommit}
           onClick={() => void commitWith(projectPath, "commit")}
         >
           {opRunning === "提交" ? (
-            <Loader2 size={14} className="mr-2 animate-spin" />
+            <Loader2 size={14} className="animate-spin" />
           ) : (
-            <Check size={14} className="mr-2" />
+            <Check size={14} />
           )}
           提交
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
+              size="sm"
               title="更多提交方式"
-              className="h-auto bg-[var(--accent)] px-2 py-2.5 text-white hover:bg-[var(--accent-hover)] dark:bg-[var(--accent)] dark:text-white dark:hover:bg-[var(--accent-hover)]"
+              className="bg-[var(--accent)] px-2 text-white hover:bg-[var(--accent-hover)] dark:bg-[var(--accent)] dark:text-white dark:hover:bg-[var(--accent-hover)]"
               disabled={!canCommit}
             >
               <ChevronDown size={14} />

@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import type { ToolCallEntry } from "./types";
 import { formatToolRawInput } from "./applySessionUpdate";
 import { isEditTool } from "./toolCallUtils";
+import { ThreadDiffBlock } from "./ThreadDiffBlock";
 import { useAgentStore } from "../../../stores/agent.store";
 
 export function ToolCallCard({
@@ -50,14 +51,12 @@ export function ToolCallCard({
         >
           {entry.content.map((c, i) =>
             c.type === "diff" ? (
-              <pre
+              <ThreadDiffBlock
                 key={i}
-                className="text-xs overflow-x-auto p-2 rounded bg-[var(--glass-2-surface)] text-[var(--text-secondary)]"
-              >
-                {c.path ? `# ${c.path}\n` : ""}
-                {c.oldText != null ? `- ${c.oldText}\n` : ""}
-                {c.newText != null ? `+ ${c.newText}` : ""}
-              </pre>
+                path={c.path}
+                oldText={c.oldText}
+                newText={c.newText}
+              />
             ) : (
               <pre
                 key={i}
@@ -118,7 +117,7 @@ export function ToolCallGroup({ entries }: { entries: ToolCallEntry[] }) {
   );
 
   return (
-    <div className="max-w-[90%]">
+    <div className="max-w-[96%]">
       <button
         type="button"
         className="inline-flex items-center gap-1 text-xs text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] transition-colors"

@@ -126,7 +126,7 @@ export function ThreadView() {
 function AgentLoadingIndicator() {
   return (
     <div
-      className="flex items-center gap-2 max-w-[90%] text-sm text-[var(--text-tertiary)]"
+      className="flex items-center gap-2 max-w-[96%] text-sm text-[var(--text-tertiary)]"
       role="status"
       aria-live="polite"
     >
@@ -142,7 +142,7 @@ function EntryView({ entry }: { entry: ThreadEntry }) {
       return (
         <div className="flex justify-end">
           <Card
-            className="max-w-[80%] gap-0 px-3 py-1.5 text-sm shadow-none bg-[var(--accent)]/15 border-[color:var(--accent)]/25"
+            className="max-w-[96%] gap-0 px-3 py-1.5 text-sm shadow-none bg-[var(--accent)]/15 border-[color:var(--accent)]/25"
           >
             <CardContent className="px-0 space-y-2">
               {entry.images && entry.images.length > 0 && (
@@ -164,7 +164,7 @@ function EntryView({ entry }: { entry: ThreadEntry }) {
       );
     case "assistant_message":
       return (
-        <div className="flex flex-col gap-1.5 max-w-[90%]">
+        <div className="flex flex-col gap-1.5 max-w-[96%]">
           {groupChunks(entry.chunks).map((g, i) =>
             g.type === "thought" ? (
               <ThinkingBlock key={i} text={g.text} />
@@ -182,13 +182,13 @@ function EntryView({ entry }: { entry: ThreadEntry }) {
       );
     case "tool_call":
       return (
-        <div className="max-w-[90%]">
+        <div className="max-w-[96%]">
           <ToolCallCard entry={entry} />
         </div>
       );
     case "completed_plan":
       return (
-        <div className="max-w-[90%] rounded-[var(--radius-md)] border border-[color:var(--border-subtle)] bg-[var(--glass-2-surface)] px-2.5 py-1.5">
+        <div className="max-w-[96%] rounded-[var(--radius-md)] border border-[color:var(--border-subtle)] bg-[var(--glass-2-surface)] px-2.5 py-1.5">
           <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)] mb-1">
             <ListChecks size={14} />
             <span>Completed Plan — {entry.entries.length} steps</span>

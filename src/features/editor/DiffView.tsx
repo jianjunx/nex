@@ -53,10 +53,20 @@ interface DiffViewProps {
   /** 语言高亮 + 搜索扩展，由 EditorPanel 统一构造传入。 */
   extensions: Extension[];
   onCreateEditor?: (view: EditorView) => void;
+  /** 默认 100%（编辑器面板）；对话内嵌可用 auto + maxHeight。 */
+  height?: string;
+  maxHeight?: string;
 }
 
 /** 只读 diff 标签内容：merge = 统一合并视图（双全文档），patch = 行着色补丁全文。 */
-export function DiffView({ payload, theme, extensions, onCreateEditor }: DiffViewProps) {
+export function DiffView({
+  payload,
+  theme,
+  extensions,
+  onCreateEditor,
+  height = "100%",
+  maxHeight,
+}: DiffViewProps) {
   if (payload.binary) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-[var(--text-tertiary)]">
@@ -65,6 +75,8 @@ export function DiffView({ payload, theme, extensions, onCreateEditor }: DiffVie
     );
   }
 
+  const sizeStyle = { height, maxHeight };
+
   if (payload.mode === "patch") {
     return (
       <CodeMirror
@@ -72,8 +84,9 @@ export function DiffView({ payload, theme, extensions, onCreateEditor }: DiffVie
         theme={theme}
         extensions={[...extensions, EditorState.readOnly.of(true), patchHighlight, patchTheme]}
         onCreateEditor={(view) => onCreateEditor?.(view)}
-        height="100%"
-        style={{ height: "100%" }}
+        height={height}
+        maxHeight={maxHeight}
+        style={sizeStyle}
       />
     );
   }
@@ -94,8 +107,9 @@ export function DiffView({ payload, theme, extensions, onCreateEditor }: DiffVie
         }),
       ]}
       onCreateEditor={(view) => onCreateEditor?.(view)}
-      height="100%"
-      style={{ height: "100%" }}
+      height={height}
+      maxHeight={maxHeight}
+      style={sizeStyle}
     />
   );
 }

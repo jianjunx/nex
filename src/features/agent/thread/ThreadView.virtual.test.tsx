@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render } from "@testing-library/react";
+import { act, cleanup, render } from "@testing-library/react";
 
 vi.mock("../../../bridge/tauri", () => ({
   agentCreateSession: vi.fn(),
@@ -32,6 +32,8 @@ vi.mock("../../../bridge/tauri", () => ({
 }));
 
 import { ThreadView } from "./ThreadView";
+import { useAgentStore } from "../../../stores/agent.store";
+import { useConversationStore } from "../../../stores/conversation.store";
 import {
   getScroller,
   installVirtualListMocks,
@@ -65,5 +67,73 @@ describe("ThreadView 虚拟化", () => {
 
     expect(renderedRows).toBeGreaterThan(0);
     expect(renderedRows).toBeLessThan(60); // 视口 10 行 + overscan 5×2,远小于 1000
+  });
+
+  it("跟随态:追加条目后自动滚动到底部", async () => {
+    setupThreadStores("A", { A: makeEntries(100) });
+    const { container } = render(<ThreadView />);
+    const scroller = getScroller(container);
+    setMockScrollHeight(scroller, 100 * 60);
+    await act(async () => {}); // 让挂载后的测量/滚动 settle
+
+    act(() => {
+      useAgentStore.setState((s) => {
+        s.entriesByConversation["A"] = [
+          ...(s.entriesByConversation["A"] ?? []),
+          { id: "new1", kind: "user_message", text: "新消息", timestamp: 999 },
+        ];
+      });
+    });
+    await act(async () => {});
+
+    // 101 行 × 60px − 视口 600px ≈ 5460;断言已滚到靠近底部
+    expect(scroller.scrollTop).toBeGreaterThan(4000);
+  });
+
+  it("上滚超过 80px 后取消跟随,新条目不再拉回底部", async () => {
+    setupThreadStores("A", { A: makeEntries(100) });
+    const { container } = render(<ThreadView />);
+    const scroller = getScroller(container);
+    setMockScrollHeight(scroller, 100 * 60);
+    await act(async () => {});
+
+    scroller.scrollTop = 0; // 手动到顶
+    act(() => {
+      scroller.dispatchEvent(new Event("scroll"));
+    });
+
+    act(() => {
+      useAgentStore.setState((s) => {
+        s.entriesByConversation["A"] = [
+          ...(s.entriesByConversation["A"] ?? []),
+          { id: "new1", kind: "user_message", text: "新消息", timestamp: 999 },
+        ];
+      });
+    });
+    await act(async () => {});
+
+    expect(scroller.scrollTop).toBe(0);
+  });
+
+  it("切换会话后恢复跟随并滚动到新会话底部", async () => {
+    setupThreadStores("A", { A: makeEntries(100), B: makeEntries(50) });
+    const { container } = render(<ThreadView />);
+    const scroller = getScroller(container);
+    setMockScrollHeight(scroller, 100 * 60);
+    await act(async () => {});
+
+    scroller.scrollTop = 0;
+    act(() => {
+      scroller.dispatchEvent(new Event("scroll"));
+    });
+
+    act(() => {
+      useConversationStore.setState((s) => {
+        s.activeTabByProject = { p1: "B" };
+      });
+    });
+    await act(async () => {});
+
+    expect(scroller.scrollTop).toBeGreaterThan(0); // B:50×60−600=2400
   });
 });

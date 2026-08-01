@@ -1,11 +1,12 @@
 /**
  * @vitest-environment jsdom
  */
+import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-// TopBar 触碰 Tauri 窗口 API 与重子组件；全部打桩。被测的页签轮廓是纯
-// className 逻辑，store 用真实例 + setState 播种。
+// TopBar 触碰 Tauri 窗口 API 与重子组件；全部打桩。NewConversationDropdown
+// 保持真实（本文件同时覆盖 F5 轮廓与 F6 接线）。
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
     startDragging: () => Promise.resolve(),
@@ -23,10 +24,49 @@ vi.mock("../agent/CloseTabConfirmDialog", () => ({
 }));
 
 import { TopBar } from "./TopBar";
+import { getCommand } from "../../commands/registry";
 import { useProjectStore } from "../../stores/project.store";
 import { useConversationStore } from "../../stores/conversation.store";
+import { useAgentStore } from "../../stores/agent.store";
+import { useUiStore } from "../../stores/ui.store";
+import type { Conversation, ServerDescriptor } from "../../bridge/tauri";
+
+// 模块级可变 let 持有 mock action，beforeEach 经 setState 注入真 store。
+let createConversationMock: ReturnType<typeof vi.fn>;
+let createSessionMock: ReturnType<typeof vi.fn>;
+let loadAllServersMock: ReturnType<typeof vi.fn>;
+let refreshRegistryMock: ReturnType<typeof vi.fn>;
+
+const SERVER_CLAUDE: ServerDescriptor = {
+  id: "claude-code", name: "Claude Code", version: "1.2.3",
+  description: "Anthropic 的智能体", icon: null, kind: "registry",
+};
+
+// mock 的 createConversation 与真实动作的副作用逐一对齐（conversationsByProject.unshift
+// + tabs.push + 激活）——TopBar 的页签标题从 conversationsByProject 解析，漏掉 unshift
+// 会让标题回退成 tab id，"新对话"断言必挂。
+const fakeCreateConversation = async (projectId: string, agentType: string): Promise<Conversation> => {
+  const conv: Conversation = {
+    id: "conv-1", project_id: projectId, title: "新对话", agent_type: agentType,
+    status: "active", created_at: 0, updated_at: 0,
+  };
+  useConversationStore.setState((s) => {
+    if (!s.conversationsByProject[projectId]) s.conversationsByProject[projectId] = [];
+    s.conversationsByProject[projectId].unshift(conv);
+    const tabs = s.tabsByProject[projectId] ?? [];
+    s.tabsByProject[projectId] = [...tabs, conv.id];
+    s.activeTabByProject[projectId] = conv.id;
+  });
+  return conv;
+};
 
 beforeEach(() => {
+  createConversationMock = vi.fn().mockImplementation(fakeCreateConversation);
+  createSessionMock = vi.fn().mockResolvedValue("sess-1");
+  loadAllServersMock = vi.fn().mockResolvedValue(undefined);
+  refreshRegistryMock = vi.fn().mockResolvedValue(undefined);
+
+  useUiStore.setState({ newConversationOpen: false });
   useProjectStore.setState({
     projects: [{ id: "p1", name: "demo", path: "/tmp/demo", created_at: 0, last_opened: 0 }],
     activeProjectId: "p1",
@@ -40,6 +80,18 @@ beforeEach(() => {
     },
     tabsByProject: { p1: ["c1", "c2"] },
     activeTabByProject: { p1: "c1" },
+  });
+  useAgentStore.setState({
+    servers: [SERVER_CLAUDE],
+    serversLoading: false,
+    serversLoadedAt: Date.now(),
+    error: null,
+    createSession: createSessionMock,
+    loadAllServers: loadAllServersMock,
+    refreshRegistry: refreshRegistryMock,
+  });
+  useConversationStore.setState({
+    createConversation: createConversationMock,
   });
 });
 afterEach(() => cleanup());
@@ -64,7 +116,6 @@ describe("conversation tab outline (F5)", () => {
       "group-data-[variant=line]/tabs-list:data-[state=active]:before:opacity-100"
     );
     expect(active.className).toContain("rounded-[var(--radius-md)]");
-    // line 变体内置 after 下划线保持关闭
     expect(active.className).toContain(
       "group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-0"
     );
@@ -93,7 +144,6 @@ describe("conversation tab outline (F5)", () => {
       "group-data-[variant=line]/tabs-list:hover:bg-[var(--overlay-hover)]"
     );
     expect(inactive.className).toContain("hover:border-[color:var(--border-subtle)]");
-    // 激活 hover 不位移的覆盖类也在同一 class 集里
     expect(inactive.className).toContain("data-[state=active]:hover:translate-y-0");
   });
 
@@ -103,5 +153,35 @@ describe("conversation tab outline (F5)", () => {
     expect(container.innerHTML).toContain("bg-gradient-to-r from-[var(--glass-1-surface)] to-transparent");
     expect(container.innerHTML).toContain("bg-gradient-to-l from-[var(--glass-1-surface)] to-transparent");
     expect(container.innerHTML).toContain("pointer-events-none");
+  });
+});
+
+describe("new-conversation dropdown wiring (F6)", () => {
+  it("clicking + opens the dropdown; Esc closes it", async () => {
+    render(<TopBar />);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "新建会话" }));
+    expect(screen.getByText("选择智能体")).toBeTruthy();
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByText("选择智能体")).toBeNull());
+    expect(useUiStore.getState().newConversationOpen).toBe(false);
+  });
+
+  it("Ctrl+Shift+N (command run) opens the dropdown", () => {
+    render(<TopBar />);
+    act(() => {
+      getCommand("workbench.newConversation")!.run();
+    });
+    expect(screen.getByText("选择智能体")).toBeTruthy();
+  });
+
+  it("clicking an agent row creates a conversation and shows the tab immediately", async () => {
+    render(<TopBar />);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "新建会话" }));
+    fireEvent.click(screen.getByText("Claude Code"));
+    await waitFor(() =>
+      expect(createConversationMock).toHaveBeenCalledWith("p1", "claude-code")
+    );
+    expect(useUiStore.getState().newConversationOpen).toBe(false);
+    expect(await screen.findByRole("tab", { name: /新对话/ })).toBeTruthy();
   });
 });

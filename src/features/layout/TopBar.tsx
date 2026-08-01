@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Plus, PanelRight } from "lucide-react";
+import { PanelRight } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -12,8 +12,8 @@ import {
 } from "../../stores/conversation.store";
 import { useAgentStore } from "../../stores/agent.store";
 import { CloseTabConfirmDialog } from "../agent/CloseTabConfirmDialog";
+import { NewConversationDropdown } from "../projects/NewConversationDropdown";
 import { ProjectSelector } from "../projects/ProjectSelector";
-import { NewConversationModal } from "../projects/NewConversationModal";
 import { WindowControls } from "./WindowControls";
 
 const platform = typeof navigator !== "undefined" ? navigator.platform : "";
@@ -50,7 +50,6 @@ export function TopBar() {
   const closeTab = useConversationStore((s) => s.closeTab);
   const sessions = useAgentStore((s) => s.sessions);
   const removeSession = useAgentStore((s) => s.removeSession);
-  const [showNewConversation, setShowNewConversation] = useState(false);
   const [pendingCloseId, setPendingCloseId] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
   const [macFullscreen, setMacFullscreen] = useState(false);
@@ -107,10 +106,8 @@ export function TopBar() {
       {/* Project selector */}
       <ProjectSelector />
 
-      {/* New conversation */}
-      <Button size={iconSize} variant="ghost" onClick={() => setShowNewConversation(true)}>
-        <Plus size={14} />
-      </Button>
+      {/* New conversation: controlled dropdown, also opened by workbench.newConversation */}
+      <NewConversationDropdown triggerSize={iconSize} />
 
       {/* Conversation tabs */}
       <div className="relative flex-1 min-w-0">
@@ -184,7 +181,6 @@ export function TopBar() {
         </div>
       )}
 
-      <NewConversationModal open={showNewConversation} onClose={() => setShowNewConversation(false)} />
       <CloseTabConfirmDialog
         open={pendingCloseId !== null}
         busy={closing}

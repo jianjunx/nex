@@ -65,7 +65,7 @@ export function NewConversationDropdown({ triggerSize }: Props) {
     void loadAllServers();
   }, [open, servers.length, serversLoading, serversLoadedAt, loadAllServers]);
 
-  // 语义搬自旧 NewConversationModal.handleCreate：createConversation 立即开标签
+  // 语义搬自旧新建会话模态框的 handleCreate：createConversation 立即开标签
   // → 关面板 → createSession 后台握手（失败写 agent.store 共享 error，现状一致）。
   // 拆成两段 try：建标签前的失败只出错误行；建标签后的任何同步失败回滚标签。
   const handleCreate = async (selected: ServerDescriptor) => {

@@ -102,9 +102,9 @@ export function ThreadView() {
     <div
       ref={scrollerRef}
       onScroll={onScroll}
-      className="flex-1 min-h-0 overflow-y-auto px-6 py-4"
+      className="flex-1 min-h-0 overflow-y-auto px-4 py-3"
     >
-      <div ref={contentRef} className="space-y-4">
+      <div ref={contentRef} className="space-y-3">
         {entries.length === 0 && (
           <div className="flex items-center justify-center h-full text-[var(--text-tertiary)] text-sm">
             Start a conversation
@@ -142,7 +142,7 @@ function EntryView({ entry }: { entry: ThreadEntry }) {
       return (
         <div className="flex justify-end">
           <Card
-            className="max-w-[80%] gap-0 px-4 py-2 text-sm shadow-none bg-[var(--accent)]/15 border-[color:var(--accent)]/25"
+            className="max-w-[80%] gap-0 px-3 py-1.5 text-sm shadow-none bg-[var(--accent)]/15 border-[color:var(--accent)]/25"
           >
             <CardContent className="px-0 space-y-2">
               {entry.images && entry.images.length > 0 && (
@@ -164,12 +164,12 @@ function EntryView({ entry }: { entry: ThreadEntry }) {
       );
     case "assistant_message":
       return (
-        <div className="flex flex-col gap-2 max-w-[90%]">
+        <div className="flex flex-col gap-1.5 max-w-[90%]">
           {groupChunks(entry.chunks).map((g, i) =>
             g.type === "thought" ? (
               <ThinkingBlock key={i} text={g.text} />
             ) : (
-              <Card key={i} className="gap-0 px-4 py-2 text-sm shadow-none bg-[var(--glass-2-surface)] border-[color:var(--border-subtle)]">
+              <Card key={i} className="gap-0 px-3 py-1.5 text-sm shadow-none bg-[var(--glass-2-surface)] border-[color:var(--border-subtle)]">
                 <CardContent className="px-0">
                   <div className="[&_pre]:overflow-x-auto [&_code]:text-[0.85em] [&_p]:my-1">
                     <ReactMarkdown>{g.text}</ReactMarkdown>
@@ -188,7 +188,7 @@ function EntryView({ entry }: { entry: ThreadEntry }) {
       );
     case "completed_plan":
       return (
-        <div className="max-w-[90%] rounded-[var(--radius-md)] border border-[color:var(--border-subtle)] bg-[var(--glass-2-surface)] px-3 py-2">
+        <div className="max-w-[90%] rounded-[var(--radius-md)] border border-[color:var(--border-subtle)] bg-[var(--glass-2-surface)] px-2.5 py-1.5">
           <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)] mb-1">
             <ListChecks size={14} />
             <span>Completed Plan — {entry.entries.length} steps</span>

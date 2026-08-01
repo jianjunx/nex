@@ -98,6 +98,8 @@ interface FsStore {
   openDiffTab: (id: string, payload: DiffPayload) => void;
   switchFile: (filePath: string) => Promise<void>;
   closeFile: (filePath: string) => Promise<void>;
+  /** Reorder editor tabs by index. */
+  reorderOpenFiles: (fromIndex: number, toIndex: number) => void;
   closeEditor: () => Promise<void>;
   setDraft: (draft: string) => void;
   setSelectedPath: (path: string | null) => void;
@@ -334,6 +336,15 @@ export const useFsStore = create<FsStore>()(
       if (get().openFiles.length === 0) {
         useUiStore.getState().setEditorVisible(false);
       }
+    },
+
+    reorderOpenFiles: (fromIndex, toIndex) => {
+      set((s) => {
+        if (fromIndex < 0 || fromIndex >= s.openFiles.length || toIndex < 0 || toIndex >= s.openFiles.length) return;
+        if (fromIndex === toIndex) return;
+        const [item] = s.openFiles.splice(fromIndex, 1);
+        s.openFiles.splice(toIndex, 0, item);
+      });
     },
 
     closeEditor: async () => {

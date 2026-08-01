@@ -6,6 +6,7 @@ import { Plus, X } from "lucide-react";
 import { useTerminalStore, getReplay, setLiveSink } from "../../stores/terminal.store";
 import { useSettingsStore } from "../../stores/settings.store";
 import { useProjectStore } from "../../stores/project.store";
+import { useUiStore } from "../../stores/ui.store";
 import { Button } from "@/components/ui/button";
 
 function isPasteKey(ev: KeyboardEvent): boolean {
@@ -151,26 +152,48 @@ export function TerminalPanel() {
     if (project) void create(project.path, terminalShell || undefined);
   };
 
+  const handleClose = (id: string) => {
+    const isLast = useTerminalStore.getState().sessions.length <= 1;
+    void kill(id).then(() => {
+      if (isLast) useUiStore.getState().setTerminalVisible(false);
+    });
+  };
+
   const focusTerminal = () => {
     xtermRef.current?.focus();
   };
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center gap-1.5 px-4 py-2 border-b border-[color:var(--border-subtle)]">
+      <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-[color:var(--border-subtle)]">
         {sessions.map((s) => (
           <button
             key={s.id}
+            type="button"
             onClick={() => setActive(s.id)}
-            className={`px-3 py-1.5 text-xs rounded-[var(--radius-sm)] transition-colors ${s.id === activeSessionId ? "bg-[var(--overlay-active)] text-[var(--text-primary)]" : "text-[var(--text-tertiary)] hover:bg-[var(--overlay-ghost)]"}`}
+            className={`flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-[var(--radius-sm)] transition-colors ${s.id === activeSessionId ? "bg-[var(--overlay-active)] text-[var(--text-primary)]" : "text-[var(--text-tertiary)] hover:bg-[var(--overlay-ghost)]"}`}
           >
-            {s.title}
+            <span className="truncate max-w-[120px]">{s.title}</span>
+            <span
+              role="button"
+              title="关闭终端"
+              className="opacity-50 hover:opacity-100"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleClose(s.id);
+              }}
+            >
+              <X size={11} />
+            </span>
           </button>
         ))}
-        <Button size="sm" variant="ghost" disabled={!project} onClick={handleCreate}><Plus size={12} /></Button>
-        {activeSessionId && (
-          <Button size="sm" variant="ghost" onClick={() => void kill(activeSessionId)}><X size={12} /></Button>
-        )}
+        <Button size="sm" variant="ghost" disabled={!project} onClick={handleCreate} title="新建终端">
+          <Plus size={12} />
+        </Button>
       </div>
       {error && (
         <div className="flex items-center gap-2 px-4 py-1.5 text-xs text-[var(--error)] bg-[var(--error)]/10">

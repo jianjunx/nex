@@ -20,7 +20,7 @@ export function IconBar() {
   } = useUiStore();
 
   return (
-    <div className="flex flex-col items-center py-3 gap-1.5 w-12 border-l border-[color:var(--border-subtle)] bg-[var(--background)] mr-1.5 rounded-l-[var(--radius-md)]">
+    <div className="flex flex-col items-center py-2 gap-1 w-10 border-l border-[color:var(--border-subtle)] bg-[var(--background)] mr-1 rounded-l-[var(--radius-md)]">
       {tabs.map(({ id, icon: Icon, label }) => {
         const active = sidePanelVisible && sidePanelTab === id;
         return (

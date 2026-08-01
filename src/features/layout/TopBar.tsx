@@ -15,6 +15,7 @@ import { CloseTabConfirmDialog } from "../agent/CloseTabConfirmDialog";
 import { NewConversationDropdown } from "../projects/NewConversationDropdown";
 import { ProjectSelector } from "../projects/ProjectSelector";
 import { WindowControls } from "./WindowControls";
+import { useTabReorder } from "./useTabReorder";
 
 const platform = typeof navigator !== "undefined" ? navigator.platform : "";
 const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
@@ -48,11 +49,13 @@ export function TopBar() {
   const conversationsByProject = useConversationStore((s) => s.conversationsByProject);
   const switchTab = useConversationStore((s) => s.switchTab);
   const closeTab = useConversationStore((s) => s.closeTab);
+  const reorderTabs = useConversationStore((s) => s.reorderTabs);
   const sessions = useAgentStore((s) => s.sessions);
   const removeSession = useAgentStore((s) => s.removeSession);
   const [pendingCloseId, setPendingCloseId] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
   const [macFullscreen, setMacFullscreen] = useState(false);
+  const { draggingIndex, bindTab } = useTabReorder(reorderTabs);
 
   // Overlay mode puts our content under the native title bar, so the OS no
   // longer provides a drag strip or double-click-to-zoom. We re-add both here,
@@ -92,10 +95,10 @@ export function TopBar() {
 
   // macOS: compact fused bar (40px) so the overlay traffic lights line up with
   // the tabs. Windows keeps its taller frameless bar with custom window controls.
-  const sizing = isMac ? "h-10 gap-2" : "h-12 gap-3";
+  const sizing = isMac ? "h-9 gap-2" : "h-10 gap-2";
   const pad =
-    isMac && !macFullscreen ? MAC_TRAFFIC_LIGHT_PAD + " pr-3" : isMac ? "px-3" : "px-4";
-  const iconSize = isMac ? "icon-sm" : "icon";
+    isMac && !macFullscreen ? MAC_TRAFFIC_LIGHT_PAD + " pr-2" : isMac ? "px-2.5" : "px-3";
+  const iconSize = isMac ? "icon-sm" : "icon-sm";
 
   return (
     <div
@@ -116,14 +119,17 @@ export function TopBar() {
           <span className="text-xs text-[var(--text-tertiary)] px-2">暂无会话</span>
         ) : (
           <Tabs value={activeTabId ?? ""} onValueChange={switchTab} className="min-w-0">
-            <TabsList variant="line" className={`h-8 gap-1 ${isMac ? "h-8" : "h-8"}`}>
-              {openTabs.map((tabId) => {
+            <TabsList variant="line" className="h-7 gap-1">
+              {openTabs.map((tabId, index) => {
                 const status = sessions[tabId]?.status ?? null;
+                const drag = bindTab(index);
                 return (
                   <TabsTrigger
                     key={tabId}
                     value={tabId}
-                    className={`${isMac ? "h-7 text-xs " : ""}flex-none gap-2 rounded-[var(--radius-md)] border border-transparent px-2.5 font-normal text-[var(--text-secondary)] transition-all duration-150 hover:-translate-y-px hover:border-[color:var(--border-subtle)] group-data-[variant=line]/tabs-list:hover:bg-[var(--overlay-hover)] hover:text-[var(--text-primary)] data-[state=active]:hover:translate-y-0 group-data-[variant=line]/tabs-list:data-[state=active]:bg-[var(--glass-2-surface)] group-data-[variant=line]/tabs-list:data-[state=active]:border-[color:var(--border-default)] dark:group-data-[variant=line]/tabs-list:data-[state=active]:bg-[var(--glass-2-surface)] dark:group-data-[variant=line]/tabs-list:data-[state=active]:border-[color:var(--border-default)] group-data-[variant=line]/tabs-list:data-[state=active]:text-[var(--text-primary)] group-data-[variant=line]/tabs-list:data-[state=active]:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] before:absolute before:left-0 before:top-1/4 before:bottom-1/4 before:w-0 before:rounded before:bg-[var(--accent)] before:opacity-0 before:transition-all before:duration-150 group-data-[variant=line]/tabs-list:data-[state=active]:before:w-0.5 group-data-[variant=line]/tabs-list:data-[state=active]:before:opacity-100 group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-0`}
+                    data-tab-index={drag["data-tab-index"]}
+                    onPointerDown={drag.onPointerDown}
+                    className={`h-6 text-xs flex-none gap-1.5 rounded-[var(--radius-md)] border border-transparent px-2 font-normal text-[var(--text-secondary)] transition-all duration-150 hover:-translate-y-px hover:border-[color:var(--border-subtle)] group-data-[variant=line]/tabs-list:hover:bg-[var(--overlay-hover)] hover:text-[var(--text-primary)] data-[state=active]:hover:translate-y-0 group-data-[variant=line]/tabs-list:data-[state=active]:bg-[var(--glass-2-surface)] group-data-[variant=line]/tabs-list:data-[state=active]:border-[color:var(--border-default)] dark:group-data-[variant=line]/tabs-list:data-[state=active]:bg-[var(--glass-2-surface)] dark:group-data-[variant=line]/tabs-list:data-[state=active]:border-[color:var(--border-default)] group-data-[variant=line]/tabs-list:data-[state=active]:text-[var(--text-primary)] group-data-[variant=line]/tabs-list:data-[state=active]:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-0 select-none ${draggingIndex === index ? "opacity-50" : ""}`}
                   >
                     {status && status !== "idle" && (
                       <span
@@ -144,6 +150,7 @@ export function TopBar() {
                     */}
                     <span
                       role="button"
+                      data-tab-close
                       className="ml-1 cursor-pointer text-xs opacity-50 hover:opacity-100"
                       onMouseDown={(e) => {
                         e.preventDefault();

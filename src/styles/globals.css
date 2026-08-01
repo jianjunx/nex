@@ -36,7 +36,7 @@
   --input: #1d1f23;
   --ring: #3e4452;
 
-  --radius: 0.75rem;
+  --radius: 0.625rem;
 
   /* ─── App semantic tokens (One Dark Pro) ───────────────────────────── */
   --border-subtle: #181a1f;
@@ -66,10 +66,10 @@
   --warning: #d19a66;
   --error: #e06c75;
 
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --radius-xl: 24px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
 
   /* Surfaces: editor/title/activity = --background; sidebar/widgets darker */
   --surface-sidebar: #21252b;
@@ -169,10 +169,10 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
 
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --radius-xl: 24px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
 
   /* ─── Motion easing (native-feel curves) ────────────────────────────
      --ease-spring: decelerate with a slight overshoot (macOS-style pop)

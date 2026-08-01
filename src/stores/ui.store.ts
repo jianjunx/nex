@@ -39,6 +39,7 @@ interface UiState {
   /** 点亮态再点同一图标则收起；否则切换 tab 并展开面板。 */
   toggleSidePanelTab: (tab: SidePanelTab) => void;
   toggleTerminal: () => void;
+  setTerminalVisible: (v: boolean) => void;
   setSidePanelWidth: (w: number) => void;
   setTerminalHeight: (h: number) => void;
   setEditorVisible: (v: boolean) => void;
@@ -86,6 +87,10 @@ export const useUiStore = create<UiState>()(
         // the panel is hidden would light the icon with nothing appearing.
         // (Same force-show precedent as setSidePanelTab.)
         if (s.terminalVisible) s.sidePanelVisible = true;
+      }),
+      setTerminalVisible: (v) => set((s) => {
+        s.terminalVisible = v;
+        if (v) s.sidePanelVisible = true;
       }),
       setSidePanelWidth: (w) => set((s) => { s.sidePanelWidth = w; }),
       setTerminalHeight: (h) => set((s) => { s.terminalHeight = h; }),

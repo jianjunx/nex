@@ -13,6 +13,7 @@ import { fileBasename, relativeToProject } from "./pathUtils";
 import { languageExtensionsForPath } from "./language";
 import { editorSearchExtensions } from "./editorSearch";
 import { DiffView } from "./DiffView";
+import { useTabReorder } from "../layout/useTabReorder";
 
 /** Shared layout chrome (height / panels / fonts). Colors come from oneDark or lightTheme. */
 const editorLayoutTheme = EditorView.theme({
@@ -89,6 +90,7 @@ export function EditorPanel() {
   const setDraft = useFsStore((s) => s.setDraft);
   const switchFile = useFsStore((s) => s.switchFile);
   const closeFile = useFsStore((s) => s.closeFile);
+  const reorderOpenFiles = useFsStore((s) => s.reorderOpenFiles);
   const reloadEditor = useFsStore((s) => s.reloadEditor);
   const dismissStale = useFsStore((s) => s.dismissStale);
   const clearError = useFsStore((s) => s.clearError);
@@ -99,6 +101,7 @@ export function EditorPanel() {
   const editorTheme = useMemo(() => editorThemeFor(appTheme), [appTheme]);
   const viewRef = useRef<EditorView | null>(null);
   const pendingLine = useFsStore((s) => s.pendingLine);
+  const { draggingIndex, bindTab } = useTabReorder(reorderOpenFiles);
 
   // diff 标签用合成路径（diff: 前缀），语言检测须走载荷中的 languageHint。
   const langPath = editorFile?.diff ? editorFile.diff.languageHint : (editorFile?.path ?? "");
@@ -127,17 +130,20 @@ export function EditorPanel() {
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      <div className="flex items-center gap-1 px-2 py-1.5 border-b border-[color:var(--border-subtle)] overflow-x-auto shrink-0">
-        {openFiles.map((f) => {
+      <div className="flex items-center gap-1 px-1.5 py-1 border-b border-[color:var(--border-subtle)] overflow-x-auto shrink-0">
+        {openFiles.map((f, index) => {
           const active = f.path === activePath;
+          const drag = bindTab(index);
           return (
             <div
               key={f.path}
-              className={`flex items-center gap-1 max-w-[160px] rounded-[var(--radius-sm)] px-2 py-1 text-xs cursor-pointer shrink-0 ${
+              data-tab-index={drag["data-tab-index"]}
+              onPointerDown={drag.onPointerDown}
+              className={`flex items-center gap-1 max-w-[160px] rounded-[var(--radius-sm)] px-2 py-1 text-xs cursor-pointer shrink-0 select-none ${
                 active
                   ? "bg-[var(--glass-2-surface)] text-[var(--text-primary)]"
                   : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-              }`}
+              } ${draggingIndex === index ? "opacity-50" : ""}`}
               title={f.diff ? f.diff.title : relativeToProject(f.path, projectPath)}
               onClick={() => void switchFile(f.path)}
             >
@@ -145,6 +151,7 @@ export function EditorPanel() {
               {f.dirty && <span className="text-[var(--accent)]" title="未保存的修改">●</span>}
               <span
                 role="button"
+                data-tab-close
                 className="opacity-50 hover:opacity-100"
                 onMouseDown={(e) => {
                   e.preventDefault();

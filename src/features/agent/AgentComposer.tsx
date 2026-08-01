@@ -14,8 +14,8 @@ import { ComposerOptionMenu } from "./ComposerOptionMenu";
 import { PlanBar } from "./thread/PlanBar";
 
 // Text area only — toolbar lives inside the same chrome below this.
-const MIN_HEIGHT = 60;
-const MAX_HEIGHT = 240;
+const MIN_HEIGHT = 48;
+const MAX_HEIGHT = 200;
 
 interface FileMention {
   path: string;
@@ -316,14 +316,14 @@ export function AgentComposer() {
     <div>
       {meta?.plan && meta.plan.length > 0 && <PlanBar entries={meta.plan} />}
 
-      <div className="px-6 py-4 relative">
+      <div className="px-4 py-3 relative">
         {slashOpen && filteredCommands.length > 0 && (
-          <div className="absolute bottom-full left-6 right-6 mb-1 max-h-48 overflow-y-auto rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--glass-3-surface)] shadow-lg z-20">
+          <div className="absolute bottom-full left-4 right-4 mb-1 max-h-48 overflow-y-auto rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--glass-3-surface)] shadow-lg z-20">
             {filteredCommands.map((c) => (
               <button
                 key={c.name}
                 type="button"
-                className="w-full text-left px-3 py-2 text-sm hover:bg-[var(--glass-2-surface)]"
+                className="w-full text-left px-2.5 py-1.5 text-sm hover:bg-[var(--glass-2-surface)]"
                 onClick={() => pickCommand(c.name)}
               >
                 <span className="font-mono text-[var(--accent)]">/{c.name}</span>
@@ -334,15 +334,15 @@ export function AgentComposer() {
         )}
 
         {atOpen && (
-          <div className="absolute bottom-full left-6 right-6 mb-1 max-h-48 overflow-y-auto rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--glass-3-surface)] shadow-lg z-20">
+          <div className="absolute bottom-full left-4 right-4 mb-1 max-h-48 overflow-y-auto rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--glass-3-surface)] shadow-lg z-20">
             {atResults.length === 0 ? (
-              <div className="px-3 py-2 text-xs text-[var(--text-tertiary)]">Search files…</div>
+              <div className="px-2.5 py-1.5 text-xs text-[var(--text-tertiary)]">Search files…</div>
             ) : (
               atResults.map((hit) => (
                 <button
                   key={hit.path}
                   type="button"
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-[var(--glass-2-surface)]"
+                  className="w-full text-left px-2.5 py-1.5 text-sm hover:bg-[var(--glass-2-surface)]"
                   onClick={() => pickFile(hit)}
                 >
                   <span className="font-medium">{hit.name}</span>
@@ -400,7 +400,7 @@ export function AgentComposer() {
         {/* Single bordered surface: textarea + toolbar share one chrome so
             Mode/Model/Send sit inside the input box (not below it). */}
         <div
-          className="flex flex-col gap-2 rounded-[var(--radius-lg)] bg-[var(--glass-3-surface)] border border-[color:var(--glass-border)] px-3 pt-3 pb-2 shadow-xs transition-[border-color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50"
+          className="flex flex-col gap-1.5 rounded-[var(--radius-md)] bg-[var(--glass-3-surface)] border border-[color:var(--glass-border)] px-2.5 pt-2 pb-1.5 shadow-xs transition-[border-color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50"
           onClick={() => textareaRef.current?.focus()}
         >
           <Textarea

@@ -33,6 +33,8 @@ interface ConversationStore {
   createConversation: (projectId: string, agentType: string) => Promise<Conversation>;
   switchTab: (id: string) => void;
   closeTab: (id: string) => void;
+  /** Reorder open conversation tabs for the active project. */
+  reorderTabs: (fromIndex: number, toIndex: number) => void;
   /** Persist a new title and update the in-memory conversation list. */
   renameConversation: (conversationId: string, title: string) => Promise<void>;
   /**
@@ -209,6 +211,19 @@ export const useConversationStore = create<ConversationStore>()(
           if (s.activeTabByProject[projectId] === id) {
             s.activeTabByProject[projectId] = tabs[tabs.length - 1] || null;
           }
+        });
+      },
+
+      reorderTabs: (fromIndex, toIndex) => {
+        const projectId = useProjectStore.getState().activeProjectId;
+        if (!projectId) return;
+        set((s) => {
+          const tabs = s.tabsByProject[projectId] ?? [];
+          if (fromIndex < 0 || fromIndex >= tabs.length || toIndex < 0 || toIndex >= tabs.length) return;
+          if (fromIndex === toIndex) return;
+          const [item] = tabs.splice(fromIndex, 1);
+          tabs.splice(toIndex, 0, item);
+          s.tabsByProject[projectId] = tabs;
         });
       },
 

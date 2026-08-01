@@ -229,7 +229,7 @@ export function SearchPanel() {
       }}
     >
       {/* 顶工具条 */}
-      <div className="flex items-center gap-1 px-2 pt-2">
+      <div className="flex items-center gap-1 px-2 pt-1.5">
         <span className="flex-1 text-xs font-medium text-[var(--text-secondary)]">搜索</span>
         <Button
           variant="ghost"

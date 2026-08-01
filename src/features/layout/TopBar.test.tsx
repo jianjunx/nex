@@ -105,7 +105,7 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("conversation tab outline (F5)", () => {
-  it("active trigger carries capsule outline classes (glass bg, border, top highlight, left accent bar)", () => {
+  it("active trigger carries capsule outline classes (glass bg, border, top highlight)", () => {
     render(<TopBar />);
     const active = screen.getByRole("tab", { name: /第一个会话/ });
     expect(active.className).toContain(
@@ -117,12 +117,7 @@ describe("conversation tab outline (F5)", () => {
     expect(active.className).toContain(
       "group-data-[variant=line]/tabs-list:data-[state=active]:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]"
     );
-    expect(active.className).toContain(
-      "group-data-[variant=line]/tabs-list:data-[state=active]:before:w-0.5"
-    );
-    expect(active.className).toContain(
-      "group-data-[variant=line]/tabs-list:data-[state=active]:before:opacity-100"
-    );
+    expect(active.className).not.toContain("before:bg-[var(--accent)]");
     expect(active.className).toContain("rounded-[var(--radius-md)]");
     expect(active.className).toContain(
       "group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-0"

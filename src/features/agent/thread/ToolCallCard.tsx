@@ -32,7 +32,7 @@ export function ToolCallCard({
     <div className="rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--glass-3-surface)] overflow-hidden">
       <button
         type="button"
-        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-[var(--glass-2-surface)]"
+        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-sm text-left hover:bg-[var(--glass-2-surface)]"
         onClick={() => setOpen((v) => !v)}
       >
         <Icon size={14} className="text-[var(--text-tertiary)] shrink-0" />
@@ -44,7 +44,7 @@ export function ToolCallCard({
       {(open || waiting) && (
         <div
           className={cn(
-            "px-3 pb-3 space-y-2 border-t border-[color:var(--border-subtle)]",
+            "px-2.5 pb-2 space-y-1.5 border-t border-[color:var(--border-subtle)]",
             isEdit && "max-h-[350px] overflow-y-auto",
           )}
         >

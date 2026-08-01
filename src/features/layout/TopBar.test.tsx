@@ -118,7 +118,8 @@ describe("conversation tab outline (F5)", () => {
       "group-data-[variant=line]/tabs-list:data-[state=active]:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]"
     );
     expect(active.className).not.toContain("before:bg-[var(--accent)]");
-    expect(active.className).toContain("rounded-[var(--radius-md)]");
+    expect(active.className).toContain("rounded-[var(--radius-sm)]");
+    expect(active.className).not.toContain("rounded-[var(--radius-md)]");
     expect(active.className).toContain(
       "group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-0"
     );
@@ -131,23 +132,32 @@ describe("conversation tab outline (F5)", () => {
     );
   });
 
-  it("legacy bottom-line shadow and small radius are gone", () => {
+  it("legacy bottom-line shadow and large radius are gone", () => {
     render(<TopBar />);
     const active = screen.getByRole("tab", { name: /第一个会话/ });
     expect(active.className).not.toContain("shadow-[inset_0_-2px_0_0_var(--accent)]");
-    expect(active.className).not.toContain("rounded-[var(--radius-sm)]");
+    expect(active.className).not.toContain("rounded-[var(--radius-md)]");
   });
 
-  it("inactive triggers keep transparent placeholder border + hover lift/bg/border", () => {
+  it("inactive triggers keep a light outline + hover lift/bg/stronger border", () => {
     render(<TopBar />);
     const inactive = screen.getByRole("tab", { name: /第二个会话/ });
-    expect(inactive.className).toContain("border-transparent");
+    expect(inactive.className).toContain("border-[color:var(--border-subtle)]");
     expect(inactive.className).toContain("hover:-translate-y-px");
     expect(inactive.className).toContain(
       "group-data-[variant=line]/tabs-list:hover:bg-[var(--overlay-hover)]"
     );
-    expect(inactive.className).toContain("hover:border-[color:var(--border-subtle)]");
+    expect(inactive.className).toContain("hover:border-[color:var(--border-default)]");
     expect(inactive.className).toContain("data-[state=active]:hover:translate-y-0");
+  });
+
+  it("hides the close icon until the tab is hovered", () => {
+    render(<TopBar />);
+    const active = screen.getByRole("tab", { name: /第一个会话/ });
+    expect(active.className).toContain("group/tab");
+    const close = active.querySelector("[data-tab-close]");
+    expect(close?.className).toContain("opacity-0");
+    expect(close?.className).toContain("group-hover/tab:opacity-70");
   });
 
   it("renders scrollbar-hidden overflow with left/right fade masks", () => {

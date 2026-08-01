@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { PanelRight } from "lucide-react";
+import { PanelRight, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -129,7 +129,7 @@ export function TopBar() {
                     value={tabId}
                     data-tab-index={drag["data-tab-index"]}
                     onPointerDown={drag.onPointerDown}
-                    className={`h-6 text-xs flex-none gap-1.5 rounded-[var(--radius-md)] border border-transparent px-2 font-normal text-[var(--text-secondary)] transition-all duration-150 hover:-translate-y-px hover:border-[color:var(--border-subtle)] group-data-[variant=line]/tabs-list:hover:bg-[var(--overlay-hover)] hover:text-[var(--text-primary)] data-[state=active]:hover:translate-y-0 group-data-[variant=line]/tabs-list:data-[state=active]:bg-[var(--glass-2-surface)] group-data-[variant=line]/tabs-list:data-[state=active]:border-[color:var(--border-default)] dark:group-data-[variant=line]/tabs-list:data-[state=active]:bg-[var(--glass-2-surface)] dark:group-data-[variant=line]/tabs-list:data-[state=active]:border-[color:var(--border-default)] group-data-[variant=line]/tabs-list:data-[state=active]:text-[var(--text-primary)] group-data-[variant=line]/tabs-list:data-[state=active]:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-0 select-none ${draggingIndex === index ? "opacity-50" : ""}`}
+                    className={`group/tab h-6 text-xs flex-none gap-1.5 rounded-[var(--radius-sm)] border border-[color:var(--border-subtle)] px-2 font-normal text-[var(--text-secondary)] transition-all duration-150 hover:-translate-y-px hover:border-[color:var(--border-default)] group-data-[variant=line]/tabs-list:hover:bg-[var(--overlay-hover)] hover:text-[var(--text-primary)] data-[state=active]:hover:translate-y-0 group-data-[variant=line]/tabs-list:data-[state=active]:bg-[var(--glass-2-surface)] group-data-[variant=line]/tabs-list:data-[state=active]:border-[color:var(--border-default)] dark:group-data-[variant=line]/tabs-list:data-[state=active]:bg-[var(--glass-2-surface)] dark:group-data-[variant=line]/tabs-list:data-[state=active]:border-[color:var(--border-default)] group-data-[variant=line]/tabs-list:data-[state=active]:text-[var(--text-primary)] group-data-[variant=line]/tabs-list:data-[state=active]:font-semibold group-data-[variant=line]/tabs-list:data-[state=active]:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-0 select-none ${draggingIndex === index ? "opacity-50" : ""}`}
                   >
                     {status && status !== "idle" && (
                       <span
@@ -151,7 +151,8 @@ export function TopBar() {
                     <span
                       role="button"
                       data-tab-close
-                      className="ml-1 cursor-pointer text-xs opacity-50 hover:opacity-100"
+                      title="关闭会话"
+                      className="ml-0.5 translate-x-[4px] flex size-4 shrink-0 items-center justify-center rounded-sm opacity-0 transition-opacity group-hover/tab:opacity-70 hover:!opacity-100"
                       onMouseDown={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
@@ -161,7 +162,7 @@ export function TopBar() {
                         setPendingCloseId(tabId);
                       }}
                     >
-                      ×
+                      <X size={13} strokeWidth={2.25} />
                     </span>
                   </TabsTrigger>
                 );

@@ -11,6 +11,7 @@ import {
   useConversationStore,
 } from "../../stores/conversation.store";
 import { useAgentStore } from "../../stores/agent.store";
+import { AgentIcon } from "../agent/AgentIcon";
 import { CloseTabConfirmDialog } from "../agent/CloseTabConfirmDialog";
 import { NewConversationDropdown } from "../projects/NewConversationDropdown";
 import { ProjectSelector } from "../projects/ProjectSelector";
@@ -122,6 +123,8 @@ export function TopBar() {
             <TabsList variant="line" className="h-7 gap-1">
               {openTabs.map((tabId, index) => {
                 const status = sessions[tabId]?.status ?? null;
+                const conv = projectConversations.find((c) => c.id === tabId);
+                const agentType = conv?.agent_type ?? "";
                 const drag = bindTab(index);
                 return (
                   <TabsTrigger
@@ -131,14 +134,11 @@ export function TopBar() {
                     onPointerDown={drag.onPointerDown}
                     className={`group/tab h-6 text-xs flex-none gap-1.5 rounded-[var(--radius-sm)] border border-[color:var(--border-subtle)] px-2 font-normal text-[var(--text-secondary)] transition-all duration-150 hover:-translate-y-px hover:border-[color:var(--border-default)] group-data-[variant=line]/tabs-list:hover:bg-[var(--overlay-hover)] hover:text-[var(--text-primary)] data-[state=active]:hover:translate-y-0 group-data-[variant=line]/tabs-list:data-[state=active]:bg-[var(--glass-2-surface)] group-data-[variant=line]/tabs-list:data-[state=active]:border-[color:var(--border-default)] dark:group-data-[variant=line]/tabs-list:data-[state=active]:bg-[var(--glass-2-surface)] dark:group-data-[variant=line]/tabs-list:data-[state=active]:border-[color:var(--border-default)] group-data-[variant=line]/tabs-list:data-[state=active]:text-[var(--text-primary)] group-data-[variant=line]/tabs-list:data-[state=active]:font-semibold group-data-[variant=line]/tabs-list:data-[state=active]:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-0 select-none ${draggingIndex === index ? "opacity-50" : ""}`}
                   >
-                    {status && status !== "idle" && (
-                      <span
-                        className={`w-2 h-2 rounded-full ${status === "running" ? "animate-pulse" : ""}`}
-                        style={{ backgroundColor: status === "running" ? "var(--accent)" : "var(--warning)" }}
-                      />
+                    {agentType && (
+                      <AgentIcon agentType={agentType} status={status} size={13} />
                     )}
                     <span className="max-w-[120px] truncate">
-                      {projectConversations.find((c) => c.id === tabId)?.title ?? tabId}
+                      {conv?.title ?? tabId}
                     </span>
                     {/*
                       TabsTrigger renders a <button>, so the close × cannot be

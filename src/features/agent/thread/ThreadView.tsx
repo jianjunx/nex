@@ -142,7 +142,7 @@ function EntryView({ entry }: { entry: ThreadEntry }) {
       return (
         <div className="flex justify-end">
           <Card
-            className="max-w-[96%] gap-0 px-3 py-1.5 text-sm shadow-none bg-[var(--accent)]/15 border-[color:var(--accent)]/25"
+            className="max-w-[80%] gap-0 px-3 py-1.5 text-sm shadow-none bg-[var(--accent)]/15 border-[color:var(--accent)]/25"
           >
             <CardContent className="px-0 space-y-2">
               {entry.images && entry.images.length > 0 && (

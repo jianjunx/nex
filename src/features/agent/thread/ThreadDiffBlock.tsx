@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { EditorView } from "@codemirror/view";
 import { oneDark } from "@codemirror/theme-one-dark";
 import type { Extension } from "@codemirror/state";
@@ -106,13 +106,22 @@ export function ThreadDiffBlock({
     return () => clearTimeout(t);
   }, []);
 
-  // 就绪且 CM 布局完成后,把槽(不含路径头)实测高写入缓存:回看时占位即可复现该高度。
+  // 槽(不含路径头)实测高缓存的唯一写入路径:ready 后用 ResizeObserver 观察 slotRef。
+  // RO 在真实布局后触发,并随 CM 的 rAF 测量循环(晚到的字体度量、collapseUnchanged 折叠
+  // 收敛)多次触发并覆写 → 缓存始终为收敛后的真实高度。相比「useLayoutEffect 单次抢测」:
+  // 不再隐式依赖 @uiw/react-codemirror 在子 useLayoutEffect 同步建视图的内部时序(其若改
+  // 为 useEffect 建视图,单次抢测将恒 0,h>0 守卫使缓存静默退化且无告警);晚到的收敛修
+  // 正也能回写。首次挂载缓存未命中仍走 estimateDiffHeight 预估,缓存供下次回看复现。
   const slotRef = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    if (ready && slotRef.current) {
-      const h = slotRef.current.getBoundingClientRect().height;
+  useEffect(() => {
+    const el = slotRef.current;
+    if (!ready || !el) return;
+    const ro = new ResizeObserver(() => {
+      const h = el.getBoundingClientRect().height;
       if (h > 0) diffHeights.set(cacheKey, h);
-    }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
   }, [ready, cacheKey]);
 
   // 占位高度:命中缓存复现就绪高度(回看零跳);否则按行数预估(首次揭示贴近自然高度)。

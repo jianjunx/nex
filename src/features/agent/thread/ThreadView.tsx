@@ -96,7 +96,8 @@ export function ThreadView() {
     // 测量后把高度写入模块级缓存:卸载再滚回的行可复现真实高度,不再估值跳变。
     measureElement: (el) => {
       const h = el.getBoundingClientRect().height;
-      const item = renderItems[Number(el.dataset.index)];
+      // 行元素为 div(HTMLElement);dataset.index 即行 div 上的 data-index。
+      const item = renderItems[Number((el as HTMLElement).dataset.index)];
       const key = rowKey(item);
       if (key && h > 0) measuredHeights.set(key, h);
       return h;

@@ -51,9 +51,9 @@ docs/                   PRD 与界面设计（prd.md / layout.png）
 ### 安装与运行
 
 ```bash
-pnpm install        # 安装前端依赖
-pnpm tauri dev      # 开发模式（Vite HMR + Rust 热重载）
-pnpm tauri build    # 生产打包（产物在 src-tauri/target/release/bundle/）
+pnpm install             # 安装前端依赖
+pnpm tauri dev           # 开发模式（Vite HMR + Rust 热重载）
+pnpm build:installer     # 一键打安装包（等同 tauri build；产物在 src-tauri/target/release/bundle/）
 ```
 
 仅前端：

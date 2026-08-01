@@ -44,7 +44,7 @@ export function NewConversationDropdown({ triggerSize }: Props) {
   const servers = useAgentStore((s) => s.servers);
   const serversLoading = useAgentStore((s) => s.serversLoading);
   const serversLoadedAt = useAgentStore((s) => s.serversLoadedAt);
-  const loadAllServers = useAgentStore((s) => s.loadAllServers);
+  const loadServers = useAgentStore((s) => s.loadServers);
   const refreshRegistry = useAgentStore((s) => s.refreshRegistry);
   const createSession = useAgentStore((s) => s.createSession);
   const createConversation = useConversationStore((s) => s.createConversation);
@@ -62,8 +62,8 @@ export function NewConversationDropdown({ triggerSize }: Props) {
     if (!open) return;
     if (serversLoading) return;
     if (servers.length > 0 && Date.now() - serversLoadedAt < 60_000) return;
-    void loadAllServers();
-  }, [open, servers.length, serversLoading, serversLoadedAt, loadAllServers]);
+    void loadServers();
+  }, [open, servers.length, serversLoading, serversLoadedAt, loadServers]);
 
   // 语义搬自旧新建会话模态框的 handleCreate：createConversation 立即开标签
   // → 关面板 → createSession 后台握手（失败写 agent.store 共享 error，现状一致）。

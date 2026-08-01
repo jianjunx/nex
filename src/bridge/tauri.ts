@@ -151,10 +151,24 @@ export interface SessionModelsDto {
   availableModels: SessionModelDto[];
 }
 
+export interface SessionConfigValueDto {
+  id: string;
+  name: string;
+}
+
+export interface SessionConfigOptionDto {
+  id: string;
+  name: string;
+  category?: string | null;
+  currentValueId: string;
+  options: SessionConfigValueDto[];
+}
+
 export interface CreateSessionResult {
   sessionId: string;
   modes?: SessionModesDto | null;
   models?: SessionModelsDto | null;
+  configOptions?: SessionConfigOptionDto[] | null;
 }
 
 export type PromptBlock =
@@ -181,6 +195,14 @@ export async function agentSetSessionMode(sessionId: string, modeId: string): Pr
 
 export async function agentSetSessionModel(sessionId: string, modelId: string): Promise<void> {
   return invoke(COMMANDS.AGENT_SET_SESSION_MODEL, { sessionId, modelId });
+}
+
+export async function agentSetSessionConfigOption(
+  sessionId: string,
+  configId: string,
+  value: string,
+): Promise<SessionConfigOptionDto[] | null> {
+  return invoke(COMMANDS.AGENT_SET_SESSION_CONFIG_OPTION, { sessionId, configId, value });
 }
 
 export async function agentCancel(sessionId: string): Promise<void> {

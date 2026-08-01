@@ -95,6 +95,7 @@ export interface SessionModelOption {
 export interface SessionConfigOption {
   id: string;
   name: string;
+  category?: string;
   currentValueId: string;
   options: { id: string; name: string }[];
 }

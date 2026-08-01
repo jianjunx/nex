@@ -8,7 +8,6 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -20,8 +19,8 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use super::launch::{spawn_agent, LaunchSpec};
 use super::types::{
     AgentNotification, AgentPermissionRequest, AgentSessionTerminated, CreateSessionResult,
-    PermissionOption, PromptBlock, SessionModeDto, SessionModesDto, SessionModelDto,
-    SessionModelsDto,
+    PermissionOption, PromptBlock, SessionConfigOptionDto, SessionConfigValueDto, SessionModeDto,
+    SessionModesDto, SessionModelDto, SessionModelsDto,
 };
 use crate::error::NexError;
 
@@ -112,6 +111,79 @@ impl acp::Client for NexAcpClient {
     ) -> acp::Result<acp::ReadTextFileResponse> {
         Err(acp::Error::method_not_found())
     }
+
+    async fn ext_method(&self, args: acp::ExtRequest) -> acp::Result<acp::ExtResponse> {
+        let method = args.method.as_ref();
+        // Forward opaque extension traffic so the UI can surface Cursor task /
+        // plan / question events when we add richer handlers later.
+        let _ = self.app.emit(
+            AGENT_NOTIFICATION_EVENT,
+            AgentNotification {
+                session_id: self.session_key.clone(),
+                update: serde_json::json!({
+                    "sessionUpdate": "ext_method",
+                    "method": method,
+                    "params": serde_json::from_str::<serde_json::Value>(args.params.get())
+                        .unwrap_or(serde_json::Value::Null),
+                }),
+            },
+        );
+
+        // Cursor blocking extensions hang the turn until a well-formed outcome
+        // is returned. Auto-resolve so prompts can finish (and stream text).
+        let result = match method {
+            "cursor/ask_question" => serde_json::json!({
+                "outcome": { "outcome": "skipped", "reason": "Nex has not implemented this prompt UI yet" }
+            }),
+            "cursor/create_plan" => serde_json::json!({
+                "outcome": { "outcome": "accepted" }
+            }),
+            "cursor/task" => serde_json::json!({
+                "outcome": { "outcome": "completed" }
+            }),
+            "cursor/update_todos" | "cursor/generate_image" => serde_json::json!({
+                "outcome": { "outcome": "accepted" }
+            }),
+            _ => serde_json::Value::Null,
+        };
+        let raw = serde_json::value::RawValue::from_string(result.to_string()).map_err(|e| {
+            acp::Error::internal_error().with_data(format!("ext_method encode failed: {e}"))
+        })?;
+        Ok(raw.into())
+    }
+
+    async fn ext_notification(&self, args: acp::ExtNotification) -> acp::Result<()> {
+        let method = args.method.as_ref();
+        let params: serde_json::Value =
+            serde_json::from_str(args.params.get()).unwrap_or(serde_json::Value::Null);
+
+        // Unknown session/update variants (config_option_update on older schema)
+        // arrive here; forward the inner `update` so the frontend reducer sees it.
+        if method == "session/update" {
+            let update = params
+                .get("update")
+                .cloned()
+                .unwrap_or(params);
+            let _ = self.app.emit(
+                AGENT_NOTIFICATION_EVENT,
+                AgentNotification { session_id: self.session_key.clone(), update },
+            );
+            return Ok(());
+        }
+
+        let _ = self.app.emit(
+            AGENT_NOTIFICATION_EVENT,
+            AgentNotification {
+                session_id: self.session_key.clone(),
+                update: serde_json::json!({
+                    "sessionUpdate": "ext_notification",
+                    "method": method,
+                    "params": params,
+                }),
+            },
+        );
+        Ok(())
+    }
 }
 
 fn prompt_blocks_to_acp(blocks: Vec<PromptBlock>) -> Vec<acp::ContentBlock> {
@@ -158,34 +230,132 @@ fn prompt_blocks_to_acp(blocks: Vec<PromptBlock>) -> Vec<acp::ContentBlock> {
         .collect()
 }
 
-fn modes_dto(state: &acp::SessionModeState) -> SessionModesDto {
-    SessionModesDto {
-        current_mode_id: state.current_mode_id.to_string(),
-        available_modes: state
-            .available_modes
-            .iter()
-            .map(|m| SessionModeDto {
-                id: m.id.to_string(),
-                name: m.name.clone(),
-                description: m.description.clone(),
+fn config_options_from_json(value: &serde_json::Value) -> Option<Vec<SessionConfigOptionDto>> {
+    let arr = value.get("configOptions").or_else(|| value.get("config_options"))?;
+    let items = arr.as_array()?;
+    let mut out = Vec::new();
+    for item in items {
+        let id = item.get("id")?.as_str()?.to_string();
+        let name = item
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let category = item
+            .get("category")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let current_value_id = item
+            .get("currentValue")
+            .or_else(|| item.get("current_value"))
+            .or_else(|| item.get("currentValueId"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let options = item
+            .get("options")
+            .and_then(|v| v.as_array())
+            .map(|opts| {
+                opts.iter()
+                    .filter_map(|o| {
+                        let oid = o
+                            .get("value")
+                            .or_else(|| o.get("id"))
+                            .and_then(|v| v.as_str())?
+                            .to_string();
+                        let oname = o
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(oid.as_str())
+                            .to_string();
+                        Some(SessionConfigValueDto { id: oid, name: oname })
+                    })
+                    .collect()
             })
-            .collect(),
+            .unwrap_or_default();
+        // Only surface select-style options in the composer for now.
+        if item.get("type").and_then(|v| v.as_str()) == Some("boolean") {
+            continue;
+        }
+        out.push(SessionConfigOptionDto {
+            id,
+            name,
+            category,
+            current_value_id,
+            options,
+        });
     }
+    Some(out).filter(|o| !o.is_empty())
 }
 
-fn models_dto(state: &acp::SessionModelState) -> SessionModelsDto {
-    SessionModelsDto {
-        current_model_id: state.current_model_id.to_string(),
-        available_models: state
-            .available_models
-            .iter()
-            .map(|m| SessionModelDto {
-                id: m.model_id.to_string(),
-                name: m.name.clone(),
-                description: m.description.clone(),
-            })
-            .collect(),
-    }
+fn modes_from_json(value: &serde_json::Value) -> Option<SessionModesDto> {
+    let modes = value.get("modes")?;
+    let current = modes
+        .get("currentModeId")
+        .or_else(|| modes.get("current_mode_id"))
+        .and_then(|v| v.as_str())?
+        .to_string();
+    let available = modes
+        .get("availableModes")
+        .or_else(|| modes.get("available_modes"))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| {
+                    Some(SessionModeDto {
+                        id: m.get("id")?.as_str()?.to_string(),
+                        name: m.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        description: m
+                            .get("description")
+                            .and_then(|v| v.as_str())
+                            .map(str::to_string),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(SessionModesDto {
+        current_mode_id: current,
+        available_modes: available,
+    })
+}
+
+fn models_from_json(value: &serde_json::Value) -> Option<SessionModelsDto> {
+    let models = value.get("models")?;
+    let current = models
+        .get("currentModelId")
+        .or_else(|| models.get("current_model_id"))
+        .and_then(|v| v.as_str())?
+        .to_string();
+    let available = models
+        .get("availableModels")
+        .or_else(|| models.get("available_models"))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| {
+                    let id = m
+                        .get("modelId")
+                        .or_else(|| m.get("model_id"))
+                        .or_else(|| m.get("id"))
+                        .and_then(|v| v.as_str())?
+                        .to_string();
+                    Some(SessionModelDto {
+                        id,
+                        name: m.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        description: m
+                            .get("description")
+                            .and_then(|v| v.as_str())
+                            .map(str::to_string),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(SessionModelsDto {
+        current_model_id: current,
+        available_models: available,
+    })
 }
 
 /// ACP 0.7 agent methods return `!Send` futures (`async_trait(?Send)`).
@@ -224,7 +394,7 @@ impl AcpSessionManager {
     ) -> Result<CreateSessionResult, NexError> {
         let session_key = uuid::Uuid::new_v4().to_string();
         let (init_tx, init_rx) = oneshot::channel::<
-            Result<(acp::ClientSideConnection, acp::SessionId, Option<acp::SessionModeState>, Option<acp::SessionModelState>), NexError>,
+            Result<(acp::ClientSideConnection, acp::SessionId, Option<SessionModesDto>, Option<SessionModelsDto>, Option<Vec<SessionConfigOptionDto>>), NexError>,
         >();
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
@@ -259,7 +429,7 @@ impl AcpSessionManager {
             })
             .map_err(|e| NexError::Agent(format!("failed to spawn session thread: {e}")))?;
 
-        let (conn, agent_session_id, modes, models) = init_rx
+        let (conn, agent_session_id, modes, models, config_options) = init_rx
             .await
             .map_err(|_| NexError::Agent("session thread stopped during initialization".to_string()))??;
 
@@ -273,8 +443,9 @@ impl AcpSessionManager {
         self.sessions.lock().unwrap().insert(session_key.clone(), handle);
         Ok(CreateSessionResult {
             session_id: session_key,
-            modes: modes.as_ref().map(modes_dto),
-            models: models.as_ref().map(models_dto),
+            modes,
+            models,
+            config_options,
         })
     }
 
@@ -349,6 +520,36 @@ impl AcpSessionManager {
         .map(|_| ())
     }
 
+    pub async fn set_session_config_option(
+        &self,
+        session_id: &str,
+        config_id: &str,
+        value: &str,
+    ) -> Result<Option<Vec<SessionConfigOptionDto>>, NexError> {
+        let handle = self.session(session_id)?;
+        let agent_session_id = handle.agent_session_id.to_string();
+        let config_id = config_id.to_string();
+        let value = value.to_string();
+        let raw = run_acp({
+            let handle = Arc::clone(&handle);
+            move || async move {
+                handle
+                    .conn
+                    .request_raw(
+                        "session/set_config_option",
+                        serde_json::json!({
+                            "sessionId": agent_session_id,
+                            "configId": config_id,
+                            "value": value,
+                        }),
+                    )
+                    .await
+            }
+        })
+        .await?;
+        Ok(config_options_from_json(&raw))
+    }
+
     pub async fn cancel(&self, session_id: &str) -> Result<(), NexError> {
         let handle = self.session(session_id)?;
         self.resolve_session_permissions(session_id, Some(acp::RequestPermissionOutcome::Cancelled));
@@ -420,7 +621,7 @@ async fn run_session(
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
     sessions: Arc<Mutex<HashMap<String, Arc<SessionHandle>>>>,
     init_tx: oneshot::Sender<
-        Result<(acp::ClientSideConnection, acp::SessionId, Option<acp::SessionModeState>, Option<acp::SessionModelState>), NexError>,
+        Result<(acp::ClientSideConnection, acp::SessionId, Option<SessionModesDto>, Option<SessionModelsDto>, Option<Vec<SessionConfigOptionDto>>), NexError>,
     >,
     shutdown_rx: oneshot::Receiver<()>,
 ) {
@@ -504,31 +705,56 @@ async fn run_session(
         }
 
         let response = conn
-            .new_session(acp::NewSessionRequest {
-                cwd: PathBuf::from(&cwd),
-                mcp_servers: Vec::new(),
-                meta: None,
-            })
+            .request_raw(
+                "session/new",
+                serde_json::json!({
+                    "cwd": cwd,
+                    "mcpServers": [],
+                }),
+            )
             .await
             .map_err(NexError::from)?;
-        Ok((response.session_id, response.modes, response.models))
+
+        let session_id = response
+            .get("sessionId")
+            .or_else(|| response.get("session_id"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| NexError::Agent("session/new response missing sessionId".into()))?;
+        let session_id = acp::SessionId(Arc::from(session_id));
+
+        // Prefer typed fields when present; also keep configOptions which the
+        // 0.7 schema drops from NewSessionResponse.
+        let modes = modes_from_json(&response);
+        let models = models_from_json(&response);
+        let config_options = config_options_from_json(&response);
+        Ok((session_id, modes, models, config_options))
     })
     .await;
 
-    let handshake: Result<(acp::SessionId, Option<acp::SessionModeState>, Option<acp::SessionModelState>), NexError> =
-        match handshake {
-            Ok(Ok(v)) => Ok(v),
-            Ok(Err(e)) => Err(enrich(e, &mut child, &stderr_tail, &program, &spec.args)),
-            Err(_) => Err(NexError::Agent(format!(
-                "agent `{program}` did not complete the ACP handshake within {}s{}",
-                HANDSHAKE_TIMEOUT.as_secs(),
-                diag(&mut child, &stderr_tail, &program, &spec.args)
-            ))),
-        };
+    let handshake: Result<
+        (
+            acp::SessionId,
+            Option<SessionModesDto>,
+            Option<SessionModelsDto>,
+            Option<Vec<SessionConfigOptionDto>>,
+        ),
+        NexError,
+    > = match handshake {
+        Ok(Ok(v)) => Ok(v),
+        Ok(Err(e)) => Err(enrich(e, &mut child, &stderr_tail, &program, &spec.args)),
+        Err(_) => Err(NexError::Agent(format!(
+            "agent `{program}` did not complete the ACP handshake within {}s{}",
+            HANDSHAKE_TIMEOUT.as_secs(),
+            diag(&mut child, &stderr_tail, &program, &spec.args)
+        ))),
+    };
 
     match handshake {
-        Ok((agent_session_id, modes, models)) => {
-            if init_tx.send(Ok((conn, agent_session_id, modes, models))).is_err() {
+        Ok((agent_session_id, modes, models, config_options)) => {
+            if init_tx
+                .send(Ok((conn, agent_session_id, modes, models, config_options)))
+                .is_err()
+            {
                 let _ = child.kill().await;
                 return;
             }

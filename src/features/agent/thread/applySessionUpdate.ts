@@ -276,22 +276,37 @@ export function applySessionUpdate(
         .map((o) => ({
           id: typeof o.id === "string" ? o.id : "",
           name: typeof o.name === "string" ? o.name : "",
+          category: typeof o.category === "string" ? o.category : undefined,
           currentValueId:
             typeof o.currentValueId === "string"
               ? o.currentValueId
               : typeof o.current_value_id === "string"
                 ? o.current_value_id
-                : "",
+                : typeof o.currentValue === "string"
+                  ? o.currentValue
+                  : typeof o.current_value === "string"
+                    ? o.current_value
+                    : "",
           options: Array.isArray(o.options)
             ? o.options
                 .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
                 .map((x) => ({
-                  id: typeof x.id === "string" ? x.id : "",
+                  id:
+                    typeof x.id === "string"
+                      ? x.id
+                      : typeof x.value === "string"
+                        ? x.value
+                        : "",
                   name: typeof x.name === "string" ? x.name : "",
                 }))
             : [],
         }))
         .filter((o) => o.id);
+      // Prefer configOptions as source of truth for mode/model current values.
+      const modeOpt = meta.configOptions.find((o) => o.id === "mode" || o.category === "mode");
+      if (modeOpt?.currentValueId) meta.currentModeId = modeOpt.currentValueId;
+      const modelOpt = meta.configOptions.find((o) => o.id === "model" || o.category === "model");
+      if (modelOpt?.currentValueId) meta.currentModelId = modelOpt.currentValueId;
       result.metaChanged = true;
       return result;
     }

@@ -17,7 +17,7 @@ import type { Conversation, ServerDescriptor, SessionTarget } from "../../bridge
 type CreateConversationFn = (projectId: string, agentType: string) => Promise<Conversation>;
 type CreateSessionFn = (conversationId: string, target: SessionTarget, cwd: string) => Promise<string>;
 type CloseTabFn = (id: string) => void;
-type LoadAllServersFn = () => Promise<void>;
+type LoadServersFn = () => Promise<void>;
 type RefreshRegistryFn = () => Promise<void>;
 
 // 模块级可变 let 持有 mock action，beforeEach 经 setState 注入真 store
@@ -25,7 +25,7 @@ type RefreshRegistryFn = () => Promise<void>;
 let createConversationMock: Mock<CreateConversationFn>;
 let createSessionMock: Mock<CreateSessionFn>;
 let closeTabMock: Mock<CloseTabFn>;
-let loadAllServersMock: Mock<LoadAllServersFn>;
+let loadServersMock: Mock<LoadServersFn>;
 let refreshRegistryMock: Mock<RefreshRegistryFn>;
 
 const realCloseNewConversation = useUiStore.getState().closeNewConversation;
@@ -47,7 +47,7 @@ beforeEach(() => {
   createConversationMock = vi.fn<CreateConversationFn>().mockResolvedValue(CONV);
   createSessionMock = vi.fn<CreateSessionFn>().mockResolvedValue("sess-1");
   closeTabMock = vi.fn<CloseTabFn>();
-  loadAllServersMock = vi.fn<LoadAllServersFn>().mockResolvedValue(undefined);
+  loadServersMock = vi.fn<LoadServersFn>().mockResolvedValue(undefined);
   refreshRegistryMock = vi.fn<RefreshRegistryFn>().mockResolvedValue(undefined);
 
   useUiStore.setState({
@@ -66,7 +66,7 @@ beforeEach(() => {
     serversLoadedAt: Date.now(),
     error: null,
     createSession: createSessionMock,
-    loadAllServers: loadAllServersMock,
+    loadServers: loadServersMock,
     refreshRegistry: refreshRegistryMock,
   });
   useConversationStore.setState({
@@ -166,17 +166,17 @@ describe("NewConversationDropdown", () => {
     await waitFor(() => expect(createSessionMock).toHaveBeenCalled());
   });
 
-  it("freshness guard: stale servers trigger loadAllServers on open", () => {
+  it("freshness guard: stale servers trigger loadServers on open", () => {
     useAgentStore.setState({ serversLoadedAt: Date.now() - 120_000 });
     render(<NewConversationDropdown triggerSize="icon" />);
-    expect(loadAllServersMock).not.toHaveBeenCalled();
+    expect(loadServersMock).not.toHaveBeenCalled();
     fireEvent.pointerDown(screen.getByRole("button", { name: "新建会话" }));
-    expect(loadAllServersMock).toHaveBeenCalledTimes(1);
+    expect(loadServersMock).toHaveBeenCalledTimes(1);
   });
 
   it("freshness guard: fresh servers skip the reload", () => {
     openDropdown();
-    expect(loadAllServersMock).not.toHaveBeenCalled();
+    expect(loadServersMock).not.toHaveBeenCalled();
   });
 
   it("shows a loading row when empty and loading", () => {

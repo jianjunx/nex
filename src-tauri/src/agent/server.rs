@@ -263,6 +263,17 @@ impl AgentSessionManager {
         self.acp.set_session_model(session_id, model_id).await
     }
 
+    pub async fn set_session_config_option(
+        &self,
+        session_id: &str,
+        config_id: &str,
+        value: &str,
+    ) -> Result<Option<Vec<super::types::SessionConfigOptionDto>>, NexError> {
+        self.acp
+            .set_session_config_option(session_id, config_id, value)
+            .await
+    }
+
     pub async fn cancel(&self, session_id: &str) -> Result<(), NexError> {
         self.acp.cancel(session_id).await
     }

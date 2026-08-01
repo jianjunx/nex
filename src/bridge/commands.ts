@@ -19,6 +19,7 @@ export const COMMANDS = {
   AGENT_SEND_PROMPT: "agent_send_prompt",
   AGENT_SET_SESSION_MODE: "agent_set_session_mode",
   AGENT_SET_SESSION_MODEL: "agent_set_session_model",
+  AGENT_SET_SESSION_CONFIG_OPTION: "agent_set_session_config_option",
   AGENT_CANCEL: "agent_cancel",
   AGENT_RESPOND_PERMISSION: "agent_respond_permission",
   AGENT_CLOSE_SESSION: "agent_close_session",

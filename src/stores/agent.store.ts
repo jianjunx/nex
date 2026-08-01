@@ -14,6 +14,7 @@ import {
   agentCustomDelete,
   agentSetSessionMode,
   agentSetSessionModel,
+  agentSetSessionConfigOption,
   conversationReplaceThreadEntries,
   onAgentNotification,
   onAgentPermissionRequest,
@@ -65,6 +66,7 @@ interface AgentStore {
   respondPermission: (requestId: string, optionId: string | null) => Promise<void>;
   setMode: (sessionId: string, modeId: string) => Promise<void>;
   setModel: (sessionId: string, modelId: string) => Promise<void>;
+  setConfigOption: (sessionId: string, configId: string, value: string) => Promise<void>;
   loadServers: () => Promise<void>;
   /** Settings: whitelist + custom + other registry agents. */
   loadAllServers: () => Promise<void>;
@@ -111,6 +113,15 @@ function applyCreateMeta(result: CreateSessionResult): SessionMeta {
       id: m.id,
       name: m.name,
       description: m.description ?? undefined,
+    }));
+  }
+  if (result.configOptions && result.configOptions.length > 0) {
+    meta.configOptions = result.configOptions.map((o) => ({
+      id: o.id,
+      name: o.name,
+      category: o.category ?? undefined,
+      currentValueId: o.currentValueId,
+      options: o.options.map((x) => ({ id: x.id, name: x.name })),
     }));
   }
   return meta;
@@ -273,12 +284,37 @@ export const useAgentStore = create<AgentStore>()(
             "assistant",
             assistantText,
           );
+        } else {
+          // Agents like Cursor may finish a turn with only tool cards and no
+          // agent_message_chunk. Surface an explicit completion so the thread
+          // doesn't look stuck after status returns to idle.
+          set((s) => {
+            const list = s.entriesByConversation[session.conversationId];
+            if (!list) return;
+            const last = list[list.length - 1];
+            if (last?.kind === "user_message") {
+              list.push({
+                id: crypto.randomUUID(),
+                kind: "assistant_message",
+                timestamp: Date.now(),
+                chunks: [{ type: "message", text: "（本回合已完成，未返回文本消息）" }],
+              });
+            } else if (last?.kind === "tool_call") {
+              list.push({
+                id: crypto.randomUUID(),
+                kind: "assistant_message",
+                timestamp: Date.now(),
+                chunks: [{ type: "message", text: "（本回合已完成）" }],
+              });
+            }
+          });
         }
         // Persist full thread snapshot (thought/tool_call/etc.) so the UI can
         // restore complete history after restart.
+        const latestEntries = get().entriesByConversation[session.conversationId] ?? entries;
         void conversationReplaceThreadEntries(
           session.conversationId,
-          entries.map((e, sequence) => ({
+          latestEntries.map((e, sequence) => ({
             kind: e.kind,
             sequence,
             timestamp: e.timestamp,
@@ -390,6 +426,46 @@ export const useAgentStore = create<AgentStore>()(
       }
     },
 
+    setConfigOption: async (sessionId, configId, value) => {
+      const session = Object.values(get().sessions).find((ss) => ss.sessionId === sessionId);
+      try {
+        const next = await agentSetSessionConfigOption(sessionId, configId, value);
+        if (session) {
+          set((s) => {
+            const meta = s.metaByConversation[session.conversationId];
+            if (!meta) return;
+            if (next && next.length > 0) {
+              meta.configOptions = next.map((o) => ({
+                id: o.id,
+                name: o.name,
+                category: o.category ?? undefined,
+                currentValueId: o.currentValueId,
+                options: o.options.map((x) => ({ id: x.id, name: x.name })),
+              }));
+              // Keep legacy mode/model selectors in sync when agents dual-write.
+              const modeOpt = meta.configOptions.find((o) => o.id === "mode" || o.category === "mode");
+              if (modeOpt) {
+                meta.currentModeId = modeOpt.currentValueId;
+              }
+              const modelOpt = meta.configOptions.find(
+                (o) => o.id === "model" || o.category === "model",
+              );
+              if (modelOpt) {
+                meta.currentModelId = modelOpt.currentValueId;
+              }
+            } else {
+              const opt = meta.configOptions.find((o) => o.id === configId);
+              if (opt) opt.currentValueId = value;
+            }
+          });
+        }
+      } catch (err) {
+        set((s) => {
+          s.error = errorMessage(err);
+        });
+      }
+    },
+
     loadServers: async () => {
       set((s) => {
         s.serversLoading = true;
@@ -406,6 +482,7 @@ export const useAgentStore = create<AgentStore>()(
       } finally {
         set((s) => {
           s.serversLoading = false;
+          s.serversLoadedAt = Date.now();
         });
       }
     },
@@ -451,6 +528,7 @@ export const useAgentStore = create<AgentStore>()(
       } finally {
         set((s) => {
           s.serversLoading = false;
+          s.serversLoadedAt = Date.now();
         });
       }
     },

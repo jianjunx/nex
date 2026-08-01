@@ -42,12 +42,12 @@ describe("agent.store serversLoadedAt 打点语义", () => {
     expect(s.serversLoading).toBe(false);
   });
 
-  it("loadServers 成功 → serversLoadedAt === 0（白名单子集不打点）", async () => {
+  it("loadServers 成功 → serversLoadedAt > 0（新建会话新鲜度守卫需要打点）", async () => {
     agentListServers.mockResolvedValue([SERVER]);
     await useAgentStore.getState().loadServers();
     const s = useAgentStore.getState();
     expect(s.servers).toHaveLength(1);
-    expect(s.serversLoadedAt).toBe(0);
+    expect(s.serversLoadedAt).toBeGreaterThan(0);
     expect(s.serversLoading).toBe(false);
   });
 });

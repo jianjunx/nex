@@ -71,7 +71,7 @@ pub enum PromptBlock {
     },
 }
 
-/// Result of `agent_create_session`, including initial mode/model state.
+/// Result of `agent_create_session`, including initial mode/model/config state.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateSessionResult {
@@ -80,6 +80,8 @@ pub struct CreateSessionResult {
     pub modes: Option<SessionModesDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub models: Option<SessionModelsDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_options: Option<Vec<SessionConfigOptionDto>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -112,4 +114,22 @@ pub struct SessionModelDto {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionConfigOptionDto {
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    pub current_value_id: String,
+    pub options: Vec<SessionConfigValueDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionConfigValueDto {
+    pub id: String,
+    pub name: String,
 }

@@ -51,6 +51,7 @@ export function AgentComposer() {
   const cancel = useAgentStore((s) => s.cancel);
   const setMode = useAgentStore((s) => s.setMode);
   const setModel = useAgentStore((s) => s.setModel);
+  const setConfigOption = useAgentStore((s) => s.setConfigOption);
   const autoTitleFromFirstMessage = useConversationStore((s) => s.autoTitleFromFirstMessage);
 
   const session = activeTabId ? sessions[activeTabId] : null;
@@ -415,75 +416,86 @@ export function AgentComposer() {
           />
 
           <div
-            className="flex items-center gap-1.5 flex-wrap pt-0.5"
+            className="flex items-center gap-1 pt-0.5"
             onClick={(e) => e.stopPropagation()}
           >
-            {meta && meta.modes.length > 0 && session?.sessionId && (
-              <label className="relative inline-flex items-center text-xs text-[var(--text-secondary)]">
-                <span className="mr-1 opacity-70">Mode</span>
-                <select
-                  className="appearance-none bg-[var(--glass-2-surface)] border border-[color:var(--border-subtle)] rounded-full pl-2.5 pr-6 py-1 text-xs"
-                  value={meta.currentModeId ?? ""}
-                  onChange={(e) => void setMode(session.sessionId, e.target.value)}
-                >
-                  {meta.modes.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown size={12} className="absolute right-1.5 pointer-events-none opacity-50" />
-              </label>
-            )}
-
-            {meta && meta.models.length > 0 && session?.sessionId && (
-              <label className="relative inline-flex items-center text-xs text-[var(--text-secondary)]">
-                <select
-                  className="appearance-none bg-transparent hover:bg-[var(--glass-2-surface)] rounded-full pl-2 pr-6 py-1 text-xs max-w-[160px] text-[var(--text-secondary)]"
-                  value={meta.currentModelId ?? ""}
-                  onChange={(e) => void setModel(session.sessionId, e.target.value)}
-                  title="Model"
-                >
-                  {meta.models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown size={12} className="absolute right-1.5 pointer-events-none opacity-50" />
-              </label>
-            )}
-
-            {meta?.configOptions.map((opt) =>
-              session?.sessionId ? (
-                <label key={opt.id} className="relative inline-flex items-center text-xs text-[var(--text-secondary)]">
-                  <span className="mr-1 opacity-70">{opt.name}</span>
-                  <select
-                    className="appearance-none bg-[var(--glass-2-surface)] border border-[color:var(--border-subtle)] rounded-full pl-2.5 pr-6 py-1 text-xs"
-                    value={opt.currentValueId}
-                    onChange={() => {
-                      /* set_config not in ACP 0.7; UI ready for future wire-up */
-                    }}
-                  >
-                    {opt.options.map((o) => (
-                      <option key={o.id} value={o.id}>
-                        {o.name}
-                      </option>
+            <div className="ml-auto flex items-center gap-0.5 min-w-0">
+              {session?.sessionId && meta && (() => {
+                const configOpts = (meta.configOptions ?? []).filter((o) => o.options.length > 0);
+                const hasConfigMode = configOpts.some(
+                  (o) => o.id === "mode" || o.category === "mode",
+                );
+                const hasConfigModel = configOpts.some(
+                  (o) => o.id === "model" || o.category === "model",
+                );
+                const selectClass =
+                  "appearance-none bg-transparent hover:bg-[var(--glass-2-surface)] rounded-md pl-1.5 pr-4 py-1 text-xs text-[var(--text-secondary)] w-auto max-w-[12rem] cursor-pointer";
+                return (
+                  <>
+                    {!hasConfigMode && meta.modes.length > 0 && (
+                      <label className="relative inline-flex items-center text-xs text-[var(--text-secondary)] shrink-0">
+                        <select
+                          className={selectClass}
+                          value={meta.currentModeId ?? ""}
+                          onChange={(e) => void setMode(session.sessionId, e.target.value)}
+                        >
+                          {meta.modes.map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.name}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown size={12} className="absolute right-0.5 pointer-events-none opacity-50" />
+                      </label>
+                    )}
+                    {!hasConfigModel && meta.models.length > 0 && (
+                      <label className="relative inline-flex items-center text-xs text-[var(--text-secondary)] shrink-0">
+                        <select
+                          className={selectClass}
+                          value={meta.currentModelId ?? ""}
+                          onChange={(e) => void setModel(session.sessionId, e.target.value)}
+                        >
+                          {meta.models.map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.name}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown size={12} className="absolute right-0.5 pointer-events-none opacity-50" />
+                      </label>
+                    )}
+                    {configOpts.map((opt) => (
+                      <label
+                        key={opt.id}
+                        className="relative inline-flex items-center text-xs text-[var(--text-secondary)] shrink-0"
+                      >
+                        <select
+                          className={selectClass}
+                          value={opt.currentValueId}
+                          onChange={(e) =>
+                            void setConfigOption(session.sessionId, opt.id, e.target.value)
+                          }
+                        >
+                          {opt.options.map((o) => (
+                            <option key={o.id} value={o.id}>
+                              {o.name}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown size={12} className="absolute right-0.5 pointer-events-none opacity-50" />
+                      </label>
                     ))}
-                  </select>
-                  <ChevronDown size={12} className="absolute right-1.5 pointer-events-none opacity-50" />
-                </label>
-              ) : null,
-            )}
+                  </>
+                );
+              })()}
 
-            <div className="ml-auto flex items-center gap-1.5">
               {isRunning ? (
                 <Button
                   variant="ghost"
                   size="icon-sm"
                   onClick={() => session?.sessionId && void cancel(session.sessionId)}
                   title="Stop"
-                  className="rounded-full"
+                  className="rounded-full shrink-0"
                 >
                   <Square size={14} />
                 </Button>
@@ -494,7 +506,7 @@ export function AgentComposer() {
                   disabled={!canSend}
                   onClick={() => void handleSend()}
                   title="Send"
-                  className="rounded-full"
+                  className="rounded-full shrink-0"
                 >
                   <Send size={14} />
                 </Button>

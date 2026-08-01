@@ -79,6 +79,7 @@ pub fn run() {
             commands::agent_cmds::agent_send_prompt,
             commands::agent_cmds::agent_set_session_mode,
             commands::agent_cmds::agent_set_session_model,
+            commands::agent_cmds::agent_set_session_config_option,
             commands::agent_cmds::agent_cancel,
             commands::agent_cmds::agent_respond_permission,
             commands::agent_cmds::agent_close_session,

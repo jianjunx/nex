@@ -6,7 +6,8 @@ import { useAgentStore } from "../../../stores/agent.store";
 import { useProjectStore } from "../../../stores/project.store";
 import { selectProjectActiveTabId, useConversationStore } from "../../../stores/conversation.store";
 import { ThinkingBlock } from "./ThinkingBlock";
-import { ToolCallCard } from "./ToolCallCard";
+import { ToolCallCard, ToolCallGroup } from "./ToolCallCard";
+import { groupThreadEntries } from "./groupThreadEntries";
 import type { AssistantChunk, ThreadEntry } from "./types";
 
 /** 距底部小于此阈值视为「仍在底部」，恢复自动跟随。 */
@@ -46,6 +47,7 @@ export function ThreadView() {
   const entries = activeTabId ? (entriesByConversation[activeTabId] ?? []) : [];
   const sessionStatus = activeTabId ? sessions[activeTabId]?.status : undefined;
   const showLoading = shouldShowAgentLoading(sessionStatus, entries);
+  const renderItems = groupThreadEntries(entries);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
@@ -108,9 +110,13 @@ export function ThreadView() {
             Start a conversation
           </div>
         )}
-        {entries.map((entry) => (
-          <EntryView key={entry.id} entry={entry} />
-        ))}
+        {renderItems.map((item) =>
+          item.type === "tool_group" ? (
+            <ToolCallGroup key={item.key} entries={item.entries} />
+          ) : (
+            <EntryView key={item.entry.id} entry={item.entry} />
+          ),
+        )}
         {showLoading && <AgentLoadingIndicator />}
       </div>
     </div>

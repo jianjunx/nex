@@ -59,6 +59,19 @@ pub async fn agent_set_session_model(
 }
 
 #[tauri::command]
+pub async fn agent_set_session_config_option(
+    state: State<'_, AppState>,
+    session_id: String,
+    config_id: String,
+    value: String,
+) -> Result<Option<Vec<crate::agent::types::SessionConfigOptionDto>>, NexError> {
+    state
+        .agent_manager
+        .set_session_config_option(&session_id, &config_id, &value)
+        .await
+}
+
+#[tauri::command]
 pub async fn agent_cancel(state: State<'_, AppState>, session_id: String) -> Result<(), NexError> {
     state.agent_manager.cancel(&session_id).await
 }

@@ -20,7 +20,8 @@ function estimateRowHeight(item: ThreadRenderItem | undefined): number {
   if (!item) return 40; // 加载指示器行
   if (item.type === "tool_group") return 40;
   const e = item.entry;
-  if (e.kind === "tool_call") return isEditTool(e) ? 420 : 48;
+  // edit 卡行高估值贴近「内容区封顶 350 + 头/边距」实测(~386),首帧布局即准,减小上滚首测 delta。
+  if (e.kind === "tool_call") return isEditTool(e) ? 386 : 48;
   return 96;
 }
 
@@ -99,13 +100,19 @@ export function ThreadView() {
     }
   }, [count, totalSize, virtualizer]);
 
-  // 用户发送新消息:强制恢复跟随(实际滚动由上方 effect 在 count 变化时执行)。
+  // 用户发送新消息:强制恢复跟随,并在本 effect 内同步回底。
+  // 不能只置 stickToBottomRef 再等上方 follow effect:同一提交里 follow effect 先跑
+  // (此刻 stick 仍 false → 不滚),本 effect 才置 true;若此后无流式追加,count/totalSize
+  // 不再变化 → follow effect 不再触发 → 永不回底。故此处直接 scrollToIndex。
+  // count/virtualizer 取自本渲染闭包,无需进 deps(deps 仍为 [entries] 以检测新 user id)。
   useLayoutEffect(() => {
     const userId = lastUserMessageId(entries);
     if (userId && userId !== lastUserMsgIdRef.current) {
       lastUserMsgIdRef.current = userId;
       stickToBottomRef.current = true;
+      if (count > 0) virtualizer.scrollToIndex(count - 1, { align: "end" });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entries]);
 
   // 切换对话:恢复跟随并直接滚到底(两个会话 count 可能相同,不能只靠 count 依赖)。

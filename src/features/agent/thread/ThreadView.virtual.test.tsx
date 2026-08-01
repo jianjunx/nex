@@ -102,6 +102,42 @@ describe("ThreadView 虚拟化", () => {
       scroller.dispatchEvent(new Event("scroll"));
     });
 
+    // 追加非 user 条目(助手消息):上滚取消跟随后,这类条目不应把视图拉回底部。
+    // 注意:不能追加 user_message——发送新消息是显式回底语义(见下方用例),二者故意分开。
+    act(() => {
+      useAgentStore.setState((s) => {
+        s.entriesByConversation["A"] = [
+          ...(s.entriesByConversation["A"] ?? []),
+          {
+            id: "new1",
+            kind: "assistant_message",
+            chunks: [{ type: "message", text: "新回复" }],
+            timestamp: 999,
+          },
+        ];
+      });
+    });
+    await act(async () => {});
+
+    expect(scroller.scrollTop).toBe(0);
+  });
+
+  it("上滚取消跟随后追加 user_message 应回底(发送即回底)", async () => {
+    setupThreadStores("A", { A: makeEntries(100) });
+    const { container } = render(<ThreadView />);
+    const scroller = getScroller(container);
+    setMockScrollHeight(scroller, 100 * 60);
+    await act(async () => {});
+
+    // 上滚到顶(距底 5400px > 80)并触发 onScroll → 取消跟随,此刻不贴底
+    scroller.scrollTop = 0;
+    act(() => {
+      scroller.dispatchEvent(new Event("scroll"));
+    });
+    expect(scroller.scrollTop).toBe(0);
+
+    // 追加一条 user_message:发送新消息应强制恢复跟随并在 effect 内立即回底,
+    // 不依赖后续 count/totalSize 再变化触发的 follow effect。
     act(() => {
       useAgentStore.setState((s) => {
         s.entriesByConversation["A"] = [
@@ -112,7 +148,8 @@ describe("ThreadView 虚拟化", () => {
     });
     await act(async () => {});
 
-    expect(scroller.scrollTop).toBe(0);
+    // 101 行 × 60px − 视口 600px ≈ 5460;断言已回底(与跟随用例同口径)
+    expect(scroller.scrollTop).toBeGreaterThan(4000);
   });
 
   it("切换会话后恢复跟随并滚动到新会话底部", async () => {

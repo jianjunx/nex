@@ -94,15 +94,19 @@ export function ThreadDiffBlock({
         </div>
       ) : null}
       {ready ? (
+        // 不传 maxHeight:卡片外层 max-h-[350px] 作唯一滚动容器,diff 自动撑高后被其封顶,
+        // 避免 DiffView 内部 .cm-scroller 再起一条滚动条(双滚动条)。
         <DiffView
           payload={payload}
           theme={theme}
           extensions={extensions}
           height="auto"
-          maxHeight="320px"
         />
       ) : (
-        <div style={{ minHeight: 96 }} aria-hidden="true" />
+        // 占位顶满 edit 内容区封顶高度(350):使「占位帧」与「就绪帧」行高恒等(均被
+        // 外层 max-h-[350px] 封顶),measureElement 在延迟挂载前后测得同高,虚拟器零尺寸
+        // 变化 → 消除上滚抖动;同时快速滚过的行仍不会触发昂贵的 merge 计算。
+        <div style={{ minHeight: 350 }} aria-hidden="true" />
       )}
     </div>
   );

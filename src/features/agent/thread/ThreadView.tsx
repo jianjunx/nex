@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import { ListChecks } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -8,22 +9,88 @@ import { ThinkingBlock } from "./ThinkingBlock";
 import { ToolCallCard } from "./ToolCallCard";
 import type { AssistantChunk, ThreadEntry } from "./types";
 
+/** 距底部小于此阈值视为「仍在底部」，恢复自动跟随。 */
+const NEAR_BOTTOM_PX = 80;
+
+function lastUserMessageId(entries: ThreadEntry[]): string | null {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    if (entries[i].kind === "user_message") return entries[i].id;
+  }
+  return null;
+}
+
 export function ThreadView() {
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const activeTabId = useConversationStore((s) => selectProjectActiveTabId(s, activeProjectId));
   const entriesByConversation = useAgentStore((s) => s.entriesByConversation);
   const entries = activeTabId ? (entriesByConversation[activeTabId] ?? []) : [];
 
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
+  const lastUserMsgIdRef = useRef<string | null>(null);
+
+  const scrollToBottom = useCallback(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, []);
+
+  const onScroll = () => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickToBottomRef.current = distance <= NEAR_BOTTOM_PX;
+  };
+
+  // 切换对话：回到底部并开启跟随。
+  useLayoutEffect(() => {
+    stickToBottomRef.current = true;
+    lastUserMsgIdRef.current = lastUserMessageId(entries);
+    scrollToBottom();
+    // 仅在切 tab 时重置；entries 内容变化由下方 effect / ResizeObserver 处理
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTabId, scrollToBottom]);
+
+  // 用户发送新消息：强制贴底并跟随后续 AI 流式更新。
+  useLayoutEffect(() => {
+    const userId = lastUserMessageId(entries);
+    if (userId && userId !== lastUserMsgIdRef.current) {
+      lastUserMsgIdRef.current = userId;
+      stickToBottomRef.current = true;
+      scrollToBottom();
+      return;
+    }
+    if (stickToBottomRef.current) scrollToBottom();
+  }, [entries, scrollToBottom]);
+
+  // 流式内容增高时，若仍处于跟随态则继续贴底。
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content) return;
+    const ro = new ResizeObserver(() => {
+      if (stickToBottomRef.current) scrollToBottom();
+    });
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, [scrollToBottom]);
+
   return (
-    <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-      {entries.length === 0 && (
-        <div className="flex items-center justify-center h-full text-[var(--text-tertiary)] text-sm">
-          Start a conversation
-        </div>
-      )}
-      {entries.map((entry) => (
-        <EntryView key={entry.id} entry={entry} />
-      ))}
+    <div
+      ref={scrollerRef}
+      onScroll={onScroll}
+      className="flex-1 min-h-0 overflow-y-auto px-6 py-4"
+    >
+      <div ref={contentRef} className="space-y-4">
+        {entries.length === 0 && (
+          <div className="flex items-center justify-center h-full text-[var(--text-tertiary)] text-sm">
+            Start a conversation
+          </div>
+        )}
+        {entries.map((entry) => (
+          <EntryView key={entry.id} entry={entry} />
+        ))}
+      </div>
     </div>
   );
 }

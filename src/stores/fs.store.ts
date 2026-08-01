@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { persist } from "zustand/middleware";
 import { enableMapSet } from "immer";
-import { fsReadTree, fsExpandDir, fsReadFile, fsSearch, fsSearchReplace, fsApplyReplace, fsWriteFile, fsCreateFile, fsCreateDir, type FsNode, type SearchMatch, type SearchOptions, type ReplacePreview, type ReplaceResult } from "../bridge/tauri";
+import { fsReadTree, fsExpandDir, fsReadFile, fsSearch, fsSearchReplace, fsApplyReplace, fsWriteFile, fsCreateFile, fsCreateDir, fsDeleteEntry, fsRenameEntry, fsCopyEntry, fsMoveEntry, fsImportFiles, type FsNode, type SearchMatch, type SearchOptions, type ReplacePreview, type ReplaceResult } from "../bridge/tauri";
 import { useUiStore } from "./ui.store";
 import { useSettingsStore } from "./settings.store";
 import {
@@ -82,6 +82,8 @@ interface FsStore {
   replacePreview: ReplacePreview | null;
   replacing: boolean;
   pendingLine: PendingLine | null;
+  /** Set by keyboard shortcut (F2) to trigger inline rename on the selected node. */
+  pendingRenamePath: string | null;
   loading: boolean;
   error: string | null;
   /** Per-project open-file paths + active path, persisted to localStorage. */
@@ -105,6 +107,12 @@ interface FsStore {
   setSelectedPath: (path: string | null) => void;
   createFile: (parentDir: string, name: string) => Promise<void>;
   createDir: (parentDir: string, name: string) => Promise<void>;
+  deleteEntry: (path: string) => Promise<void>;
+  renameEntry: (path: string, newName: string) => Promise<void>;
+  copyEntries: (sources: string[], targetDir: string) => Promise<void>;
+  moveEntries: (sources: string[], targetDir: string) => Promise<void>;
+  /** Import external files (e.g. OS drag-and-drop) into a target directory. */
+  importFiles: (sources: string[], targetDir: string) => Promise<void>;
   refreshDir: (dirPath: string) => Promise<void>;
   /** @returns false when a write was attempted and failed */
   saveFile: (filePath?: string) => Promise<boolean>;
@@ -118,6 +126,9 @@ interface FsStore {
   applyReplace: (projectPath: string, query: string, replacement: string, scope?: { paths?: string[]; limitPerFile?: number }) => Promise<ReplaceResult | null>;
   clearReplacePreview: () => void;
   consumePendingLine: () => PendingLine | null;
+  /** Set a path to trigger inline rename in FileTree; consumed once. */
+  setPendingRename: (path: string | null) => void;
+  consumePendingRename: () => string | null;
   clearError: () => void;
   /** Flush dirty files, cache full EditorFile[] + paths for the project. Call before switching away. */
   saveCurrentEditorState: (projectId: string) => Promise<void>;
@@ -154,6 +165,7 @@ export const useFsStore = create<FsStore>()(
     replacePreview: null,
     replacing: false,
     pendingLine: null,
+    pendingRenamePath: null,
     loading: false,
     error: null,
     editorLayoutByProject: {},
@@ -408,6 +420,111 @@ export const useFsStore = create<FsStore>()(
       }
     },
 
+    deleteEntry: async (path) => {
+      set((s) => { s.error = null; });
+      try {
+        const parent = path.replace(/[/\\][^/\\]*$/, "");
+        // Close the file in editor if it was open
+        const openIndex = get().openFiles.findIndex((f) => f.path === path);
+        if (openIndex >= 0) {
+          await get().closeFile(path);
+        }
+        await fsDeleteEntry(path);
+        await get().refreshDir(parent);
+        // Also refresh subdirs that had this path as parent
+        if (parent) {
+          const parentInNodes = parent in get().nodesByDir;
+          if (!parentInNodes) {
+            // Attempt to refresh the project root
+            const projects = get().nodesByDir;
+            for (const dir of Object.keys(projects)) {
+              if (path.startsWith(dir)) {
+                await get().refreshDir(dir);
+                break;
+              }
+            }
+          }
+        }
+      } catch (err) {
+        set((s) => { s.error = errorMessage(err); });
+      }
+    },
+
+    renameEntry: async (path, newName) => {
+      set((s) => { s.error = null; });
+      try {
+        const parent = path.replace(/[/\\][^/\\]*$/, "");
+        const newPath = parent ? `${parent}\\${newName}` : newName;
+        await fsRenameEntry(path, newName);
+        // Update open file path if the renamed file was open
+        const openIndex = get().openFiles.findIndex((f) => f.path === path);
+        if (openIndex >= 0) {
+          set((s) => {
+            s.openFiles[openIndex].path = newPath;
+            if (s.activePath === path) s.activePath = newPath;
+          });
+        }
+        // Update expanded dirs
+        const dirs = new Set(get().expandedDirs);
+        if (dirs.has(path)) {
+          dirs.delete(path);
+          dirs.add(newPath);
+          set((s) => { s.expandedDirs = dirs; });
+        }
+        // Refresh parent
+        await get().refreshDir(parent);
+      } catch (err) {
+        set((s) => { s.error = errorMessage(err); });
+      }
+    },
+
+    copyEntries: async (sources, targetDir) => {
+      set((s) => { s.error = null; });
+      try {
+        for (const src of sources) {
+          await fsCopyEntry(src, targetDir);
+        }
+        await get().refreshDir(targetDir);
+      } catch (err) {
+        set((s) => { s.error = errorMessage(err); });
+      }
+    },
+
+    moveEntries: async (sources, targetDir) => {
+      set((s) => { s.error = null; });
+      try {
+        for (const src of sources) {
+          // Close any open editor tabs for moved files
+          const openIndex = get().openFiles.findIndex((f) => f.path === src);
+          if (openIndex >= 0) {
+            const name = src.replace(/^.*[/\\]/, "");
+            const newPath = `${targetDir}\\${name}`;
+            set((s) => {
+              s.openFiles[openIndex].path = newPath;
+              if (s.activePath === src) s.activePath = newPath;
+            });
+          }
+          // Refresh source parent before move
+          const srcParent = src.replace(/[/\\][^/\\]*$/, "");
+          await fsMoveEntry(src, targetDir);
+          await get().refreshDir(srcParent);
+        }
+        await get().refreshDir(targetDir);
+      } catch (err) {
+        set((s) => { s.error = errorMessage(err); });
+      }
+    },
+
+    importFiles: async (sources, targetDir) => {
+      set((s) => { s.error = null; });
+      try {
+        await fsImportFiles(sources, targetDir);
+        await get().refreshDir(targetDir);
+      } catch (err) {
+        set((s) => { s.error = errorMessage(err); });
+      }
+    },
+
     refreshDir: async (dirPath) => {
       set((s) => { s.loading = true; s.error = null; });
       try {
@@ -577,6 +694,16 @@ export const useFsStore = create<FsStore>()(
     consumePendingLine: () => {
       const cur = get().pendingLine;
       if (cur) set((s) => { s.pendingLine = null; });
+      return cur;
+    },
+
+    setPendingRename: (path) => {
+      set((s) => { s.pendingRenamePath = path; });
+    },
+
+    consumePendingRename: () => {
+      const cur = get().pendingRenamePath;
+      if (cur) set((s) => { s.pendingRenamePath = null; });
       return cur;
     },
 

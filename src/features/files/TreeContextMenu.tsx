@@ -1,0 +1,221 @@
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+} from "@/components/ui/dropdown-menu";
+import {
+  FilePlus,
+  FolderPlus,
+  Copy,
+  Scissors,
+  ClipboardPaste,
+  Link,
+  Pencil,
+  Trash2,
+} from "lucide-react";
+import { useClipboardStore } from "@/stores/clipboard.store";
+import { useFsStore } from "@/stores/fs.store";
+import { detectPlatform } from "@/commands/types";
+
+interface TreeContextMenuProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  position: { x: number; y: number };
+  node: { name: string; path: string; is_dir: boolean };
+  onClose: () => void;
+  onRename: () => void;
+  onNewFile?: () => void;
+  onNewFolder?: () => void;
+}
+
+const platform = detectPlatform();
+const isMac = platform === "mac";
+
+export function TreeContextMenu({
+  open,
+  onOpenChange,
+  position,
+  node,
+  onClose,
+  onRename,
+  onNewFile,
+  onNewFolder,
+}: TreeContextMenuProps) {
+  const clipboard = useClipboardStore();
+  const fs = useFsStore();
+  const canPaste = clipboard.hasEntries();
+
+  const handleCopy = () => {
+    clipboard.setEntries([{ path: node.path, isCut: false }]);
+    onClose();
+  };
+
+  const handleCut = () => {
+    clipboard.setEntries([{ path: node.path, isCut: true }]);
+    onClose();
+  };
+
+  const handlePaste = () => {
+    if (!canPaste) return;
+    const entries = clipboard.entries;
+    // Paste into this directory
+    if (entries.some((e) => e.isCut)) {
+      // Move: cut entries
+      void fs.moveEntries(
+        entries.map((e) => e.path),
+        node.path,
+      );
+      clipboard.clear();
+    } else {
+      // Copy
+      void fs.copyEntries(
+        entries.map((e) => e.path),
+        node.path,
+      );
+    }
+    onClose();
+  };
+
+  const handleCopyPath = () => {
+    navigator.clipboard.writeText(node.path).catch(() => {});
+    onClose();
+  };
+
+  const handleCopyRelativePath = async () => {
+    // Find project root from the store — relative to project base
+    try {
+      const text = node.name;
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // fallback: copy full path
+      navigator.clipboard.writeText(node.path).catch(() => {});
+    }
+    onClose();
+  };
+
+  const handleDelete = () => {
+    void fs.deleteEntry(node.path);
+    onClose();
+  };
+
+  // File node context menu
+  if (!node.is_dir) {
+    return (
+      <DropdownMenu open={open} onOpenChange={onOpenChange} modal={false}>
+        <DropdownMenuContent
+          className="w-52"
+          style={{ position: "fixed", left: position.x, top: position.y }}
+          onCloseAutoFocus={(e) => e.preventDefault()}
+        >
+          <DropdownMenuGroup>
+            <DropdownMenuItem onClick={handleCopy}>
+              <Copy className="size-4" />
+              <span>复制</span>
+              <DropdownMenuShortcut>{isMac ? "⌘C" : "Ctrl+C"}</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={handleCut}>
+              <Scissors className="size-4" />
+              <span>剪切</span>
+              <DropdownMenuShortcut>{isMac ? "⌘X" : "Ctrl+X"}</DropdownMenuShortcut>
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuGroup>
+            <DropdownMenuItem onClick={handleCopyPath}>
+              <Link className="size-4" />
+              <span>复制路径</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={handleCopyRelativePath}>
+              <Link className="size-4" />
+              <span>复制相对路径</span>
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuGroup>
+            <DropdownMenuItem onClick={onRename}>
+              <Pencil className="size-4" />
+              <span>重命名</span>
+              <DropdownMenuShortcut>{isMac ? "⏎" : "F2"}</DropdownMenuShortcut>
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={handleDelete} variant="destructive">
+            <Trash2 className="size-4" />
+            <span>删除</span>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  }
+
+  // Directory node context menu
+  return (
+    <DropdownMenu open={open} onOpenChange={onOpenChange} modal={false}>
+      <DropdownMenuContent
+        className="w-52"
+        style={{ position: "fixed", left: position.x, top: position.y }}
+        onCloseAutoFocus={(e) => e.preventDefault()}
+      >
+        <DropdownMenuGroup>
+          {onNewFile && (
+            <DropdownMenuItem onClick={onNewFile}>
+              <FilePlus className="size-4" />
+              <span>新建文件</span>
+            </DropdownMenuItem>
+          )}
+          {onNewFolder && (
+            <DropdownMenuItem onClick={onNewFolder}>
+              <FolderPlus className="size-4" />
+              <span>新建文件夹</span>
+            </DropdownMenuItem>
+          )}
+        </DropdownMenuGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuGroup>
+          <DropdownMenuItem onClick={handleCopy}>
+            <Copy className="size-4" />
+            <span>复制</span>
+            <DropdownMenuShortcut>{isMac ? "⌘C" : "Ctrl+C"}</DropdownMenuShortcut>
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={handleCut}>
+            <Scissors className="size-4" />
+            <span>剪切</span>
+            <DropdownMenuShortcut>{isMac ? "⌘X" : "Ctrl+X"}</DropdownMenuShortcut>
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={handlePaste} disabled={!canPaste}>
+            <ClipboardPaste className="size-4" />
+            <span>粘贴</span>
+            <DropdownMenuShortcut>{isMac ? "⌘V" : "Ctrl+V"}</DropdownMenuShortcut>
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuGroup>
+          <DropdownMenuItem onClick={handleCopyPath}>
+            <Link className="size-4" />
+            <span>复制路径</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={handleCopyRelativePath}>
+            <Link className="size-4" />
+            <span>复制相对路径</span>
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuGroup>
+          <DropdownMenuItem onClick={onRename}>
+            <Pencil className="size-4" />
+            <span>重命名</span>
+            <DropdownMenuShortcut>{isMac ? "⏎" : "F2"}</DropdownMenuShortcut>
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={handleDelete} variant="destructive">
+          <Trash2 className="size-4" />
+          <span>删除</span>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}

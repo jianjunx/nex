@@ -3,6 +3,7 @@ use crate::fs::tree::{FsNode, read_tree, expand_dir};
 use crate::fs::read::{FileContent, read_file};
 use crate::fs::write::write_file;
 use crate::fs::create::{create_file, create_dir};
+use crate::fs::operations::{delete_entry, rename_entry, copy_entry, move_entry, import_file};
 use crate::fs::search::{SearchMatch, SearchOptions, ReplacePreview, ReplaceResult, search, search_replace, apply_replace};
 use crate::state::AppState;
 use std::path::Path;
@@ -69,4 +70,38 @@ pub fn fs_create_file(parent_dir: String, name: String) -> Result<(), NexError> 
 #[tauri::command]
 pub fn fs_create_dir(parent_dir: String, name: String) -> Result<(), NexError> {
     create_dir(Path::new(&parent_dir), &name)
+}
+
+#[tauri::command]
+pub fn fs_delete_entry(path: String) -> Result<(), NexError> {
+    delete_entry(Path::new(&path))
+}
+
+#[tauri::command]
+pub fn fs_rename_entry(path: String, new_name: String) -> Result<(), NexError> {
+    rename_entry(Path::new(&path), &new_name)
+}
+
+#[tauri::command]
+pub fn fs_copy_entry(source: String, target_dir: String) -> Result<(), NexError> {
+    copy_entry(Path::new(&source), Path::new(&target_dir))
+}
+
+#[tauri::command]
+pub fn fs_move_entry(source: String, target_dir: String) -> Result<(), NexError> {
+    move_entry(Path::new(&source), Path::new(&target_dir))
+}
+
+/// Import external files/directories (e.g. from OS drag-and-drop) into a
+/// target directory.  Handles name conflicts by appending a numeric suffix.
+/// Returns the list of destination paths.
+#[tauri::command]
+pub fn fs_import_files(sources: Vec<String>, target_dir: String) -> Result<Vec<String>, NexError> {
+    let target = Path::new(&target_dir);
+    let mut results = Vec::with_capacity(sources.len());
+    for src in &sources {
+        let dest = import_file(Path::new(src), target)?;
+        results.push(dest.to_string_lossy().into_owned());
+    }
+    Ok(results)
 }

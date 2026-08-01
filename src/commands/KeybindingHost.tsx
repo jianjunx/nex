@@ -9,7 +9,7 @@ import { listCommands } from "./registry";
 import { useKeybindingsStore } from "../stores/keybindings.store";
 
 // Commands that must work even while typing (VSCode semantics).
-const ALLOW_IN_INPUT = new Set(["editor.save", "editor.close", "scm.commit"]);
+const ALLOW_IN_INPUT = new Set(["editor.save", "editor.close", "scm.commit", "files.copy", "files.cut", "files.paste", "files.rename", "files.delete"]);
 
 /** Workbench shortcuts still allowed while the integrated terminal is focused. */
 const ALLOW_IN_TERMINAL = new Set(["terminal.toggle"]);

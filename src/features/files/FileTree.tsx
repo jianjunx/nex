@@ -1,7 +1,9 @@
-import { ChevronRight, File, Folder, FilePlus, FolderPlus, RefreshCw, ChevronsDownUp } from "lucide-react";
+import { ChevronRight, FilePlus, FolderPlus, RefreshCw, ChevronsDownUp } from "lucide-react";
 import { useFsStore } from "../../stores/fs.store";
 import { useProjectStore } from "../../stores/project.store";
 import { useEffect, useState, useRef, useCallback } from "react";
+import FileIcon from "./FileIcon";
+import { TreeContextMenu } from "./TreeContextMenu";
 
 function CreatingInput({ type, depth, onDone }: {
   type: 'file' | 'dir';
@@ -27,35 +29,108 @@ function CreatingInput({ type, depth, onDone }: {
 
   return (
     <div
-      className="flex items-center gap-2 px-2.5 py-1.5 text-sm rounded-[var(--radius-sm)]"
-      style={{ paddingLeft: depth * 12 + 8 }}
+      className="flex items-center gap-1 px-1.5 py-0.5 text-sm rounded-[var(--radius-sm)]"
+      style={{ paddingLeft: depth * 10 + 6 }}
     >
       <span className="w-3" />
-      {type === 'file' ? (
-        <File size={14} className="text-[var(--text-tertiary)] shrink-0" />
-      ) : (
-        <Folder size={14} className="text-[var(--accent)] shrink-0" />
-      )}
+      <FileIcon filename="" isFolder={type === "dir"} size={14} className="shrink-0" />
       <input
         ref={inputRef}
         value={name}
         onChange={(e) => setName(e.target.value)}
         onKeyDown={handleKeyDown}
         onBlur={() => onDone(name.trim())}
-        className="bg-[var(--glass-2-surface)] border border-[var(--border-subtle)] rounded-[var(--radius-sm)] px-1.5 py-0.5 text-sm text-[var(--text-primary)] outline-none flex-1 min-w-0"
+        className="bg-[var(--glass-2-surface)] border border-[var(--border-subtle)] rounded-[var(--radius-sm)] px-1 py-px text-sm text-[var(--text-primary)] outline-none flex-1 min-w-0"
         placeholder={type === 'file' ? 'new file' : 'new folder'}
       />
     </div>
   );
 }
 
-function TreeNode({ node, depth, isRoot, creatingIn, creatingType, onCreatingDone, rootActions }: {
+/** Inline rename input — replaces the filename span while renaming */
+function RenameInput({ name, depth, isFolder, onDone }: {
+  name: string;
+  depth: number;
+  isFolder: boolean;
+  onDone: (name: string) => void;
+}) {
+  const [value, setValue] = useState(name);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      // Select name part without extension for files
+      if (!isFolder) {
+        const dotIdx = name.lastIndexOf('.');
+        if (dotIdx > 0) {
+          inputRef.current?.setSelectionRange(0, dotIdx);
+        } else {
+          inputRef.current?.select();
+        }
+      } else {
+        inputRef.current?.select();
+      }
+    });
+  }, []);
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const trimmed = value.trim();
+      if (trimmed && trimmed !== name) onDone(trimmed);
+      else onDone('');
+    } else if (e.key === 'Escape') {
+      onDone('');
+    }
+  };
+
+  return (
+    <div
+      className="flex items-center gap-1 px-1.5 py-0.5 text-sm rounded-[var(--radius-sm)]"
+      style={{ paddingLeft: depth * 10 + 6 }}
+    >
+      <span className="w-3" />
+      <FileIcon filename={isFolder ? "" : name} isFolder={isFolder} size={14} className="shrink-0" />
+      <input
+        ref={inputRef}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={handleKeyDown}
+        onBlur={() => {
+          const trimmed = value.trim();
+          if (trimmed && trimmed !== name) onDone(trimmed);
+          else onDone('');
+        }}
+        className="bg-[var(--glass-2-surface)] border border-[var(--accent)] rounded-[var(--radius-sm)] px-1 py-px text-sm text-[var(--text-primary)] outline-none flex-1 min-w-0"
+      />
+    </div>
+  );
+}
+
+// --- Context menu state (module-level to avoid resetting on re-renders) ---
+interface ContextMenuState {
+  node: { name: string; path: string; is_dir: boolean };
+  position: { x: number; y: number };
+}
+
+function TreeNode({
+  node, depth, isRoot,
+  creatingIn, creatingType, onCreatingDone,
+  renamingPath, onRenameStart, onRenameDone,
+  onContextMenu,
+  rootActions
+}: {
   node: { name: string; path: string; is_dir: boolean };
   depth: number;
   isRoot?: boolean;
   creatingIn: string | null;
   creatingType: 'file' | 'dir' | null;
   onCreatingDone: (name: string, parentPath: string) => void;
+  renamingPath: string | null;
+  onRenameStart: (path: string) => void;
+  onRenameDone: (path: string, newName: string) => void;
+  onContextMenu: (e: React.MouseEvent, node: { name: string; path: string; is_dir: boolean }) => void;
   rootActions?: {
     projectName: string;
     onNewFile: () => void;
@@ -64,11 +139,16 @@ function TreeNode({ node, depth, isRoot, creatingIn, creatingType, onCreatingDon
     onCollapseAll: () => void;
   };
 }) {
-  const { expandedDirs, expandDir, collapseDir, nodesByDir, openFile, selectedPath, setSelectedPath } = useFsStore();
+  const { expandedDirs, expandDir, collapseDir, nodesByDir, openFile, selectedPath, setSelectedPath, moveEntries, importFiles } = useFsStore();
   const isExpanded = expandedDirs.has(node.path);
   const children = nodesByDir[node.path];
   const isSelected = selectedPath === node.path;
   const isCreatingHere = creatingIn === node.path;
+  const isRenaming = renamingPath === node.path;
+
+  // Drag-and-drop state
+  const [isDragOver, setIsDragOver] = useState(false);
+  const rowRef = useRef<HTMLDivElement>(null);
 
   const handleClick = () => {
     setSelectedPath(node.path);
@@ -86,51 +166,174 @@ function TreeNode({ node, depth, isRoot, creatingIn, creatingType, onCreatingDon
     }
   };
 
+  // --- Drag-and-drop handlers ---
+  const handleDragStart = (e: React.DragEvent) => {
+    if (isRoot) return;
+    e.dataTransfer.setData('application/nex-tree-node', node.path);
+    e.dataTransfer.effectAllowed = 'move';
+    (e.currentTarget as HTMLElement).classList.add('opacity-50');
+  };
+
+  const handleDragEnd = (e: React.DragEvent) => {
+    (e.currentTarget as HTMLElement).classList.remove('opacity-50');
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    // Only directories (and root) accept drops
+    if (!isRoot && !node.is_dir) return;
+    e.preventDefault();
+    e.stopPropagation();
+    // Determine effect based on data type
+    const isInternal = e.dataTransfer.types.includes('application/nex-tree-node');
+    e.dataTransfer.dropEffect = isInternal ? 'move' : 'copy';
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    // Only reset if we're actually leaving (not entering a child)
+    const target = e.currentTarget as HTMLElement;
+    const relatedTarget = e.relatedTarget as HTMLElement;
+    if (!relatedTarget || !target.contains(relatedTarget)) {
+      setIsDragOver(false);
+    }
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+
+    const internalPath = e.dataTransfer.getData('application/nex-tree-node');
+    // Determine target directory
+    const targetDir = (isRoot || node.is_dir) ? node.path
+      : node.path.replace(/[/\\][^/\\]*$/, '');
+
+    if (internalPath && internalPath !== node.path) {
+      // Prevent dropping a directory into itself or a descendant
+      if (targetDir.startsWith(internalPath + '\\') || targetDir.startsWith(internalPath + '/') || targetDir === internalPath) return;
+      void moveEntries([internalPath], targetDir);
+      return;
+    }
+
+    // External file drop (from OS)
+    if (e.dataTransfer.files.length > 0) {
+      const paths: string[] = [];
+      for (let i = 0; i < e.dataTransfer.files.length; i++) {
+        const file = e.dataTransfer.files[i];
+        // Tauri v2 extends File with a `path` property
+        const fp = (file as any).path as string | undefined;
+        if (fp) paths.push(fp);
+      }
+      if (paths.length > 0) {
+        void importFiles(paths, targetDir);
+      }
+    }
+  };
+
+  // --- Keyboard handler ---
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      if ((isRoot || node.is_dir) && !isExpanded) {
+        expandDir(node.path);
+      }
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      if ((isRoot || node.is_dir) && isExpanded) {
+        collapseDir(node.path);
+      }
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (!node.is_dir) {
+        openFile(node.path);
+      } else if (isExpanded) {
+        collapseDir(node.path);
+      } else {
+        expandDir(node.path);
+      }
+    }
+  };
+
   const displayName = isRoot ? (rootActions?.projectName ?? node.name) : node.name;
 
   return (
     <div>
-      <div
-        onClick={handleClick}
-        onDoubleClick={handleDoubleClick}
-        className={`flex items-center gap-2 px-2.5 py-1.5 text-sm cursor-pointer rounded-[var(--radius-sm)] transition-colors duration-100 ${
-          isSelected ? "bg-[var(--accent)]/20" : "hover:bg-[var(--overlay-hover)]"
-        }`}
-        style={{ paddingLeft: depth * 12 + 8 }}
-      >
-        {isRoot || node.is_dir ? (
-          <ChevronRight size={12} className={`shrink-0 transition-transform duration-150 ease-out ${isExpanded ? "rotate-90" : ""}`} />
-        ) : (
-          <span className="w-3" />
-        )}
-        {(isRoot || node.is_dir) ? (
-          <Folder size={14} className="text-[var(--accent)] shrink-0" />
-        ) : (
-          <File size={14} className="text-[var(--text-tertiary)] shrink-0" />
-        )}
-        <span className={`truncate ${isRoot ? "text-[var(--text-primary)] font-medium" : "text-[var(--text-secondary)]"}`}>
-          {displayName}
-        </span>
-        {isRoot && rootActions && (
-          <>
-            <div className="flex-1" />
-            <div className="flex items-center gap-0.5">
-              <span role="button" title="新建文件" className="p-0.5 rounded transition-colors duration-100 hover:bg-[var(--overlay-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onNewFile(); }}>
-                <FilePlus size={14} />
-              </span>
-              <span role="button" title="新建目录" className="p-0.5 rounded transition-colors duration-100 hover:bg-[var(--overlay-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onNewFolder(); }}>
-                <FolderPlus size={14} />
-              </span>
-              <span role="button" title="刷新" className="p-0.5 rounded transition-colors duration-100 hover:bg-[var(--overlay-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onRefresh(); }}>
-                <RefreshCw size={14} />
-              </span>
-              <span role="button" title="全部折叠" className="p-0.5 rounded transition-colors duration-100 hover:bg-[var(--overlay-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onCollapseAll(); }}>
-                <ChevronsDownUp size={14} />
-              </span>
-            </div>
-          </>
-        )}
-      </div>
+      {isRenaming ? (
+        <RenameInput
+          name={node.name}
+          depth={depth}
+          isFolder={node.is_dir}
+          onDone={(newName) => onRenameDone(node.path, newName)}
+        />
+      ) : (
+        <div
+          ref={rowRef}
+          tabIndex={0}
+          role="treeitem"
+          aria-expanded={isRoot || node.is_dir ? isExpanded : undefined}
+          aria-selected={isSelected}
+          onClick={handleClick}
+          onDoubleClick={handleDoubleClick}
+          onKeyDown={handleKeyDown}
+          onContextMenu={(e) => {
+            if (!isRoot) {
+              e.preventDefault();
+              e.stopPropagation();
+              setSelectedPath(node.path);
+              onContextMenu(e, node);
+            }
+          }}
+          // Drag-and-drop
+          draggable={!isRoot}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          className={`flex items-center gap-1.5 px-2 py-1 text-sm cursor-pointer rounded-[var(--radius-sm)] transition-colors duration-100 outline-none group ${
+            isDragOver
+              ? "bg-[var(--accent)]/30 ring-1 ring-[var(--accent)]"
+              : isSelected
+              ? "bg-[var(--accent)]/20"
+              : "hover:bg-[var(--overlay-hover)]"
+          }`}
+          style={{ paddingLeft: depth * 10 + 6 }}
+        >
+          {isRoot || node.is_dir ? (
+            <ChevronRight size={12} className={`shrink-0 transition-transform duration-150 ease-out ${isExpanded ? "rotate-90" : ""}`} />
+          ) : (
+            <span className="w-3" />
+          )}
+          <FileIcon
+            filename={isRoot ? "" : node.name}
+            isFolder={isRoot || node.is_dir}
+            size={14}
+            className="shrink-0"
+          />
+          <span className={`truncate ${isRoot ? "text-[var(--text-primary)] font-medium" : "text-[var(--text-secondary)]"}`}>
+            {displayName}
+          </span>
+          {isRoot && rootActions && (
+            <>
+              <div className="flex-1" />
+              <div className="flex items-center gap-0.5">
+                <span role="button" title="新建文件" className="p-0.5 rounded transition-colors duration-100 hover:bg-[var(--overlay-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onNewFile(); }}>
+                  <FilePlus size={14} />
+                </span>
+                <span role="button" title="新建目录" className="p-0.5 rounded transition-colors duration-100 hover:bg-[var(--overlay-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onNewFolder(); }}>
+                  <FolderPlus size={14} />
+                </span>
+                <span role="button" title="刷新" className="p-0.5 rounded transition-colors duration-100 hover:bg-[var(--overlay-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onRefresh(); }}>
+                  <RefreshCw size={14} />
+                </span>
+                <span role="button" title="全部折叠" className="p-0.5 rounded transition-colors duration-100 hover:bg-[var(--overlay-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onCollapseAll(); }}>
+                  <ChevronsDownUp size={14} />
+                </span>
+              </div>
+            </>
+          )}
+        </div>
+      )}
       {isExpanded && (
         <>
           {isCreatingHere && creatingType && (
@@ -148,6 +351,10 @@ function TreeNode({ node, depth, isRoot, creatingIn, creatingType, onCreatingDon
               creatingIn={creatingIn}
               creatingType={creatingType}
               onCreatingDone={onCreatingDone}
+              renamingPath={renamingPath}
+              onRenameStart={onRenameStart}
+              onRenameDone={onRenameDone}
+              onContextMenu={onContextMenu}
             />
           ))}
         </>
@@ -157,13 +364,36 @@ function TreeNode({ node, depth, isRoot, creatingIn, creatingType, onCreatingDon
 }
 
 export function FileTree() {
-  const { loadRoot, nodesByDir, expandDir, createFile, createDir, refreshDir, collapseAll, selectedPath } = useFsStore();
+  const { loadRoot, nodesByDir, expandDir, createFile, createDir, renameEntry, refreshDir, collapseAll, selectedPath, pendingRenamePath, consumePendingRename, moveEntries, importFiles } = useFsStore();
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const projects = useProjectStore((s) => s.projects);
   const project = projects.find((p) => p.id === activeProjectId);
 
   const [creatingIn, setCreatingIn] = useState<string | null>(null);
   const [creatingType, setCreatingType] = useState<'file' | 'dir' | null>(null);
+  const [renamingPath, setRenamingPath] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+
+  const treeContainerRef = useRef<HTMLDivElement>(null);
+
+  // Consume pending rename from keyboard shortcut
+  useEffect(() => {
+    if (pendingRenamePath) {
+      // Expand parent dir if needed
+      const parent = pendingRenamePath.replace(/[/\\][^/\\]*$/, "");
+      if (parent && parent !== project?.path && !(parent in nodesByDir)) {
+        expandDir(parent);
+      }
+      setRenamingPath(pendingRenamePath);
+      consumePendingRename();
+    }
+  }, [pendingRenamePath]);
+
+  const closeContextMenu = useCallback(() => setContextMenu(null), []);
+
+  const handleContextMenu = useCallback((e: React.MouseEvent, node: { name: string; path: string; is_dir: boolean }) => {
+    setContextMenu({ node, position: { x: e.clientX, y: e.clientY } });
+  }, []);
 
   const getTargetDir = useCallback((): string => {
     const sel = selectedPath;
@@ -176,17 +406,17 @@ export function FileTree() {
     return project.path;
   }, [selectedPath, project, nodesByDir]);
 
-  const handleNewFile = useCallback(() => {
-    const targetDir = getTargetDir();
-    if (targetDir && targetDir !== project?.path) expandDir(targetDir);
-    setCreatingIn(targetDir);
+  const handleNewFile = useCallback((targetDir?: string) => {
+    const dir = targetDir ?? getTargetDir();
+    if (dir && dir !== project?.path) expandDir(dir);
+    setCreatingIn(dir);
     setCreatingType('file');
   }, [getTargetDir, project, expandDir]);
 
-  const handleNewFolder = useCallback(() => {
-    const targetDir = getTargetDir();
-    if (targetDir && targetDir !== project?.path) expandDir(targetDir);
-    setCreatingIn(targetDir);
+  const handleNewFolder = useCallback((targetDir?: string) => {
+    const dir = targetDir ?? getTargetDir();
+    if (dir && dir !== project?.path) expandDir(dir);
+    setCreatingIn(dir);
     setCreatingType('dir');
   }, [getTargetDir, project, expandDir]);
 
@@ -200,6 +430,18 @@ export function FileTree() {
       void createDir(parentPath, name);
     }
   }, [creatingType, createFile, createDir]);
+
+  const handleRenameStart = useCallback((path: string) => {
+    setRenamingPath(path);
+    setContextMenu(null);
+  }, []);
+
+  const handleRenameDone = useCallback((path: string, newName: string) => {
+    setRenamingPath(null);
+    if (newName) {
+      void renameEntry(path, newName);
+    }
+  }, [renameEntry]);
 
   const handleRefresh = useCallback(async () => {
     if (!project) return;
@@ -216,6 +458,34 @@ export function FileTree() {
     setCreatingType(null);
   }, [project, collapseAll]);
 
+  // --- External file drop on entire tree area (fallback) ---
+  const handleTreeDragOver = useCallback((e: React.DragEvent) => {
+    // Only handle if not already handled by a node
+    if (e.dataTransfer.types.includes('application/nex-tree-node')) return;
+    // Accept external file drops
+    if (e.dataTransfer.types.includes('Files')) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+    }
+  }, []);
+
+  const handleTreeDrop = useCallback(async (e: React.DragEvent) => {
+    // Skip internal drags — handled by TreeNode
+    if (e.dataTransfer.getData('application/nex-tree-node')) return;
+    // External files dropped onto the tree background → import to project root
+    if (e.dataTransfer.files.length > 0 && project) {
+      e.preventDefault();
+      const paths: string[] = [];
+      for (let i = 0; i < e.dataTransfer.files.length; i++) {
+        const fp = (e.dataTransfer.files[i] as any).path as string | undefined;
+        if (fp) paths.push(fp);
+      }
+      if (paths.length > 0) {
+        void importFiles(paths, project.path);
+      }
+    }
+  }, [project, importFiles]);
+
   useEffect(() => {
     if (project) loadRoot(project.path);
   }, [project?.path]);
@@ -224,8 +494,8 @@ export function FileTree() {
 
   const rootActions = {
     projectName: project.name,
-    onNewFile: handleNewFile,
-    onNewFolder: handleNewFolder,
+    onNewFile: () => handleNewFile(),
+    onNewFolder: () => handleNewFolder(),
     onRefresh: handleRefresh,
     onCollapseAll: handleCollapseAll,
   };
@@ -233,16 +503,45 @@ export function FileTree() {
   const rootNode = { name: project.name, path: project.path, is_dir: true };
 
   return (
-    <div className="py-2 overflow-y-auto h-full pr-1">
-      <TreeNode
-        node={rootNode}
-        depth={0}
-        isRoot={true}
-        creatingIn={creatingIn}
-        creatingType={creatingType}
-        onCreatingDone={handleCreatingDone}
-        rootActions={rootActions}
-      />
-    </div>
+    <>
+      <div
+        ref={treeContainerRef}
+        className="py-0.5 overflow-y-auto h-full pr-1"
+        onDragOver={handleTreeDragOver}
+        onDrop={handleTreeDrop}
+      >
+        <TreeNode
+          node={rootNode}
+          depth={0}
+          isRoot={true}
+          creatingIn={creatingIn}
+          creatingType={creatingType}
+          onCreatingDone={handleCreatingDone}
+          renamingPath={renamingPath}
+          onRenameStart={handleRenameStart}
+          onRenameDone={handleRenameDone}
+          onContextMenu={handleContextMenu}
+          rootActions={rootActions}
+        />
+      </div>
+      {contextMenu && (
+        <TreeContextMenu
+          open={true}
+          onOpenChange={(open) => { if (!open) closeContextMenu(); }}
+          position={contextMenu.position}
+          node={contextMenu.node}
+          onClose={closeContextMenu}
+          onRename={() => handleRenameStart(contextMenu.node.path)}
+          onNewFile={contextMenu.node.is_dir ? () => {
+            handleNewFile(contextMenu.node.path);
+            closeContextMenu();
+          } : undefined}
+          onNewFolder={contextMenu.node.is_dir ? () => {
+            handleNewFolder(contextMenu.node.path);
+            closeContextMenu();
+          } : undefined}
+        />
+      )}
+    </>
   );
 }

@@ -475,6 +475,26 @@ export async function fsCreateDir(parentDir: string, name: string): Promise<void
   return invoke(COMMANDS.FS_CREATE_DIR, { parentDir, name });
 }
 
+export async function fsDeleteEntry(path: string): Promise<void> {
+  return invoke(COMMANDS.FS_DELETE_ENTRY, { path });
+}
+
+export async function fsRenameEntry(path: string, newName: string): Promise<void> {
+  return invoke(COMMANDS.FS_RENAME_ENTRY, { path, newName });
+}
+
+export async function fsCopyEntry(source: string, targetDir: string): Promise<void> {
+  return invoke(COMMANDS.FS_COPY_ENTRY, { source, targetDir });
+}
+
+export async function fsMoveEntry(source: string, targetDir: string): Promise<void> {
+  return invoke(COMMANDS.FS_MOVE_ENTRY, { source, targetDir });
+}
+
+export async function fsImportFiles(sources: string[], targetDir: string): Promise<string[]> {
+  return invoke(COMMANDS.FS_IMPORT_FILES, { sources, targetDir });
+}
+
 // --- Event Listeners ---
 export function onAgentNotification(cb: (payload: AgentNotificationPayload) => void): Promise<UnlistenFn> {
   return listen(EVENTS.AGENT_NOTIFICATION, (e) => cb(e.payload as AgentNotificationPayload));

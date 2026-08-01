@@ -66,4 +66,9 @@ export const COMMANDS = {
   FS_APPLY_REPLACE: "fs_apply_replace",
   FS_CREATE_FILE: "fs_create_file",
   FS_CREATE_DIR: "fs_create_dir",
+  FS_DELETE_ENTRY: "fs_delete_entry",
+  FS_RENAME_ENTRY: "fs_rename_entry",
+  FS_COPY_ENTRY: "fs_copy_entry",
+  FS_MOVE_ENTRY: "fs_move_entry",
+  FS_IMPORT_FILES: "fs_import_files",
 } as const;

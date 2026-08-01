@@ -58,7 +58,7 @@ function FileRow({ projectPath, file, display, busy, onDiscard }: FileRowProps) 
   return (
     <div
       data-testid={`row-${file.path}`}
-      className="group flex cursor-pointer items-center gap-2 rounded-[var(--radius-sm)] px-2.5 py-1.5 transition-colors duration-100 hover:bg-[var(--overlay-hover)]"
+      className="group flex cursor-pointer items-center gap-1.5 rounded-[var(--radius-sm)] px-2 py-1 transition-colors duration-100 hover:bg-[var(--overlay-hover)]"
       onClick={() => void openDiffInEditor(projectPath, file.path, file.staged)}
     >
       <span className="w-3 shrink-0 text-center text-xs" style={{ color: STATUS_COLORS[file.status] }}>
@@ -203,8 +203,8 @@ function ChangeTreeView({ projectPath, files, busy, onDiscard }: ChangeTreeViewP
       <div key={`dir-${dir.path}`}>
         <div
           data-testid={`dir-${dir.path}`}
-          className="flex cursor-pointer items-center gap-2 rounded-[var(--radius-sm)] px-2.5 py-1.5 hover:bg-[var(--overlay-hover)]"
-          style={{ paddingLeft: depth * 12 + 10 }}
+          className="flex cursor-pointer items-center gap-1.5 rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[var(--overlay-hover)]"
+          style={{ paddingLeft: depth * 10 + 10 }}
           onClick={() => toggle(dir.path)}
         >
           <ChevronRight

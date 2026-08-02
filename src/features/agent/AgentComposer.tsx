@@ -342,7 +342,7 @@ export function AgentComposer() {
         previewFn={pendingMessagePreview}
       />
 
-      <div className="px-4 py-3 relative">
+      <div className="px-4 pb-3 relative">
         {slashOpen && filteredCommands.length > 0 && (
           <div className="absolute bottom-full left-4 right-4 mb-1 max-h-48 overflow-y-auto rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--glass-3-surface)] shadow-lg z-20">
             {filteredCommands.map((c) => (

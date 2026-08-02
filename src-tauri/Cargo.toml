@@ -31,6 +31,7 @@ tokio-util = { version = "0.7", features = ["compat"] }
 thiserror = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 git2 = "0.19"
+openssl = { version = "0.10", features = ["vendored"] }
 portable-pty = "0.8"
 notify = "7"
 notify-debouncer-full = "0.4"

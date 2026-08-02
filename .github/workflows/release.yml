@@ -47,6 +47,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_SIGNING_IDENTITY: "-"
+          OPENSSL_NO_VENDOR: "0"
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Nex ${{ github.ref_name }}"

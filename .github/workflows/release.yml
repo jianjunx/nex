@@ -46,6 +46,7 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: "-"
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Nex ${{ github.ref_name }}"
@@ -57,8 +58,20 @@ jobs:
             ### 下载
 
             根据你的操作系统选择对应的安装包：
-            - **macOS**: 下载 `.dmg` 文件，双击安装
+            - **macOS**: 下载 `.dmg` 文件安装
             - **Windows**: 下载 `.exe` 或 `.msi` 安装包运行
+
+            ### macOS 安装说明
+
+            由于应用未经过 Apple 公证，首次打开时会提示"已损坏"。请执行以下任一操作：
+
+            **方法一（推荐）**：在终端运行
+            ```bash
+            xattr -cr /Applications/Nex.app
+            ```
+            然后从"应用程序"文件夹正常打开。
+
+            **方法二**：右键点击 Nex.app → 选择"打开" → 在弹出的对话框中点击"打开"。
 
             ### 变更
 

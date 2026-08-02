@@ -4,6 +4,7 @@ import { ListChecks } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { ToolCallCard } from "./ToolCallCard";
+import { MessageContextMenu } from "./MessageContextMenu";
 import { groupChunks } from "./groupChunks";
 import type { ThreadEntry } from "./types";
 
@@ -21,25 +22,27 @@ export const EntryView = memo(function EntryView({ entry }: { entry: ThreadEntry
     case "user_message":
       return (
         <div className="flex justify-end">
-          <Card
-            className="max-w-[80%] gap-0 px-3 py-1.5 text-sm shadow-none bg-[var(--accent)]/15 border-[color:var(--accent)]/25"
-          >
-            <CardContent className="px-0 space-y-2">
-              {entry.images && entry.images.length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  {entry.images.map((img, i) => (
-                    <img
-                      key={i}
-                      src={`data:${img.mimeType};base64,${img.data}`}
-                      alt=""
-                      className="max-h-48 max-w-full rounded-[var(--radius-sm)] object-contain"
-                    />
-                  ))}
-                </div>
-              )}
-              {entry.text ? <p className="whitespace-pre-wrap">{entry.text}</p> : null}
-            </CardContent>
-          </Card>
+          <MessageContextMenu textContent={entry.text ?? ""}>
+            <Card
+              className="max-w-[80%] gap-0 px-3 py-1.5 text-sm shadow-none bg-[var(--accent)]/15 border-[color:var(--accent)]/25"
+            >
+              <CardContent className="px-0 space-y-2">
+                {entry.images && entry.images.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {entry.images.map((img, i) => (
+                      <img
+                        key={i}
+                        src={`data:${img.mimeType};base64,${img.data}`}
+                        alt=""
+                        className="max-h-48 max-w-full rounded-[var(--radius-sm)] object-contain"
+                      />
+                    ))}
+                  </div>
+                )}
+                {entry.text ? <p className="whitespace-pre-wrap">{entry.text}</p> : null}
+              </CardContent>
+            </Card>
+          </MessageContextMenu>
         </div>
       );
     case "assistant_message":
@@ -49,13 +52,15 @@ export const EntryView = memo(function EntryView({ entry }: { entry: ThreadEntry
             g.type === "thought" ? (
               <ThinkingBlock key={i} text={g.text} />
             ) : (
-              <Card key={i} className="gap-0 px-3 py-1.5 text-sm shadow-none bg-[var(--glass-2-surface)] border-[color:var(--border-subtle)]">
-                <CardContent className="px-0">
-                  <div className="[&_pre]:overflow-x-auto [&_code]:text-[0.85em] [&_p]:my-1">
-                    <ReactMarkdown>{g.text}</ReactMarkdown>
-                  </div>
-                </CardContent>
-              </Card>
+              <MessageContextMenu key={i} textContent={g.text}>
+                <Card className="gap-0 px-3 py-1.5 text-sm shadow-none bg-[var(--glass-2-surface)] border-[color:var(--border-subtle)]">
+                  <CardContent className="px-0">
+                    <div className="[&_pre]:overflow-x-auto [&_code]:text-[0.85em] [&_p]:my-1">
+                      <ReactMarkdown>{g.text}</ReactMarkdown>
+                    </div>
+                  </CardContent>
+                </Card>
+              </MessageContextMenu>
             ),
           )}
         </div>

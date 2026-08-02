@@ -4,6 +4,10 @@ import App from "./App";
 import "./styles/globals.css";
 import { useSettingsStore } from "./stores/settings.store";
 
+// Suppress the browser's native context menu globally so the app feels
+// like a native desktop application rather than a web page.
+document.addEventListener("contextmenu", (e) => e.preventDefault(), true);
+
 // Synchronous light fallback so first paint is never the dark CSS default.
 document.documentElement.setAttribute("data-theme", "light");
 

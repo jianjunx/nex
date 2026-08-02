@@ -51,9 +51,10 @@ describe("BranchSelector", () => {
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
   });
 
-  it("creates a new branch then checks it out", async () => {
+  it("creates a new branch via the dropdown item then the dialog", async () => {
     render(<BranchSelector projectPath="/p" open onOpenChange={() => {}} />);
-    fireEvent.click(screen.getByRole("button", { name: /新建分支/ }));
+    // 下拉面板中的「新建分支…」项 → 弹小窗
+    fireEvent.click(screen.getByTestId("new-branch-item"));
     fireEvent.change(screen.getByPlaceholderText("新分支名"), { target: { value: "hotfix" } });
     fireEvent.click(screen.getByRole("button", { name: "创建" }));
     await waitFor(() => expect(gitState.createBranch).toHaveBeenCalledWith("/p", "hotfix"));

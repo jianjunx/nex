@@ -1,9 +1,18 @@
 import { useEffect, useState } from "react";
-import { Check, GitBranch, Plus, Trash2 } from "lucide-react";
+import { Check, ChevronDown, GitBranch, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -17,27 +26,26 @@ interface BranchSelectorProps {
   onOpenChange: (open: boolean) => void;
 }
 
-/** Branch switcher/creator/deleter dialog opened from the Git panel header. */
+/** 分支切换下拉面板（含搜索/删除）+「新建分支…」小弹窗。 */
 export function BranchSelector({ projectPath, open, onOpenChange }: BranchSelectorProps) {
+  const status = useGitStore((s) => s.status);
   const branches = useGitStore((s) => s.branches);
   const opRunning = useGitStore((s) => s.opRunning);
   const loadBranches = useGitStore((s) => s.loadBranches);
   const checkout = useGitStore((s) => s.checkout);
   const createBranch = useGitStore((s) => s.createBranch);
   const deleteBranch = useGitStore((s) => s.deleteBranch);
-  // R1：store error 被对话框遮罩盖住 GitPanel 错误条——对话框内自行回显
+  // R1：store error 被对话框遮罩盖住 GitPanel 错误条——下拉面板内自行回显
   const error = useGitStore((s) => s.error);
 
   const [query, setQuery] = useState("");
-  const [creating, setCreating] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState("");
   const [toDelete, setToDelete] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
       setQuery("");
-      setCreating(false);
-      setNewName("");
       setToDelete(null);
       void loadBranches(projectPath);
     }
@@ -60,25 +68,40 @@ export function BranchSelector({ projectPath, open, onOpenChange }: BranchSelect
     if (!name || busy) return;
     const ok = await createBranch(projectPath, name);
     if (!ok) return;
-    setCreating(false);
+    setCreateOpen(false);
     setNewName("");
     const switched = await checkout(projectPath, name);
     if (switched) onOpenChange(false);
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle>切换分支</DialogTitle>
-        </DialogHeader>
-        <Input
-          autoFocus
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="搜索分支…"
-        />
-        <div className="max-h-72 -mx-1 overflow-y-auto">
+    <>
+      <DropdownMenu open={open} onOpenChange={onOpenChange}>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="xs"
+            data-testid="branch-trigger"
+            className="max-w-[55%] gap-1.5"
+          >
+            <GitBranch size={13} className="shrink-0 text-[var(--accent)]" />
+            <span className="truncate">{status?.branch || "—"}</span>
+            <ChevronDown size={12} className="shrink-0 text-[var(--text-tertiary)]" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="w-64">
+          <div className="p-1.5 pb-1">
+            <Input
+              autoFocus
+              data-testid="branch-search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="搜索分支…"
+              className="h-7 font-normal"
+              // Radix 菜单内容会拦截方向键导航菜单项——输入框内按键不冒泡给菜单
+              onKeyDown={(e) => e.stopPropagation()}
+            />
+          </div>
           <div className="px-2 py-1 text-xs text-[var(--text-tertiary)]">本地</div>
           {locals.map((b) => (
             <div
@@ -130,48 +153,57 @@ export function BranchSelector({ projectPath, open, onOpenChange }: BranchSelect
               </div>
             </>
           )}
-        </div>
-        {error && (
-          <p className="px-1 text-xs text-[var(--error)]">{error}</p>
-        )}
-        <div className="border-t border-[var(--border-subtle)] pt-3">
-          {creating ? (
-            <div className="flex gap-2">
-              <Input
-                autoFocus
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                placeholder="新分支名"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void doCreate();
-                }}
-              />
-              <Button size="sm" disabled={!newName.trim() || busy} onClick={() => void doCreate()}>
-                <Plus size={13} /> 创建
-              </Button>
-            </div>
-          ) : (
-            <Button variant="outline" size="sm" className="w-full" onClick={() => setCreating(true)}>
-              <Plus size={13} /> 新建分支…
+          {error && <p className="px-2 py-1 text-xs text-[var(--error)]">{error}</p>}
+          <DropdownMenuSeparator />
+          {/* 选中后菜单自动关闭，弹新建分支小窗 */}
+          <DropdownMenuItem data-testid="new-branch-item" onSelect={() => setCreateOpen(true)}>
+            <Plus size={13} /> 新建分支…
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      {/* 新建分支弹窗：创建成功后直接签出新分支 */}
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>新建分支</DialogTitle>
+            <DialogDescription>基于当前 HEAD 创建分支并签出。</DialogDescription>
+          </DialogHeader>
+          <Input
+            autoFocus
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            placeholder="新分支名"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void doCreate();
+            }}
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>
+              取消
             </Button>
-          )}
-        </div>
-        <GitConfirmDialog
-          open={toDelete !== null}
-          title="删除分支"
-          description={`确定删除分支「${toDelete ?? ""}」？未合并的提交将无法找回。`}
-          confirmLabel="删除"
-          busy={busy}
-          onCancel={() => setToDelete(null)}
-          onConfirm={async () => {
-            // R2：await 期间保持对话框打开让 busy 禁用态可渲染，成功后再关
-            const name = toDelete;
-            if (!name) return;
-            const ok = await deleteBranch(projectPath, name);
-            if (ok) setToDelete(null);
-          }}
-        />
-      </DialogContent>
-    </Dialog>
+            <Button disabled={!newName.trim() || busy} onClick={() => void doCreate()}>
+              <Plus size={13} /> 创建
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <GitConfirmDialog
+        open={toDelete !== null}
+        title="删除分支"
+        description={`确定删除分支「${toDelete ?? ""}」？未合并的提交将无法找回。`}
+        confirmLabel="删除"
+        busy={busy}
+        onCancel={() => setToDelete(null)}
+        onConfirm={async () => {
+          // R2：await 期间保持对话框打开让 busy 禁用态可渲染，成功后再关
+          const name = toDelete;
+          if (!name) return;
+          const ok = await deleteBranch(projectPath, name);
+          if (ok) setToDelete(null);
+        }}
+      />
+    </>
   );
 }

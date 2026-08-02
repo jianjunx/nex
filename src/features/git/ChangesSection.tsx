@@ -1,17 +1,10 @@
 import { useMemo, useState } from "react";
-import {
-  ChevronRight,
-  File,
-  FileDiff,
-  Folder,
-  Minus,
-  Plus,
-  Trash2,
-  Undo2,
-} from "lucide-react";
+import { ChevronRight, File, Minus, Plus, Trash2, Undo2 } from "lucide-react";
+import FileIcon from "../files/FileIcon";
 import { useGitStore } from "../../stores/git.store";
 import { useFsStore } from "../../stores/fs.store";
 import type { GitFileChange } from "../../bridge/tauri";
+import { CommitSection } from "./CommitSection";
 import { GitConfirmDialog } from "./GitConfirmDialog";
 
 /** VSCode 状态色惯例：modified 黄 / added 绿 / deleted 红 / untracked 绿。 */
@@ -61,9 +54,8 @@ function FileRow({ projectPath, file, display, busy, onDiscard }: FileRowProps) 
       className="group flex cursor-pointer items-center gap-1.5 rounded-[var(--radius-sm)] px-2 py-1 transition-colors duration-100 hover:bg-[var(--overlay-hover)]"
       onClick={() => void openDiffInEditor(projectPath, file.path, file.staged)}
     >
-      <span className="w-3 shrink-0 text-center text-xs" style={{ color: STATUS_COLORS[file.status] }}>
-        {file.status[0].toUpperCase()}
-      </span>
+      {/* 与文件树同款类型图标 */}
+      <FileIcon filename={basename(file.path)} size={14} className="shrink-0" />
       <span className="min-w-0 flex-1 truncate text-[var(--text-secondary)]">{display}</span>
       <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
         <button
@@ -77,18 +69,6 @@ function FileRow({ projectPath, file, display, busy, onDiscard }: FileRowProps) 
           }}
         >
           <File size={13} />
-        </button>
-        <button
-          data-testid={`diff-${file.path}`}
-          title="打开 diff"
-          disabled={busy}
-          className={ICON_BUTTON}
-          onClick={(e) => {
-            e.stopPropagation();
-            void openDiffInEditor(projectPath, file.path, file.staged);
-          }}
-        >
-          <FileDiff size={13} />
         </button>
         {file.staged ? (
           <button
@@ -129,6 +109,14 @@ function FileRow({ projectPath, file, display, busy, onDiscard }: FileRowProps) 
         >
           <Trash2 size={13} />
         </button>
+      </span>
+      {/* git 状态字母（M/A/D/U）置于最右侧，常显 */}
+      <span
+        data-testid={`status-${file.path}`}
+        className="w-3 shrink-0 text-center text-xs"
+        style={{ color: STATUS_COLORS[file.status] }}
+      >
+        {file.status[0].toUpperCase()}
       </span>
     </div>
   );
@@ -211,7 +199,7 @@ function ChangeTreeView({ projectPath, files, busy, onDiscard }: ChangeTreeViewP
             size={12}
             className={`shrink-0 text-[var(--text-tertiary)] transition-transform duration-150 ${isCollapsed ? "" : "rotate-90"}`}
           />
-          <Folder size={13} className="shrink-0 text-[var(--accent)]" />
+          <FileIcon filename={dir.name} isFolder size={13} className="shrink-0" />
           <span className="truncate text-[var(--text-secondary)]">{dir.name}</span>
         </div>
         {!isCollapsed && (
@@ -341,7 +329,7 @@ function FileGroup({ projectPath, title, files, staged, busy, treeView, onDiscar
   );
 }
 
-/** 更改 / 暂存的更改 两组。列表/树视图切换在 GitPanel 顶栏。提交区（T10）不动。 */
+/** 更改 / 暂存的更改 两组。列表/树视图切换在 GitPanel 顶栏。提交区（T10）在「更改」标题下方、文件上方。 */
 export function ChangesSection({ projectPath }: { projectPath: string }) {
   const status = useGitStore((s) => s.status);
   const statusLoading = useGitStore((s) => s.statusLoading);
@@ -359,6 +347,8 @@ export function ChangesSection({ projectPath }: { projectPath: string }) {
 
   return (
     <div className="flex-1 overflow-y-auto px-2 py-2">
+      {/* 提交框：位于「更改」标题下方、更改文件上方；工作区干净时也常驻可见 */}
+      <CommitSection projectPath={projectPath} />
       {files.length === 0 && (
         <div className="px-2.5 py-2 text-xs text-[var(--text-tertiary)]">无更改，工作区干净</div>
       )}

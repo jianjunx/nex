@@ -62,6 +62,7 @@ interface GitStore {
   openCommitDiff: (projectPath: string, commitHash: string) => void;
   appendLog: (line: string) => void;
   clearLog: () => void;
+  clearError: () => void;
   setTreeView: (v: boolean) => void;
   setHistoryOpen: (v: boolean) => void;
   setOpLogOpen: (v: boolean) => void;
@@ -335,6 +336,7 @@ export const useGitStore = create<GitStore>()(
         }),
 
       clearLog: () => set((s) => { s.opLog = []; }),
+      clearError: () => set((s) => { s.error = null; }),
       setTreeView: (v) => set((s) => { s.treeView = v; }),
       setHistoryOpen: (v) => set((s) => { s.historyOpen = v; }),
       setOpLogOpen: (v) => set((s) => { s.opLogOpen = v; }),

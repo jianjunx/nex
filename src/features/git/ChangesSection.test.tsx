@@ -20,6 +20,10 @@ let gitState: {
   discard: ReturnType<typeof vi.fn>;
   revertStaged: ReturnType<typeof vi.fn>;
   openDiffInEditor: ReturnType<typeof vi.fn>;
+  // CommitSection（渲染在 ChangesSection 内）所需
+  commitMessage: string;
+  setCommitMessage: ReturnType<typeof vi.fn>;
+  commitWith: ReturnType<typeof vi.fn>;
 };
 vi.mock("../../stores/git.store", () => ({
   useGitStore: (selector?: (s: typeof gitState) => unknown) => (selector ? selector(gitState) : gitState),
@@ -51,6 +55,9 @@ beforeEach(() => {
     discard: vi.fn().mockResolvedValue(true),
     revertStaged: vi.fn().mockResolvedValue(true),
     openDiffInEditor: vi.fn().mockResolvedValue(undefined),
+    commitMessage: "hello",
+    setCommitMessage: vi.fn(),
+    commitWith: vi.fn().mockResolvedValue(undefined),
   };
 });
 afterEach(() => cleanup());

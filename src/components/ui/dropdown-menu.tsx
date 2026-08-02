@@ -225,6 +225,9 @@ function DropdownMenuSubContent({
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.SubContent>) {
   return (
+    // 显式 Portal：radix-ui 1.6 的 SubContent 不再自动 portal，内联渲染在父
+    // 内容里会被父 DropdownMenuContent 的 overflow 裁剪（存储子菜单被遮挡）。
+    <DropdownMenuPrimitive.Portal>
     <DropdownMenuPrimitive.SubContent
       data-slot="dropdown-menu-sub-content"
       className={cn(
@@ -233,6 +236,7 @@ function DropdownMenuSubContent({
       )}
       {...props}
     />
+    </DropdownMenuPrimitive.Portal>
   )
 }
 

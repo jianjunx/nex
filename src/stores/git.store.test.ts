@@ -177,6 +177,14 @@ describe("git.store push guard", () => {
   });
 });
 
+describe("git.store clearError", () => {
+  it("clears the error slot so the panel error bar can be dismissed", () => {
+    useGitStore.setState({ error: "推送被拒绝：非快进，请先拉取合并" });
+    useGitStore.getState().clearError();
+    expect(useGitStore.getState().error).toBeNull();
+  });
+});
+
 describe("git.store loadHistory", () => {
   it("stores commits returned by gitLog", async () => {
     gitLogMock.mockResolvedValue([{ hash: "abc1234", message: "init", author: "a", time: 1 }]);

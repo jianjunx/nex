@@ -6,7 +6,6 @@ import { EditorPanel } from "./features/editor/EditorPanel";
 import { onFsChanged, onGitStatusChanged, fsWatchStart } from "./bridge/tauri";
 import { useAgentStore } from "./stores/agent.store";
 import { useProjectStore } from "./stores/project.store";
-import { useConversationStore } from "./stores/conversation.store";
 import { useFsStore } from "./stores/fs.store";
 import { useGitStore } from "./stores/git.store";
 import { useUiStore } from "./stores/ui.store";
@@ -95,28 +94,6 @@ function App() {
 
   const hasOpenEditors = useFsStore((s) => s.openFiles.length > 0);
   const editorVisible = useUiStore((s) => s.editorVisible);
-
-  // TEMP(perf 验证用,验证完删除):控制台 __seedThread(n?) 向当前会话灌合成数据
-  useEffect(() => {
-    if (!import.meta.env.DEV) return;
-    let disposed = false;
-    void import("./features/agent/thread/threadTestUtils").then((m) => {
-      if (disposed) return;
-      (window as unknown as Record<string, unknown>).__seedThread = (n?: number) => {
-        const pid = useProjectStore.getState().activeProjectId;
-        const tab = pid
-          ? useConversationStore.getState().activeTabByProject[pid]
-          : null;
-        if (!tab) return console.warn("先打开一个会话");
-        m.seedSyntheticThread(tab, n ?? 2000);
-        console.log("seeded", n ?? 2000, "entries →", tab);
-      };
-    });
-    return () => {
-      disposed = true;
-      delete (window as unknown as Record<string, unknown>).__seedThread;
-    };
-  }, []);
 
   return (
     <>

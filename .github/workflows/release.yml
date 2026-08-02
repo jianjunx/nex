@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            ext: dmg
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            ext: exe
+
+    runs-on: ${{ matrix.platform }}
+    name: Build (${{ matrix.platform }})
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and publish
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Nex ${{ github.ref_name }}"
+          releaseBody: |
+            ## Nex ${{ github.ref_name }}
+
+            AI Agent 集成环境桌面客户端。
+
+            ### 下载
+
+            根据你的操作系统选择对应的安装包：
+            - **macOS**: 下载 `.dmg` 文件，双击安装
+            - **Windows**: 下载 `.exe` 或 `.msi` 安装包运行
+
+            ### 变更
+
+            查看 [CHANGELOG](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) 了解详细变更。
+          releaseDraft: true
+          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+          args: "--target ${{ matrix.target }}"

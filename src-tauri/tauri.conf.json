@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nickel-org/nickel.rs/refs/heads/master/docs/schema/tauri.conf.schema.json",
   "productName": "Nex",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "identifier": "com.nex.app",
   "build": {
     "frontendDist": "../dist",

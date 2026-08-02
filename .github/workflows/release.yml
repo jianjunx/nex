@@ -42,7 +42,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build and publish
+      - name: Build and publish (unsigned)
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -82,13 +82,15 @@ jobs:
             <details>
             <summary><b>Windows</b></summary>
 
-            Windows SmartScreen 可能会阻止运行未签名的应用。
+            Windows SmartScreen 可能会阻止运行应用（所有非商业证书签名的应用均如此）。
 
             **方法一（推荐）**：下载后右键 `.exe` → 属性 → 勾选"解除锁定" → 确定，然后双击运行。
 
             **方法二**：出现"Windows 已保护你的电脑"提示时，点击"更多信息" → "仍要运行"。
 
             **方法三**：使用 `.msi` 安装包，通常拦截更少。
+
+            > 安装包已附加自签名数字签名，可验证文件完整性。企业环境可通过组策略信任此证书。
             </details>
 
             ### 变更
@@ -97,3 +99,65 @@ jobs:
           releaseDraft: true
           prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
           args: "--target ${{ matrix.target }}"
+
+      - name: Sign Windows binaries (self-signed)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Find signtool from Windows SDK
+          $sdkBin = "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
+          $signtool = Get-ChildItem -Path $sdkBin -Recurse -Filter "signtool.exe" -ErrorAction SilentlyContinue |
+                      Where-Object { $_.FullName -like "*\x64\signtool.exe" } |
+                      Sort-Object { [version]($_.Directory.Parent.Name) } -Descending |
+                      Select-Object -First 1
+          if (-not $signtool) {
+            Write-Warning "signtool.exe not found, skipping code signing"
+            exit 0
+          }
+          Write-Host "Using signtool: $($signtool.FullName)"
+
+          # Generate self-signed code signing certificate (per-build, no secret management needed)
+          $cert = New-SelfSignedCertificate `
+            -Type CodeSigningCert `
+            -Subject "CN=Nex, O=Nex Open Source Project, C=CN" `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -KeyUsage DigitalSignature `
+            -KeySpec Signature `
+            -KeyLength 2048 `
+            -HashAlgorithm SHA256 `
+            -NotAfter (Get-Date).AddYears(5)
+          Write-Host "Certificate generated: $($cert.Thumbprint)"
+
+          $certPwd = ConvertTo-SecureString -String "nexselfsign" -Force -AsPlainText
+          Export-PfxCertificate -Cert $cert -FilePath "$env:RUNNER_TEMP\nex-cert.pfx" -Password $certPwd
+
+          function Sign-File {
+            param([string]$Pattern, [string]$Description)
+            $files = Get-ChildItem -Path "src-tauri\target\release\bundle" -Recurse -Filter $Pattern -ErrorAction SilentlyContinue
+            foreach ($f in $files) {
+              Write-Host "Signing $Description`: $($f.Name)"
+              & $signtool.FullName sign `
+                /fd SHA256 `
+                /f "$env:RUNNER_TEMP\nex-cert.pfx" `
+                /p nexselfsign `
+                /tr http://timestamp.digicert.com `
+                /td SHA256 `
+                $f.FullName
+              if ($LASTEXITCODE -eq 0) {
+                Write-Host "  -> Signed successfully"
+                # Overwrite the unsigned asset on the release
+                gh release upload $env:GITHUB_REF_NAME $f.FullName --clobber
+                Write-Host "  -> Re-uploaded to release"
+              } else {
+                Write-Warning "  -> Signing failed with exit code $LASTEXITCODE"
+              }
+            }
+            if ($files.Count -eq 0) {
+              Write-Warning "No $Description files found matching '$Pattern'"
+            }
+          }
+
+          Sign-File -Pattern "*_x64-setup.exe" -Description "NSIS installer"
+          Sign-File -Pattern "*_x64_en-US.msi" -Description "MSI installer"

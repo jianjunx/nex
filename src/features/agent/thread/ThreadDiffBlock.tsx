@@ -60,6 +60,7 @@ function themeFor(appTheme: "light" | "dark"): Extension {
 const diffHeights = new Map<string, number>();
 
 /** 按 diff 行数预估就绪高度:首次揭示无缓存时贴近 CM 自然高度,压低占位↔就绪首跳。封顶 320(外层 max-h-[350px] 减去路径头/内边距)。 */
+// oxlint-disable-next-line react/only-export-components
 export function estimateDiffHeight(oldText?: string, newText?: string): number {
   const LINE_PX = 18;
   const MAX = 320;

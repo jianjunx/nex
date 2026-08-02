@@ -43,6 +43,24 @@ export interface AgentSession {
   status: "starting" | "idle" | "running" | "waiting";
 }
 
+/** A user message that was queued because the session is starting or busy. */
+export interface PendingMessage {
+  id: string;
+  blocks: PromptBlock[];
+}
+
+/** Build a short preview string from a list of PromptBlock for display. */
+export function pendingMessagePreview(blocks: PromptBlock[]): string {
+  const textBlock = blocks.find((b) => b.type === "text") as { type: "text"; text: string } | undefined;
+  const imageCount = blocks.filter((b) => b.type === "image").length;
+  const hasResource = blocks.some((b) => b.type === "resource" || b.type === "resource_link");
+
+  let preview = textBlock?.text ?? "";
+  if (imageCount > 0) preview += (preview ? " " : "") + `[图片 ×${imageCount}]`;
+  if (hasResource) preview += (preview ? " " : "") + "[文件]";
+  return preview.trim() || "(empty)";
+}
+
 export type AuthMode = "allow" | "menu";
 
 /** Per-conversation composer choices restored after ACP session recreate. */
@@ -63,6 +81,8 @@ interface AgentStore {
   pendingPermission: AgentPermissionRequestPayload | null;
   /** Shown on a tool card — exclude from PermissionModal fallback. */
   inlinePermissionIds: Record<string, true>;
+  /** Pending user messages waiting for session to become available (starting → idle) or current task to finish. */
+  pendingMessagesByConversation: Record<string, PendingMessage[]>;
   servers: ServerDescriptor[];
   loading: boolean;
   serversLoading: boolean;
@@ -86,6 +106,14 @@ interface AgentStore {
   setModel: (sessionId: string, modelId: string) => Promise<void>;
   setConfigOption: (sessionId: string, configId: string, value: string) => Promise<void>;
   setAuthMode: (conversationId: string, authMode: AuthMode) => void;
+  /** Queue a message for later sending when the session is starting or busy. */
+  enqueuePendingMessage: (conversationId: string, blocks: PromptBlock[]) => string;
+  /** Remove a specific queued message (user dismissed it). */
+  removePendingMessage: (conversationId: string, messageId: string) => void;
+  /** Cancel current task and immediately send a specific queued message. */
+  sendPendingNow: (conversationId: string, messageId: string) => Promise<void>;
+  /** Dequeue and send the oldest pending message for a conversation, if the session is idle. */
+  processNextPending: (conversationId: string) => Promise<void>;
   loadServers: () => Promise<void>;
   /** Settings: whitelist + custom + other registry agents. */
   loadAllServers: () => Promise<void>;
@@ -292,6 +320,7 @@ export const useAgentStore = create<AgentStore>()(
     permissionQueues: {},
     pendingPermission: null,
     inlinePermissionIds: {},
+    pendingMessagesByConversation: {},
     servers: [],
     loading: false,
     serversLoading: false,
@@ -321,6 +350,8 @@ export const useAgentStore = create<AgentStore>()(
           s.metaByConversation[conversationId] = applyCreateMeta(result);
         });
         await restorePrefsToLiveSession(set, get, conversationId, result.sessionId);
+        // Auto-process any messages queued while the session was starting
+        void get().processNextPending(conversationId);
         return result.sessionId;
       } catch (err) {
         set((s) => {
@@ -457,6 +488,10 @@ export const useAgentStore = create<AgentStore>()(
             s.sessions[session.conversationId].status = hasWaiting ? "waiting" : "idle";
           }
         });
+        // Auto-process next queued message if session returned to idle
+        if (get().sessions[session.conversationId]?.status === "idle") {
+          void get().processNextPending(session.conversationId);
+        }
       }
     },
 
@@ -613,6 +648,85 @@ export const useAgentStore = create<AgentStore>()(
 
     setAuthMode: (conversationId, authMode) => {
       patchPrefs(set, conversationId, { authMode });
+    },
+
+    enqueuePendingMessage: (conversationId, blocks) => {
+      const id = crypto.randomUUID();
+      set((s) => {
+        if (!s.pendingMessagesByConversation[conversationId]) {
+          s.pendingMessagesByConversation[conversationId] = [];
+        }
+        s.pendingMessagesByConversation[conversationId].push({ id, blocks });
+      });
+      return id;
+    },
+
+    removePendingMessage: (conversationId, messageId) => {
+      set((s) => {
+        const queue = s.pendingMessagesByConversation[conversationId];
+        if (!queue) return;
+        s.pendingMessagesByConversation[conversationId] = queue.filter((m) => m.id !== messageId);
+        if (s.pendingMessagesByConversation[conversationId].length === 0) {
+          delete s.pendingMessagesByConversation[conversationId];
+        }
+      });
+    },
+
+    sendPendingNow: async (conversationId, messageId) => {
+      const state = get();
+      const session = state.sessions[conversationId];
+      if (!session?.sessionId) return;
+
+      // Cancel current running task if any
+      if (session.status === "running" || session.status === "waiting") {
+        try {
+          await agentCancel(session.sessionId);
+        } catch {
+          /* best-effort cancel */
+        }
+        set((s) => {
+          const sess = s.sessions[conversationId];
+          if (sess) sess.status = "idle";
+        });
+      }
+
+      // Find and remove the specific message from the queue
+      const queue = state.pendingMessagesByConversation[conversationId] ?? [];
+      const idx = queue.findIndex((m) => m.id === messageId);
+      if (idx === -1) return;
+      const pending = queue[idx];
+      set((s) => {
+        const q = s.pendingMessagesByConversation[conversationId];
+        if (q) {
+          s.pendingMessagesByConversation[conversationId] = q.filter((m) => m.id !== messageId);
+          if (s.pendingMessagesByConversation[conversationId].length === 0) {
+            delete s.pendingMessagesByConversation[conversationId];
+          }
+        }
+      });
+
+      await get().sendPrompt(session.sessionId, pending.blocks);
+    },
+
+    processNextPending: async (conversationId) => {
+      const state = get();
+      const session = state.sessions[conversationId];
+      // Only auto-process when session is truly idle
+      if (!session || session.status !== "idle") return;
+
+      const queue = state.pendingMessagesByConversation[conversationId];
+      if (!queue || queue.length === 0) return;
+
+      const pending = queue[0];
+      // Remove from queue before sending to avoid race
+      set((s) => {
+        s.pendingMessagesByConversation[conversationId] = s.pendingMessagesByConversation[conversationId].slice(1);
+        if (s.pendingMessagesByConversation[conversationId].length === 0) {
+          delete s.pendingMessagesByConversation[conversationId];
+        }
+      });
+
+      await get().sendPrompt(session.sessionId, pending.blocks);
     },
 
     loadServers: async () => {

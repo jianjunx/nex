@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback, type ClipboardEvent, type Key
 import { Send, Square, X, AtSign } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { useAgentStore } from "../../stores/agent.store";
+import { useAgentStore, pendingMessagePreview } from "../../stores/agent.store";
 import { useProjectStore } from "../../stores/project.store";
 import {
   selectProjectActiveTabId,
@@ -12,6 +12,7 @@ import {
 import { fsSearch, fsReadFile, type PromptBlock, type SearchMatch, type SessionTarget } from "../../bridge/tauri";
 import { ComposerOptionMenu } from "./ComposerOptionMenu";
 import { PlanBar } from "./thread/PlanBar";
+import { PendingMessagesBar } from "./thread/PendingMessagesBar";
 
 // Text area only — toolbar lives inside the same chrome below this.
 const MIN_HEIGHT = 48;
@@ -56,18 +57,23 @@ export function AgentComposer() {
   const setAuthMode = useAgentStore((s) => s.setAuthMode);
   const sessionPrefsByConversation = useAgentStore((s) => s.sessionPrefsByConversation);
   const autoTitleFromFirstMessage = useConversationStore((s) => s.autoTitleFromFirstMessage);
+  const pendingMessagesByConversation = useAgentStore((s) => s.pendingMessagesByConversation);
+  const enqueuePendingMessage = useAgentStore((s) => s.enqueuePendingMessage);
+  const removePendingMessage = useAgentStore((s) => s.removePendingMessage);
+  const sendPendingNow = useAgentStore((s) => s.sendPendingNow);
 
   const session = activeTabId ? sessions[activeTabId] : null;
   const meta = activeTabId ? metaByConversation[activeTabId] : null;
   const isStarting = session?.status === "starting";
   const isRunning = session?.status === "running" || session?.status === "waiting";
+  const pendingMessages = activeTabId ? (pendingMessagesByConversation[activeTabId] ?? []) : [];
   const agentError = useAgentStore((s) => s.error);
   const createSession = useAgentStore((s) => s.createSession);
   const conversations = useConversationStore((s) =>
     selectProjectConversations(s, activeProjectId),
   );
   const activeConversation = conversations.find((c) => c.id === activeTabId) ?? null;
-  const canSend = (!!text.trim() || images.length > 0) && !!activeTabId && !isStarting;
+  const canSend = (!!text.trim() || images.length > 0) && !!activeTabId;
   const isCursorAgent = activeConversation?.agent_type === "cursor";
   const authMode =
     (activeTabId ? sessionPrefsByConversation[activeTabId]?.authMode : undefined) ?? "menu";
@@ -181,7 +187,7 @@ export function AgentComposer() {
   });
 
   const handleSend = async () => {
-    if ((!text.trim() && images.length === 0) || !activeTabId || isStarting) return;
+    if ((!text.trim() && images.length === 0) || !activeTabId) return;
     const content = text;
     const fileMentions = [...mentions];
     const pendingImages = [...images];
@@ -203,20 +209,7 @@ export function AgentComposer() {
       content.trim() || (threadImages.length > 0 ? "图片" : content),
     );
 
-    const sessionId = await ensureLiveSession();
-    if (!sessionId) {
-      // appendUserMessage may have flipped idle → running; clear it if we never send.
-      const sess = useAgentStore.getState().sessions[activeTabId];
-      if (sess?.status === "running") {
-        useAgentStore.setState((s) => {
-          if (s.sessions[activeTabId]?.status === "running") {
-            s.sessions[activeTabId].status = "idle";
-          }
-        });
-      }
-      return;
-    }
-
+    // Build prompt blocks eagerly (reads file mentions now, even if session isn't ready)
     const blocks: PromptBlock[] = [];
     if (content.trim()) blocks.push({ type: "text", text: content });
     for (const img of pendingImages) {
@@ -245,6 +238,33 @@ export function AgentComposer() {
           s.sessions[activeTabId].status = "idle";
         }
       });
+      return;
+    }
+
+    // If session is starting or busy, queue the message for later
+    if (isStarting) {
+      enqueuePendingMessage(activeTabId, blocks);
+      // Session may have become ready while we were building blocks — trigger check
+      void useAgentStore.getState().processNextPending(activeTabId);
+      return;
+    }
+    if (isRunning) {
+      enqueuePendingMessage(activeTabId, blocks);
+      return;
+    }
+
+    // Normal flow: ensure session and send
+    const sessionId = await ensureLiveSession();
+    if (!sessionId) {
+      // appendUserMessage may have flipped idle → running; clear it if we never send.
+      const sess = useAgentStore.getState().sessions[activeTabId];
+      if (sess?.status === "running") {
+        useAgentStore.setState((s) => {
+          if (s.sessions[activeTabId]?.status === "running") {
+            s.sessions[activeTabId].status = "idle";
+          }
+        });
+      }
       return;
     }
     await sendPrompt(sessionId, blocks);
@@ -315,6 +335,12 @@ export function AgentComposer() {
   return (
     <div>
       {meta?.plan && meta.plan.length > 0 && <PlanBar entries={meta.plan} />}
+      <PendingMessagesBar
+        messages={pendingMessages}
+        onSendNow={(id) => void sendPendingNow(activeTabId!, id)}
+        onRemove={(id) => removePendingMessage(activeTabId!, id)}
+        previewFn={pendingMessagePreview}
+      />
 
       <div className="px-4 py-3 relative">
         {slashOpen && filteredCommands.length > 0 && (
@@ -389,7 +415,7 @@ export function AgentComposer() {
         {(isStarting || agentError) && (
           <div className="mb-2 text-xs px-1">
             {isStarting && (
-              <p className="text-[var(--text-tertiary)]">正在启动 Agent（拉起进程并握手）…</p>
+              <p className="text-[var(--text-tertiary)]">正在连接服务…</p>
             )}
             {agentError && !isStarting && (
               <p className="text-[var(--error)] whitespace-pre-wrap">{agentError}</p>
@@ -418,7 +444,7 @@ export function AgentComposer() {
             }
             className="flex-1 min-h-0 border-0 bg-transparent p-1 shadow-none rounded-none text-sm font-normal leading-[21px] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] resize-none overflow-y-auto focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
             style={{ minHeight: MIN_HEIGHT, maxHeight: MAX_HEIGHT }}
-            disabled={!activeTabId || isStarting}
+            disabled={!activeTabId}
           />
 
           <div

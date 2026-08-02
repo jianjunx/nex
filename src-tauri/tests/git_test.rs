@@ -1,4 +1,3 @@
-use git2::RemoteCallbacks;
 use git2::Repository;
 use nex_lib::git::credentials::{host_of, session_key, GitCredentialBroker};
 use nex_lib::git::network;
@@ -331,7 +330,8 @@ fn set_ident(repo: &Repository) {
 
 #[test]
 fn push_pull_round_trip_over_local_bare_remote() {
-    // Seed repo with one commit and a bare "remote".
+    // Seed repo with one commit and a bare "remote". 网络操作委派系统 git
+    // 子进程（与生产一致），file:// 远端无需凭据。
     let seed = tempdir().unwrap();
     init_repo(seed.path());
     commit_file(seed.path(), "a.txt", "v1", "init");
@@ -342,12 +342,12 @@ fn push_pull_round_trip_over_local_bare_remote() {
         let repo = Repository::open(seed.path()).unwrap();
         repo.remote("origin", &file_url(bare.path())).unwrap();
     }
-    network::push_remote(seed.path(), "origin", &branch, RemoteCallbacks::new()).unwrap();
+    network::push_remote(seed.path(), "origin", &branch).unwrap();
 
-    // Clone the bare remote (local transport: no credentials callback fires).
+    // Clone the bare remote.
     let work = tempdir().unwrap();
     let work_path = work.path().join("clone");
-    network::clone_repo(&file_url(bare.path()), &work_path, RemoteCallbacks::new()).unwrap();
+    network::clone_repo(&file_url(bare.path()), &work_path).unwrap();
     assert_eq!(fs::read_to_string(work_path.join("a.txt")).unwrap(), "v1");
     {
         let repo = Repository::open(&work_path).unwrap();
@@ -356,18 +356,17 @@ fn push_pull_round_trip_over_local_bare_remote() {
 
     // Advance the seed; the clone fetches + pulls (fast-forward path).
     commit_file(seed.path(), "a.txt", "v2", "second");
-    network::push_remote(seed.path(), "origin", &branch, RemoteCallbacks::new()).unwrap();
-    network::fetch_remote(&work_path, "origin", RemoteCallbacks::new()).unwrap();
-    network::pull_remote(&work_path, "origin", RemoteCallbacks::new()).unwrap();
+    network::push_remote(seed.path(), "origin", &branch).unwrap();
+    network::fetch_remote(&work_path, "origin").unwrap();
+    network::pull_remote(&work_path, "origin").unwrap();
     assert_eq!(fs::read_to_string(work_path.join("a.txt")).unwrap(), "v2");
 
     // Diverge the clone, let the seed push again, then expect a readable
     // non-fast-forward rejection.
     commit_file(&work_path, "a.txt", "v3-diverge", "third");
     commit_file(seed.path(), "a.txt", "v4", "fourth");
-    network::push_remote(seed.path(), "origin", &branch, RemoteCallbacks::new()).unwrap();
-    let err = network::push_remote(&work_path, "origin", &branch, RemoteCallbacks::new())
-        .unwrap_err();
+    network::push_remote(seed.path(), "origin", &branch).unwrap();
+    let err = network::push_remote(&work_path, "origin", &branch).unwrap_err();
     assert!(err.to_string().contains("推送被拒绝"));
 }
 
@@ -379,7 +378,7 @@ fn clone_creates_working_copy() {
 
     let dest_parent = tempdir().unwrap();
     let dest = dest_parent.path().join("fresh-clone");
-    network::clone_repo(&file_url(seed.path()), &dest, RemoteCallbacks::new()).unwrap();
+    network::clone_repo(&file_url(seed.path()), &dest).unwrap();
 
     assert!(dest.join(".git").exists());
     assert_eq!(fs::read_to_string(dest.join("README.md")).unwrap(), "# hi");

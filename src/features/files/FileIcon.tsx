@@ -5,7 +5,7 @@
  * modeled after the VS Code Material Icon Theme.
  */
 
-import { type SVGProps, memo } from "react";
+import { memo } from "react";
 
 // ============================================================
 // Props
@@ -1223,7 +1223,6 @@ const folderMap: Record<string, string> = {
   ".changeset": "folder-changesets",
   changeset: "folder-changesets",
   changesets: "folder-changesets",
-  "changesets": "folder-changesets",
   tasks: "folder-tasks",
   terraform: "folder-terraform",
   ".terraform": "folder-terraform",

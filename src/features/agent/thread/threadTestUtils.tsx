@@ -1,6 +1,6 @@
 /**
- * 线程视图的测试/开发基建。仅被 .test.tsx 与 DEV-only 动态 import 引用,
- * 不进生产 bundle。
+ * 线程视图的测试夹具。仅被 .test.tsx 引用,不进生产 bundle。
+ * seedSyntheticThread 供手动压测时自行 import 灌入合成数据。
  */
 import { vi } from "vitest";
 import { useAgentStore } from "../../../stores/agent.store";

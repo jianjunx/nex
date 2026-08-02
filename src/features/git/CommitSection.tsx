@@ -23,7 +23,7 @@ export function CommitSection({ projectPath }: { projectPath: string }) {
   const canCommit = commitMessage.trim().length > 0 && !busy;
 
   return (
-    <div className="flex items-center gap-1.5 py-2">
+    <div className="flex items-center gap-1.5 py-1">
       <Input
         data-scm-commit-input
         value={commitMessage}

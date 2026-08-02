@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { ChevronRight, File, Minus, Plus, Trash2, Undo2 } from "lucide-react";
+import { ChevronRight, File, Minus, Plus, Undo2 } from "lucide-react";
 import FileIcon from "../files/FileIcon";
 import { useGitStore } from "../../stores/git.store";
 import { useFsStore } from "../../stores/fs.store";
@@ -107,7 +107,7 @@ function FileRow({ projectPath, file, display, busy, onDiscard }: FileRowProps) 
             onDiscard({ files: [file.path], staged: file.staged });
           }}
         >
-          <Trash2 size={13} />
+          <Undo2 size={13} />
         </button>
       </span>
       {/* git 状态字母（M/A/D/U）置于最右侧，常显 */}
@@ -312,7 +312,7 @@ function FileGroup({ projectPath, title, files, staged, busy, treeView, onDiscar
                 onDiscard({ files: paths, staged: false });
               }}
             >
-              <Trash2 size={13} />
+              <Undo2 size={13} />
             </button>
           </>
         )}
@@ -346,7 +346,7 @@ export function ChangesSection({ projectPath }: { projectPath: string }) {
   const busy = statusLoading || opRunning !== null;
 
   return (
-    <div className="flex-1 overflow-y-auto px-2 py-2">
+    <div className="flex-1 overflow-y-auto px-2 py-1">
       {/* 提交框：位于「更改」标题下方、更改文件上方；工作区干净时也常驻可见 */}
       <CommitSection projectPath={projectPath} />
       {files.length === 0 && (

@@ -596,13 +596,62 @@ fn files_key_for_platform(platform: &str) -> String {
     }
 }
 
+/// Floors on bundled components that the picked LTS must satisfy.
+///
+/// Defensive against upstream mistakes: the index is hand-edited at Node
+/// release time, and a bad `v8` / `npm` / `openssl` field would otherwise
+/// silently give us a Node that can't run modern agents. Every published
+/// LTS already satisfies these, so this only filters out hypothetical
+/// outliers — it's cheap defense, not a feature gate.
+#[derive(Clone, Debug)]
+pub struct IndexFloors {
+    pub min_v8: Option<VersionReq>,
+    pub min_npm: Option<VersionReq>,
+    pub min_openssl: Option<VersionReq>,
+}
+
+impl Default for IndexFloors {
+    fn default() -> Self {
+        // v8 12 = Node 22's baseline engine
+        // npm 10 = Node 22's baseline package manager
+        // openssl 3 = Node 18+'s baseline crypto library
+        Self {
+            min_v8: Some(VersionReq::parse(">=12.0.0").expect("static")),
+            min_npm: Some(VersionReq::parse(">=10.0.0").expect("static")),
+            min_openssl: Some(VersionReq::parse(">=3.0.0").expect("static")),
+        }
+    }
+}
+
+/// Parse a Node index.json `v8` / `npm` / `openssl` field. V8 uses
+/// 4-part versions like `12.4.254.14`; npm and openssl use 3-part.
+/// `semver::Version::parse` only accepts strict X.Y.Z, so we drop the
+/// trailing component (build/patch) before parsing.
+fn parse_short_semver(s: &str) -> Option<Version> {
+    let parts: Vec<&str> = s.split('.').take(3).collect();
+    if parts.len() < 2 {
+        return None;
+    }
+    Version::parse(&parts.join(".")).ok()
+}
+
 /// Pick the version to download from a `nodejs.org/dist/index.json` body.
 ///
 /// Walks entries newest-first (the index's native order) and returns the
 /// first version that is an LTS (`lts` is a non-false codename), publishes
-/// the required archive (`files_key` present in `files`), and satisfies
-/// `min_version`. Returns `None` when nothing qualifies.
-pub fn parse_node_index(body: &str, files_key: &str, min_version: &VersionReq) -> Option<String> {
+/// the required archive (`files_key` present in `files`), satisfies
+/// `min_version`, and meets the per-component `floors` (v8 / npm /
+/// openssl). Returns `None` when nothing qualifies.
+///
+/// A floor is *ignored* (not enforced) when the corresponding field is
+/// missing on an entry — older index entries may not list every bundled
+/// component, and we don't want to penalize missing metadata.
+pub fn parse_node_index(
+    body: &str,
+    files_key: &str,
+    min_version: &VersionReq,
+    floors: &IndexFloors,
+) -> Option<String> {
     #[derive(serde::Deserialize)]
     struct IndexEntry {
         version: String,
@@ -610,6 +659,12 @@ pub fn parse_node_index(body: &str, files_key: &str, min_version: &VersionReq) -
         files: Vec<String>,
         #[serde(default)]
         lts: serde_json::Value,
+        #[serde(default)]
+        v8: Option<String>,
+        #[serde(default)]
+        npm: Option<String>,
+        #[serde(default)]
+        openssl: Option<String>,
     }
     let entries: Vec<IndexEntry> = serde_json::from_str(body).ok()?;
     for entry in &entries {
@@ -631,6 +686,25 @@ pub fn parse_node_index(body: &str, files_key: &str, min_version: &VersionReq) -
         };
         if !min_version.matches(&sem) {
             continue;
+        }
+        // Per-component floors: only enforced when the field is present.
+        if let Some(req) = floors.min_v8.as_ref() {
+            if let Some(field) = entry.v8.as_deref() {
+                let Some(sem) = parse_short_semver(field) else { continue };
+                if !req.matches(&sem) { continue; }
+            }
+        }
+        if let Some(req) = floors.min_npm.as_ref() {
+            if let Some(field) = entry.npm.as_deref() {
+                let Some(sem) = parse_short_semver(field) else { continue };
+                if !req.matches(&sem) { continue; }
+            }
+        }
+        if let Some(req) = floors.min_openssl.as_ref() {
+            if let Some(field) = entry.openssl.as_deref() {
+                let Some(sem) = parse_short_semver(field) else { continue };
+                if !req.matches(&sem) { continue; }
+            }
         }
         return Some(entry.version.clone());
     }
@@ -674,7 +748,8 @@ async fn discover_node_version(http: &reqwest::Client, platform: &str) -> Result
     let files_key = files_key_for_platform(platform);
     let min = VersionReq::parse(MIN_NODE_VERSION)
         .expect("MIN_NODE_VERSION is a static, parseable requirement");
-    parse_node_index(&body, &files_key, &min).ok_or_else(|| NexError::AgentNotInstalled {
+    parse_node_index(&body, &files_key, &min, &IndexFloors::default())
+        .ok_or_else(|| NexError::AgentNotInstalled {
         what: "managed node",
         hint: format!(
             "nodejs.org publishes no Node.js LTS with a `{files_key}` archive \
@@ -1352,18 +1427,26 @@ eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee  node-v24.11.0-
         VersionReq::parse(MIN_NODE_VERSION).unwrap()
     }
 
+    fn no_floors() -> IndexFloors {
+        IndexFloors {
+            min_v8: None,
+            min_npm: None,
+            min_openssl: None,
+        }
+    }
+
     #[test]
     fn parse_node_index_picks_newest_lts() {
         // v26.x entries are Current (`lts: false`) and must be skipped even
         // though they're newer and have the right files.
-        let got = parse_node_index(SAMPLE_INDEX, "osx-arm64-tar", &min_req());
+        let got = parse_node_index(SAMPLE_INDEX, "osx-arm64-tar", &min_req(), &no_floors());
         assert_eq!(got.as_deref(), Some("v24.18.1"));
     }
 
     #[test]
     fn parse_node_index_respects_files_key() {
         // No entry publishes a `win-arm64-zip` in the fixture.
-        let got = parse_node_index(SAMPLE_INDEX, "win-arm64-zip", &min_req());
+        let got = parse_node_index(SAMPLE_INDEX, "win-arm64-zip", &min_req(), &no_floors());
         assert_eq!(got, None);
     }
 
@@ -1372,19 +1455,19 @@ eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee  node-v24.11.0-
         // With a floor of >=23, only the Krypton line qualifies; the older
         // Jod (22.x) and Hydrogen (18.x) LTSes are filtered out.
         let req = VersionReq::parse(">=23.0.0").unwrap();
-        let got = parse_node_index(SAMPLE_INDEX, "linux-x64", &req);
+        let got = parse_node_index(SAMPLE_INDEX, "linux-x64", &req, &no_floors());
         assert_eq!(got.as_deref(), Some("v24.18.1"));
 
         // And a floor above everything yields nothing.
         let req = VersionReq::parse(">=99.0.0").unwrap();
-        assert_eq!(parse_node_index(SAMPLE_INDEX, "linux-x64", &req), None);
+        assert_eq!(parse_node_index(SAMPLE_INDEX, "linux-x64", &req, &no_floors()), None);
     }
 
     #[test]
     fn parse_node_index_malformed_json_returns_none() {
-        assert_eq!(parse_node_index("not json", "win-x64-zip", &min_req()), None);
-        assert_eq!(parse_node_index("{}", "win-x64-zip", &min_req()), None);
-        assert_eq!(parse_node_index("", "win-x64-zip", &min_req()), None);
+        assert_eq!(parse_node_index("not json", "win-x64-zip", &min_req(), &no_floors()), None);
+        assert_eq!(parse_node_index("{}", "win-x64-zip", &min_req(), &no_floors()), None);
+        assert_eq!(parse_node_index("", "win-x64-zip", &min_req(), &no_floors()), None);
     }
 
     #[test]
@@ -1394,9 +1477,141 @@ eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee  node-v24.11.0-
             {"version":"v24.18.1","files":["win-x64-zip"],"lts":"Krypton"}
         ]"#;
         assert_eq!(
-            parse_node_index(body, "win-x64-zip", &min_req()).as_deref(),
+            parse_node_index(body, "win-x64-zip", &min_req(), &no_floors()).as_deref(),
             Some("v24.18.1")
         );
+    }
+
+    // ---- v8 / npm / openssl floors ------------------------------------
+
+    /// Realistic fixture with bundled component versions.
+    const INDEX_WITH_BUNDLED: &str = r#"[
+        {"version":"v24.18.1","files":["osx-arm64-tar","win-x64-zip","linux-x64"],"lts":"Krypton",
+         "v8":"13.6.298.16","npm":"11.17.0","openssl":"3.5.1"},
+        {"version":"v24.10.0","files":["osx-arm64-tar","win-x64-zip","linux-x64"],"lts":"Krypton",
+         "v8":"13.0.245.12","npm":"10.9.0","openssl":"3.4.0"},
+        {"version":"v22.20.0","files":["osx-arm64-tar","win-x64-zip","linux-x64"],"lts":"Jod",
+         "v8":"12.10.267.17","npm":"10.9.0","openssl":"3.3.0"},
+        {"version":"v22.10.0","files":["osx-arm64-tar","win-x64-zip","linux-x64"],"lts":"Jod",
+         "v8":"12.4.254.14","npm":"10.2.3","openssl":"3.0.13"}
+    ]"#;
+
+    #[test]
+    fn parse_node_index_default_floors_pass_real_lts() {
+        // All four LTSes satisfy the default floors (>= v8 12 / npm 10 /
+        // openssl 3). The newest one wins.
+        let got = parse_node_index(
+            INDEX_WITH_BUNDLED,
+            "osx-arm64-tar",
+            &min_req(),
+            &IndexFloors::default(),
+        );
+        assert_eq!(got.as_deref(), Some("v24.18.1"));
+    }
+
+    #[test]
+    fn parse_node_index_floor_skips_old_v8() {
+        // Bumping min_v8 to 13 excludes the v22 entries (v8 12.x).
+        let floors = IndexFloors {
+            min_v8: Some(VersionReq::parse(">=13.0.0").unwrap()),
+            ..no_floors()
+        };
+        let got = parse_node_index(
+            INDEX_WITH_BUNDLED,
+            "osx-arm64-tar",
+            &min_req(),
+            &floors,
+        );
+        assert_eq!(got.as_deref(), Some("v24.18.1"));
+    }
+
+    #[test]
+    fn parse_node_index_floor_skips_old_npm() {
+        // Require npm >= 11 excludes the v22 lines (npm 10.x).
+        let floors = IndexFloors {
+            min_npm: Some(VersionReq::parse(">=11.0.0").unwrap()),
+            ..no_floors()
+        };
+        let got = parse_node_index(
+            INDEX_WITH_BUNDLED,
+            "osx-arm64-tar",
+            &min_req(),
+            &floors,
+        );
+        assert_eq!(got.as_deref(), Some("v24.18.1"));
+    }
+
+    #[test]
+    fn parse_node_index_floor_skips_old_openssl() {
+        // Require openssl >= 3.4 excludes v22.10.0 (3.0.13).
+        let floors = IndexFloors {
+            min_openssl: Some(VersionReq::parse(">=3.4.0").unwrap()),
+            ..no_floors()
+        };
+        let got = parse_node_index(
+            INDEX_WITH_BUNDLED,
+            "osx-arm64-tar",
+            &min_req(),
+            &floors,
+        );
+        // v24.10.0 (openssl 3.4.0) and v24.18.1 (3.5.1) both pass.
+        assert_eq!(got.as_deref(), Some("v24.18.1"));
+    }
+
+    #[test]
+    fn parse_node_index_floor_unparseable_field_skips_entry() {
+        // Entry has a garbage v8 string — skip rather than panic.
+        let body = r#"[
+            {"version":"v24.18.1","files":["win-x64-zip"],"lts":"Krypton","v8":"not-a-version"},
+            {"version":"v24.17.0","files":["win-x64-zip"],"lts":"Krypton","v8":"13.6.298.16"}
+        ]"#;
+        let floors = IndexFloors {
+            min_v8: Some(VersionReq::parse(">=13.0.0").unwrap()),
+            ..no_floors()
+        };
+        // v24.18.1 fails v8 parse → skipped; v24.17.0 wins.
+        assert_eq!(
+            parse_node_index(body, "win-x64-zip", &min_req(), &floors).as_deref(),
+            Some("v24.17.0")
+        );
+    }
+
+    #[test]
+    fn parse_node_index_floor_missing_field_is_ignored() {
+        // If a floor is set but the field is missing on an entry, we don't
+        // penalize the entry. (Older index entries may lack the field.)
+        let body = r#"[
+            {"version":"v24.18.1","files":["win-x64-zip"],"lts":"Krypton","npm":"11.17.0"},
+            {"version":"v24.17.0","files":["win-x64-zip"],"lts":"Krypton","v8":"13.6.298.16","npm":"11.17.0"}
+        ]"#;
+        // v24.18.1 has npm but no v8 → npm floor passes, v8 floor ignored.
+        let floors = IndexFloors {
+            min_v8: Some(VersionReq::parse(">=13.0.0").unwrap()),
+            ..no_floors()
+        };
+        assert_eq!(
+            parse_node_index(body, "win-x64-zip", &min_req(), &floors).as_deref(),
+            Some("v24.18.1")
+        );
+    }
+
+    #[test]
+    fn parse_short_semver_handles_4_part_v8_versions() {
+        // V8 publishes 4-part versions like 12.4.254.14; semver is strict
+        // 3-part, so we drop the trailing component.
+        assert_eq!(
+            parse_short_semver("12.4.254.14").unwrap().to_string(),
+            "12.4.254"
+        );
+        // Standard 3-part inputs pass through unchanged.
+        assert_eq!(
+            parse_short_semver("11.17.0").unwrap().to_string(),
+            "11.17.0"
+        );
+        // Garbage / too-short inputs return None.
+        assert!(parse_short_semver("garbage").is_none());
+        assert!(parse_short_semver("13").is_none());
+        assert!(parse_short_semver("").is_none());
     }
 
     #[test]

@@ -1,0 +1,25 @@
+src-tauri/src/agent/node_runtime.rs
+  s_99f4a515321b30::t_84dd17f687830b 1159-1273
+  s_99f4a515321b30::t_89e713ba346667 888-891
+  s_99f4a515321b30::t_8ad18d774dd5c3 647
+  s_99f4a515321b30::t_8d16e2e57c16f1 227
+  s_99f4a515321b30::t_955754e4aacf82 613-646,648-676
+src-tauri/src/agent/package_cache.rs
+  s_99f4a515321b30::t_bdb68fe09a34cd 121-126
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "a43ffe1659e16bcbaf9f0fc1a64138c4942747c8",
+  "prompts": {},
+  "sessions": {
+    "s_99f4a515321b30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cde542cb-fe30-4529-8277-67f2904fd574",
+        "model": "MiniMax-M3"
+      },
+      "human_author": "zt23330 <zt23330@ztn.com>"
+    }
+  }
+}

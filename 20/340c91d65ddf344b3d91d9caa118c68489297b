@@ -1,0 +1,40 @@
+src/bridge/commands.ts
+  s_a9bf9370cfd8b1::t_bc709e46c6ec2f 64
+src/features/projects/restoreProjectConversationTabs.ts
+  s_a9bf9370cfd8b1::t_cd19976c73efba 7-49,52,54,71-72,74,76-79,81,83-86,89-111
+src/features/projects/ProjectSelector.tsx
+  s_a9bf9370cfd8b1::t_dc8abb60837b3b 159-167
+  s_a9bf9370cfd8b1::t_b49bf6aeaf2031 95-100
+src/stores/fs.store.ts
+  s_a9bf9370cfd8b1::t_2475ff56b6d136 139-140
+  s_a9bf9370cfd8b1::t_dd8838cdf4a635 764-775,802-818
+  s_a9bf9370cfd8b1::t_45bdbb203f45b8 819-820
+src-tauri/src/watcher.rs
+  s_a9bf9370cfd8b1::t_966129f9a103b9 51,56-63,116-127
+src-tauri/src/commands/git_cmds.rs
+  s_a9bf9370cfd8b1::t_b7f541a2714567 10-13,32-35,54-57
+src-tauri/src/lib.rs
+  s_a9bf9370cfd8b1::t_263cfc5709f866 42
+src-tauri/src/commands/fs_cmds.rs
+  s_a9bf9370cfd8b1::t_2582307e909c63 13-16,25-28,38-39,41-59
+src/stores/agent.store.ts
+  s_a9bf9370cfd8b1::t_8e74908bf936e3 398-402
+  s_a9bf9370cfd8b1::t_98d0a7076f47c7 97-98
+  s_a9bf9370cfd8b1::t_5cb3cc3dc89b4c 403-405
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "20340c91d65ddf344b3d91d9caa118c68489297b",
+  "prompts": {},
+  "sessions": {
+    "s_a9bf9370cfd8b1": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "3964547a-67f0-47a7-ace3-a297d09748e6",
+        "model": "default"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

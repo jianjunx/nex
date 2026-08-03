@@ -1,0 +1,43 @@
+src/features/git/GitPanel.tsx
+  s_a9bf9370cfd8b1::t_3d544fc4e4b8b5 2,10,13-25,37-41,48-60,63-76,81,107-108
+src-tauri/src/git/repository.rs
+  s_a9bf9370cfd8b1::t_1c81c96f6c3074 233-240,249,266-273,279-287
+src/features/git/BranchSelector.test.tsx
+  s_a9bf9370cfd8b1::t_090a100b7d84dc 8,25-27,46-50
+  s_a9bf9370cfd8b1::t_283f5eb2ef49a9 51-52
+src/bridge/tauri.ts
+  s_a9bf9370cfd8b1::t_cfd5cf8dd251be 287-288
+  s_a9bf9370cfd8b1::t_52866c0357235f 477-478
+  s_a9bf9370cfd8b1::t_7921acfa8bd744 479-480
+src/features/git/GitErrorDialog.tsx
+  s_a9bf9370cfd8b1::t_443e1ff33738f2 24-25
+  s_a9bf9370cfd8b1::t_c33a17c8f6b5cf 1-23,26-85
+src-tauri/src/git/network.rs
+  s_a9bf9370cfd8b1::t_2cc180cfde976f 34-35,49-58,64
+  s_a9bf9370cfd8b1::t_748172fa433dde 90
+src/features/git/GitErrorDialog.test.tsx
+  s_a9bf9370cfd8b1::t_6f487eacd9c8b0 1-18
+src-tauri/src/git/types.rs
+  s_a9bf9370cfd8b1::t_45cc2327327012 34-35
+src/features/git/BranchSelector.tsx
+  s_a9bf9370cfd8b1::t_bdef3600653e79 57-64
+  s_a9bf9370cfd8b1::t_0d43f607a1b690 162
+src-tauri/tests/git_test.rs
+  s_a9bf9370cfd8b1::t_ce209798ffcda9 46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "ed5d821a5cdc02d850ea201e56364d41a923d7a3",
+  "prompts": {},
+  "sessions": {
+    "s_a9bf9370cfd8b1": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "3964547a-67f0-47a7-ace3-a297d09748e6",
+        "model": "default"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

@@ -1,0 +1,67 @@
+src/stores/ui.store.ts
+  s_a9bf9370cfd8b1::t_d7fd7cd60f4277 122-123
+  s_a9bf9370cfd8b1::t_77eebd3a77763a 77
+  s_a9bf9370cfd8b1::t_d9ff56f611eb76 36-37,57-58
+src/commands/types.test.ts
+  s_a9bf9370cfd8b1::t_b3b8a8eeefcf4a 59-62,67-72
+  s_a9bf9370cfd8b1::t_9581e0754dea9f 6
+  s_a9bf9370cfd8b1::t_b70064505a877a 73-75
+src/commands/KeybindingHost.test.tsx
+  s_a9bf9370cfd8b1::t_839ed6c5eb82b6 24
+src/App.tsx
+  s_a9bf9370cfd8b1::t_0bdea8857e1b10 52,56-61,70-83
+  s_a9bf9370cfd8b1::t_f39b76182d9f6d 115
+  s_a9bf9370cfd8b1::t_6c2e727a183ffb 18
+src/components/ui/TextEditContextMenu.tsx
+  s_a9bf9370cfd8b1::t_42b3697f5844ec 1-127
+src/features/layout/AppLifecycleHost.tsx
+  s_a9bf9370cfd8b1::t_e78f8ec8044e01 82,84
+  s_a9bf9370cfd8b1::t_147918a2c28975 1-81,83,85-141
+src/features/editor/EditorContextMenu.tsx
+  s_a9bf9370cfd8b1::t_17bd827548c721 1-99
+src/commands/types.ts
+  s_a9bf9370cfd8b1::t_fbfbd52ccb9590 3,6
+  s_a9bf9370cfd8b1::t_aa3172ccac59bf 129-130
+  s_a9bf9370cfd8b1::t_000d88f371f8be 83,89-107
+  s_a9bf9370cfd8b1::t_1d6c5b9d31f841 29-34,50
+  s_a9bf9370cfd8b1::t_7c30701a9a457d 80-82
+  s_a9bf9370cfd8b1::t_155e82652d1e12 108-110
+  s_a9bf9370cfd8b1::t_c79336cff476e5 75-79
+src/commands/registry.ts
+  s_a9bf9370cfd8b1::t_0a330a2f5c549e 10-11
+  s_a9bf9370cfd8b1::t_2b19a537ee14b6 31-34
+  s_a9bf9370cfd8b1::t_5189cc04e8e033 12-29
+  s_a9bf9370cfd8b1::t_b7e1ec5587f3cd 131,142,155,178-180,194-196
+  s_a9bf9370cfd8b1::t_c6eb747e1374fe 79-80,83-89
+  s_a9bf9370cfd8b1::t_024651d3d1029d 30
+  s_a9bf9370cfd8b1::t_35d8bcd6d84909 90
+src/features/editor/EditorPanel.tsx
+  s_a9bf9370cfd8b1::t_bacf663befcae1 17
+  s_a9bf9370cfd8b1::t_ab59ecc9d29ea7 196-197,199,202,204-220
+src/commands/registry.test.ts
+  s_a9bf9370cfd8b1::t_46682489aaa735 26-27
+src/commands/KeybindingHost.tsx
+  s_a9bf9370cfd8b1::t_007aa0d56d21fc 55,68
+  s_a9bf9370cfd8b1::t_b256513eb1fc80 3
+  s_a9bf9370cfd8b1::t_ac0b457284e102 12-23
+  s_a9bf9370cfd8b1::t_c1f0d00e7d8fc0 77-78
+src/features/agent/AgentComposer.tsx
+  s_a9bf9370cfd8b1::t_91422f9cb96b33 433-451
+  s_a9bf9370cfd8b1::t_4874f02896f662 16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "05c8e04fa9a6ceabb77ce8e316ce6b2ffb0667cc",
+  "prompts": {},
+  "sessions": {
+    "s_a9bf9370cfd8b1": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "3964547a-67f0-47a7-ace3-a297d09748e6",
+        "model": "default"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

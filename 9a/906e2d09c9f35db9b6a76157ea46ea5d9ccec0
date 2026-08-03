@@ -1,0 +1,19 @@
+CLAUDE.md
+  s_99f4a515321b30::t_aa5cfac0ec4da8 3-5,7,10,13,15,17,20,24,27,31-142
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "9a906e2d09c9f35db9b6a76157ea46ea5d9ccec0",
+  "prompts": {},
+  "sessions": {
+    "s_99f4a515321b30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cde542cb-fe30-4529-8277-67f2904fd574",
+        "model": "MiniMax-M3"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

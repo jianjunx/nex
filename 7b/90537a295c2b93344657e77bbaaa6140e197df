@@ -1,0 +1,33 @@
+src-tauri/src/agent/launch.rs
+  s_99f4a515321b30::t_5478796b4f8e38 129-132,134
+  s_99f4a515321b30::t_e2d45c665b502a 463,469-510
+  s_99f4a515321b30::t_8624159382aa5e 511
+src-tauri/src/agent/shell_env.rs
+  s_99f4a515321b30::t_9693bbf33ff541 239
+  s_99f4a515321b30::t_7b3f62832635a1 373-374,381-382
+  s_99f4a515321b30::t_fcdc643028bef7 213-216
+  s_99f4a515321b30::t_02b73cade5f12e 131-138,140-151,175-207,217-238
+  s_99f4a515321b30::t_2b32cc684e3eb4 208-212
+  s_99f4a515321b30::t_c65d2bf2d711c7 365-372,375-380,383-437
+  s_99f4a515321b30::t_81b60da09bc30b 240
+src-tauri/src/agent/node_runtime.rs
+  s_99f4a515321b30::t_ac1828c885d8e5 522-531,533-541,543
+  s_99f4a515321b30::t_2ccbf2e7181d80 547
+  s_99f4a515321b30::t_1c04418960f322 558
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "7b90537a295c2b93344657e77bbaaa6140e197df",
+  "prompts": {},
+  "sessions": {
+    "s_99f4a515321b30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cde542cb-fe30-4529-8277-67f2904fd574",
+        "model": "MiniMax-M3"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

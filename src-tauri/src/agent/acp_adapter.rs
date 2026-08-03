@@ -28,7 +28,10 @@ const AGENT_NOTIFICATION_EVENT: &str = "agent-notification";
 const AGENT_PERMISSION_REQUEST_EVENT: &str = "agent-permission-request";
 const AGENT_SESSION_TERMINATED_EVENT: &str = "agent-session-terminated";
 
-const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+// 120s covers the worst case: cold-cache `npm install` of a new agent
+// (downloads the package + transitive deps) plus the agent's own bootstrap.
+// Steady-state restarts complete in well under a second.
+const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 const STDERR_TAIL_LINES: usize = 50;
 
 fn permission_option_kind_str(kind: acp::PermissionOptionKind) -> &'static str {

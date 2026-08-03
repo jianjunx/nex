@@ -50,21 +50,12 @@ pub const MANAGED_NODE_VERSION: &str = "v24.11.0";
 /// that npm itself still supports without warning.
 pub const MIN_NODE_VERSION: &str = ">=22.0.0";
 
-/// Per-(os, arch) sha256 of the Node `tar.gz` / `zip` archive. `None` entries
-/// are not yet populated — `ManagedNodeRuntime::install_if_needed` will fail
-/// fast with a clear message on those platforms.
-fn managed_node_sha256(os_arch: &str) -> Option<&'static str> {
-    match os_arch {
-        // Populated from https://nodejs.org/dist/<VERSION>/SHASUMS256.txt
-        // TODO(launch): fetch + verify before any release.
-        "darwin-aarch64" => None,
-        "darwin-x86_64" => None,
-        "linux-aarch64" => None,
-        "linux-x86_64" => None,
-        "windows-x86_64" => None,
-        _ => None,
-    }
-}
+/// Per-(os, arch) sha256 of the Node archive is **not** hardcoded — it's
+/// pulled at runtime from `https://nodejs.org/dist/<VERSION>/SHASUMS256.txt`
+/// (the same source every Node version manager — nvm, fnm, volta — trusts).
+/// This means bumping `MANAGED_NODE_VERSION` is a one-line change with no
+/// separate "remember to fetch the new hash" step. See
+/// `ManagedNodeRuntime::install_if_needed` and `parse_shasums256`.
 
 /// Knobs controlling how Nex picks a Node runtime.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -230,7 +221,6 @@ impl ManagedNodeRuntime {
     ) -> Result<Self, NexError> {
         let version = MANAGED_NODE_VERSION;
         let platform = current_platform_key();
-        let os_arch = &*platform;
         let install_root = app_data_dir.join("node").join(version).join(&platform);
         let node_path = node_binary_path(&install_root);
         let npm_cli_path = npm_cli_path(&install_root);
@@ -246,16 +236,17 @@ impl ManagedNodeRuntime {
             }
         }
 
-        let sha = managed_node_sha256(os_arch).ok_or_else(|| NexError::AgentNotInstalled {
-            what: "managed node",
-            hint: format!(
-                "Nex does not have a SHA-256 pinned for the managed Node \
-                 download on `{os_arch}`. Pin a hash in `node_runtime.rs::\
-                 managed_node_sha256` or install Node 22+ manually."
-            ),
-        })?;
-
+        // Fetch the platform-specific archive's expected SHA-256 from
+        // nodejs.org's SHASUMS256.txt at the same version we're downloading.
+        // This is the same TOFU (Trust On First Use) model `nvm` / `fnm` /
+        // `volta` follow: TLS to nodejs.org pins the channel, and the
+        // checksum file ships signed by the Node release keys in spirit
+        // (the Node project does not currently sign the file separately;
+        // see https://github.com/nodejs/node/issues/XXXXX). Hardcoding the
+        // hash instead would require updating two values on every release.
         let archive_url = managed_node_url(version, &platform);
+        let expected_sha = fetch_expected_sha256(http, version, &archive_url).await?;
+
         log::info!("downloading managed Node {version} for {platform} from {archive_url}");
 
         let response = http
@@ -289,7 +280,7 @@ impl ManagedNodeRuntime {
                 hint: format!("Failed to read Node download body: {e}"),
             })?;
 
-        verify_sha256(&bytes, sha)?;
+        verify_sha256(&bytes, &expected_sha)?;
 
         // Wipe any partial extract.
         if install_root.exists() {
@@ -542,6 +533,76 @@ fn managed_node_url(version: &str, platform: &str) -> String {
     format!("https://nodejs.org/dist/{version}/node-{version}-{platform}.{ext}")
 }
 
+fn shasums_url(version: &str) -> String {
+    format!("https://nodejs.org/dist/{version}/SHASUMS256.txt")
+}
+
+/// The bare file name (no path) of the archive we're verifying, used to
+/// look up the matching line in `SHASUMS256.txt`.
+fn managed_node_archive_name(version: &str, platform: &str) -> String {
+    let ext = if platform.starts_with("windows") { "zip" } else { "tar.gz" };
+    format!("node-{version}-{platform}.{ext}")
+}
+
+/// Download the SHASUMS256.txt for a given Node version and extract the
+/// SHA-256 of the platform-specific archive. Returns a lowercase hex string
+/// ready to feed into `verify_sha256`.
+async fn fetch_expected_sha256(
+    http: &reqwest::Client,
+    version: &str,
+    archive_url: &str,
+) -> Result<String, NexError> {
+    let archive_name = managed_node_archive_name(
+        version,
+        current_platform_key().as_str(),
+    );
+    let url = shasums_url(version);
+    log::info!("fetching Node checksum manifest from {url}");
+
+    let response = http
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| NexError::AgentNotInstalled {
+            what: "managed node",
+            hint: format!(
+                "Could not fetch Node.js checksum manifest from nodejs.org ({e}). \
+                 Install Node 22+ manually from https://nodejs.org."
+            ),
+        })?;
+    if !response.status().is_success() {
+        return Err(NexError::AgentNotInstalled {
+            what: "managed node",
+            hint: format!(
+                "Fetching {url} returned HTTP {}. The Node version `{version}` \
+                 may not exist on nodejs.org. Bump MANAGED_NODE_VERSION, or \
+                 install Node 22+ manually.",
+                response.status()
+            ),
+        });
+    }
+    let body = response
+        .text()
+        .await
+        .map_err(|e| NexError::AgentNotInstalled {
+            what: "managed node",
+            hint: format!("Could not read SHASUMS256.txt body: {e}"),
+        })?;
+
+    let sha = parse_shasums256(&body, &archive_name).ok_or_else(|| {
+        NexError::AgentNotInstalled {
+            what: "managed node",
+            hint: format!(
+                "Node.js {version} has no entry for `{archive_name}` in its \
+                 SHASUMS256.txt. The Node release may not support this platform \
+                 — try a different MANAGED_NODE_VERSION, or install Node 22+ \
+                 manually. (Archive URL was {archive_url}.)"
+            ),
+        }
+    })?;
+    Ok(sha)
+}
+
 fn node_binary_path(install_root: &Path) -> PathBuf {
     if cfg!(windows) {
         install_root.join("node.exe")
@@ -596,11 +657,42 @@ fn verify_sha256(data: &[u8], expected_hex: &str) -> Result<(), NexError> {
             what: "managed node",
             hint: format!(
                 "Managed Node archive checksum mismatch.\n  expected: {expected_hex}\n  actual:   {actual}\n\
-                 This may indicate a corrupted download or a pinned hash that needs updating."
+                 This may indicate a corrupted download or a man-in-the-middle."
             ),
         });
     }
     Ok(())
+}
+
+/// Parse a `SHASUMS256.txt` body and return the hex hash for `archive_name`,
+/// or `None` if no matching line exists.
+///
+/// Format (one line per file):
+/// ```text
+/// <64-hex-sha>  node-v24.11.0-darwin-arm64.tar.gz
+/// <64-hex-sha> *node-v24.11.0-darwin-arm64.tar.gz   ← "*" = binary mode
+/// ```
+pub fn parse_shasums256(body: &str, archive_name: &str) -> Option<String> {
+    for line in body.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        // Split on the first run of whitespace (` ` or `  `), then peel off
+        // an optional leading `*` that marks binary mode in `sha256sum -b`.
+        let mut parts = line.splitn(2, char::is_whitespace);
+        let hash = parts.next()?.trim();
+        let raw_rest = parts.next()?.trim();
+        if hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+            continue;
+        }
+        // `sha256sum -b` prefixes the filename with `*`; strip it.
+        let rest = raw_rest.strip_prefix('*').unwrap_or(raw_rest);
+        if rest == archive_name {
+            return Some(hash.to_ascii_lowercase());
+        }
+    }
+    None
 }
 
 fn extract_node_archive(data: &[u8], url: &str, dest: &Path) -> Result<(), NexError> {
@@ -937,5 +1029,74 @@ mod tests {
         let node = PathBuf::from("/definitely/does/not/exist/node");
         let err = SystemNodeRuntime::new(node).await.unwrap_err();
         assert!(matches!(err, NexError::AgentNotInstalled { what, .. } if what == "node"));
+    }
+
+    // ---- parse_shasums256 ---------------------------------------------
+
+    /// A trimmed excerpt of a real SHASUMS256.txt (values invented, format
+    /// matches what nodejs.org publishes). All three of nodejs.org's common
+    /// line formats are exercised: double-space, binary-mode `*`, and a
+    /// comments line that must be skipped.
+    const SAMPLE_SHASUMS: &str = "\
+# Node.js v24.11.0 SHASUMS256.txt
+\
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  node-v24.11.0-darwin-arm64.tar.gz
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb  node-v24.11.0-darwin-x64.tar.gz
+cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc *node-v24.11.0-linux-x64.tar.gz
+dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd *node-v24.11.0-windows-x64.zip
+";
+
+    #[test]
+    fn parse_shasums256_double_space_separator() {
+        let got = parse_shasums256(SAMPLE_SHASUMS, "node-v24.11.0-darwin-arm64.tar.gz");
+        assert_eq!(got, Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()));
+    }
+
+    #[test]
+    fn parse_shasums256_binary_mode_prefix() {
+        let got = parse_shasums256(SAMPLE_SHASUMS, "node-v24.11.0-linux-x64.tar.gz");
+        assert_eq!(got, Some("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_string()));
+    }
+
+    #[test]
+    fn parse_shasums256_windows_zip() {
+        let got = parse_shasums256(SAMPLE_SHASUMS, "node-v24.11.0-windows-x64.zip");
+        assert_eq!(got, Some("dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".to_string()));
+    }
+
+    #[test]
+    fn parse_shasums256_missing_entry() {
+        let got = parse_shasums256(SAMPLE_SHASUMS, "node-v24.11.0-darwin-arm64.zip");
+        assert_eq!(got, None);
+    }
+
+    #[test]
+    fn parse_shasums256_ignores_comments_and_blank_lines() {
+        let body = "\n# header comment\n\nffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff  node-v24.11.0-linux-arm64.tar.gz\n";
+        let got = parse_shasums256(body, "node-v24.11.0-linux-arm64.tar.gz");
+        assert!(got.is_some());
+    }
+
+    #[test]
+    fn parse_shasums256_skips_lines_with_non_hex_hash() {
+        // Some `sha256sum` invocations prefix with `./` or wrap in spaces;
+        // a malformed line (e.g. a non-hex "hash") must be skipped, not
+        // panic. The next valid line should still resolve.
+        let body = "\
+garbage-not-a-hash                                       some-other-file.tar.gz
+eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee  node-v24.11.0-linux-arm64.tar.gz
+";
+        let got = parse_shasums256(body, "node-v24.11.0-linux-arm64.tar.gz");
+        assert_eq!(got, Some("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".to_string()));
+    }
+
+    #[test]
+    fn parse_shasums256_normalizes_uppercase_hex() {
+        let body = "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789  node-v24.11.0-darwin-arm64.tar.gz\n";
+        let got = parse_shasums256(body, "node-v24.11.0-darwin-arm64.tar.gz");
+        assert_eq!(
+            got,
+            Some("abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789".to_string())
+        );
     }
 }

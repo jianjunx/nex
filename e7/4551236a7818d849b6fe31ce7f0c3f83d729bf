@@ -1,0 +1,30 @@
+src-tauri/src/agent/node_runtime.rs
+  s_99f4a515321b30::t_1ea43ef4c7d19a 708,1430-1437,1442,1449,1458,1463,1468-1470,1480-1593,1598-1615
+  s_99f4a515321b30::t_cd58c08c77b673 751-752
+  s_99f4a515321b30::t_8af3b6d2fa0b31 599-637,642-654,662-667,690-707
+  s_fdb54a8d1dfbfb::t_f6f53bb716120e 1616
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "e74551236a7818d849b6fe31ce7f0c3f83d729bf",
+  "prompts": {},
+  "sessions": {
+    "s_99f4a515321b30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cde542cb-fe30-4529-8277-67f2904fd574",
+        "model": "MiniMax-M3"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    },
+    "s_fdb54a8d1dfbfb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1602fbff-9bc0-4294-a508-d83334def615",
+        "model": "MiniMax-M3"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

@@ -98,7 +98,12 @@ export async function conversationAppendMessage(
 export interface ServerDescriptor {
   id: string;
   name: string;
+  /** Latest version published in the registry. */
   version: string;
+  /** Version currently cached on disk, if any. Compared against `version`
+   * to render an "update available" badge in the UI. Omitted entirely for
+   * custom servers (which have no registry version). */
+  installedVersion?: string;
   description: string;
   icon: string | null;
   kind: "registry" | "custom";

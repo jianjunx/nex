@@ -32,6 +32,12 @@ use crate::error::NexError;
 /// 120s gives headroom for slow networks without hanging the GUI.
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// Keep this many recent spec versions per agent id when sweeping old
+/// caches. The newest is always the live install; older ones are kept just
+/// in case a downgrade is requested. Three strikes a balance between disk
+/// footprint and rollback flexibility.
+const KEEP_RECENT_VERSIONS: usize = 3;
+
 /// A fully-resolved `npx` distribution: the absolute node path to use as
 /// the process, and the absolute path to the package's bin script.
 #[derive(Clone, Debug)]
@@ -53,6 +59,11 @@ pub trait PackageResolver: Send + Sync {
         entry: &RegistryEntry,
         npx: &RegistryNpxDistribution,
     ) -> Result<ResolvedNpx, NexError>;
+
+    /// Version of the most-recently-used cached install for `agent_id`, or
+    /// `None` if no install is cached. Surfaced to the UI so it can render
+    /// an "update available" badge against the registry's latest version.
+    fn newest_installed_version(&self, agent_id: &str) -> Option<String>;
 }
 
 type Inflight = Arc<OnceCell<Result<ResolvedNpx, NexError>>>;
@@ -232,11 +243,16 @@ impl PackageResolver for PackageCache {
         let runtime = self.node_runtime.get().await;
         let install_dir = self.install_dir(&entry.id, &npx.package).await?;
         let marker = install_dir.join(".nex-install-ok");
+        let version_file = install_dir.join(".nex-version");
 
         // Fast path: marker present and the bin file still exists.
         if marker.exists() {
             if let Ok(exec) = read_package_executable_path(&install_dir, &npx.package) {
                 if exec.exists() {
+                    // Touch the marker so its mtime reflects the most recent
+                    // use. The LRU sweeper (see `evict_old_versions`) uses this
+                    // mtime to decide which versions to keep.
+                    let _ = touch_marker(&marker);
                     return Ok(ResolvedNpx {
                         node_path: runtime.binary_path().to_path_buf(),
                         executable_path: exec,
@@ -262,13 +278,68 @@ impl PackageResolver for PackageCache {
             })
             .await;
 
-        // Persist the marker only on success, and only after we've actually
-        // written the bin (the read above guarantees it does).
+        // Persist the marker + version sidecar only on success, and only
+        // after we've actually written the bin (the read above guarantees
+        // it does). Writing the version sidecar separately keeps the empty
+        // marker file compatible with older caches.
         if result.is_ok() {
             let _ = std::fs::write(&marker, "");
+            if let Some(ver) = version_from_spec(&npx.package) {
+                let _ = std::fs::write(&version_file, ver);
+            }
+            // Sweep old versions in the background. Best-effort: a failure
+            // here only means the next sweep will retry; the install itself
+            // already succeeded.
+            let root = self.root.clone();
+            tokio::spawn(async move {
+                if let Err(e) = sweep_lru(&root, KEEP_RECENT_VERSIONS).await {
+                    log::warn!("agent cache LRU sweep failed: {e}");
+                }
+            });
         }
         result.clone()
     }
+
+    fn newest_installed_version(&self, agent_id: &str) -> Option<String> {
+        newest_installed_version(&self.root, agent_id)
+    }
+}
+
+/// Returns the version of the most-recently-used installed spec for
+/// `agent_id`, or `None` if no install is cached. Reads the `.nex-version`
+/// sidecar written by `resolve_npx`. Used by the UI to decide whether
+/// to render an "update available" badge against the registry's latest
+/// version.
+pub fn newest_installed_version(root: &Path, agent_id: &str) -> Option<String> {
+    let agent_dir = root.join(sanitize(agent_id));
+    if !agent_dir.is_dir() {
+        return None;
+    }
+    // Find the spec dir with the newest `.nex-install-ok` mtime; that
+    // corresponds to the most-recently-used install. Then read its
+    // `.nex-version` sidecar.
+    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+    if let Ok(entries) = std::fs::read_dir(&agent_dir) {
+        for entry in entries.flatten() {
+            if !entry.path().is_dir() {
+                continue;
+            }
+            let marker = entry.path().join(".nex-install-ok");
+            let Ok(mtime) = std::fs::metadata(&marker).and_then(|m| m.modified()) else {
+                continue;
+            };
+            match &newest {
+                Some((prev, _)) if *prev >= mtime => {}
+                _ => newest = Some((mtime, entry.path())),
+            }
+        }
+    }
+    let (_, spec_dir) = newest?;
+    let version_path = spec_dir.join(".nex-version");
+    std::fs::read_to_string(&version_path)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 /// Replaces characters that are trouble in filesystem paths. Mirrors
@@ -311,6 +382,103 @@ pub fn package_name_from_spec(spec: &str) -> &str {
             spec
         }
     }
+}
+
+/// Extract a parseable version suffix from an install spec. Returns `None`
+/// when the spec has no `@version` or the suffix isn't a valid semver.
+///
+/// - `pkg@1.0.0` → `Some("1.0.0")`
+/// - `@scope/name@0.64.2` → `Some("0.64.2")`
+/// - `pkg` → `None`
+/// - `@scope/name` → `None`
+/// - `weird@not.a.version` → `None`
+///
+/// Used to write the `.nex-version` sidecar so the UI can show "you have
+/// 0.64.2, registry says 0.65.0" without re-parsing the spec.
+pub fn version_from_spec(spec: &str) -> Option<String> {
+    use semver::Version;
+    // The version is the last `@`-separated piece. `rsplit` gives us that
+    // without manual scanning, and works for both `@scope/name@version`
+    // and unscoped `name@version`.
+    spec.rsplit('@')
+        .next()
+        .filter(|v| !v.is_empty())
+        .filter(|v| Version::parse(v).is_ok())
+        .map(String::from)
+}
+
+/// Update a file's mtime to "now". Used to bump `.nex-install-ok` on every
+/// fast-path cache hit, so the LRU sweeper can sort by last-used.
+///
+/// We deliberately don't use the `filetime` crate to avoid adding another
+/// dep — opening for write is enough to update mtime on Unix and macOS.
+fn touch_marker(path: &Path) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new().write(true).open(path)?;
+    f.write_all(b"")?;
+    f.sync_data()?;
+    Ok(())
+}
+
+/// Sweep agent caches under `root`, keeping only the `keep_recent` most
+/// recently used spec dirs per agent id. Returns the number of dirs
+/// removed. Best-effort: errors on individual dirs are logged but do not
+/// abort the sweep.
+async fn sweep_lru(root: &Path, keep_recent: usize) -> std::io::Result<usize> {
+    // Move blocking I/O to a blocking task so we don't tie up the runtime.
+    let root = root.to_path_buf();
+    tokio::task::spawn_blocking(move || -> std::io::Result<usize> {
+        if !root.exists() {
+            return Ok(0);
+        }
+        let mut removed = 0usize;
+        for agent_entry in std::fs::read_dir(&root)? {
+            let agent_entry = agent_entry?;
+            let agent_path = agent_entry.path();
+            if !agent_path.is_dir() {
+                continue;
+            }
+            // Each spec dir is `<agent>/<sanitize(spec)>/`. Sort by mtime of
+            // `.nex-install-ok` (touched on every use) descending; keep the
+            // newest `keep_recent`, drop the rest.
+            let mut specs: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
+            for spec_entry in std::fs::read_dir(&agent_path)? {
+                let spec_entry = spec_entry?;
+                let spec_path = spec_entry.path();
+                if !spec_path.is_dir() {
+                    continue;
+                }
+                let marker = spec_path.join(".nex-install-ok");
+                let mtime = match std::fs::metadata(&marker).and_then(|m| m.modified()) {
+                    Ok(t) => t,
+                    Err(_) => continue, // broken cache dir; leave alone for now
+                };
+                specs.push((mtime, spec_path));
+            }
+            // Newest first.
+            specs.sort_by(|a, b| b.0.cmp(&a.0));
+            for (_, stale_path) in specs.into_iter().skip(keep_recent) {
+                match std::fs::remove_dir_all(&stale_path) {
+                    Ok(()) => {
+                        log::info!(
+                            "evicted old agent cache: {}",
+                            stale_path.display()
+                        );
+                        removed += 1;
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "failed to evict {}: {e}",
+                            stale_path.display()
+                        );
+                    }
+                }
+            }
+        }
+        Ok(removed)
+    })
+    .await
+    .map_err(|e| std::io::Error::other(format!("LRU sweep join error: {e}")))?
 }
 
 /// Read the `bin` field of a freshly-installed package and return the path
@@ -568,5 +736,129 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let err = read_package_executable_path(dir.path(), "@scope/missing@1.0.0").unwrap_err();
         assert!(matches!(err, NexError::Agent(_)));
+    }
+
+    // ---- version_from_spec --------------------------------------------
+
+    #[test]
+    fn version_from_spec_extracts_unscoped() {
+        assert_eq!(version_from_spec("pkg@1.0.0").as_deref(), Some("1.0.0"));
+    }
+
+    #[test]
+    fn version_from_spec_extracts_scoped() {
+        assert_eq!(
+            version_from_spec("@agentclientprotocol/claude-agent-acp@0.64.2").as_deref(),
+            Some("0.64.2")
+        );
+    }
+
+    #[test]
+    fn version_from_spec_handles_prerelease() {
+        assert_eq!(version_from_spec("foo@1.0.0-beta.1").as_deref(), Some("1.0.0-beta.1"));
+        assert_eq!(
+            version_from_spec("@scope/name@2.0.0-rc.3").as_deref(),
+            Some("2.0.0-rc.3")
+        );
+    }
+
+    #[test]
+    fn version_from_spec_returns_none_without_version() {
+        assert_eq!(version_from_spec("pkg"), None);
+        assert_eq!(version_from_spec("@scope/name"), None);
+    }
+
+    #[test]
+    fn version_from_spec_returns_none_for_unparseable() {
+        // rsplit takes the last segment, which must parse as semver.
+        assert_eq!(version_from_spec("pkg@not-a-version"), None);
+    }
+
+    // ---- newest_installed_version -------------------------------------
+
+    /// Helper: create a fake installed spec under `agent_packages_root/<id>/<spec>`,
+    /// with `.nex-install-ok` (empty) and `.nex-version` sidecar.
+    fn make_fake_install(
+        root: &Path,
+        id: &str,
+        spec: &str,
+        version: &str,
+        marker_mtime_offset_secs: i64,
+    ) -> PathBuf {
+        let dir = root.join(sanitize(id)).join(sanitize(spec));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(".nex-install-ok"), "").unwrap();
+        std::fs::write(dir.join(".nex-version"), version).unwrap();
+        // Backdate or forward-date the marker so we can assert ordering.
+        // Negative offsets mean "older than now"; cap to ±1 day.
+        let offset = marker_mtime_offset_secs.clamp(-86_400, 86_400);
+        let now = std::time::SystemTime::now();
+        let mtime = if offset >= 0 {
+            now + std::time::Duration::from_secs(offset as u64)
+        } else {
+            now - std::time::Duration::from_secs(offset.unsigned_abs())
+        };
+        let _ = filetime_set(&dir.join(".nex-install-ok"), mtime);
+        dir
+    }
+
+    /// Set a file's mtime to `t`. Uses `std::fs::File::set_modified` (stable
+    /// since Rust 1.75) so we don't pull in the `filetime` crate.
+    fn filetime_set(path: &Path, t: std::time::SystemTime) -> std::io::Result<()> {
+        let f = std::fs::OpenOptions::new().write(true).open(path)?;
+        f.set_modified(t)
+    }
+
+    #[tokio::test]
+    async fn newest_installed_version_returns_none_when_cache_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = PackageCache::new(
+            dir.path(),
+            crate::agent::node_runtime::NodeRuntimeHandle::new(
+                crate::agent::node_runtime::NodeBinaryOptions::default(),
+                crate::agent::shell_env::ShellEnv::new(),
+                dir.path().to_path_buf(),
+            ),
+        );
+        assert_eq!(cache.newest_installed_version("claude-acp"), None);
+    }
+
+    #[tokio::test]
+    async fn newest_installed_version_picks_newest_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = PackageCache::new(
+            dir.path(),
+            crate::agent::node_runtime::NodeRuntimeHandle::new(
+                crate::agent::node_runtime::NodeBinaryOptions::default(),
+                crate::agent::shell_env::ShellEnv::new(),
+                dir.path().to_path_buf(),
+            ),
+        );
+        // Three installs: 0.64.0 (old), 0.65.0 (older), 0.66.0 (newest).
+        // Mtimes are: -3600, -60, 0 seconds from now.
+        make_fake_install(&cache.root, "claude-acp", "@scope/claude@0.64.0", "0.64.0", -3600);
+        make_fake_install(&cache.root, "claude-acp", "@scope/claude@0.66.0", "0.66.0", 0);
+        make_fake_install(&cache.root, "claude-acp", "@scope/claude@0.65.0", "0.65.0", -60);
+        assert_eq!(cache.newest_installed_version("claude-acp").as_deref(), Some("0.66.0"));
+    }
+
+    #[tokio::test]
+    async fn newest_installed_version_ignores_dirs_without_version_sidecar() {
+        // An older cache that hasn't written `.nex-version` yet — should
+        // not surface anything (we don't know which version it is).
+        let dir = tempfile::tempdir().unwrap();
+        let cache = PackageCache::new(
+            dir.path(),
+            crate::agent::node_runtime::NodeRuntimeHandle::new(
+                crate::agent::node_runtime::NodeBinaryOptions::default(),
+                crate::agent::shell_env::ShellEnv::new(),
+                dir.path().to_path_buf(),
+            ),
+        );
+        let spec_dir = cache.root.join("claude-acp/_scope_claude_0.64.0");
+        std::fs::create_dir_all(&spec_dir).unwrap();
+        std::fs::write(spec_dir.join(".nex-install-ok"), "").unwrap();
+        // No .nex-version file.
+        assert_eq!(cache.newest_installed_version("claude-acp"), None);
     }
 }

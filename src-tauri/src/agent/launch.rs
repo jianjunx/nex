@@ -298,10 +298,25 @@ mod tests {
     }
 
     /// Test double for `PackageResolver` that returns a canned `ResolvedNpx`
-    /// without ever touching the filesystem. The optional `fail_with` lets
-    /// tests exercise the error path.
+    /// without ever touching the filesystem. The optional `installed_version`
+    /// field lets tests pin what `newest_installed_version` reports.
     struct FakePackageResolver {
         resolved: Result<ResolvedNpx, NexError>,
+        installed_version: Option<String>,
+    }
+
+    impl FakePackageResolver {
+        fn ok(resolved: ResolvedNpx) -> Self {
+            Self { resolved: Ok(resolved), installed_version: None }
+        }
+        fn err(err: NexError) -> Self {
+            Self { resolved: Err(err), installed_version: None }
+        }
+        #[allow(dead_code)]
+        fn with_installed(mut self, ver: Option<&str>) -> Self {
+            self.installed_version = ver.map(String::from);
+            self
+        }
     }
 
     #[async_trait]
@@ -326,6 +341,10 @@ mod tests {
                     other => NexError::Agent(other.to_string()),
                 }),
             }
+        }
+
+        fn newest_installed_version(&self, _agent_id: &str) -> Option<String> {
+            self.installed_version.clone()
         }
     }
 
@@ -380,12 +399,10 @@ mod tests {
     #[tokio::test]
     async fn resolve_registry_uses_resolver_for_npx() {
         let e = entry("codex-acp", Some(npx("@agentclientprotocol/codex-acp@1.1.7", &[])));
-        let resolver = FakePackageResolver {
-            resolved: Ok(fake_resolved(
-                "/opt/homebrew/bin/node",
-                "/cache/agent-packages/_codex-acp/_pkg_1.1.7/node-/node_modules/.../cli.js",
-            )),
-        };
+        let resolver = FakePackageResolver::ok(fake_resolved(
+            "/opt/homebrew/bin/node",
+            "/cache/agent-packages/_codex-acp/_pkg_1.1.7/node-/node_modules/.../cli.js",
+        ));
         let spec = resolve_registry(&e, "/work", &test_cache(), &resolver).await.unwrap();
         assert_eq!(spec.program, "/opt/homebrew/bin/node");
         assert!(spec.args[0].ends_with("cli.js"));
@@ -397,9 +414,7 @@ mod tests {
     #[tokio::test]
     async fn resolve_registry_appends_entry_args() {
         let e = entry("gemini", Some(npx("@google/gemini-cli@0.52.0", &["--acp"])));
-        let resolver = FakePackageResolver {
-            resolved: Ok(fake_resolved("/usr/bin/node", "/cache/bin")),
-        };
+        let resolver = FakePackageResolver::ok(fake_resolved("/usr/bin/node", "/cache/bin"));
         let spec = resolve_registry(&e, "/w", &test_cache(), &resolver).await.unwrap();
         // args: [bin, --acp]
         assert_eq!(spec.args.len(), 2);
@@ -410,9 +425,7 @@ mod tests {
     #[tokio::test]
     async fn resolve_registry_clears_anthropic_key_for_claude() {
         let e = entry("claude-acp", Some(npx("@agentclientprotocol/claude-agent-acp@0.62.0", &[])));
-        let resolver = FakePackageResolver {
-            resolved: Ok(fake_resolved("/usr/bin/node", "/cache/bin")),
-        };
+        let resolver = FakePackageResolver::ok(fake_resolved("/usr/bin/node", "/cache/bin"));
         let spec = resolve_registry(&e, "/w", &test_cache(), &resolver).await.unwrap();
         assert_eq!(spec.env.get("ANTHROPIC_API_KEY").map(String::as_str), Some(""));
     }
@@ -420,12 +433,10 @@ mod tests {
     #[tokio::test]
     async fn resolve_registry_propagates_package_resolver_error() {
         let e = entry("claude-acp", Some(npx("@agentclientprotocol/claude-agent-acp@0.62.0", &[])));
-        let resolver = FakePackageResolver {
-            resolved: Err(NexError::AgentNotInstalled {
-                what: "npm package",
-                hint: "synthetic failure".into(),
-            }),
-        };
+        let resolver = FakePackageResolver::err(NexError::AgentNotInstalled {
+            what: "npm package",
+            hint: "synthetic failure".into(),
+        });
         let err = resolve_registry(&e, "/w", &test_cache(), &resolver).await.unwrap_err();
         match err {
             NexError::AgentNotInstalled { what, hint } => {
@@ -478,9 +489,7 @@ mod tests {
             icon: None,
             distribution: RegistryDistribution { binary: Some(binary), npx: None },
         };
-        let resolver = FakePackageResolver {
-            resolved: Ok(fake_resolved("/usr/bin/node", "/cache/bin")),
-        };
+        let resolver = FakePackageResolver::ok(fake_resolved("/usr/bin/node", "/cache/bin"));
         let err = resolve_registry(&e, "/w", &test_cache(), &resolver).await.unwrap_err();
         let msg = format!("{err}");
         assert!(msg.contains("has no binary for platform"), "error should mention missing platform: {msg}");

@@ -56,7 +56,13 @@ pub enum SessionTarget {
 pub struct ServerDescriptor {
     pub id: String,
     pub name: String,
+    /// Latest version published in the registry.
     pub version: String,
+    /// Version currently cached on disk under
+    /// `<app_data>/agent-packages/<id>/.../`, if any. The frontend compares
+    /// this against `version` to render an "update available" badge.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub installed_version: Option<String>,
     pub description: String,
     pub icon: Option<String>,
     pub kind: ServerKind,
@@ -237,14 +243,7 @@ impl AgentSessionManager {
             if !WHITELISTED_REGISTRY_IDS.contains(&e.id.as_str()) {
                 continue;
             }
-            out.push(ServerDescriptor {
-                id: e.id,
-                name: e.name,
-                version: e.version,
-                description: e.description,
-                icon: e.icon,
-                kind: ServerKind::Registry,
-            });
+            out.push(self.registry_entry_to_descriptor(&e));
         }
         out
     }
@@ -257,6 +256,7 @@ impl AgentSessionManager {
                 id: c.id,
                 name: c.name,
                 version: String::new(),
+                installed_version: None,
                 description: c.command.clone(),
                 icon: None,
                 kind: ServerKind::Custom,
@@ -267,16 +267,27 @@ impl AgentSessionManager {
             if WHITELISTED_REGISTRY_IDS.contains(&e.id.as_str()) {
                 continue;
             }
-            out.push(ServerDescriptor {
-                id: e.id,
-                name: e.name,
-                version: e.version,
-                description: e.description,
-                icon: e.icon,
-                kind: ServerKind::Registry,
-            });
+            out.push(self.registry_entry_to_descriptor(&e));
         }
         out
+    }
+
+    /// Build a `ServerDescriptor` from a `RegistryEntry`, filling the cached
+    /// `installed_version` by inspecting `PackageCache`.
+    fn registry_entry_to_descriptor(
+        &self,
+        e: &super::registry::RegistryEntry,
+    ) -> ServerDescriptor {
+        let installed_version = self.package_cache.newest_installed_version(&e.id);
+        ServerDescriptor {
+            id: e.id.clone(),
+            name: e.name.clone(),
+            version: e.version.clone(),
+            installed_version,
+            description: e.description.clone(),
+            icon: e.icon.clone(),
+            kind: ServerKind::Registry,
+        }
     }
 
     /// Forces a registry fetch (ignoring the throttle); used by the UI's

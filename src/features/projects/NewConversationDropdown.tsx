@@ -25,6 +25,53 @@ function errorMessage(err: unknown): string {
   return String(err);
 }
 
+/**
+ * Compare two semver-ish version strings (e.g. "0.64.2" vs "0.65.0").
+ * Returns negative if `a < b`, zero if equal, positive if `a > b`. Versions
+ * with the same major/minor/patch but a pre-release suffix (`-beta.1`) sort
+ * before the same version without one — matching semver's intuition.
+ *
+ * We don't pull in the `semver` package: registry versions are always
+ * `x.y.z` (or `x.y.z-prerelease`) and we only need ordering, not range
+ * matching or normalization. Tail-recursion-free; handles the common shapes
+ * without dragging in ~150KB.
+ */
+function compareVersions(a: string, b: string): number {
+  const parsePart = (s: string): [number[], string | null] => {
+    const dash = s.indexOf("-");
+    const numeric = dash === -1 ? s : s.slice(0, dash);
+    const prerelease = dash === -1 ? null : s.slice(dash + 1);
+    const nums = numeric.split(".").map((p) => {
+      const n = parseInt(p, 10);
+      return Number.isFinite(n) ? n : 0;
+    });
+    // Pad to at least 3 components so "0.64" compares correctly to "0.64.0".
+    while (nums.length < 3) nums.push(0);
+    return [nums, prerelease];
+  };
+  const [aNums, aPre] = parsePart(a);
+  const [bNums, bPre] = parsePart(b);
+  for (let i = 0; i < Math.max(aNums.length, bNums.length); i++) {
+    const av = aNums[i] ?? 0;
+    const bv = bNums[i] ?? 0;
+    if (av !== bv) return av - bv;
+  }
+  // Numeric parts equal: a version *with* a pre-release sorts *before* the
+  // same version without one. Empty pre-release is the "release" form.
+  if (aPre === bPre) return 0;
+  if (aPre === null) return 1;
+  if (bPre === null) return -1;
+  return aPre.localeCompare(bPre);
+}
+
+/** True when an installed-but-outdated registry entry needs the badge. */
+function isUpdateAvailable(server: ServerDescriptor): boolean {
+  if (server.kind !== "registry") return false;
+  if (!server.installedVersion) return false;
+  if (!server.version) return false;
+  return compareVersions(server.installedVersion, server.version) < 0;
+}
+
 // 列表项 stagger 入场（前 12 条，tw-animate-css 的 fade-in；fill-mode 经 inline style）。
 const ITEM_ENTER = "animate-in fade-in-0 duration-150";
 // hover 左侧强调色条，与对话页签轮廓（F5）呼应。
@@ -180,6 +227,14 @@ export function NewConversationDropdown({ triggerSize }: Props) {
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--overlay-ghost)] text-[var(--text-tertiary)]">
                   {s.kind === "custom" ? "自定义" : "注册表"}
                 </span>
+                {isUpdateAvailable(s) && (
+                  <span
+                    title={`当前 v${s.installedVersion}，可更新到 v${s.version}`}
+                    className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--warning)]/15 text-[var(--warning)] font-medium"
+                  >
+                    有更新
+                  </span>
+                )}
                 {creatingId === s.id && (
                   <Loader2 size={12} className="ml-auto animate-spin text-[var(--accent)]" />
                 )}

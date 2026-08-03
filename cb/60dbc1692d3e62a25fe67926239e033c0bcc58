@@ -1,0 +1,38 @@
+docs/prd.v1.0.1.md
+  s_99f4a515321b30::t_7d5fee31896d7a 9-10
+  s_fdb54a8d1dfbfb::t_012ca01cb525b1 1-8,11-15
+docs/superpowers/specs/2026-08-03-v1.0.1-design.md
+  s_a9bf9370cfd8b1::t_59d18618835b04 1-28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "cb60dbc1692d3e62a25fe67926239e033c0bcc58",
+  "prompts": {},
+  "sessions": {
+    "s_99f4a515321b30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cde542cb-fe30-4529-8277-67f2904fd574",
+        "model": "MiniMax-M3"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    },
+    "s_a9bf9370cfd8b1": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "3964547a-67f0-47a7-ace3-a297d09748e6",
+        "model": "default"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    },
+    "s_fdb54a8d1dfbfb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1602fbff-9bc0-4294-a508-d83334def615",
+        "model": "qwen3.8-max"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

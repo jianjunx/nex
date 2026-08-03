@@ -223,9 +223,8 @@ impl ManagedNodeRuntime {
         let platform = current_platform_key();
         let install_root = app_data_dir.join("node").join(version).join(&platform);
         let node_path = node_binary_path(&install_root);
-        let npm_cli_path = npm_cli_path(&install_root);
 
-        if node_path.exists() && npm_cli_path.exists() {
+        if node_path.exists() && resolve_npm_cli(&install_root).is_ok() {
             // Validate the cached binary still works (corruption / half-extract).
             if let Ok(version) = read_node_version(&node_path).await {
                 return Ok(Self {
@@ -611,8 +610,70 @@ fn node_binary_path(install_root: &Path) -> PathBuf {
     }
 }
 
-fn npm_cli_path(install_root: &Path) -> PathBuf {
-    install_root.join("node_modules").join("npm").join("bin").join("npm-cli.js")
+/// Derive the Node install root from a `node` binary path. On Unix,
+/// `node` sits in `<root>/bin/node`; on Windows, `node.exe` sits at
+/// `<root>/node.exe`.
+pub fn install_root_from_node(node_binary: &Path) -> Result<PathBuf, NexError> {
+    let parent = node_binary.parent().ok_or_else(|| NexError::Agent(format!(
+        "could not determine Node install root from `{}` (no parent directory)",
+        node_binary.display()
+    )))?;
+    if cfg!(windows) {
+        // <root>/node.exe → <root>
+        Ok(parent.to_path_buf())
+    } else {
+        // <root>/bin/node → <root>
+        parent.parent().map(Path::to_path_buf).ok_or_else(|| {
+            NexError::Agent(format!(
+                "could not determine Node install root from `{}` (no grandparent directory)",
+                node_binary.display()
+            ))
+        })
+    }
+}
+
+/// Resolve the absolute path to `npm-cli.js` for a given Node install root.
+///
+/// Different Node distributions place `npm-cli.js` under different paths:
+/// - **Windows (zip / installer)**: `<root>/node_modules/npm/bin/npm-cli.js`
+/// - **macOS / Linux (official tarball, nvm, fnm, volta, Homebrew)**:
+///   `<root>/lib/node_modules/npm/bin/npm-cli.js`
+///
+/// We try the layouts we know about in priority order and return the first
+/// one that actually exists on disk. A clear error lists all attempted
+/// locations if none resolve, so the user can see why a custom Node build
+/// (e.g. stripped-down) won't work with Nex.
+pub fn resolve_npm_cli(install_root: &Path) -> Result<PathBuf, NexError> {
+    let candidates: Vec<PathBuf> = if cfg!(windows) {
+        vec![
+            install_root.join("node_modules").join("npm").join("bin").join("npm-cli.js"),
+            install_root.join("node_modules").join("npm").join("bin").join("npm.cmd"),
+        ]
+    } else {
+        vec![
+            // Most common: official tarball / nvm / fnm / volta / Homebrew.
+            install_root.join("lib").join("node_modules").join("npm").join("bin").join("npm-cli.js"),
+            // Fallback for custom builds that skip the `lib/` prefix.
+            install_root.join("node_modules").join("npm").join("bin").join("npm-cli.js"),
+        ]
+    };
+    for candidate in &candidates {
+        if candidate.exists() {
+            return Ok(candidate.clone());
+        }
+    }
+    let tried = candidates
+        .iter()
+        .map(|p| format!("- {}", p.display()))
+        .collect::<Vec<_>>()
+        .join("\n  ");
+    Err(NexError::Agent(format!(
+        "Could not locate npm-cli.js for Node at `{}`. Tried:\n  {}\n\
+         This usually means the Node installation is missing npm, or it uses \
+         an unsupported layout. Try installing Node 22+ from https://nodejs.org.",
+        install_root.display(),
+        tried
+    )))
 }
 
 /// Spawn `<node_binary> --version` and parse the output as a `semver::Version`.
@@ -824,14 +885,10 @@ async fn run_npm_subcommand_with(
     env_map: &HashMap<String, String>,
 ) -> Result<(), NexError> {
     // The Node distribution ships its own `npm-cli.js` next to the binary.
-    let install_root = node_binary
-        .parent()                        // .../bin
-        .and_then(|p| p.parent())        // .../<node-vX.Y.Z-platform>
-        .ok_or_else(|| NexError::Agent(format!(
-            "could not determine Node install root from `{}`",
-            node_binary.display()
-        )))?;
-    let npm_cli = install_root.join("node_modules/npm/bin/npm-cli.js");
+    // The path differs by platform — see `resolve_npm_cli` for the full
+    // list of candidate layouts.
+    let install_root = install_root_from_node(node_binary)?;
+    let npm_cli = resolve_npm_cli(&install_root)?;
 
     let mut cmd = tokio::process::Command::new(node_binary);
     cmd.arg(&npm_cli).arg(subcommand).args(args);
@@ -1098,5 +1155,120 @@ eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee  node-v24.11.0-
             got,
             Some("abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789".to_string())
         );
+    }
+
+    // ---- install_root_from_node + resolve_npm_cli --------------------
+    //
+    // Regression coverage for the macOS nvm bug: a Node at
+    // `/Users/x/.nvm/versions/node/v24.15.0/bin/node` must resolve npm to
+    // `<...>/v24.15.0/lib/node_modules/npm/bin/npm-cli.js`, NOT
+    // `<...>/v24.15.0/node_modules/npm/bin/npm-cli.js`. The Windows layout
+    // puts `node.exe` at the root and `node_modules/` directly under it.
+
+    #[test]
+    fn install_root_unix_strips_bin() {
+        if cfg!(windows) {
+            return;
+        }
+        let node = Path::new("/Users/x/.nvm/versions/node/v24.15.0/bin/node");
+        let root = install_root_from_node(node).unwrap();
+        assert_eq!(root, Path::new("/Users/x/.nvm/versions/node/v24.15.0"));
+    }
+
+    #[test]
+    fn install_root_windows_stays_at_parent() {
+        if !cfg!(windows) {
+            return;
+        }
+        let node = Path::new(r"C:\nodejs\node.exe");
+        let root = install_root_from_node(node).unwrap();
+        assert_eq!(root, Path::new(r"C:\nodejs"));
+    }
+
+    #[test]
+    fn install_root_unix_errors_on_bare_binary() {
+        if cfg!(windows) {
+            return;
+        }
+        // `node` with no parent: there's no `bin/`, so we can't derive
+        // an install root. This shouldn't happen in practice, but the
+        // error path is what protects us from silent nonsense.
+        let node = Path::new("node");
+        let err = install_root_from_node(node).unwrap_err();
+        assert!(matches!(err, NexError::Agent(_)));
+    }
+
+    #[test]
+    fn resolve_npm_cli_unix_prefers_lib_layout() {
+        if cfg!(windows) {
+            return;
+        }
+        // Create a fake Unix Node install:
+        //   <root>/bin/node              (we don't actually need the file)
+        //   <root>/lib/node_modules/npm/bin/npm-cli.js
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let npm_cli = root.join("lib/node_modules/npm/bin/npm-cli.js");
+        std::fs::create_dir_all(npm_cli.parent().unwrap()).unwrap();
+        std::fs::write(&npm_cli, "// fake").unwrap();
+
+        let resolved = resolve_npm_cli(root).unwrap();
+        assert_eq!(resolved, npm_cli,
+            "Unix layout must find npm-cli.js under lib/node_modules/, got: {resolved:?}");
+    }
+
+    #[test]
+    fn resolve_npm_cli_unix_falls_back_when_no_lib() {
+        if cfg!(windows) {
+            return;
+        }
+        // A non-standard Node that puts npm directly under <root>/node_modules/.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let npm_cli = root.join("node_modules/npm/bin/npm-cli.js");
+        std::fs::create_dir_all(npm_cli.parent().unwrap()).unwrap();
+        std::fs::write(&npm_cli, "// fake").unwrap();
+
+        let resolved = resolve_npm_cli(root).unwrap();
+        assert_eq!(resolved, npm_cli);
+    }
+
+    #[test]
+    fn resolve_npm_cli_lists_attempted_paths_in_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let err = resolve_npm_cli(root).unwrap_err();
+        match err {
+            NexError::Agent(msg) => {
+                assert!(msg.contains("Could not locate npm-cli.js"));
+                if cfg!(windows) {
+                    assert!(msg.contains("node_modules"));
+                } else {
+                    assert!(msg.contains("/lib/node_modules/npm/bin/npm-cli.js"),
+                        "error must list the lib/ candidate: {msg}");
+                }
+            }
+            other => panic!("expected NexError::Agent, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_npm_cli_handles_real_nvm_layout() {
+        if cfg!(windows) {
+            return;
+        }
+        // Mirror the exact path layout the user reported:
+        //   /Users/jj/.nvm/versions/node/v24.15.0/lib/node_modules/npm/bin/npm-cli.js
+        let dir = tempfile::tempdir().unwrap();
+        let nvm_root = dir.path().join("versions/node/v24.15.0");
+        let npm_cli = nvm_root.join("lib/node_modules/npm/bin/npm-cli.js");
+        std::fs::create_dir_all(npm_cli.parent().unwrap()).unwrap();
+        std::fs::write(&npm_cli, "// fake").unwrap();
+
+        let bin = nvm_root.join("bin/node");
+        let resolved_install_root = install_root_from_node(&bin).unwrap();
+        assert_eq!(resolved_install_root, nvm_root);
+        let resolved_npm = resolve_npm_cli(&resolved_install_root).unwrap();
+        assert_eq!(resolved_npm, npm_cli);
     }
 }

@@ -118,19 +118,12 @@ impl PackageCache {
                 hint: "No usable Node.js runtime. Install Node 22+ and restart Nex.".into(),
             });
         }
-        // The Node distribution ships `npm-cli.js` next to its own `bin/node`.
-        let install_root = node_binary
-            .parent()
-            .and_then(|p| p.parent())
-            .ok_or_else(|| NexError::Agent(format!(
-                "could not derive Node install root from `{}`",
-                node_binary.display()
-            )))?;
-        let npm_cli = install_root
-            .join("node_modules")
-            .join("npm")
-            .join("bin")
-            .join("npm-cli.js");
+        // The Node distribution ships `npm-cli.js` next to its own `bin/node`
+        // (Unix) or directly under `<root>/node_modules/` (Windows). The
+        // exact path depends on the Node layout — see `resolve_npm_cli` for
+        // the full list of candidate locations.
+        let install_root = super::node_runtime::install_root_from_node(node_binary)?;
+        let npm_cli = super::node_runtime::resolve_npm_cli(&install_root)?;
 
         // npm install flags:
         //   --prefix <install_dir>           install target = cache

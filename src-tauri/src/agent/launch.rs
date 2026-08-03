@@ -10,9 +10,9 @@
 //!   `(node, bin)` pairs by `PackageCache::resolve_npx`, and the agent is
 //!   spawned as `<node> <bin-path> <args...>`. This dodges the GUI-PATH problem
 //!   on macOS where the user's login shell env is invisible to `.app` bundles.
-//! - We pin the Node version (`node_runtime::MANAGED_NODE_VERSION`) and
-//!   install it on first use, so the user does not need a system Node just
-//!   to run Nex.
+//! - We manage our own Node runtime (newest LTS discovered from
+//!   `nodejs.org/dist/index.json`, downloaded on first use), so the user
+//!   does not need a system Node just to run Nex.
 
 use std::collections::HashMap;
 use std::io;

@@ -39,9 +39,12 @@ use crate::error::NexError;
 
 const NODE_CA_CERTS_ENV_VAR: &str = "NODE_EXTRA_CA_CERTS";
 
-/// Pin a specific Node version so cache keys and managed downloads are
-/// deterministic. Bumping this requires re-verifying the sha256 table below.
-pub const MANAGED_NODE_VERSION: &str = "v24.11.0";
+/// The Node.js release index: a JSON array of every published version,
+/// newest first, each entry carrying an `lts` field (`false` for Current
+/// releases, the codename string for LTS) and a `files` list of the build
+/// artifacts available. Nex uses this to pick the newest LTS supporting
+/// the user's platform — no hardcoded version to bump as Node evolves.
+const NODE_DIST_INDEX_URL: &str = "https://nodejs.org/dist/index.json";
 
 /// Minimum Node version Nex will accept — both from the system PATH and
 /// from the managed download. Modern ACP agents (claude-agent-acp, codex-acp,
@@ -53,10 +56,10 @@ pub const MIN_NODE_VERSION: &str = ">=22.0.0";
 /// Per-(os, arch) sha256 of the Node archive is **not** hardcoded — it's
 /// pulled at runtime from `https://nodejs.org/dist/<VERSION>/SHASUMS256.txt`
 /// (the same source every Node version manager — nvm, fnm, volta — trusts).
-/// This means bumping `MANAGED_NODE_VERSION` is a one-line change with no
-/// separate "remember to fetch the new hash" step. See
-/// `ManagedNodeRuntime::install_if_needed` and `parse_shasums256`.
-
+/// The version itself is also discovered at runtime from `index.json`, so
+/// there is no "remember to fetch the new hash / bump the pin" step when
+/// Node releases. See `ManagedNodeRuntime::install_if_needed`,
+/// `discover_node_version`, and `parse_shasums256`.
 /// Knobs controlling how Nex picks a Node runtime.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct NodeBinaryOptions {
@@ -213,38 +216,63 @@ impl ManagedNodeRuntime {
         &self.install_path
     }
 
-    /// Download, verify, and extract the managed Node tarball/zip. Idempotent:
-    /// re-runs are no-ops if a usable binary is already on disk.
+    /// Returns a usable managed Node runtime, downloading one only if needed.
+    ///
+    /// Strategy, in order:
+    /// 1. **Reuse an existing install** under `<app_data>/node/<version>/<platform>/`.
+    ///    This is fully offline — a machine that already downloaded Node keeps
+    ///    working even with no network. The highest parseable version wins.
+    /// 2. **Discover the newest LTS** from `https://nodejs.org/dist/index.json`
+    ///    that publishes an archive for the current platform. Node evolves
+    ///    continuously, so Nex never hardcodes a version; `index.json` is the
+    ///    same source nvm/fnm consult. Versions below `MIN_NODE_VERSION` are
+    ///    skipped (defensive — every published LTS already satisfies it).
+    /// 3. **Download + verify + extract** that version. The SHA-256 comes from
+    ///    the per-version `SHASUMS256.txt` fetched at the same time, so both
+    ///    the version and its checksum track nodejs.org automatically.
     pub async fn install_if_needed(
         app_data_dir: &Path,
         http: &reqwest::Client,
     ) -> Result<Self, NexError> {
-        let version = MANAGED_NODE_VERSION;
         let platform = current_platform_key();
-        let install_root = app_data_dir.join("node").join(version).join(&platform);
-        let node_path = node_binary_path(&install_root);
+        let node_root = app_data_dir.join("node");
 
-        if node_path.exists() && resolve_npm_cli(&install_root).is_ok() {
-            // Validate the cached binary still works (corruption / half-extract).
-            if let Ok(version) = read_node_version(&node_path).await {
-                return Ok(Self {
-                    node: node_path,
-                    install_path: install_root,
-                    version,
-                });
+        // 1) Offline-first: reuse whatever is already on disk.
+        if let Some((version_dir_name, install_root)) =
+            find_existing_managed_install(&node_root, &platform)
+        {
+            let node_path = node_binary_path(&install_root);
+            if resolve_npm_cli(&install_root).is_ok() {
+                if let Ok(version) = read_node_version(&node_path).await {
+                    log::info!(
+                        "reusing managed Node {version_dir_name} at {}",
+                        install_root.display()
+                    );
+                    return Ok(Self {
+                        node: node_path,
+                        install_path: install_root,
+                        version,
+                    });
+                }
             }
+            log::warn!(
+                "existing managed Node at {} is unusable; re-discovering a version to download",
+                install_root.display()
+            );
         }
 
-        // Fetch the platform-specific archive's expected SHA-256 from
-        // nodejs.org's SHASUMS256.txt at the same version we're downloading.
-        // This is the same TOFU (Trust On First Use) model `nvm` / `fnm` /
-        // `volta` follow: TLS to nodejs.org pins the channel, and the
-        // checksum file ships signed by the Node release keys in spirit
-        // (the Node project does not currently sign the file separately;
-        // see https://github.com/nodejs/node/issues/XXXXX). Hardcoding the
-        // hash instead would require updating two values on every release.
-        let archive_url = managed_node_url(version, &platform);
-        let expected_sha = fetch_expected_sha256(http, version, &archive_url).await?;
+        // 2) Ask nodejs.org which LTS to install.
+        let version = discover_node_version(http, &platform).await?;
+        let install_root = node_root.join(&version).join(&platform);
+        let node_path = node_binary_path(&install_root);
+
+        // 3) Fetch SHA-256 from the same release's SHASUMS256.txt, download,
+        // verify, extract. Trust model mirrors nvm/fnm/volta: TLS to
+        // nodejs.org pins the channel; the checksum file is additionally
+        // GPG-signed upstream (SHASUMS256.txt.asc), though Nex does not
+        // verify the signature itself.
+        let archive_url = managed_node_url(&version, &platform);
+        let expected_sha = fetch_expected_sha256(http, &version, &archive_url).await?;
 
         log::info!("downloading managed Node {version} for {platform} from {archive_url}");
 
@@ -552,6 +580,137 @@ fn shasums_url(version: &str) -> String {
     format!("https://nodejs.org/dist/{version}/SHASUMS256.txt")
 }
 
+/// Map our archive platform key (node release naming, e.g. `darwin-arm64`)
+/// to the corresponding entry in `index.json`'s `files` array. The index
+/// uses artifact-specific names — `osx-arm64-tar`, `win-x64-zip` — that
+/// encode both the platform and the archive format we download.
+fn files_key_for_platform(platform: &str) -> String {
+    match platform {
+        "darwin-arm64" => "osx-arm64-tar".to_string(),
+        "darwin-x64" => "osx-x64-tar".to_string(),
+        "win-x64" => "win-x64-zip".to_string(),
+        "win-arm64" => "win-arm64-zip".to_string(),
+        // Linux artifact names in the index match the release naming
+        // verbatim (`linux-x64`, `linux-arm64`, `linux-ppc64le`, ...).
+        other => other.to_string(),
+    }
+}
+
+/// Pick the version to download from a `nodejs.org/dist/index.json` body.
+///
+/// Walks entries newest-first (the index's native order) and returns the
+/// first version that is an LTS (`lts` is a non-false codename), publishes
+/// the required archive (`files_key` present in `files`), and satisfies
+/// `min_version`. Returns `None` when nothing qualifies.
+pub fn parse_node_index(body: &str, files_key: &str, min_version: &VersionReq) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct IndexEntry {
+        version: String,
+        #[serde(default)]
+        files: Vec<String>,
+        #[serde(default)]
+        lts: serde_json::Value,
+    }
+    let entries: Vec<IndexEntry> = serde_json::from_str(body).ok()?;
+    for entry in &entries {
+        // LTS only: `lts` is `false` for Current releases and a codename
+        // string ("Krypton", "Jod", ...) for LTS.
+        let is_lts = match &entry.lts {
+            serde_json::Value::String(s) => !s.is_empty(),
+            _ => false,
+        };
+        if !is_lts {
+            continue;
+        }
+        if !entry.files.iter().any(|f| f == files_key) {
+            continue;
+        }
+        let v = entry.version.trim_start_matches('v');
+        let Ok(sem) = Version::parse(v) else {
+            continue;
+        };
+        if !min_version.matches(&sem) {
+            continue;
+        }
+        return Some(entry.version.clone());
+    }
+    None
+}
+
+/// Query `nodejs.org/dist/index.json` and pick the newest LTS for the
+/// current platform. The returned version string keeps its leading `v`
+/// (e.g. `v24.18.1`) so it can be used directly in download URLs and
+/// install-dir names.
+async fn discover_node_version(http: &reqwest::Client, platform: &str) -> Result<String, NexError> {
+    log::info!("discovering managed Node version from {NODE_DIST_INDEX_URL}");
+    let response = http
+        .get(NODE_DIST_INDEX_URL)
+        .send()
+        .await
+        .map_err(|e| NexError::AgentNotInstalled {
+            what: "managed node",
+            hint: format!(
+                "Nex could not reach nodejs.org to determine which Node.js to \
+                 install (network error: {e}). Install Node 22+ from \
+                 https://nodejs.org, or via `fnm install 22` / \
+                 `volta install node@22`, then restart Nex."
+            ),
+        })?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(NexError::AgentNotInstalled {
+            what: "managed node",
+            hint: format!(
+                "Fetching the Node.js release index returned HTTP {status}. \
+                 Install Node 22+ manually from https://nodejs.org and restart Nex."
+            ),
+        });
+    }
+    let body = response.text().await.map_err(|e| NexError::AgentNotInstalled {
+        what: "managed node",
+        hint: format!("Failed to read the Node.js release index body: {e}"),
+    })?;
+
+    let files_key = files_key_for_platform(platform);
+    let min = VersionReq::parse(MIN_NODE_VERSION)
+        .expect("MIN_NODE_VERSION is a static, parseable requirement");
+    parse_node_index(&body, &files_key, &min).ok_or_else(|| NexError::AgentNotInstalled {
+        what: "managed node",
+        hint: format!(
+            "nodejs.org publishes no Node.js LTS with a `{files_key}` archive \
+             that satisfies {MIN_NODE_VERSION}. Install Node 22+ manually from \
+             https://nodejs.org and restart Nex."
+        ),
+    })
+}
+
+/// Scan `<app_data>/node/` for a previously-downloaded Node that matches
+/// `platform`. Returns `(version_dir_name, install_root)` for the highest
+/// parseable version, or `None` when nothing usable is on disk. Fully
+/// offline — this is what keeps Nex working without network once Node has
+/// been downloaded once.
+fn find_existing_managed_install(node_root: &Path, platform: &str) -> Option<(String, PathBuf)> {
+    let mut best: Option<(Version, String, PathBuf)> = None;
+    let Ok(entries) = std::fs::read_dir(node_root) else {
+        return None;
+    };
+    for entry in entries.flatten() {
+        let install_root = entry.path().join(platform);
+        if !node_binary_path(&install_root).exists() {
+            continue;
+        }
+        let dir_name = entry.file_name().to_string_lossy().into_owned();
+        let Ok(sem) = Version::parse(dir_name.trim_start_matches('v')) else {
+            continue;
+        };
+        match &best {
+            Some((prev, _, _)) if *prev >= sem => {}
+            _ => best = Some((sem, dir_name, install_root)),
+        }
+    }
+    best.map(|(_, dir_name, install_root)| (dir_name, install_root))
+}
+
 /// The bare file name (no path) of the archive we're verifying, used to
 /// look up the matching line in `SHASUMS256.txt`.
 fn managed_node_archive_name(version: &str, platform: &str) -> String {
@@ -590,8 +749,8 @@ async fn fetch_expected_sha256(
             what: "managed node",
             hint: format!(
                 "Fetching {url} returned HTTP {}. The Node version `{version}` \
-                 may not exist on nodejs.org. Bump MANAGED_NODE_VERSION, or \
-                 install Node 22+ manually.",
+                 may not exist on nodejs.org, or the release index is stale. \
+                 Install Node 22+ manually from https://nodejs.org.",
                 response.status()
             ),
         });
@@ -610,8 +769,8 @@ async fn fetch_expected_sha256(
             hint: format!(
                 "Node.js {version} has no entry for `{archive_name}` in its \
                  SHASUMS256.txt. The Node release may not support this platform \
-                 — try a different MANAGED_NODE_VERSION, or install Node 22+ \
-                 manually. (Archive URL was {archive_url}.)"
+                 — install Node 22+ manually from https://nodejs.org. \
+                 (Archive URL was {archive_url}.)"
             ),
         }
     })?;
@@ -1171,6 +1330,127 @@ eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee  node-v24.11.0-
             got,
             Some("abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789".to_string())
         );
+    }
+
+    // ---- index.json version discovery --------------------------------
+    //
+    // Fixture mirrors the real shape of https://nodejs.org/dist/index.json:
+    // newest first, Current releases carry `"lts": false`, LTS releases carry
+    // a codename string, and `files` uses artifact-specific names
+    // (`osx-arm64-tar`, `win-x64-zip`, ...).
+
+    const SAMPLE_INDEX: &str = r#"[
+        {"version":"v26.5.1","files":["osx-arm64-tar","win-x64-zip","linux-x64"],"lts":false},
+        {"version":"v26.0.0","files":["osx-arm64-tar","win-x64-zip","linux-x64"],"lts":false},
+        {"version":"v24.18.1","files":["osx-arm64-tar","win-x64-zip","linux-x64"],"lts":"Krypton"},
+        {"version":"v24.10.0","files":["osx-arm64-tar","win-x64-zip","linux-x64"],"lts":"Krypton"},
+        {"version":"v22.20.0","files":["osx-arm64-tar","win-x64-zip","linux-x64"],"lts":"Jod"},
+        {"version":"v18.20.8","files":["osx-arm64-tar","win-x64-zip","linux-x64"],"lts":"Hydrogen"}
+    ]"#;
+
+    fn min_req() -> VersionReq {
+        VersionReq::parse(MIN_NODE_VERSION).unwrap()
+    }
+
+    #[test]
+    fn parse_node_index_picks_newest_lts() {
+        // v26.x entries are Current (`lts: false`) and must be skipped even
+        // though they're newer and have the right files.
+        let got = parse_node_index(SAMPLE_INDEX, "osx-arm64-tar", &min_req());
+        assert_eq!(got.as_deref(), Some("v24.18.1"));
+    }
+
+    #[test]
+    fn parse_node_index_respects_files_key() {
+        // No entry publishes a `win-arm64-zip` in the fixture.
+        let got = parse_node_index(SAMPLE_INDEX, "win-arm64-zip", &min_req());
+        assert_eq!(got, None);
+    }
+
+    #[test]
+    fn parse_node_index_min_version_filters_old_lts() {
+        // With a floor of >=23, only the Krypton line qualifies; the older
+        // Jod (22.x) and Hydrogen (18.x) LTSes are filtered out.
+        let req = VersionReq::parse(">=23.0.0").unwrap();
+        let got = parse_node_index(SAMPLE_INDEX, "linux-x64", &req);
+        assert_eq!(got.as_deref(), Some("v24.18.1"));
+
+        // And a floor above everything yields nothing.
+        let req = VersionReq::parse(">=99.0.0").unwrap();
+        assert_eq!(parse_node_index(SAMPLE_INDEX, "linux-x64", &req), None);
+    }
+
+    #[test]
+    fn parse_node_index_malformed_json_returns_none() {
+        assert_eq!(parse_node_index("not json", "win-x64-zip", &min_req()), None);
+        assert_eq!(parse_node_index("{}", "win-x64-zip", &min_req()), None);
+        assert_eq!(parse_node_index("", "win-x64-zip", &min_req()), None);
+    }
+
+    #[test]
+    fn parse_node_index_unparseable_version_skipped() {
+        let body = r#"[
+            {"version":"v99.99.99-weird","files":["win-x64-zip"],"lts":"Odd"},
+            {"version":"v24.18.1","files":["win-x64-zip"],"lts":"Krypton"}
+        ]"#;
+        assert_eq!(
+            parse_node_index(body, "win-x64-zip", &min_req()).as_deref(),
+            Some("v24.18.1")
+        );
+    }
+
+    #[test]
+    fn files_key_maps_to_index_artifact_names() {
+        assert_eq!(files_key_for_platform("darwin-arm64"), "osx-arm64-tar");
+        assert_eq!(files_key_for_platform("darwin-x64"), "osx-x64-tar");
+        assert_eq!(files_key_for_platform("win-x64"), "win-x64-zip");
+        assert_eq!(files_key_for_platform("win-arm64"), "win-arm64-zip");
+        // Linux artifact names match the release naming verbatim.
+        assert_eq!(files_key_for_platform("linux-x64"), "linux-x64");
+        assert_eq!(files_key_for_platform("linux-arm64"), "linux-arm64");
+        assert_eq!(files_key_for_platform("linux-ppc64le"), "linux-ppc64le");
+    }
+
+    /// Build a fake managed install at `<root>/<version>/<platform>/` with
+    /// the platform-appropriate binary name.
+    fn make_fake_managed_node(root: &Path, version: &str, platform: &str) -> PathBuf {
+        let install_root = root.join(version).join(platform);
+        let bin = node_binary_path(&install_root);
+        std::fs::create_dir_all(bin.parent().unwrap()).unwrap();
+        std::fs::write(&bin, "").unwrap();
+        install_root
+    }
+
+    #[test]
+    fn find_existing_managed_install_picks_highest_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let platform = current_platform_key();
+        make_fake_managed_node(dir.path(), "v22.11.0", &platform);
+        make_fake_managed_node(dir.path(), "v24.18.1", &platform);
+        make_fake_managed_node(dir.path(), "v24.10.0", &platform);
+
+        let got = find_existing_managed_install(dir.path(), &platform).unwrap();
+        assert_eq!(got.0, "v24.18.1");
+        assert_eq!(got.1, dir.path().join("v24.18.1").join(&platform));
+    }
+
+    #[test]
+    fn find_existing_managed_install_ignores_other_platforms_and_junk() {
+        let dir = tempfile::tempdir().unwrap();
+        // A different platform's dir has its own platform subdir — ours
+        // (`<version>/<our_platform>/bin/node`) doesn't exist for it.
+        make_fake_managed_node(dir.path(), "v24.18.1", "some-other-platform");
+        // A junk dir name that isn't semver at all.
+        std::fs::create_dir_all(dir.path().join("not-a-version")).unwrap();
+
+        assert!(find_existing_managed_install(dir.path(), &current_platform_key()).is_none());
+    }
+
+    #[test]
+    fn find_existing_managed_install_missing_root_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("node-does-not-exist");
+        assert!(find_existing_managed_install(&missing, "darwin-arm64").is_none());
     }
 
     // ---- install_root_from_node + resolve_npm_cli --------------------

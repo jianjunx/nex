@@ -94,6 +94,8 @@ interface AgentStore {
   removeSession: (conversationId: string) => Promise<void>;
   /** Replace in-memory thread with hydrated history (used on cold restore). */
   hydrateEntries: (conversationId: string, entries: ThreadEntry[]) => void;
+  /** Drop hydrated thread entries for conversation ids not in `keepIds` (switch-project memory). */
+  pruneEntriesExcept: (keepIds: Set<string>) => void;
   appendUserMessage: (
     conversationId: string,
     text: string,
@@ -390,6 +392,14 @@ export const useAgentStore = create<AgentStore>()(
     hydrateEntries: (conversationId, entries) => {
       set((s) => {
         s.entriesByConversation[conversationId] = entries;
+      });
+    },
+
+    pruneEntriesExcept: (keepIds) => {
+      set((s) => {
+        for (const id of Object.keys(s.entriesByConversation)) {
+          if (!keepIds.has(id)) delete s.entriesByConversation[id];
+        }
       });
     },
 

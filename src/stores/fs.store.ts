@@ -136,6 +136,8 @@ interface FsStore {
   loadEditorState: (projectId: string) => Promise<void>;
   /** Synchronously persist current open-file paths for the project (for beforeunload). */
   persistEditorLayout: (projectId: string) => void;
+  /** Drop file-tree nodes that do not belong under `projectPath`. */
+  clearTreeExcept: (projectPath: string) => void;
 }
 
 // Backend errors arrive as { type, message }; fall back to String(err).
@@ -759,12 +761,18 @@ export const useFsStore = create<FsStore>()(
         // Dedupe in case a prior buggy persist wrote the same path twice
         // (React keys would collide and remount editors incorrectly).
         const uniquePaths = [...new Set(layout.paths)];
-        for (const path of uniquePaths) {
-          try {
-            await get().openFile(path, true);
-          } catch {
-            // File may have been deleted/moved since last session — skip.
-          }
+        const CONCURRENCY = 4;
+        for (let i = 0; i < uniquePaths.length; i += CONCURRENCY) {
+          const chunk = uniquePaths.slice(i, i + CONCURRENCY);
+          await Promise.all(
+            chunk.map(async (path) => {
+              try {
+                await get().openFile(path, true);
+              } catch {
+                // File may have been deleted/moved since last session — skip.
+              }
+            }),
+          );
         }
         // Restore the saved active tab if it survived re-opening.
         if (layout.activePath && get().openFiles.some((f) => f.path === layout.activePath)) {
@@ -789,6 +797,25 @@ export const useFsStore = create<FsStore>()(
           paths: openFiles.filter((f) => !f.diff).map((f) => f.path), // diff 标签不进冷恢复
           activePath,
         };
+      });
+    },
+
+    clearTreeExcept: (projectPath: string) => {
+      set((s) => {
+        const nextNodes: Record<string, typeof s.nodesByDir[string]> = {};
+        for (const [dir, nodes] of Object.entries(s.nodesByDir)) {
+          if (dir === projectPath || dir.startsWith(projectPath + "/") || dir.startsWith(projectPath + "\\")) {
+            nextNodes[dir] = nodes;
+          }
+        }
+        s.nodesByDir = nextNodes;
+        const nextExpanded = new Set<string>();
+        for (const dir of s.expandedDirs) {
+          if (dir === projectPath || dir.startsWith(projectPath + "/") || dir.startsWith(projectPath + "\\")) {
+            nextExpanded.add(dir);
+          }
+        }
+        s.expandedDirs = nextExpanded;
       });
     },
     })),

@@ -92,9 +92,12 @@ export function ProjectSelector() {
         const { activeProjectId: id, projects: all } = useProjectStore.getState();
         const active = all.find((p) => p.id === id);
         if (active) {
-          await useFsStore.getState().loadEditorState(active.id);
-          await restoreProjectConversationTabs(active.id);
-          fsWatchStart(active.path).catch(() => {});
+          useFsStore.getState().clearTreeExcept(active.path);
+          await Promise.all([
+            useFsStore.getState().loadEditorState(active.id),
+            restoreProjectConversationTabs(active.id),
+            fsWatchStart(active.path).catch(() => {}),
+          ]);
         }
       }
     } catch (err) {
@@ -153,9 +156,15 @@ export function ProjectSelector() {
                     await useFsStore.getState().saveCurrentEditorState(oldId);
                   }
                   switchProject(p.id);
-                  await useFsStore.getState().loadEditorState(p.id);
-                  await restoreProjectConversationTabs(p.id);
-                  fsWatchStart(p.path).catch(() => {});
+                  useFsStore.getState().clearTreeExcept(p.path);
+                  // Keep only this project's tab ids hydrated; others re-fetch on visit.
+                  const keep = new Set(useConversationStore.getState().tabsByProject[p.id] ?? []);
+                  useAgentStore.getState().pruneEntriesExcept(keep);
+                  await Promise.all([
+                    useFsStore.getState().loadEditorState(p.id),
+                    restoreProjectConversationTabs(p.id),
+                    fsWatchStart(p.path).catch(() => {}),
+                  ]);
                 })();
               }}
               className={`px-3 transition-colors duration-100 ${ITEM_HIGHLIGHT} ${

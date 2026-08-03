@@ -61,6 +61,7 @@ export const COMMANDS = {
   FS_READ_FILE: "fs_read_file",
   FS_WRITE_FILE: "fs_write_file",
   FS_WATCH_START: "fs_watch_start",
+  FS_WATCH_STOP: "fs_watch_stop",
   FS_SEARCH: "fs_search",
   FS_SEARCH_REPLACE: "fs_search_replace",
   FS_APPLY_REPLACE: "fs_apply_replace",

@@ -43,6 +43,7 @@ fn list_branches_reports_locals_and_no_remotes() {
     assert_eq!(head.name, head_name(dir.path()));
     // No upstream configured → ahead/behind stay None.
     assert!(head.ahead.is_none() && head.behind.is_none());
+    assert!(head.tip_time.is_some());
 }
 
 #[test]

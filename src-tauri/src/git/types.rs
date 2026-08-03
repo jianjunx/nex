@@ -31,6 +31,8 @@ pub struct BranchInfo {
     pub is_remote: bool,
     pub ahead: Option<u32>,
     pub behind: Option<u32>,
+    /// Tip commit time (committer seconds since epoch); None if peel fails.
+    pub tip_time: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]

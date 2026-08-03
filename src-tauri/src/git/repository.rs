@@ -230,6 +230,14 @@ pub fn commit(repo_path: &Path, message: &str) -> Result<String, NexError> {
     Ok(oid.to_string())
 }
 
+fn branch_tip_time(branch: &git2::Branch<'_>) -> Option<i64> {
+    branch
+        .get()
+        .peel_to_commit()
+        .ok()
+        .map(|c| c.time().seconds())
+}
+
 pub fn list_branches(repo_path: &Path) -> Result<Vec<BranchInfo>, NexError> {
     let repo = Repository::open(repo_path)?;
     let mut out = Vec::new();
@@ -238,6 +246,7 @@ pub fn list_branches(repo_path: &Path) -> Result<Vec<BranchInfo>, NexError> {
         let (branch, _) = entry?;
         let name = branch.name()?.unwrap_or("").to_string();
         let is_head = branch.is_head();
+        let tip_time = branch_tip_time(&branch);
         // ahead/behind is only meaningful for the HEAD branch against its
         // upstream; every other branch reports None (UI shows badges once).
         let (ahead, behind) = if is_head {
@@ -254,13 +263,28 @@ pub fn list_branches(repo_path: &Path) -> Result<Vec<BranchInfo>, NexError> {
         } else {
             (None, None)
         };
-        out.push(BranchInfo { name, is_head, is_remote: false, ahead, behind });
+        out.push(BranchInfo {
+            name,
+            is_head,
+            is_remote: false,
+            ahead,
+            behind,
+            tip_time,
+        });
     }
 
     for entry in repo.branches(Some(git2::BranchType::Remote))? {
         let (branch, _) = entry?;
         let name = branch.name()?.unwrap_or("").to_string();
-        out.push(BranchInfo { name, is_head: false, is_remote: true, ahead: None, behind: None });
+        let tip_time = branch_tip_time(&branch);
+        out.push(BranchInfo {
+            name,
+            is_head: false,
+            is_remote: true,
+            ahead: None,
+            behind: None,
+            tip_time,
+        });
     }
 
     Ok(out)

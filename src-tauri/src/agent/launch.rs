@@ -3,16 +3,22 @@
 //!
 //! Clean-room port of the launch *mechanism* from Zed's
 //! `crates/project/src/{external_agents,agent_server_store}.rs` and
-//! `crates/agent_servers/src/custom.rs`: we build `npx --yes -- <package> <args>`
-//! for registry agents, apply the one per-agent env override that actually
-//! changes behavior (`claude-acp` clears a stray `ANTHROPIC_API_KEY`), and on
-//! Windows run npm `.cmd` shims through `cmd /c` without flashing a console
-//! window. Zed reads the proxy URL from its own settings; Nex does not read
-//! Zed's config, and proxy variables are inherited from Nex's environment
-//! automatically, so no explicit proxy pass-through is needed here.
+//! `crates/agent_servers/src/custom.rs`. Two material deviations from the
+//! original Zed design:
+//!
+//! - We do **not** shell out to `npx`. Registry `npx` entries are turned into
+//!   `(node, bin)` pairs by `PackageCache::resolve_npx`, and the agent is
+//!   spawned as `<node> <bin-path> <args...>`. This dodges the GUI-PATH problem
+//!   on macOS where the user's login shell env is invisible to `.app` bundles.
+//! - We pin the Node version (`node_runtime::MANAGED_NODE_VERSION`) and
+//!   install it on first use, so the user does not need a system Node just
+//!   to run Nex.
 
 use std::collections::HashMap;
+use std::io;
+use std::path::{Path, PathBuf};
 
+use super::package_cache::PackageResolver;
 use super::registry::RegistryEntry;
 use super::binary::BinaryCache;
 use crate::error::NexError;
@@ -32,32 +38,49 @@ pub struct LaunchSpec {
 
 /// Resolves a registry agent into a launch spec.
 ///
-/// For `npx` distributions the command is always `npx --yes -- <package>`.
-/// For `binary` distributions we download + extract the archive the first time
-/// (via `BinaryCache`) and spawn the extracted executable directly. Once cached
-/// the binary is reused across restarts.
+/// For `npx` distributions we install the package into a per-agent cache
+/// dir (via `PackageResolver::resolve_npx`) and emit a `LaunchSpec` that
+/// runs `<node> <bin-path> <args...>` directly. For `binary` distributions
+/// we reuse the existing `BinaryCache` download/extract path.
 pub async fn resolve_registry(
     entry: &RegistryEntry,
     cwd: &str,
-    cache: &BinaryCache,
+    binary_cache: &BinaryCache,
+    package_resolver: &dyn PackageResolver,
 ) -> Result<LaunchSpec, NexError> {
     if let Some(npx) = &entry.distribution.npx {
-        // `npx --yes -- <package@version> <entry args…>`. The registry's
-        // `package` already embeds the pinned version, so we use it verbatim.
-        let mut args = vec!["--yes".to_string(), "--".to_string(), npx.package.clone()];
+        let resolved = package_resolver.resolve_npx(entry, npx).await?;
+        let mut args = Vec::with_capacity(1 + npx.args.len());
+        args.push(resolved.executable_path.to_string_lossy().into_owned());
         args.extend(npx.args.iter().cloned());
 
         let mut env = npx.env.clone();
+        // Per-agent env override (e.g. clear ANTHROPIC_API_KEY for claude-acp)
+        // is applied at the **final** spawn env, never during `npm install`.
         apply_per_id_env(&entry.id, &mut env);
+        // Prepend the managed Node dir to PATH so any auxiliary tooling the
+        // agent spawns (npm shims, husky hooks, etc.) sees the same node we
+        // do. Per-agent env above takes precedence.
+        env.extend(node_path_env_overlay(&resolved.node_path));
 
-        return Ok(LaunchSpec { program: "npx".to_string(), args, env, cwd: cwd.to_string() });
+        log::info!(
+            "resolved npx agent `{}`: {} {}",
+            entry.id,
+            resolved.node_path.display(),
+            args.join(" ")
+        );
+        return Ok(LaunchSpec {
+            program: resolved.node_path.to_string_lossy().into_owned(),
+            args,
+            env,
+            cwd: cwd.to_string(),
+        });
     }
 
     if let Some(binaries) = &entry.distribution.binary {
         let key = current_platform_key();
         if let Some(target) = binaries.get(&key) {
-            // Download + extract on first use; reuses cached copy thereafter.
-            let exe_path = cache
+            let exe_path = binary_cache
                 .ensure_installed(entry, target, &key)
                 .await?;
             let program = exe_path.to_string_lossy().to_string();
@@ -84,12 +107,26 @@ pub async fn resolve_registry(
     )))
 }
 
+/// Build the env map used by `PackageCache` to spawn `node <bin> <args>`.
+/// Layers the node-managed PATH over the per-agent env so the child sees
+/// our node and any npm-installed shims.
+fn node_path_env_overlay(node_path: &Path) -> HashMap<String, String> {
+    let mut env = HashMap::new();
+    if let Some(parent) = node_path.parent() {
+        let path_value = parent.to_string_lossy().into_owned();
+        // Unconditional PATH: Node reads `process.env.PATH` regardless of OS.
+        env.insert("PATH".to_string(), path_value.clone());
+        // Belt-and-braces on Windows.
+        #[cfg(windows)]
+        {
+            env.insert("Path".to_string(), path_value);
+        }
+    }
+    env
+}
+
 /// Builds the platform key used to index binary targets in the registry
 /// (e.g. `windows-x86_64`, `darwin-aarch64`).
-///
-/// Rust reports macOS as `macos`, but the Zed agent registry (and Cursor's
-/// published binaries) use the Darwin triple — map that one OS name so lookup
-/// hits `darwin-aarch64` / `darwin-x86_64`.
 fn current_platform_key() -> String {
     let os = match std::env::consts::OS {
         "macos" => "darwin",
@@ -112,13 +149,6 @@ pub fn resolve_custom(command: &str, env: HashMap<String, String>, cwd: &str) ->
 }
 
 /// Per-agent env overrides, mirroring Zed's `custom.rs`.
-///
-/// Only `claude-acp` needs an explicit override: clearing `ANTHROPIC_API_KEY`
-/// forces the wrapper to use its own stored-credentials/OAuth flow instead of a
-/// stray ambient API key. Zed also re-passes `CODEX_API_KEY`/`GEMINI_API_KEY`
-/// and sets `SURFACE=zed`, but those are redundant here — the child inherits
-/// Nex's environment (so any such keys already flow through), and `SURFACE` is
-/// a Zed-specific telemetry marker we don't want to impersonate.
 fn apply_per_id_env(agent_id: &str, env: &mut HashMap<String, String>) {
     if agent_id == CLAUDE_AGENT_ID {
         env.insert("ANTHROPIC_API_KEY".to_string(), String::new());
@@ -127,7 +157,9 @@ fn apply_per_id_env(agent_id: &str, env: &mut HashMap<String, String>) {
 
 /// True when `program` is an npm/node shim that Windows can only run through a
 /// shell (`npx`/`npm`/`node` resolve to `.cmd` batch files; `CreateProcess`
-/// cannot execute those directly).
+/// cannot execute those directly). Absolute `node.exe` paths are NOT wrapped
+/// — the comparison is against the entire string, so `/opt/homebrew/bin/node`
+/// and `C:\nodejs\node.exe` both fall through to direct spawn.
 fn needs_shell(program: &str) -> bool {
     let p = program.to_ascii_lowercase();
     p == "npx" || p == "npm" || p == "node" || p.ends_with(".cmd") || p.ends_with(".bat")
@@ -135,9 +167,6 @@ fn needs_shell(program: &str) -> bool {
 
 /// Computes the real `(program, args)` to hand the OS, wrapping shell shims in
 /// `cmd /c` on Windows.
-///
-/// OS-independent (takes an explicit `windows` flag) so the wrapping logic is
-/// unit-testable on any host.
 pub fn shell_argv(program: &str, args: &[String], windows: bool) -> (String, Vec<String>) {
     if windows && needs_shell(program) {
         let mut wrapped = Vec::with_capacity(args.len() + 2);
@@ -159,6 +188,7 @@ pub fn spawn_agent(spec: &LaunchSpec) -> Result<tokio::process::Child, NexError>
 
 fn spawn_with(spec: &LaunchSpec, windows: bool) -> Result<tokio::process::Child, NexError> {
     let (program, args) = shell_argv(&spec.program, &spec.args, windows);
+    let program_path = PathBuf::from(&program);
 
     let mut cmd = tokio::process::Command::new(&program);
     cmd.args(&args);
@@ -168,28 +198,59 @@ fn spawn_with(spec: &LaunchSpec, windows: bool) -> Result<tokio::process::Child,
         Ok(child) => Ok(child),
         // A custom command on Windows may be a shim `needs_shell` didn't catch;
         // retry through `cmd /c` before giving up.
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound && windows && !needs_shell(&spec.program) => {
+        Err(e) if e.kind() == io::ErrorKind::NotFound && windows && !needs_shell(&spec.program) => {
             let mut via_cmd = tokio::process::Command::new("cmd");
             via_cmd.arg("/c").arg(&spec.program).args(&spec.args);
             configure(&mut via_cmd, spec);
-            via_cmd.spawn().map_err(|e2| {
-                NexError::Agent(format!(
-                    "failed to spawn agent `{}`: {e2} (is it installed and on PATH?)",
-                    spec.program
-                ))
-            })
+            via_cmd.spawn().map_err(|e2| classify_spawn_error(&program_path, &e2))
         }
-        Err(e) => Err(NexError::Agent(format!(
-            "failed to spawn agent `{}`: {e} (is it installed and on PATH?)",
-            spec.program
-        ))),
+        Err(e) => Err(classify_spawn_error(&program_path, &e)),
     }
 }
 
+/// Map a low-level `io::Error` from `Command::spawn` into a user-actionable
+/// `NexError`. Distinguishes "node missing" from "bin missing" so the UI
+/// can guide the user to the right remediation.
+pub fn classify_spawn_error(program: &Path, err: &io::Error) -> NexError {
+    if err.kind() == io::ErrorKind::NotFound {
+        if path_targets_node(program) {
+            return NexError::AgentNotInstalled {
+                what: "node",
+                hint: format!(
+                    "Nex could not find a usable Node.js runtime at `{}`. \
+                     Install Node 22+ from https://nodejs.org, or via \
+                     `fnm install 22` / `volta install node@22`, then restart Nex.",
+                    program.display()
+                ),
+            };
+        }
+        return NexError::AgentNotInstalled {
+            what: "agent executable",
+            hint: format!(
+                "Could not locate the agent executable at `{}`. \
+                 The npm package may have failed to install; check the Nex log for npm errors.",
+                program.display()
+            ),
+        };
+    }
+    NexError::Agent(format!("failed to spawn `{}`: {}", program.display(), err))
+}
+
+/// Heuristic: does `program` look like a Node binary? Splits on both `/`
+/// and `\` so the test (and any future Windows path that comes through
+/// `Path::new` on a non-Windows host) still detects the right tail.
+fn path_targets_node(program: &Path) -> bool {
+    let path_str = program.to_string_lossy();
+    let last = path_str
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or("");
+    let lower = last.to_ascii_lowercase();
+    lower == "node" || lower == "node.exe" || lower.starts_with("node-")
+}
+
 /// Common spawn configuration shared by the direct and `cmd /c` paths: piped
-/// stdio (stderr is drained by the adapter — inheriting would deadlock the
-/// child once the pipe buffer fills), working dir, extra env, kill-on-drop, and
-/// (Windows) no console window.
+/// stdio, working dir, extra env, kill-on-drop, and (Windows) no console window.
 fn configure(cmd: &mut tokio::process::Command, spec: &LaunchSpec) {
     cmd.current_dir(&spec.cwd)
         .stdin(std::process::Stdio::piped())
@@ -200,8 +261,6 @@ fn configure(cmd: &mut tokio::process::Command, spec: &LaunchSpec) {
 
     #[cfg(windows)]
     {
-        // Inherent on `tokio::process::Command` on Windows; prevents the npm
-        // `.cmd` shim from flashing a console window in this GUI app.
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
@@ -210,7 +269,10 @@ fn configure(cmd: &mut tokio::process::Command, spec: &LaunchSpec) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::package_cache::ResolvedNpx;
     use crate::agent::registry::{RegistryDistribution, RegistryNpxDistribution};
+    use async_trait::async_trait;
+    use std::path::PathBuf;
 
     fn entry(id: &str, npx: Option<RegistryNpxDistribution>) -> RegistryEntry {
         RegistryEntry {
@@ -235,6 +297,46 @@ mod tests {
         BinaryCache::new(&std::env::temp_dir().join("nex-test-binary-cache"))
     }
 
+    /// Test double for `PackageResolver` that returns a canned `ResolvedNpx`
+    /// without ever touching the filesystem. The optional `fail_with` lets
+    /// tests exercise the error path.
+    struct FakePackageResolver {
+        resolved: Result<ResolvedNpx, NexError>,
+    }
+
+    #[async_trait]
+    impl PackageResolver for FakePackageResolver {
+        async fn resolve_npx(
+            &self,
+            _entry: &RegistryEntry,
+            _npx: &RegistryNpxDistribution,
+        ) -> Result<ResolvedNpx, NexError> {
+            match &self.resolved {
+                Ok(r) => Ok(ResolvedNpx {
+                    node_path: r.node_path.clone(),
+                    executable_path: r.executable_path.clone(),
+                    first_install: r.first_install,
+                }),
+                Err(e) => Err(match e {
+                    NexError::Agent(s) => NexError::Agent(s.clone()),
+                    NexError::AgentNotInstalled { what, hint } => NexError::AgentNotInstalled {
+                        what,
+                        hint: hint.clone(),
+                    },
+                    other => NexError::Agent(other.to_string()),
+                }),
+            }
+        }
+    }
+
+    fn fake_resolved(node: &str, bin: &str) -> ResolvedNpx {
+        ResolvedNpx {
+            node_path: PathBuf::from(node),
+            executable_path: PathBuf::from(bin),
+            first_install: true,
+        }
+    }
+
     #[test]
     fn shell_argv_wraps_npx_on_windows() {
         let args: Vec<String> = vec!["--yes".into(), "--".into(), "pkg@1.0.0".into()];
@@ -252,11 +354,15 @@ mod tests {
     }
 
     #[test]
-    fn shell_argv_does_not_wrap_plain_binary() {
-        let args: Vec<String> = vec!["acp".into()];
-        let (program, out) = shell_argv("/opt/agent/agent", &args, true);
-        assert_eq!(program, "/opt/agent/agent");
-        assert_eq!(out, vec!["acp"]);
+    fn shell_argv_does_not_wrap_absolute_node() {
+        let (program, _) = shell_argv("/opt/homebrew/bin/node", &["x".into()], true);
+        assert_eq!(program, "/opt/homebrew/bin/node");
+    }
+
+    #[test]
+    fn shell_argv_does_not_wrap_absolute_node_exe() {
+        let (program, _) = shell_argv(r"C:\nodejs\node.exe", &["x".into()], true);
+        assert_eq!(program, r"C:\nodejs\node.exe");
     }
 
     #[test]
@@ -265,34 +371,74 @@ mod tests {
         assert_eq!(program, "cmd");
     }
 
+    #[test]
+    fn needs_shell_does_not_match_absolute_node() {
+        assert!(!needs_shell("/opt/homebrew/bin/node"));
+        assert!(!needs_shell(r"C:\Program Files\nodejs\node.exe"));
+    }
+
     #[tokio::test]
-    async fn resolve_registry_builds_npx_command_verbatim_package() {
+    async fn resolve_registry_uses_resolver_for_npx() {
         let e = entry("codex-acp", Some(npx("@agentclientprotocol/codex-acp@1.1.7", &[])));
-        let spec = resolve_registry(&e, "/work", &test_cache()).await.unwrap();
-        assert_eq!(spec.program, "npx");
-        assert_eq!(spec.args, vec!["--yes", "--", "@agentclientprotocol/codex-acp@1.1.7"]);
+        let resolver = FakePackageResolver {
+            resolved: Ok(fake_resolved(
+                "/opt/homebrew/bin/node",
+                "/cache/agent-packages/_codex-acp/_pkg_1.1.7/node-/node_modules/.../cli.js",
+            )),
+        };
+        let spec = resolve_registry(&e, "/work", &test_cache(), &resolver).await.unwrap();
+        assert_eq!(spec.program, "/opt/homebrew/bin/node");
+        assert!(spec.args[0].ends_with("cli.js"));
         assert_eq!(spec.cwd, "/work");
         assert!(!spec.env.contains_key("ANTHROPIC_API_KEY"));
+        assert!(spec.env.contains_key("PATH"));
     }
 
     #[tokio::test]
     async fn resolve_registry_appends_entry_args() {
         let e = entry("gemini", Some(npx("@google/gemini-cli@0.52.0", &["--acp"])));
-        let spec = resolve_registry(&e, "/w", &test_cache()).await.unwrap();
-        assert_eq!(spec.args, vec!["--yes", "--", "@google/gemini-cli@0.52.0", "--acp"]);
+        let resolver = FakePackageResolver {
+            resolved: Ok(fake_resolved("/usr/bin/node", "/cache/bin")),
+        };
+        let spec = resolve_registry(&e, "/w", &test_cache(), &resolver).await.unwrap();
+        // args: [bin, --acp]
+        assert_eq!(spec.args.len(), 2);
+        assert_eq!(spec.args[0], "/cache/bin");
+        assert_eq!(spec.args[1], "--acp");
     }
 
     #[tokio::test]
     async fn resolve_registry_clears_anthropic_key_for_claude() {
         let e = entry("claude-acp", Some(npx("@agentclientprotocol/claude-agent-acp@0.62.0", &[])));
-        let spec = resolve_registry(&e, "/w", &test_cache()).await.unwrap();
+        let resolver = FakePackageResolver {
+            resolved: Ok(fake_resolved("/usr/bin/node", "/cache/bin")),
+        };
+        let spec = resolve_registry(&e, "/w", &test_cache(), &resolver).await.unwrap();
         assert_eq!(spec.env.get("ANTHROPIC_API_KEY").map(String::as_str), Some(""));
+    }
+
+    #[tokio::test]
+    async fn resolve_registry_propagates_package_resolver_error() {
+        let e = entry("claude-acp", Some(npx("@agentclientprotocol/claude-agent-acp@0.62.0", &[])));
+        let resolver = FakePackageResolver {
+            resolved: Err(NexError::AgentNotInstalled {
+                what: "npm package",
+                hint: "synthetic failure".into(),
+            }),
+        };
+        let err = resolve_registry(&e, "/w", &test_cache(), &resolver).await.unwrap_err();
+        match err {
+            NexError::AgentNotInstalled { what, hint } => {
+                assert_eq!(what, "npm package");
+                assert_eq!(hint, "synthetic failure");
+            }
+            other => panic!("expected AgentNotInstalled, got {other:?}"),
+        }
     }
 
     #[test]
     fn platform_key_uses_darwin_on_macos() {
         let key = current_platform_key();
-        // Registry triples use `darwin-*`, never Rust's `macos` OS name.
         assert!(
             !key.starts_with("macos-"),
             "platform key must not use Rust's macos OS name: {key}"
@@ -332,7 +478,10 @@ mod tests {
             icon: None,
             distribution: RegistryDistribution { binary: Some(binary), npx: None },
         };
-        let err = resolve_registry(&e, "/w", &test_cache()).await.unwrap_err();
+        let resolver = FakePackageResolver {
+            resolved: Ok(fake_resolved("/usr/bin/node", "/cache/bin")),
+        };
+        let err = resolve_registry(&e, "/w", &test_cache(), &resolver).await.unwrap_err();
         let msg = format!("{err}");
         assert!(msg.contains("has no binary for platform"), "error should mention missing platform: {msg}");
     }
@@ -347,5 +496,46 @@ mod tests {
     #[test]
     fn resolve_custom_rejects_empty() {
         assert!(resolve_custom("   ", HashMap::new(), "/w").is_err());
+    }
+
+    #[test]
+    fn classify_spawn_error_known_node_path() {
+        let err = io::Error::new(io::ErrorKind::NotFound, "nope");
+        let program = Path::new("/opt/homebrew/bin/node");
+        let classified = classify_spawn_error(program, &err);
+        match classified {
+            NexError::AgentNotInstalled { what, .. } => assert_eq!(what, "node"),
+            other => panic!("expected AgentNotInstalled(node), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_spawn_error_known_node_exe() {
+        let err = io::Error::new(io::ErrorKind::NotFound, "nope");
+        let program = Path::new(r"C:\nodejs\node.exe");
+        let classified = classify_spawn_error(program, &err);
+        match classified {
+            NexError::AgentNotInstalled { what, .. } => assert_eq!(what, "node"),
+            other => panic!("expected AgentNotInstalled(node), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_spawn_error_unknown_binary() {
+        let err = io::Error::new(io::ErrorKind::NotFound, "nope");
+        let program = Path::new("/cache/agent-packages/_x/.../bin.js");
+        let classified = classify_spawn_error(program, &err);
+        match classified {
+            NexError::AgentNotInstalled { what, .. } => assert_eq!(what, "agent executable"),
+            other => panic!("expected AgentNotInstalled(agent executable), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_spawn_error_other_kind() {
+        let err = io::Error::new(io::ErrorKind::PermissionDenied, "nope");
+        let program = Path::new("/usr/bin/node");
+        let classified = classify_spawn_error(program, &err);
+        assert!(matches!(classified, NexError::Agent(_)));
     }
 }

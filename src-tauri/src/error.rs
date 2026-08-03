@@ -1,11 +1,20 @@
 use serde::Serialize;
 use thiserror::Error;
 
-#[derive(Debug, Error, Serialize)]
+#[derive(Debug, Clone, Error, Serialize)]
 #[serde(tag = "type", content = "message")]
 pub enum NexError {
     #[error("Agent error: {0}")]
     Agent(String),
+    /// The agent could not be started because a runtime dependency (Node.js,
+    /// the agent's npm package, etc.) is missing or unreachable. `what` names
+    /// the dependency, `hint` is a user-actionable remediation string.
+    #[error("Agent not installed ({what}): {hint}")]
+    #[serde(rename = "agentNotInstalled")]
+    AgentNotInstalled {
+        what: &'static str,
+        hint: String,
+    },
     #[error("Git error: {0}")]
     Git(String),
     #[error("Terminal error: {0}")]

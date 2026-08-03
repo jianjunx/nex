@@ -31,6 +31,7 @@ tokio-util = { version = "0.7", features = ["compat"] }
 thiserror = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 git2 = "0.19"
+which = "7"
 openssl = { version = "0.10", features = ["vendored"] }
 portable-pty = "0.8"
 notify = "7"
@@ -48,6 +49,7 @@ sha2 = "0.10.9"
 flate2 = "1.1.9"
 tar = "0.4.46"
 trash = "5"
+semver = "1"
 
 [dev-dependencies]
 tempfile = "3"

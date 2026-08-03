@@ -23,7 +23,10 @@ use tauri::AppHandle;
 use super::acp_adapter::AcpSessionManager;
 use super::binary::BinaryCache;
 use super::launch;
+use super::node_runtime::{NodeBinaryOptions, NodeRuntimeHandle};
+use super::package_cache::{PackageCache, PackageResolver};
 use super::registry::{RegistryEntry, RegistryStore};
+use super::shell_env::ShellEnv;
 use super::types::{CreateSessionResult, PromptBlock};
 use crate::error::NexError;
 
@@ -140,15 +143,53 @@ pub struct AgentSessionManager {
     custom: Arc<CustomStore>,
     binary_cache: BinaryCache,
     acp: AcpSessionManager,
+    /// One-shot-resolved Node.js runtime. Held as `Arc` so the background
+    /// warm-up task can outlive the `AgentSessionManager::new` call.
+    node_runtime: Arc<NodeRuntimeHandle>,
+    /// Layered on top of the node runtime; resolves registry `npx`
+    /// distributions into `(node, bin)` pairs.
+    package_cache: Arc<dyn PackageResolver>,
+    /// Cached shell env (PATH, etc.) loaded from the user's login shell.
+    /// Held as `Arc` for the same reason as `node_runtime`.
+    #[allow(dead_code)] // surfaced in a follow-up PR for diagnostics UI
+    shell_env: Arc<ShellEnv>,
 }
 
 impl AgentSessionManager {
     pub fn new(app_data_dir: &Path) -> Self {
+        // Kick off the shell-env loader on Tauri's async runtime. This must
+        // happen *before* we try to construct the node runtime so the PATH
+        // lookup has the user's real PATH. `ShellEnv::try_trigger_lazy_load`
+        // is idempotent and uses `tauri::async_runtime::spawn`, which works
+        // correctly when called from the sync `setup` hook.
+        let shell_env = ShellEnv::new();
+        shell_env.try_trigger_lazy_load();
+
+        // Build the node runtime handle and warm it up in the background.
+        // The first `create_session` will block on `get()` if resolution is
+        // still in flight, but steady-state callers see a cached result.
+        let node_runtime = NodeRuntimeHandle::new(
+            NodeBinaryOptions::default(),
+            shell_env.clone(),
+            app_data_dir.to_path_buf(),
+        );
+        node_runtime.warm_up();
+
+        // PackageCache awaits `node_runtime.get()` only when an install is
+        // actually required (cold cache), so the warm-up race is harmless.
+        let package_cache: Arc<dyn PackageResolver> = Arc::new(PackageCache::new(
+            app_data_dir,
+            node_runtime.clone(),
+        ));
+
         Self {
             registry: Arc::new(RegistryStore::new(app_data_dir)),
             custom: Arc::new(CustomStore::new(app_data_dir)),
             binary_cache: BinaryCache::new(app_data_dir),
             acp: AcpSessionManager::new(),
+            node_runtime,
+            package_cache,
+            shell_env,
         }
     }
 
@@ -172,7 +213,10 @@ impl AgentSessionManager {
                         "unknown agent `{id}` — refresh the agent registry and try again"
                     ))
                 })?;
-                launch::resolve_registry(&entry, cwd, &self.binary_cache).await?
+                // Block on node runtime resolution if it isn't done yet. This
+                // is the one place that intentionally awaits the handle.
+                let _ = self.node_runtime.get().await;
+                launch::resolve_registry(&entry, cwd, &self.binary_cache, &*self.package_cache).await?
             }
             SessionTarget::Custom { id } => {
                 let server = self.custom.find(&id).ok_or_else(|| {

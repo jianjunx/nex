@@ -274,20 +274,59 @@ impl PackageResolver for PackageCache {
 /// Replaces characters that are trouble in filesystem paths. Mirrors
 /// `binary.rs::sanitize` but is also exercised on npm package specs
 /// (`@scope/name@version`).
+///
+/// **Don't use this for the actual `node_modules/<pkg>` directory name** —
+/// npm preserves the `@scope/` prefix verbatim. Use
+/// `package_name_from_spec` for that. This is OK for the *cache key*
+/// (different `spec` strings get distinct cache subdirs), but a bug if
+/// you ever pass it to `node_modules.join(...)`.
 pub fn sanitize(s: &str) -> String {
     s.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|', ' ', '@'], "_")
+}
+
+/// Extract the npm package name (with `@scope/` preserved, `@version`
+/// stripped) from an install spec. This is what npm uses as the directory
+/// name under `node_modules/`:
+///
+/// - `pkg@1.0.0` → `pkg`
+/// - `@scope/name@0.64.2` → `@scope/name`
+/// - `pkg` (no version) → `pkg`
+/// - `@scope/name` (no version) → `@scope/name`
+///
+/// The `package.json` and the `bin` script both live under this directory.
+pub fn package_name_from_spec(spec: &str) -> &str {
+    if let Some(stripped) = spec.strip_prefix('@') {
+        // Scoped package: "@scope/name@version". We need the LAST "@" (the
+        // one before the version), not the leading scope marker.
+        if let Some(idx) = stripped.find('@') {
+            &spec[..1 + idx]
+        } else {
+            spec
+        }
+    } else {
+        // Unscoped: "name@version" or just "name".
+        if let Some(idx) = spec.find('@') {
+            &spec[..idx]
+        } else {
+            spec
+        }
+    }
 }
 
 /// Read the `bin` field of a freshly-installed package and return the path
 /// to the executable. Mirrors npx's selection rules: a single string `bin`
 /// is normalized to `{<name>: <path>}`; when there are multiple bins, the
 /// one matching the package's unscoped name wins; otherwise ambiguous.
+///
+/// `package_spec` is the install spec (`@scope/name@version`); only its
+/// package-name portion is used to find the directory under `node_modules/`,
+/// because npm strips the `@version` suffix when laying out the install.
 pub fn read_package_executable_path(
     install_dir: &Path,
     package_spec: &str,
 ) -> Result<PathBuf, NexError> {
-    let dir_name = sanitize(package_spec);
-    let pkg_dir = install_dir.join("node_modules").join(&dir_name);
+    let pkg_dir_name = package_name_from_spec(package_spec);
+    let pkg_dir = install_dir.join("node_modules").join(pkg_dir_name);
     let pkg_json_path = pkg_dir.join("package.json");
     let raw = std::fs::read_to_string(&pkg_json_path).map_err(|e| NexError::Agent(format!(
         "missing package.json at {}: {e}",
@@ -418,10 +457,72 @@ mod tests {
         assert!(matches!(err, NexError::Agent(_)));
     }
 
+    // ---- package_name_from_spec -------------------------------------
+
     #[test]
-    fn read_package_executable_path_string_bin() {
+    fn package_name_strips_version_unscoped() {
+        assert_eq!(package_name_from_spec("pkg@1.0.0"), "pkg");
+        assert_eq!(package_name_from_spec("claude-code@2.3.4"), "claude-code");
+    }
+
+    #[test]
+    fn package_name_preserves_scoped_form() {
+        assert_eq!(
+            package_name_from_spec("@agentclientprotocol/claude-agent-acp@0.64.2"),
+            "@agentclientprotocol/claude-agent-acp"
+        );
+        assert_eq!(
+            package_name_from_spec("@google/gemini-cli@0.52.0"),
+            "@google/gemini-cli"
+        );
+    }
+
+    #[test]
+    fn package_name_handles_no_version() {
+        assert_eq!(package_name_from_spec("pkg"), "pkg");
+        assert_eq!(package_name_from_spec("@scope/name"), "@scope/name");
+    }
+
+    #[test]
+    fn package_name_handles_pre_release_version() {
+        assert_eq!(
+            package_name_from_spec("foo@1.0.0-beta.1"),
+            "foo"
+        );
+        assert_eq!(
+            package_name_from_spec("@scope/name@2.0.0-rc.3+build.42"),
+            "@scope/name"
+        );
+    }
+
+    // ---- read_package_executable_path --------------------------------
+    //
+    // These tests mirror npm's actual layout: package.json goes under
+    // `node_modules/<package-name>/`, where `<package-name>` is the unscoped
+    // (or @scope/name) form, NOT the sanitized full spec. The earlier version
+    // of these tests wrote to the wrong path because they pre-dated the
+    // `package_name_from_spec` helper — see the fix for the nvm-on-macOS
+    // layout bug.
+
+    #[test]
+    fn read_package_executable_path_unscoped_string_bin() {
         let dir = tempfile::tempdir().unwrap();
-        let pkg = dir.path().join("node_modules").join(sanitize("@scope/foo@1.0.0"));
+        let pkg = dir.path().join("node_modules").join("foo");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(
+            pkg.join("package.json"),
+            r#"{"name":"foo","bin":"dist/cli.js"}"#,
+        )
+        .unwrap();
+        let got = read_package_executable_path(dir.path(), "foo@1.0.0").unwrap();
+        assert!(got.ends_with("node_modules/foo/dist/cli.js"), "got: {got:?}");
+    }
+
+    #[test]
+    fn read_package_executable_path_scoped_string_bin() {
+        // @scope/foo@1.0.0 → node_modules/@scope/foo/  (NOT node_modules/_scope_foo_1.0.0/)
+        let dir = tempfile::tempdir().unwrap();
+        let pkg = dir.path().join("node_modules/@scope/foo");
         std::fs::create_dir_all(&pkg).unwrap();
         std::fs::write(
             pkg.join("package.json"),
@@ -429,13 +530,13 @@ mod tests {
         )
         .unwrap();
         let got = read_package_executable_path(dir.path(), "@scope/foo@1.0.0").unwrap();
-        assert!(got.ends_with("node_modules/_scope_foo_1.0.0/dist/cli.js"));
+        assert!(got.ends_with("node_modules/@scope/foo/dist/cli.js"), "got: {got:?}");
     }
 
     #[test]
-    fn read_package_executable_path_object_bin_unscoped_match() {
+    fn read_package_executable_path_scoped_object_bin_unscoped_match() {
         let dir = tempfile::tempdir().unwrap();
-        let pkg = dir.path().join("node_modules").join(sanitize("@scope/foo@1.0.0"));
+        let pkg = dir.path().join("node_modules/@scope/foo");
         std::fs::create_dir_all(&pkg).unwrap();
         std::fs::write(
             pkg.join("package.json"),
@@ -444,6 +545,22 @@ mod tests {
         .unwrap();
         let got = read_package_executable_path(dir.path(), "@scope/foo@1.0.0").unwrap();
         assert!(got.ends_with("dist/foo.js"));
+    }
+
+    #[test]
+    fn read_package_executable_path_reports_real_npm_layout() {
+        // Mirror exactly the path layout npm produces for a real install:
+        //   /tmp/.../node_modules/@agentclientprotocol/claude-agent-acp/package.json
+        let dir = tempfile::tempdir().unwrap();
+        let pkg = dir.path().join("node_modules/@agentclientprotocol/claude-agent-acp");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(
+            pkg.join("package.json"),
+            r#"{"name":"@agentclientprotocol/claude-agent-acp","bin":"dist/cli.js"}"#,
+        )
+        .unwrap();
+        let got = read_package_executable_path(dir.path(), "@agentclientprotocol/claude-agent-acp@0.64.2").unwrap();
+        assert!(got.ends_with("node_modules/@agentclientprotocol/claude-agent-acp/dist/cli.js"));
     }
 
     #[test]

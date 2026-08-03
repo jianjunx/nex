@@ -7,7 +7,31 @@ import { useProjectStore } from "../stores/project.store";
 import { useGitStore } from "../stores/git.store";
 import { useClipboardStore } from "../stores/clipboard.store";
 
-const k = (key: string, o: { primary?: boolean; alt?: boolean; shift?: boolean } = {}): KeyCombo => ({
+/** Keep in sync with KeybindingHost.INPUT_SELECTOR (avoid circular import). */
+const INPUT_SELECTOR = "input, textarea, select, [contenteditable=''], [contenteditable='true']";
+
+function isTypingInInput(): boolean {
+  const el = document.activeElement;
+  return el instanceof HTMLElement ? !!el.closest(INPUT_SELECTOR) : false;
+}
+
+function isInCodeMirror(): boolean {
+  return !!document.activeElement?.closest(".cm-editor, .cm-content");
+}
+
+/** File-tree clipboard shortcuts must not steal from text inputs or the editor. */
+function filesClipboardWhen(): boolean {
+  const sel = useFsStore.getState().selectedPath;
+  if (!sel) return false;
+  if (isInCodeMirror()) return false;
+  if (isTypingInInput()) return false;
+  return true;
+}
+
+const k = (
+  key: string,
+  o: { primary?: boolean; ctrl?: boolean; alt?: boolean; shift?: boolean } = {},
+): KeyCombo => ({
   key,
   ...o,
 });
@@ -52,8 +76,17 @@ const COMMANDS: Command[] = [
     id: "terminal.toggle",
     title: "切换终端",
     category: "视图",
-    defaultKey: k("`", { primary: true }),
+    // Physical Ctrl+` on all platforms (VS Code / PRD); not Cmd+` on macOS.
+    defaultKey: k("`", { ctrl: true }),
     run: () => useUiStore.getState().toggleTerminal(),
+  },
+  {
+    id: "workbench.closeActiveTab",
+    title: "关闭当前对话页签",
+    category: "会话",
+    defaultKey: k("keyw", { primary: true }),
+    // Allow while typing so Cmd/Ctrl+W closes the tab instead of the window.
+    run: () => useUiStore.getState().requestCloseActiveTab(),
   },
   {
     id: "search.focus",
@@ -95,13 +128,7 @@ const COMMANDS: Command[] = [
     title: "复制文件/目录",
     category: "文件树",
     defaultKey: k("keyc", { primary: true }),
-    when: () => {
-      const sel = useFsStore.getState().selectedPath;
-      if (!sel) return false;
-      // Don't steal from CodeMirror editor
-      if (document.activeElement?.closest('.cm-editor, .cm-content')) return false;
-      return true;
-    },
+    when: () => filesClipboardWhen(),
     run: () => {
       const sel = useFsStore.getState().selectedPath;
       if (sel) useClipboardStore.getState().setEntries([{ path: sel, isCut: false }]);
@@ -112,12 +139,7 @@ const COMMANDS: Command[] = [
     title: "剪切文件/目录",
     category: "文件树",
     defaultKey: k("keyx", { primary: true }),
-    when: () => {
-      const sel = useFsStore.getState().selectedPath;
-      if (!sel) return false;
-      if (document.activeElement?.closest('.cm-editor, .cm-content')) return false;
-      return true;
-    },
+    when: () => filesClipboardWhen(),
     run: () => {
       const sel = useFsStore.getState().selectedPath;
       if (sel) useClipboardStore.getState().setEntries([{ path: sel, isCut: true }]);
@@ -130,10 +152,7 @@ const COMMANDS: Command[] = [
     defaultKey: k("keyv", { primary: true }),
     when: () => {
       if (!useClipboardStore.getState().hasEntries()) return false;
-      const sel = useFsStore.getState().selectedPath;
-      if (!sel) return false;
-      if (document.activeElement?.closest('.cm-editor, .cm-content')) return false;
-      return true;
+      return filesClipboardWhen();
     },
     run: () => {
       const fs = useFsStore.getState();
@@ -156,9 +175,9 @@ const COMMANDS: Command[] = [
     category: "文件树",
     defaultKey: k("f2"),
     when: () => {
-      const sel = useFsStore.getState().selectedPath;
-      if (!sel) return false;
-      if (document.activeElement?.closest('.cm-editor, .cm-content')) return false;
+      if (!useFsStore.getState().selectedPath) return false;
+      if (isInCodeMirror()) return false;
+      if (isTypingInInput()) return false;
       return true;
     },
     run: () => {
@@ -172,9 +191,9 @@ const COMMANDS: Command[] = [
     category: "文件树",
     defaultKey: k("delete"),
     when: () => {
-      const sel = useFsStore.getState().selectedPath;
-      if (!sel) return false;
-      if (document.activeElement?.closest('.cm-editor, .cm-content')) return false;
+      if (!useFsStore.getState().selectedPath) return false;
+      if (isInCodeMirror()) return false;
+      if (isTypingInInput()) return false;
       return true;
     },
     run: () => {

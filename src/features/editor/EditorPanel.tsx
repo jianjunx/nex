@@ -14,6 +14,7 @@ import { languageExtensionsForPath } from "./language";
 import { editorSearchExtensions } from "./editorSearch";
 import { DiffView } from "./DiffView";
 import { useTabReorder } from "../layout/useTabReorder";
+import { EditorContextMenu } from "./EditorContextMenu";
 
 /** Shared layout chrome (height / panels / fonts). Colors come from oneDark or lightTheme. */
 const editorLayoutTheme = EditorView.theme({
@@ -192,27 +193,31 @@ export function EditorPanel() {
       )}
       <div className="flex-1 min-h-0 overflow-hidden">
         {editorFile?.diff ? (
-          <DiffView
-            key={editorFile.path}
-            payload={editorFile.diff}
-            theme={editorTheme}
-            extensions={extensions}
-            onCreateEditor={(view) => { viewRef.current = view; }}
-          />
-        ) : editorFile?.isText ? (
-          <div className="h-full min-h-0">
-            {/* key = one EditorView per file: without it the undo stack survives a file switch and Ctrl+Z can resurrect the previous file's content — a wrong-path save hazard. Esc-hide is unaffected (same path, CSS-only hide), so undo/scroll preservation across hide/re-show still holds. */}
-            <CodeMirror
+          <EditorContextMenu viewRef={viewRef} readOnly>
+            <DiffView
               key={editorFile.path}
-              value={editorFile.draft}
-              onChange={setDraft}
-              onCreateEditor={(view) => { viewRef.current = view; applyPendingLine(view); }}
+              payload={editorFile.diff}
               theme={editorTheme}
               extensions={extensions}
-              height="100%"
-              style={{ height: "100%" }}
+              onCreateEditor={(view) => { viewRef.current = view; }}
             />
-          </div>
+          </EditorContextMenu>
+        ) : editorFile?.isText ? (
+          <EditorContextMenu viewRef={viewRef}>
+            <div className="h-full min-h-0">
+              {/* key = one EditorView per file: without it the undo stack survives a file switch and Ctrl+Z can resurrect the previous file's content — a wrong-path save hazard. Esc-hide is unaffected (same path, CSS-only hide), so undo/scroll preservation across hide/re-show still holds. */}
+              <CodeMirror
+                key={editorFile.path}
+                value={editorFile.draft}
+                onChange={setDraft}
+                onCreateEditor={(view) => { viewRef.current = view; applyPendingLine(view); }}
+                theme={editorTheme}
+                extensions={extensions}
+                height="100%"
+                style={{ height: "100%" }}
+              />
+            </div>
+          </EditorContextMenu>
         ) : editorFile ? (
           <div className="flex h-full items-center justify-center text-sm text-[var(--text-tertiary)]">
             二进制或超大文件 ({(editorFile.size / 1024).toFixed(1)} KB) — 暂不可编辑

@@ -1,0 +1,27 @@
+src-tauri/src/agent/node_runtime.rs
+  s_99f4a515321b30::t_e9d6ffc056b170 660,667-680,686-688,691-695
+  s_99f4a515321b30::t_09407582bbb261 1033-1101
+  s_99f4a515321b30::t_d1952d66add21a 681-685,689-690
+  s_99f4a515321b30::t_6571d0612f8e93 239-246,248-249,283
+  s_99f4a515321b30::t_8fba12415713cf 53-58
+  s_99f4a515321b30::t_f07ba68128ace4 536-605,696
+  s_99f4a515321b30::t_95b357eedefc30 697
+src-tauri/src/agent/acp_adapter.rs
+  s_99f4a515321b30::t_64f1a27c187305 31-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "8283aa0de0088a4677b7d98e917b397dd2f8cd8d",
+  "prompts": {},
+  "sessions": {
+    "s_99f4a515321b30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cde542cb-fe30-4529-8277-67f2904fd574",
+        "model": "MiniMax-M3"
+      },
+      "human_author": "zt23330 <zt23330@ztn.com>"
+    }
+  }
+}

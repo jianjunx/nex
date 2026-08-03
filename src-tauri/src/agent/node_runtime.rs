@@ -519,16 +519,32 @@ fn path_with_node_binary_prepended(node_binary: &Path) -> Option<OsString> {
 }
 
 /// Returns the platform key used in archive URLs and directory names.
+///
+/// The strings match the official Node.js release triples at
+/// <https://nodejs.org/dist/>:
+/// - `darwin-arm64`, `darwin-x64`
+/// - `linux-arm64`, `linux-x64`, `linux-ppc64le`, `linux-s390x`
+/// - `win-arm64`, `win-x64`
+///
+/// Rust's `consts::OS` returns `"macos"` (not `darwin`) and `"windows"`
+/// (not `win`); we remap both so the resulting URL points at a real Node
+/// release archive.
 pub fn current_platform_key() -> String {
-    let os = match std::env::consts::OS {
-        "macos" => "darwin",
-        other => other,
+    let (os, arch) = match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "aarch64") => ("darwin", "arm64"),
+        ("macos", "x86_64") => ("darwin", "x64"),
+        ("windows", "aarch64") => ("win", "arm64"),
+        ("windows", "x86_64") => ("win", "x64"),
+        ("linux", "aarch64") => ("linux", "arm64"),
+        ("linux", "x86_64") => ("linux", "x64"),
+        ("linux", "powerpc64") => ("linux", "ppc64le"),
+        (other, other_arch) => (other, other_arch),
     };
-    format!("{}-{}", os, std::env::consts::ARCH)
+    format!("{}-{}", os, arch)
 }
 
 fn managed_node_url(version: &str, platform: &str) -> String {
-    let ext = if platform.starts_with("windows") { "zip" } else { "tar.gz" };
+    let ext = if platform.starts_with("win") { "zip" } else { "tar.gz" };
     format!("https://nodejs.org/dist/{version}/node-{version}-{platform}.{ext}")
 }
 
@@ -539,7 +555,7 @@ fn shasums_url(version: &str) -> String {
 /// The bare file name (no path) of the archive we're verifying, used to
 /// look up the matching line in `SHASUMS256.txt`.
 fn managed_node_archive_name(version: &str, platform: &str) -> String {
-    let ext = if platform.starts_with("windows") { "zip" } else { "tar.gz" };
+    let ext = if platform.starts_with("win") { "zip" } else { "tar.gz" };
     format!("node-{version}-{platform}.{ext}")
 }
 

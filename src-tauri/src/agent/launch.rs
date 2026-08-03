@@ -126,13 +126,12 @@ fn node_path_env_overlay(node_path: &Path) -> HashMap<String, String> {
 }
 
 /// Builds the platform key used to index binary targets in the registry
-/// (e.g. `windows-x86_64`, `darwin-aarch64`).
+/// (e.g. `windows-x86_64`, `darwin-aarch64`). Re-exported here so the
+/// existing `current_platform_key()` callers in this module keep working
+/// without churn; the canonical definition is in `node_runtime.rs` to keep
+/// the Windows / macOS / Linux OS-name remapping in one place.
 fn current_platform_key() -> String {
-    let os = match std::env::consts::OS {
-        "macos" => "darwin",
-        other => other,
-    };
-    format!("{}-{}", os, std::env::consts::ARCH)
+    super::node_runtime::current_platform_key()
 }
 
 /// Resolves a user-defined custom server (a raw command string) into a launch
@@ -461,10 +460,53 @@ mod tests {
                 "macOS should map to darwin-*: {key}"
             );
             assert!(
-                key.ends_with("-aarch64") || key.ends_with("-x86_64"),
+                key.ends_with("-arm64") || key.ends_with("-x64"),
                 "unexpected arch in platform key: {key}"
             );
         }
+    }
+
+    /// Platform key must match Node's official release triples
+    /// (https://nodejs.org/dist/), otherwise the managed download URL 404s
+    /// and the binary cache lookup misses. Real triples seen on the CDN:
+    /// `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`,
+    /// `linux-ppc64le`, `linux-s390x`, `win-arm64`, `win-x64`.
+    #[test]
+    fn platform_key_matches_node_release_triples() {
+        let key = current_platform_key();
+        assert!(
+            matches!(
+                key.as_str(),
+                "darwin-arm64"
+                    | "darwin-x64"
+                    | "linux-arm64"
+                    | "linux-x64"
+                    | "linux-ppc64le"
+                    | "linux-s390x"
+                    | "win-arm64"
+                    | "win-x64"
+            ),
+            "platform key `{key}` doesn't match any Node release triple"
+        );
+    }
+
+    /// Specifically guards against the regression where Rust's
+    /// `consts::OS = "windows"` produced URLs like
+    /// `node-vX.Y.Z-windows-x86_64.zip` — which 404s because Node publishes
+    /// `win-x64.zip`. On Windows runners, this test must pass; on others it
+    /// is a no-op.
+    #[cfg(windows)]
+    #[test]
+    fn platform_key_uses_win_prefix_on_windows() {
+        let key = current_platform_key();
+        assert!(
+            key.starts_with("win-"),
+            "Windows platform key should use `win-` prefix, got: {key}"
+        );
+        assert!(
+            !key.contains("windows"),
+            "Windows platform key must NOT contain `windows`: {key}"
+        );
     }
 
     #[tokio::test]

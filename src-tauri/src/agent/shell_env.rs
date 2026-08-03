@@ -128,7 +128,27 @@ impl ShellEnv {
 /// Run the user's login shell and capture its environment. Best-effort:
 /// returns an empty map on any failure (shell missing, non-zero exit,
 /// timeout). The caller decides what to do with partial results.
+///
+/// **Unix / macOS**: runs `$SHELL -ilc 'env -0'` (zsh / bash / fish / etc.)
+/// so the user's full profile chain runs.
+///
+/// **Windows**: runs `cmd /U /C set` (Unicode-encoded `set` output). CMD
+/// loads the user's PATH from the registry at start, including per-user
+/// entries like nvm-windows — which GUI apps launched from the Start Menu
+/// otherwise wouldn't see.
 pub async fn load_shell_env() -> HashMap<String, String> {
+    #[cfg(windows)]
+    {
+        load_shell_env_windows().await
+    }
+    #[cfg(not(windows))]
+    {
+        load_shell_env_unix().await
+    }
+}
+
+#[cfg(not(windows))]
+async fn load_shell_env_unix() -> HashMap<String, String> {
     let shell = std::env::var_os("SHELL").unwrap_or_else(|| "/bin/zsh".into());
     let mut cmd = std::process::Command::new(&shell);
     // `-i` (interactive) + `-l` (login) so that the user's full profile chain
@@ -150,6 +170,72 @@ pub async fn load_shell_env() -> HashMap<String, String> {
     };
 
     parse_env_nul(&output.stdout)
+}
+
+/// Windows variant. `cmd /U /C set` writes the full process env to stdout
+/// in UTF-16LE — one `KEY=Value` per line. We decode to UTF-16 then split
+/// on newlines. The `/U` switch is critical: without it, `set` writes in
+/// the system code page (CP437 / CP1252), which mangles any non-ASCII PATH
+/// entries (e.g. user profile paths with CJK characters).
+#[cfg(windows)]
+async fn load_shell_env_windows() -> HashMap<String, String> {
+    // COMSPEC always points at the system command interpreter (usually
+    // `C:\Windows\System32\cmd.exe`). Fall back to bare `cmd.exe` and let
+    // Windows resolve it via PATHEXT.
+    let shell = std::env::var_os("COMSPEC").unwrap_or_else(|| OsString::from("cmd.exe"));
+    let mut cmd = std::process::Command::new(&shell);
+    cmd.args(["/U", "/C", "set"]);
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::null());
+
+    let output = match tokio::time::timeout(SHELL_LOAD_TIMEOUT, async {
+        tokio::process::Command::from(cmd).output().await
+    })
+    .await
+    {
+        Ok(Ok(out)) => out,
+        _ => return HashMap::new(),
+    };
+
+    parse_env_cmd_windows(&output.stdout)
+}
+
+/// Parse Windows `cmd /U /C set` output. The bytes are UTF-16LE without a
+/// BOM; convert each pair of bytes to a `u16`, then `String::from_utf16`
+/// the whole sequence. Failures are best-effort — we drop unpaired
+/// trailing bytes and use lossy decoding for invalid surrogates.
+///
+/// Always defined (not `#[cfg(windows)]`) so tests on Unix runners can
+/// verify the UTF-16LE decoder against fixtures; only the caller
+/// `load_shell_env_windows` is gated to Windows, since `cmd /U /C set`
+/// only exists there.
+#[cfg_attr(
+    not(windows),
+    allow(dead_code, reason = "Windows-only at runtime; cross-platform tests still call it")
+)]
+fn parse_env_cmd_windows(bytes: &[u8]) -> HashMap<String, String> {
+    let mut words: Vec<u16> = Vec::with_capacity(bytes.len() / 2);
+    let chunks = bytes.chunks_exact(2);
+    for chunk in chunks {
+        let w = u16::from_le_bytes([chunk[0], chunk[1]]);
+        words.push(w);
+    }
+    // An odd trailing byte (shouldn't happen but `set` is allowed to) is
+    // silently dropped — better than panicking on a partial decode.
+    let text = String::from_utf16_lossy(&words);
+
+    let mut out = HashMap::new();
+    for line in text.lines() {
+        let Some(eq) = line.find('=') else { continue };
+        let key = &line[..eq];
+        let val = &line[eq + 1..];
+        if !is_posix_key(key.as_bytes()) {
+            continue;
+        }
+        out.insert(key.to_string(), val.to_string());
+    }
+    out
 }
 
 /// Parse a NUL-separated `KEY=VALUE` stream (as emitted by `env -0`).
@@ -275,5 +361,78 @@ mod tests {
     async fn shell_env_wait_loaded_times_out_when_never_signaled() {
         let env = ShellEnv::new();
         assert!(!env.wait_loaded(Duration::from_millis(20)).await);
+    }
+
+    // ---- Windows cmd /U /C set parser -------------------------------
+    //
+    // These tests encode the exact UTF-16LE bytes a Windows `cmd /U /C set`
+    // would emit, so they validate the decoder on any host (no Windows
+    // runner needed).
+
+    /// Helper: encode a list of `KEY=Value` lines as UTF-16LE bytes,
+    /// matching the output format of `cmd /U /C set`. Each char becomes
+    /// 2 bytes (LE); line terminators are 4 bytes (CR LF, each as 16-bit LE).
+    fn utf16le_set_output(lines: &[&str]) -> Vec<u8> {
+        let mut buf: Vec<u8> = Vec::new();
+        for line in lines {
+            for code in line.encode_utf16() {
+                buf.extend_from_slice(&code.to_le_bytes());
+            }
+            // CRLF as UTF-16LE: \r = 0x000D, \n = 0x000A, both little-endian.
+            buf.extend_from_slice(&[0x0D, 0x00, 0x0A, 0x00]);
+        }
+        buf
+    }
+
+    #[test]
+    fn parse_env_cmd_windows_basic() {
+        let bytes = utf16le_set_output(&[
+            "Path=C:\\Windows\\system32;C:\\Windows",
+            "PATHEXT=.COM;.EXE;.BAT;.CMD;.VBS",
+            "USERPROFILE=C:\\Users\\alice",
+            "EMPTY=",
+            "=invalid-key-skipped",  // empty key → skip
+            "1HOME=starts-with-digit", // POSIX violation → skip
+        ]);
+        let env = parse_env_cmd_windows(&bytes);
+        assert_eq!(
+            env.get("Path").map(String::as_str),
+            Some("C:\\Windows\\system32;C:\\Windows")
+        );
+        assert_eq!(
+            env.get("PATHEXT").map(String::as_str),
+            Some(".COM;.EXE;.BAT;.CMD;.VBS")
+        );
+        assert_eq!(env.get("USERPROFILE").map(String::as_str), Some("C:\\Users\\alice"));
+        assert_eq!(env.get("EMPTY").map(String::as_str), Some(""));
+        assert!(!env.contains_key("1HOME"));
+    }
+
+    #[test]
+    fn parse_env_cmd_windows_handles_unicode_path() {
+        // `/U` writes UTF-16LE so non-ASCII PATH entries survive.
+        let bytes = utf16le_set_output(&["Path=C:\\Users\\张三\\bin;C:\\Program Files"]);
+        let env = parse_env_cmd_windows(&bytes);
+        assert_eq!(
+            env.get("Path").map(String::as_str),
+            Some("C:\\Users\\张三\\bin;C:\\Program Files")
+        );
+    }
+
+    #[test]
+    fn parse_env_cmd_windows_handles_odd_trailing_byte() {
+        // If the byte stream is 1 byte longer than an even UTF-16 length
+        // (rare but allowed by Windows), we drop the trailing byte rather
+        // than panic.
+        let mut bytes = utf16le_set_output(&["FOO=bar"]);
+        bytes.push(0x42); // orphaned trailing byte
+        let env = parse_env_cmd_windows(&bytes);
+        assert_eq!(env.get("FOO").map(String::as_str), Some("bar"));
+    }
+
+    #[test]
+    fn parse_env_cmd_windows_empty_input_yields_empty_map() {
+        assert!(parse_env_cmd_windows(&[]).is_empty());
+        assert!(parse_env_cmd_windows(&[0x00, 0x01]).is_empty()); // garbage → empty
     }
 }

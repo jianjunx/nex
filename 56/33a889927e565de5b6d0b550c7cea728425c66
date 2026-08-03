@@ -1,0 +1,29 @@
+src-tauri/src/agent/node_runtime.rs
+  s_99f4a515321b30::t_8d7b633799ab32 42-47
+  s_99f4a515321b30::t_612418d7f20ce6 1335-1455
+  s_99f4a515321b30::t_5113463a7bc355 772-773
+  s_99f4a515321b30::t_263bf56a01e441 675
+  s_99f4a515321b30::t_ce5a88f93d7361 219-232,238,240-256,258-261,264-275
+  s_99f4a515321b30::t_035c996b6572f3 583-604,606-631,633-674,676-713
+  s_99f4a515321b30::t_e1fcb8a4e7a435 752-753
+  s_99f4a515321b30::t_fa7a823a6dd9d8 605,632
+  s_99f4a515321b30::t_864a210d1808d6 59-62
+src-tauri/src/agent/launch.rs
+  s_99f4a515321b30::t_83311d30354ebd 13-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "5633a889927e565de5b6d0b550c7cea728425c66",
+  "prompts": {},
+  "sessions": {
+    "s_99f4a515321b30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cde542cb-fe30-4529-8277-67f2904fd574",
+        "model": "MiniMax-M3"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

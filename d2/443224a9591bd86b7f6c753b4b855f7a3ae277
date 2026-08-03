@@ -1,0 +1,46 @@
+src-tauri/src/agent/package_cache.rs
+  s_99f4a515321b30::t_2b420db03e40f1 302-303,305
+  s_99f4a515321b30::t_3bbe14cd9daee8 793-800
+  s_99f4a515321b30::t_38692554b66564 62-66
+  s_99f4a515321b30::t_1848db34a30dac 308-342
+  s_99f4a515321b30::t_7958973406132d 304
+  s_99f4a515321b30::t_e8070b2eb99e39 35-40
+  s_99f4a515321b30::t_04a00da95d79c4 306,387-483
+  s_99f4a515321b30::t_0022ac0b98b71b 740-792,801-836,842-857,862-863
+  s_99f4a515321b30::t_f10216969875ec 246,252-255,281-284,287-298
+  s_99f4a515321b30::t_9427edec916c05 837-841,858-861
+  s_99f4a515321b30::t_a9c095390541cb 307
+src-tauri/src/agent/launch.rs
+  s_99f4a515321b30::t_c7373b937c6659 305-314,316-319,345-348
+  s_99f4a515321b30::t_5858ebeca636fb 492
+  s_99f4a515321b30::t_d78b4f9c1cca9f 402-405
+  s_99f4a515321b30::t_d93e96287234ff 301-302,315
+  s_99f4a515321b30::t_4f38ffe021c6f1 428
+  s_99f4a515321b30::t_836733fe58fed3 417
+  s_99f4a515321b30::t_044cc8b5b6c64f 436-439
+src/features/projects/NewConversationDropdown.tsx
+  s_99f4a515321b30::t_1b9072c3bf7512 230-237
+  s_99f4a515321b30::t_89f100c2f06e8a 28-74
+src/bridge/tauri.ts
+  s_99f4a515321b30::t_acdf2800fac029 101,103-106
+src-tauri/src/agent/server.rs
+  s_99f4a515321b30::t_9add0695a72792 246,259,270,275-290
+  s_99f4a515321b30::t_08216c9b554edc 59,61-65
+  s_99f4a515321b30::t_d1fbd4e7394b1e 291-292
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "d2443224a9591bd86b7f6c753b4b855f7a3ae277",
+  "prompts": {},
+  "sessions": {
+    "s_99f4a515321b30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cde542cb-fe30-4529-8277-67f2904fd574",
+        "model": "MiniMax-M3"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

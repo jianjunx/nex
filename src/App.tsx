@@ -16,6 +16,8 @@ import { useKeybindingsStore } from "./stores/keybindings.store";
 import { SettingsDialog } from "./features/settings/SettingsDialog";
 import { GitCredentialModal } from "./features/git/GitCredentialModal";
 import { AppLifecycleHost } from "./features/layout/AppLifecycleHost";
+import { UpdateBanner } from "./features/updater/UpdateBanner";
+import { useUpdateStore } from "./stores/update.store";
 
 /** Path of the currently active project, if any. */
 function activeProjectPath(): string | undefined {
@@ -28,6 +30,9 @@ function App() {
   const loadProjects = useProjectStore((s) => s.loadProjects);
   useEffect(() => {
     void useKeybindingsStore.getState().load();
+    // Startup update check (silent): only surfaces a banner when a newer
+    // GitHub release exists; network errors are swallowed.
+    void useUpdateStore.getState().check(true);
     const cleanup = initListeners();
     const cleanupTerminal = useTerminalStore.getState().initListeners();
     // Restore the last session: re-open the previously active project, its
@@ -119,6 +124,7 @@ function App() {
       <AppLifecycleHost />
       <SettingsDialog />
       <GitCredentialModal />
+      <UpdateBanner />
       <MainLayout
         mainContent={<ChatArea />}
         editorPanel={hasOpenEditors && editorVisible ? <EditorPanel /> : null}

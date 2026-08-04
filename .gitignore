@@ -32,3 +32,6 @@ dist-ssr
 # Git worktrees
 .worktrees/
 
+# Local-only perl shim for openssl vendored builds (do not commit)
+perl-stub/
+

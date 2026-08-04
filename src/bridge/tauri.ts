@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { COMMANDS } from "./commands";
-import { EVENTS, type AgentNotificationPayload, type AgentPermissionRequestPayload, type TerminalOutputPayload, type TerminalExitedPayload, type FsChangedPayload, type GitStatusChangedPayload, type GitCredentialRequestPayload } from "./events";
+import { EVENTS, type AgentNotificationPayload, type AgentPermissionRequestPayload, type TerminalOutputPayload, type TerminalExitedPayload, type FsChangedPayload, type GitStatusChangedPayload, type GitCredentialRequestPayload, type UpdateDownloadProgressPayload } from "./events";
 
 // --- Projects ---
 export interface Project {
@@ -516,6 +516,38 @@ export async function fsMoveEntry(source: string, targetDir: string): Promise<vo
 
 export async function fsImportFiles(sources: string[], targetDir: string): Promise<string[]> {
   return invoke(COMMANDS.FS_IMPORT_FILES, { sources, targetDir });
+}
+
+// --- Updater (GitHub Releases) ---
+/** Result of comparing the running version against the latest GitHub release. */
+export interface UpdateInfo {
+  current_version: string;
+  latest_version: string;
+  update_available: boolean;
+  release_name: string;
+  release_url: string;
+  release_notes: string;
+  /** Installer asset for this platform, if the release ships one. */
+  asset_name: string | null;
+  asset_url: string | null;
+}
+
+export async function updateCheckLatest(): Promise<UpdateInfo> {
+  return invoke(COMMANDS.UPDATE_CHECK_LATEST);
+}
+
+/** Download the installer and run it; resolves before the app exits (Windows). */
+export async function updateDownloadAndInstall(assetUrl: string, assetName: string): Promise<void> {
+  return invoke(COMMANDS.UPDATE_DOWNLOAD_AND_INSTALL, { assetUrl, assetName });
+}
+
+/** Open a github.com URL in the system browser (host allowlisted in Rust). */
+export async function openExternal(url: string): Promise<void> {
+  return invoke(COMMANDS.OPEN_EXTERNAL, { url });
+}
+
+export function onUpdateDownloadProgress(cb: (payload: UpdateDownloadProgressPayload) => void): Promise<UnlistenFn> {
+  return listen(EVENTS.UPDATE_DOWNLOAD_PROGRESS, (e) => cb(e.payload as UpdateDownloadProgressPayload));
 }
 
 // --- Event Listeners ---

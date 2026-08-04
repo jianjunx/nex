@@ -8,6 +8,7 @@ export const EVENTS = {
   TERMINAL_EXITED: "terminal-exited",
   FS_CHANGED: "fs-changed",
   GIT_CREDENTIAL_REQUEST: "git-credential-request",
+  UPDATE_DOWNLOAD_PROGRESS: "update-download-progress",
 } as const;
 
 export interface AgentNotificationPayload {
@@ -50,4 +51,11 @@ export interface TerminalExitedPayload {
 export interface FsChangedPayload {
   projectPath: string;
   paths: string[];
+}
+
+export interface UpdateDownloadProgressPayload {
+  downloaded: number;
+  total: number | null;
+  /** 0..=100; null when the server sent no Content-Length. */
+  percent: number | null;
 }

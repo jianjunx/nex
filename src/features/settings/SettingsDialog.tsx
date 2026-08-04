@@ -7,6 +7,7 @@ import { TerminalSection } from "./sections/TerminalSection";
 import { AgentsSection } from "./sections/AgentsSection";
 import { KeybindingsEditor } from "./KeybindingsEditor";
 import { LayoutSection } from "./sections/LayoutSection";
+import { AboutSection } from "./sections/AboutSection";
 import { isRecordingActive } from "./recordingState";
 
 type TabId = SettingsSection;
@@ -17,6 +18,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "agents", label: "智能体" },
   { id: "keybindings", label: "快捷键" },
   { id: "layout", label: "布局" },
+  { id: "about", label: "关于" },
 ];
 
 export function SettingsDialog() {
@@ -80,6 +82,7 @@ export function SettingsDialog() {
             {tab === "agents" && <AgentsSection />}
             {tab === "keybindings" && <KeybindingsEditor />}
             {tab === "layout" && <LayoutSection />}
+            {tab === "about" && <AboutSection />}
           </div>
         </div>
       </DialogContent>

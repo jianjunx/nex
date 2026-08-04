@@ -73,4 +73,8 @@ export const COMMANDS = {
   FS_COPY_ENTRY: "fs_copy_entry",
   FS_MOVE_ENTRY: "fs_move_entry",
   FS_IMPORT_FILES: "fs_import_files",
+  // Updater (GitHub Releases)
+  UPDATE_CHECK_LATEST: "update_check_latest",
+  UPDATE_DOWNLOAD_AND_INSTALL: "update_download_and_install",
+  OPEN_EXTERNAL: "open_external",
 } as const;

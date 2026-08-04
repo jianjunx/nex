@@ -91,6 +91,9 @@ pub fn run() {
             commands::agent_cmds::agent_close_session,
             commands::agent_cmds::agent_custom_upsert,
             commands::agent_cmds::agent_custom_delete,
+            commands::update_cmds::update_check_latest,
+            commands::update_cmds::update_download_and_install,
+            commands::update_cmds::open_external,
         ])
         .setup(|app| {
             #[cfg(target_os = "windows")]

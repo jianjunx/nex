@@ -11,14 +11,15 @@ export function sanitizeSidePanelTab(v: unknown): SidePanelTab {
   return "files";
 }
 
-/** 设置弹窗六分区；供 ui.store.settingsSection 一次性定向导航（如"管理智能体…"）。 */
+/** 设置弹窗分区；供 ui.store.settingsSection 一次性定向导航（如“管理智能体…”）。 */
 export type SettingsSection =
   | "appearance"
   | "editor"
   | "terminal"
   | "agents"
   | "keybindings"
-  | "layout";
+  | "layout"
+  | "about";
 
 interface UiState {
   sidePanelVisible: boolean;

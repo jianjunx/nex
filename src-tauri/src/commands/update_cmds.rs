@@ -66,6 +66,9 @@ fn pick_asset(assets: &[serde_json::Value]) -> Option<(String, String)> {
         if name.ends_with(".dmg") {
             return Some((name.to_string(), url.to_string()));
         }
+        // Both matcher blocks are cfg'd out on other platforms; keep the
+        // bindings referenced so `-D warnings` builds (CI runs on Linux).
+        let _ = (name, url);
     }
     None
 }

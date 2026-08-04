@@ -135,9 +135,20 @@ export const useUiStore = create<UiState>()(
         editorWidth: s.editorWidth,
       }),
       // I-2: 水合时校验 sidePanelTab，防止陈旧持久化值（如旧版 "settings"）导致侧栏空白
+      // Clamp panel sizes so corrupted persisted values cannot hide the UI.
       merge: (persisted, current) => {
         const merged = { ...current, ...(persisted as Partial<UiState>) };
-        return { ...merged, sidePanelTab: sanitizeSidePanelTab(merged.sidePanelTab) };
+        const clamp = (n: unknown, min: number, max: number, fallback: number) => {
+          if (typeof n !== "number" || !Number.isFinite(n)) return fallback;
+          return Math.min(max, Math.max(min, n));
+        };
+        return {
+          ...merged,
+          sidePanelTab: sanitizeSidePanelTab(merged.sidePanelTab),
+          sidePanelWidth: clamp(merged.sidePanelWidth, 160, 800, current.sidePanelWidth),
+          terminalHeight: clamp(merged.terminalHeight, 80, 800, current.terminalHeight),
+          editorWidth: clamp(merged.editorWidth, 200, 2000, current.editorWidth),
+        };
       },
     }
   )

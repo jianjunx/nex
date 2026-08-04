@@ -1,7 +1,12 @@
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 use crate::error::NexError;
+
+/// Upper bound for fetch/pull/push/clone. Without this a hung remote leaves
+/// the UI spinner forever (audit #8). On timeout the child is killed.
+const GIT_NETWORK_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// 网络操作（fetch/pull/push/clone）统一委派系统 git，与 VSCode 行为一致。
 ///
@@ -21,14 +26,43 @@ fn run_git_output(repo: Option<&Path>, args: &[&str]) -> Result<Output, NexError
     if let Some(repo) = repo {
         cmd.arg("-C").arg(repo);
     }
-    cmd.args(args).env("GIT_TERMINAL_PROMPT", "0");
-    cmd.output().map_err(|e| {
+    cmd.args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             NexError::Git("未找到 git 命令：请安装 Git 并确保其加入 PATH".to_string())
         } else {
             NexError::Git(format!("git 启动失败：{e}"))
         }
-    })
+    })?;
+
+    let deadline = Instant::now() + GIT_NETWORK_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                return child.wait_with_output().map_err(|e| {
+                    NexError::Git(format!("git 读取输出失败：{e}"))
+                });
+            }
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(NexError::Git(format!(
+                        "git 操作超时（{}s）",
+                        GIT_NETWORK_TIMEOUT.as_secs()
+                    )));
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => {
+                let _ = child.kill();
+                return Err(NexError::Git(format!("git 等待失败：{e}")));
+            }
+        }
+    }
 }
 
 /// 从 git stderr 提取单行摘要：优先 error:/fatal:/hint: 行，否则最后非空行。

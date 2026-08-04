@@ -73,9 +73,13 @@ export const useSettingsStore = create<SettingsState>()(
         set((s) => {
           if (theme === "light" || theme === "dark") s.theme = theme;
           if (typeof shell === "string") s.terminalShell = shell;
-          if (typeof fontSize === "number") s.terminalFontSize = fontSize;
-          if (typeof fontFamily === "string") s.terminalFontFamily = fontFamily;
-          if (typeof scrollback === "number") s.terminalScrollback = scrollback;
+          if (typeof fontSize === "number") {
+            s.terminalFontSize = Math.min(48, Math.max(8, Math.round(fontSize)));
+          }
+          if (typeof fontFamily === "string" && fontFamily.trim()) s.terminalFontFamily = fontFamily;
+          if (typeof scrollback === "number") {
+            s.terminalScrollback = Math.min(100_000, Math.max(100, Math.round(scrollback)));
+          }
           if (typeof autoSave === "boolean") s.editorAutoSave = autoSave;
         });
       } catch {

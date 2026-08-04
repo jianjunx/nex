@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useClipboardStore } from "@/stores/clipboard.store";
 import { useFsStore } from "@/stores/fs.store";
+import { useProjectStore } from "@/stores/project.store";
 import { detectPlatform } from "@/commands/types";
 
 interface TreeContextMenuProps {
@@ -85,19 +86,25 @@ export function TreeContextMenu({
   };
 
   const handleCopyRelativePath = async () => {
-    // Find project root from the store — relative to project base
     try {
-      const text = node.name;
+      // Prefer path relative to the active project root.
+      const projects = useProjectStore.getState().projects;
+      const activeId = useProjectStore.getState().activeProjectId;
+      const root = projects.find((p) => p.id === activeId)?.path;
+      let text = node.name;
+      if (root && node.path.startsWith(root)) {
+        const rel = node.path.slice(root.length).replace(/^[/\\]/, "");
+        if (rel) text = rel;
+      }
       await navigator.clipboard.writeText(text);
     } catch {
-      // fallback: copy full path
       navigator.clipboard.writeText(node.path).catch(() => {});
     }
     onClose();
   };
 
   const handleDelete = () => {
-    void fs.deleteEntry(node.path);
+    fs.requestDeleteEntry(node.path);
     onClose();
   };
 

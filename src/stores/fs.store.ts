@@ -144,6 +144,12 @@ interface FsStore {
   createFile: (parentDir: string, name: string) => Promise<void>;
   createDir: (parentDir: string, name: string) => Promise<void>;
   deleteEntry: (path: string) => Promise<void>;
+  /** Ask UI to confirm before deleteEntry (destructive). */
+  requestDeleteEntry: (path: string) => void;
+  cancelPendingDelete: () => void;
+  confirmPendingDelete: () => Promise<void>;
+  /** Path awaiting delete confirmation; null when idle. */
+  pendingDeletePath: string | null;
   renameEntry: (path: string, newName: string) => Promise<void>;
   copyEntries: (sources: string[], targetDir: string) => Promise<void>;
   moveEntries: (sources: string[], targetDir: string) => Promise<void>;
@@ -204,6 +210,7 @@ export const useFsStore = create<FsStore>()(
     replacing: false,
     pendingLine: null,
     pendingRenamePath: null,
+    pendingDeletePath: null,
     loading: false,
     error: null,
     editorLayoutByProject: {},
@@ -462,18 +469,31 @@ export const useFsStore = create<FsStore>()(
       set((s) => { s.error = null; });
       try {
         const parent = path.replace(/[/\\][^/\\]*$/, "");
-        // Close the file in editor if it was open
         const openIndex = get().openFiles.findIndex((f) => f.path === path);
         if (openIndex >= 0) {
-          await get().closeFile(path);
+          const file = get().openFiles[openIndex];
+          // Never silent-save a dirty draft into a file we are about to
+          // delete (audit #2). Discard the tab; disk content is deleted next.
+          if (file.dirty) {
+            clearAutoSaveTimer(path);
+            const wasActive = get().activePath === path;
+            set((s) => {
+              const i = s.openFiles.findIndex((f) => f.path === path);
+              if (i < 0) return;
+              s.openFiles.splice(i, 1);
+              if (!wasActive) return;
+              if (s.openFiles.length === 0) s.activePath = null;
+              else s.activePath = s.openFiles[Math.min(i, s.openFiles.length - 1)]!.path;
+            });
+          } else {
+            await get().closeFile(path);
+          }
         }
         await fsDeleteEntry(path);
         await get().refreshDir(parent);
-        // Also refresh subdirs that had this path as parent
         if (parent) {
           const parentInNodes = parent in get().nodesByDir;
           if (!parentInNodes) {
-            // Attempt to refresh the project root
             const projects = get().nodesByDir;
             for (const dir of Object.keys(projects)) {
               if (path.startsWith(dir)) {
@@ -486,6 +506,20 @@ export const useFsStore = create<FsStore>()(
       } catch (err) {
         set((s) => { s.error = errorMessage(err); });
       }
+    },
+
+    requestDeleteEntry: (path) => {
+      set((s) => { s.pendingDeletePath = path; });
+    },
+
+    cancelPendingDelete: () => {
+      set((s) => { s.pendingDeletePath = null; });
+    },
+
+    confirmPendingDelete: async () => {
+      const path = get().pendingDeletePath;
+      set((s) => { s.pendingDeletePath = null; });
+      if (path) await get().deleteEntry(path);
     },
 
     renameEntry: async (path, newName) => {

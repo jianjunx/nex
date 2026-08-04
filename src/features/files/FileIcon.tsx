@@ -1327,6 +1327,9 @@ const folderMap: Record<string, string> = {
 // Helper: resolve icon name for a file
 // ============================================================
 
+/** Longest-first so compound extensions (e.g. `.d.ts`) win over `.ts`. */
+const EXT_KEYS_LONGEST_FIRST = Object.keys(extMap).sort((a, b) => b.length - a.length);
+
 function resolveFileIcon(filename: string): string {
   const lower = filename.toLowerCase();
 
@@ -1334,7 +1337,7 @@ function resolveFileIcon(filename: string): string {
   if (lower in filenameMap) return filenameMap[lower];
 
   // extension-based: check compound extensions first (e.g. ".d.ts")
-  for (const ext of Object.keys(extMap).sort((a, b) => b.length - a.length)) {
+  for (const ext of EXT_KEYS_LONGEST_FIRST) {
     if (lower.endsWith("." + ext)) return extMap[ext];
   }
 

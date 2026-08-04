@@ -405,14 +405,32 @@ export const useAgentStore = create<AgentStore>()(
 
     hydrateEntries: (conversationId, entries) => {
       set((s) => {
+        // Mid-turn / live ACP session: in-memory thread is ahead of DB.
+        // Switching projects must not clobber streaming tool cards with a
+        // stale hydrate from disk.
+        const live = s.sessions[conversationId];
+        if (
+          live &&
+          (live.status === "running" ||
+            live.status === "waiting" ||
+            live.status === "starting")
+        ) {
+          return;
+        }
         s.entriesByConversation[conversationId] = entries;
       });
     },
 
     pruneEntriesExcept: (keepIds) => {
       set((s) => {
+        // Always retain threads for live ACP sessions (any project). Switching
+        // away used to wipe running turns, so coming back showed empty/stale
+        // history until the turn finished and re-persisted.
+        const liveConversationIds = new Set(Object.keys(s.sessions));
         for (const id of Object.keys(s.entriesByConversation)) {
-          if (!keepIds.has(id)) delete s.entriesByConversation[id];
+          if (!keepIds.has(id) && !liveConversationIds.has(id)) {
+            delete s.entriesByConversation[id];
+          }
         }
       });
     },

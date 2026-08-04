@@ -4,6 +4,7 @@ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use std::ffi::OsStr;
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
@@ -15,6 +16,10 @@ const TERMINAL_OUTPUT_EVENT: &str = "terminal-output";
 /// `EVENTS.TERMINAL_EXITED` in `src/bridge/events.ts`.
 const TERMINAL_EXITED_EVENT: &str = "terminal-exited";
 
+/// Coalesce high-throughput PTY reads into fewer IPC emits (audit perf).
+const OUTPUT_COALESCE: Duration = Duration::from_millis(16);
+/// Flush early if a single burst is large even before the coalesce window.
+const OUTPUT_COALESCE_MAX_BYTES: usize = 64 * 1024;
 pub struct TerminalSession {
     pub id: String,
     master: Mutex<Box<dyn MasterPty + Send>>,
@@ -119,6 +124,55 @@ impl TerminalManager {
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
             let mut pending: Vec<u8> = Vec::new();
+            // Shared coalesce buffer: reader appends, ticker flushes every ~16ms
+            // so a quiet trailing chunk is not stuck until the next read.
+            let coalesce = Arc::new(Mutex::new(String::new()));
+            let stop_ticker = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            {
+                let coalesce = Arc::clone(&coalesce);
+                let stop_ticker = Arc::clone(&stop_ticker);
+                let app_tick = app_clone.clone();
+                let sid_tick = sid.clone();
+                std::thread::spawn(move || {
+                    while !stop_ticker.load(std::sync::atomic::Ordering::Relaxed) {
+                        std::thread::sleep(OUTPUT_COALESCE);
+                        let data = {
+                            let mut g = coalesce.lock().unwrap();
+                            if g.is_empty() {
+                                continue;
+                            }
+                            std::mem::take(&mut *g)
+                        };
+                        let _ = app_tick.emit(
+                            TERMINAL_OUTPUT_EVENT,
+                            TerminalOutputPayload {
+                                terminal_id: sid_tick.clone(),
+                                data,
+                            },
+                        );
+                    }
+                });
+            }
+
+            let push_out = |text: &str| {
+                if text.is_empty() {
+                    return;
+                }
+                let mut g = coalesce.lock().unwrap();
+                g.push_str(text);
+                if g.len() >= OUTPUT_COALESCE_MAX_BYTES {
+                    let data = std::mem::take(&mut *g);
+                    drop(g);
+                    let _ = app_clone.emit(
+                        TERMINAL_OUTPUT_EVENT,
+                        TerminalOutputPayload {
+                            terminal_id: sid.clone(),
+                            data,
+                        },
+                    );
+                }
+            };
+
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
@@ -132,13 +186,7 @@ impl TerminalManager {
                             match std::str::from_utf8(&pending) {
                                 Ok(text) => {
                                     if !text.is_empty() {
-                                        let _ = app_clone.emit(
-                                            TERMINAL_OUTPUT_EVENT,
-                                            TerminalOutputPayload {
-                                                terminal_id: sid.clone(),
-                                                data: text.to_string(),
-                                            },
-                                        );
+                                        push_out(text);
                                         pending.clear();
                                     }
                                     break;
@@ -150,13 +198,7 @@ impl TerminalManager {
                                         // char boundary by construction.
                                         let text = std::str::from_utf8(&pending[..valid])
                                             .expect("valid_up_to is a char boundary");
-                                        let _ = app_clone.emit(
-                                            TERMINAL_OUTPUT_EVENT,
-                                            TerminalOutputPayload {
-                                                terminal_id: sid.clone(),
-                                                data: text.to_string(),
-                                            },
-                                        );
+                                        push_out(text);
                                         pending.drain(..valid);
                                         continue;
                                     }
@@ -167,14 +209,9 @@ impl TerminalManager {
                                         // Truly invalid bytes: emit the
                                         // replacement char(s) and skip them.
                                         Some(len) => {
-                                            let lossy = String::from_utf8_lossy(&pending[..len]).into_owned();
-                                            let _ = app_clone.emit(
-                                                TERMINAL_OUTPUT_EVENT,
-                                                TerminalOutputPayload {
-                                                    terminal_id: sid.clone(),
-                                                    data: lossy,
-                                                },
-                                            );
+                                            let lossy =
+                                                String::from_utf8_lossy(&pending[..len]);
+                                            push_out(&lossy);
                                             pending.drain(..len);
                                             continue;
                                         }
@@ -186,13 +223,18 @@ impl TerminalManager {
                     Err(_) => break,
                 }
             }
+            stop_ticker.store(true, std::sync::atomic::Ordering::Relaxed);
             // Flush anything left (possibly an incomplete sequence) lossily.
             if !pending.is_empty() {
+                push_out(&String::from_utf8_lossy(&pending));
+            }
+            let leftover = std::mem::take(&mut *coalesce.lock().unwrap());
+            if !leftover.is_empty() {
                 let _ = app_clone.emit(
                     TERMINAL_OUTPUT_EVENT,
                     TerminalOutputPayload {
                         terminal_id: sid.clone(),
-                        data: String::from_utf8_lossy(&pending).into_owned(),
+                        data: leftover,
                     },
                 );
             }

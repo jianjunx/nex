@@ -136,8 +136,9 @@ export function ThreadView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entries]);
 
-  // 切换对话:恢复跟随并直接滚到底(两个会话 count 可能相同,不能只靠 count 依赖)。
+  // 切换对话:清行高缓存、恢复跟随并滚到底(两个会话 count 可能相同,不能只靠 count 依赖)。
   useLayoutEffect(() => {
+    measuredHeights.clear();
     stickToBottomRef.current = true;
     lastUserMsgIdRef.current = lastUserMessageId(entries);
     if (count > 0) virtualizer.scrollToIndex(count - 1, { align: "end" });

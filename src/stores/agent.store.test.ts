@@ -222,3 +222,87 @@ describe("entriesByConversation 结构共享", () => {
     expect(after["A"]).not.toBe(beforeA);
   });
 });
+
+describe("switch-project memory: live sessions", () => {
+  beforeEach(() => {
+    useAgentStore.setState({
+      sessions: {},
+      entriesByConversation: {},
+    });
+  });
+
+  it("pruneEntriesExcept keeps threads for live running sessions", () => {
+    useAgentStore.setState({
+      sessions: {
+        "conv-live": {
+          sessionId: "sid",
+          conversationId: "conv-live",
+          status: "running",
+        },
+      },
+      entriesByConversation: {
+        "conv-live": [
+          { id: "e1", kind: "user_message", text: "run", timestamp: 1 },
+          {
+            id: "e2",
+            kind: "assistant_message",
+            timestamp: 2,
+            chunks: [{ type: "message", text: "streaming…" }],
+          },
+        ],
+        "conv-other": [{ id: "o1", kind: "user_message", text: "old", timestamp: 1 }],
+      },
+    });
+
+    // New project tabs do not include conv-live — previously this wiped the turn.
+    useAgentStore.getState().pruneEntriesExcept(new Set(["conv-new-proj"]));
+
+    const entries = useAgentStore.getState().entriesByConversation;
+    expect(entries["conv-live"]).toHaveLength(2);
+    expect(entries["conv-other"]).toBeUndefined();
+  });
+
+  it("hydrateEntries does not overwrite a running session thread", () => {
+    useAgentStore.setState({
+      sessions: {
+        "conv-live": {
+          sessionId: "sid",
+          conversationId: "conv-live",
+          status: "running",
+        },
+      },
+      entriesByConversation: {
+        "conv-live": [
+          { id: "e1", kind: "user_message", text: "run", timestamp: 1 },
+          {
+            id: "e2",
+            kind: "assistant_message",
+            timestamp: 2,
+            chunks: [{ type: "message", text: "streaming…" }],
+          },
+        ],
+      },
+    });
+
+    useAgentStore.getState().hydrateEntries("conv-live", [
+      { id: "stale", kind: "user_message", text: "from-db", timestamp: 1 },
+    ]);
+
+    const entries = useAgentStore.getState().entriesByConversation["conv-live"];
+    expect(entries?.[0]?.id).toBe("e1");
+    expect(entries).toHaveLength(2);
+  });
+
+  it("hydrateEntries replaces idle / no-session threads", () => {
+    useAgentStore.setState({
+      sessions: {},
+      entriesByConversation: {
+        "conv-a": [{ id: "old", kind: "user_message", text: "old", timestamp: 1 }],
+      },
+    });
+    useAgentStore.getState().hydrateEntries("conv-a", [
+      { id: "new", kind: "user_message", text: "new", timestamp: 2 },
+    ]);
+    expect(useAgentStore.getState().entriesByConversation["conv-a"]?.[0]?.id).toBe("new");
+  });
+});

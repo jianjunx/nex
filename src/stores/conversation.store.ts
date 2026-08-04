@@ -66,6 +66,11 @@ const EMPTY_CONVERSATIONS: Conversation[] = [];
 
 /** loadMessages 分页大小:与 bridge 默认 limit 一致,循环翻页取完全部历史。 */
 const MESSAGE_PAGE_SIZE = 50;
+/** 防异常超大会话把 UI 拖死；50×200 = 1 万条上限。 */
+const MESSAGE_MAX_PAGES = 200;
+
+/** Monotonic id so a slow loadMessages cannot overwrite a newer conversation. */
+let loadMessagesGeneration = 0;
 
 export function selectProjectOpenTabs(
   s: Pick<ConversationStore, "tabsByProject">,
@@ -262,6 +267,7 @@ export const useConversationStore = create<ConversationStore>()(
       },
 
       loadMessages: async (conversationId: string) => {
+        const generation = ++loadMessagesGeneration;
         set((s) => {
           s.loading = true;
           s.error = null;
@@ -270,23 +276,28 @@ export const useConversationStore = create<ConversationStore>()(
           // 分页取完全部历史:旧实现只取首页 50 条,长会话旧消息静默丢失。
           const all: Message[] = [];
           let offset = 0;
-          for (;;) {
+          for (let pageIdx = 0; pageIdx < MESSAGE_MAX_PAGES; pageIdx++) {
+            if (generation !== loadMessagesGeneration) return;
             const page = await conversationGetMessages(conversationId, MESSAGE_PAGE_SIZE, offset);
             all.push(...page);
             if (page.length < MESSAGE_PAGE_SIZE) break;
             offset += MESSAGE_PAGE_SIZE;
           }
+          if (generation !== loadMessagesGeneration) return;
           set((s) => {
             s.messagesByConversation[conversationId] = all;
           });
         } catch (err) {
+          if (generation !== loadMessagesGeneration) return;
           set((s) => {
             s.error = errorMessage(err);
           });
         } finally {
-          set((s) => {
-            s.loading = false;
-          });
+          if (generation === loadMessagesGeneration) {
+            set((s) => {
+              s.loading = false;
+            });
+          }
         }
       },
 

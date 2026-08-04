@@ -198,7 +198,7 @@ const COMMANDS: Command[] = [
     },
     run: () => {
       const sel = useFsStore.getState().selectedPath;
-      if (sel) void useFsStore.getState().deleteEntry(sel);
+      if (sel) useFsStore.getState().requestDeleteEntry(sel);
     },
   },
   {

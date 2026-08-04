@@ -4,6 +4,7 @@ import { useProjectStore } from "../../stores/project.store";
 import { useEffect, useState, useRef, useCallback, memo } from "react";
 import FileIcon from "./FileIcon";
 import { TreeContextMenu } from "./TreeContextMenu";
+import { GitConfirmDialog } from "../git/GitConfirmDialog";
 
 // Stable action references (zustand actions never change identity): passing
 // these down instead of re-created closures lets memo() actually skip work.
@@ -383,7 +384,7 @@ function TreeNode({
 const MemoTreeNode = memo(TreeNode);
 
 export function FileTree() {
-  const { loadRoot, nodesByDir, expandDir, createFile, createDir, renameEntry, refreshDir, collapseAll, selectedPath, pendingRenamePath, consumePendingRename, importFiles } = useFsStore();
+  const { loadRoot, nodesByDir, expandDir, createFile, createDir, renameEntry, refreshDir, collapseAll, selectedPath, pendingRenamePath, consumePendingRename, importFiles, pendingDeletePath, cancelPendingDelete, confirmPendingDelete, openFiles } = useFsStore();
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const projects = useProjectStore((s) => s.projects);
   const project = projects.find((p) => p.id === activeProjectId);
@@ -559,6 +560,20 @@ export function FileTree() {
             handleNewFolder(contextMenu.node.path);
             closeContextMenu();
           } : undefined}
+        />
+      )}
+      {pendingDeletePath && (
+        <GitConfirmDialog
+          open
+          title="确认删除"
+          description={
+            openFiles.some((f) => f.path === pendingDeletePath && f.dirty)
+              ? `「${pendingDeletePath.split(/[/\\]/).pop() ?? pendingDeletePath}」有未保存修改，删除后草稿将丢失且无法恢复。`
+              : `确定删除「${pendingDeletePath.split(/[/\\]/).pop() ?? pendingDeletePath}」？此操作无法撤销。`
+          }
+          confirmLabel="删除"
+          onConfirm={() => void confirmPendingDelete()}
+          onCancel={cancelPendingDelete}
         />
       )}
     </>

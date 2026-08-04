@@ -120,20 +120,37 @@ pub fn git_credential_respond(
 
 // 网络操作委派系统 git 子进程（与 VSCode 一致）：SSH 走 OpenSSH、HTTPS 走
 // git 原生 credential helper；不再需要凭据 broker 参入（见 network.rs 顶部说明）。
+// 超时在 network.rs 内杀子进程；此处再套一层避免 spawn_blocking 永久挂起。
+const GIT_NETWORK_CMD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(310);
+
 #[tauri::command]
 pub async fn git_fetch(project_path: String, remote: String) -> Result<(), NexError> {
     let path = PathBuf::from(project_path);
-    tokio::task::spawn_blocking(move || network::fetch_remote(&path, &remote))
-        .await
-        .map_err(|e| NexError::Internal(format!("task join failed: {e}")))?
+    match tokio::time::timeout(
+        GIT_NETWORK_CMD_TIMEOUT,
+        tokio::task::spawn_blocking(move || network::fetch_remote(&path, &remote)),
+    )
+    .await
+    {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => Err(NexError::Internal(format!("task join failed: {e}"))),
+        Err(_) => Err(NexError::Git("git fetch 超时".into())),
+    }
 }
 
 #[tauri::command]
 pub async fn git_pull(project_path: String, remote: String) -> Result<(), NexError> {
     let path = PathBuf::from(project_path);
-    tokio::task::spawn_blocking(move || network::pull_remote(&path, &remote))
-        .await
-        .map_err(|e| NexError::Internal(format!("task join failed: {e}")))?
+    match tokio::time::timeout(
+        GIT_NETWORK_CMD_TIMEOUT,
+        tokio::task::spawn_blocking(move || network::pull_remote(&path, &remote)),
+    )
+    .await
+    {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => Err(NexError::Internal(format!("task join failed: {e}"))),
+        Err(_) => Err(NexError::Git("git pull 超时".into())),
+    }
 }
 
 #[tauri::command]
@@ -143,15 +160,29 @@ pub async fn git_push(
     branch: String,
 ) -> Result<(), NexError> {
     let path = PathBuf::from(project_path);
-    tokio::task::spawn_blocking(move || network::push_remote(&path, &remote, &branch))
-        .await
-        .map_err(|e| NexError::Internal(format!("task join failed: {e}")))?
+    match tokio::time::timeout(
+        GIT_NETWORK_CMD_TIMEOUT,
+        tokio::task::spawn_blocking(move || network::push_remote(&path, &remote, &branch)),
+    )
+    .await
+    {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => Err(NexError::Internal(format!("task join failed: {e}"))),
+        Err(_) => Err(NexError::Git("git push 超时".into())),
+    }
 }
 
 #[tauri::command]
 pub async fn git_clone(url: String, dest: String) -> Result<(), NexError> {
     let dest = PathBuf::from(dest);
-    tokio::task::spawn_blocking(move || network::clone_repo(&url, &dest))
-        .await
-        .map_err(|e| NexError::Internal(format!("task join failed: {e}")))?
+    match tokio::time::timeout(
+        GIT_NETWORK_CMD_TIMEOUT,
+        tokio::task::spawn_blocking(move || network::clone_repo(&url, &dest)),
+    )
+    .await
+    {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => Err(NexError::Internal(format!("task join failed: {e}"))),
+        Err(_) => Err(NexError::Git("git clone 超时".into())),
+    }
 }

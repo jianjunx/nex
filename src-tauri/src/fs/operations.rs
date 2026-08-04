@@ -1,4 +1,5 @@
 use crate::error::NexError;
+use crate::fs::validate_entry_name;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -12,6 +13,7 @@ pub fn delete_entry(path: &Path) -> Result<(), NexError> {
 /// Rename a file or directory in-place (same parent directory).
 /// `new_name` is just the new name, not a full path.
 pub fn rename_entry(path: &Path, new_name: &str) -> Result<(), NexError> {
+    validate_entry_name(new_name)?;
     let parent = path
         .parent()
         .ok_or_else(|| NexError::FileSystem("无法获取父目录".into()))?;
@@ -58,7 +60,15 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), NexError> {
         let entry = entry.map_err(|e| NexError::FileSystem(format!("读取条目失败: {}", e)))?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
-        if src_path.is_dir() {
+        // Use the entry's own file type (does NOT follow symlinks): a
+        // symlink pointing at an ancestor would otherwise recurse forever
+        // and blow the stack. Symlinks are copied as symlinks.
+        let file_type = entry
+            .file_type()
+            .map_err(|e| NexError::FileSystem(format!("读取条目类型失败: {}", e)))?;
+        if file_type.is_symlink() {
+            copy_symlink(&src_path, &dst_path)?;
+        } else if file_type.is_dir() {
             copy_dir_recursive(&src_path, &dst_path)?;
         } else {
             fs::copy(&src_path, &dst_path).map(|_| ()).map_err(|e| {
@@ -69,21 +79,58 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), NexError> {
     Ok(())
 }
 
+/// Copies a symlink by recreating it with the same target (never follows it).
+fn copy_symlink(src: &Path, dst: &Path) -> Result<(), NexError> {
+    let target = fs::read_link(src)
+        .map_err(|e| NexError::FileSystem(format!("读取符号链接失败: {}", e)))?;
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&target, dst)
+            .map_err(|e| NexError::FileSystem(format!("复制符号链接失败: {}", e)))
+    }
+    #[cfg(windows)]
+    {
+        // Best effort on Windows: symlink creation may require privileges,
+        // fall back to copying the referenced file's contents.
+        if let Ok(meta) = fs::metadata(src) {
+            if meta.is_dir() {
+                return std::os::windows::fs::symlink_dir(&target, dst).map_err(|e| {
+                    NexError::FileSystem(format!("复制目录符号链接失败: {}", e))
+                });
+            }
+        }
+        std::os::windows::fs::symlink_file(&target, dst)
+            .or_else(|_| fs::copy(src, dst).map(|_| ()))
+            .map_err(|e| NexError::FileSystem(format!("复制符号链接失败: {}", e)))
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        fs::copy(src, dst)
+            .map(|_| ())
+            .map_err(|e| NexError::FileSystem(format!("复制符号链接失败: {}", e)))
+    }
+}
+
 /// Resolve a paste destination: if `dest_name` is provided, use it as the
 /// target name in the destination directory; otherwise keep the source's name.
 /// Returns the full destination path.
 pub fn resolve_paste_path(source: &Path, dest_dir: &Path, dest_name: Option<&str>) -> PathBuf {
     if let Some(name) = dest_name {
-        dest_dir.join(name)
-    } else {
-        let name = source
-            .file_name()
-            .unwrap_or_else(|| std::ffi::OsStr::new("untitled"));
-        dest_dir.join(name)
+        // Defense in depth: an invalid name falls back to the source name
+        // instead of escaping dest_dir.
+        if validate_entry_name(name).is_ok() {
+            return dest_dir.join(name);
+        }
     }
+    let name = source
+        .file_name()
+        .unwrap_or_else(|| std::ffi::OsStr::new("untitled"));
+    dest_dir.join(name)
 }
 
 /// Move an entry to a destination directory, keeping its original name.
+/// Falls back to copy+delete when source and target live on different
+/// filesystems (`fs::rename` fails with CrossesDevices there).
 pub fn move_entry(source: &Path, target_dir: &Path) -> Result<(), NexError> {
     let name = source
         .file_name()
@@ -95,8 +142,34 @@ pub fn move_entry(source: &Path, target_dir: &Path) -> Result<(), NexError> {
             dest.display()
         )));
     }
-    fs::rename(source, &dest)
-        .map_err(|e| NexError::FileSystem(format!("移动失败: {}", e)))
+    match fs::rename(source, &dest) {
+        Ok(()) => Ok(()),
+        Err(e) if e.raw_os_error() == Some(EXDEV) => {
+            move_cross_device(source, &dest)?;
+            Ok(())
+        }
+        Err(e) => Err(NexError::FileSystem(format!("移动失败: {}", e))),
+    }
+}
+
+/// EXDEV (cross-device link) is errno 18 on all unix platforms we target,
+/// and Windows maps ERROR_NOT_SAME_DEVICE to the same errno value.
+const EXDEV: i32 = 18;
+
+fn move_cross_device(source: &Path, dest: &Path) -> Result<(), NexError> {
+    let meta = fs::symlink_metadata(source)
+        .map_err(|e| NexError::FileSystem(format!("读取源失败: {}", e)))?;
+    if meta.is_dir() {
+        copy_dir_recursive(source, dest)?;
+        fs::remove_dir_all(source)
+            .map_err(|e| NexError::FileSystem(format!("跨盘移动后删除源目录失败: {}", e)))?;
+    } else {
+        fs::copy(source, dest)
+            .map_err(|e| NexError::FileSystem(format!("跨盘复制失败: {}", e)))?;
+        fs::remove_file(source)
+            .map_err(|e| NexError::FileSystem(format!("跨盘移动后删除源文件失败: {}", e)))?;
+    }
+    Ok(())
 }
 
 /// Copy an external file/dir into target_dir, handling name conflicts by

@@ -23,7 +23,8 @@ describe("command registry", () => {
     expect(byId("view.toggleSidebar")).toBe("primary+keyb");
     expect(byId("search.focus")).toBe("primary+shift+keyf");
     expect(byId("scm.focus")).toBe("primary+shift+keyg");
-    expect(byId("terminal.toggle")).toBe("primary+`");
+    expect(byId("terminal.toggle")).toBe("ctrl+`");
+    expect(byId("workbench.closeActiveTab")).toBe("primary+keyw");
     expect(byId("view.openSettings")).toBe("primary+,");
     expect(byId("workbench.newConversation")).toBe("primary+shift+keyn");
     expect(byId("scm.commit")).toBe("primary+enter");

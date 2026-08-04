@@ -117,12 +117,27 @@ export function TerminalPanel() {
     });
 
     const el = termRef.current;
+    // Debounced fit: while dragging the panel divider the observer fires
+    // every frame, and each fit() reflows xterm + sends a PTY resize IPC.
+    // Coalescing to a trailing ~66ms keeps the final size exact without
+    // reflowing on every pointermove.
+    let fitTimer: ReturnType<typeof setTimeout> | undefined;
     const observer = new ResizeObserver(() => {
-      if (el.offsetWidth > 0 && el.offsetHeight > 0) fitAddon.fit();
+      if (el.offsetWidth <= 0 || el.offsetHeight <= 0) return;
+      if (fitTimer !== undefined) clearTimeout(fitTimer);
+      fitTimer = setTimeout(() => {
+        fitTimer = undefined;
+        fitAddon.fit();
+      }, 66);
     });
     observer.observe(el);
+    // Initial fit without debounce so the first paint is correct.
+    if (el.offsetWidth > 0 && el.offsetHeight > 0) fitAddon.fit();
 
-    return () => { setLiveSink(null); observer.disconnect(); term.dispose(); xtermRef.current = null; };
+    return () => {
+      if (fitTimer !== undefined) clearTimeout(fitTimer);
+      setLiveSink(null); observer.disconnect(); term.dispose(); xtermRef.current = null;
+    };
   }, [settingsVersion]);
 
   // Replay the active session's buffered output: on first mount (the
@@ -136,20 +151,36 @@ export function TerminalPanel() {
     if (!term || !activeSessionId) return;
     term.reset();
     term.write(getReplay(activeSessionId));
+    // Fit after the session is active so onResize can push cols/rows to the
+    // PTY (the mount-time fit often ran with no activeSessionId).
+    try {
+      // FitAddon is on the terminal; proposeDimensions via public API:
+      // calling resize with current dims is a no-op unless we re-fit.
+      const { cols, rows } = term;
+      if (cols > 0 && rows > 0) {
+        useTerminalStore.getState().resize(activeSessionId, cols, rows);
+      }
+    } catch {
+      /* ignore */
+    }
     term.focus();
   }, [activeSessionId, settingsVersion]);
 
   useEffect(() => {
     if (project && sessions.length === 0 && !loading && autoCreatedFor.current !== project.id) {
       autoCreatedFor.current = project.id;
-      void create(project.path, terminalShell || undefined);
+      const term = xtermRef.current;
+      void create(project.path, terminalShell || undefined, term?.cols, term?.rows);
     }
   }, [project, sessions.length, loading, create, terminalShell]);
 
   const handleCreate = () => {
     // Empty shell = system default ("" -> undefined, the bridge's
     // Option<String> None).
-    if (project) void create(project.path, terminalShell || undefined);
+    if (project) {
+      const term = xtermRef.current;
+      void create(project.path, terminalShell || undefined, term?.cols, term?.rows);
+    }
   };
 
   const handleClose = (id: string) => {

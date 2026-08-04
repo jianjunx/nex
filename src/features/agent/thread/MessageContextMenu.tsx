@@ -1,19 +1,21 @@
 import { useCallback, useRef, type ReactNode } from "react";
 import { Copy, TextSelect } from "lucide-react";
 import {
-  ContextMenu,
-  ContextMenuTrigger,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuShortcut,
-} from "@/components/ui/context-menu";
+  PositionedDropdown,
+  PositionedMenuItem,
+  PositionedMenuSeparator,
+  PositionedMenuShortcut,
+  usePositionedContextMenu,
+} from "@/components/ui/TextEditContextMenu";
+import { detectPlatform } from "@/commands/types";
 
 interface MessageContextMenuProps {
   /** The full text content of the message (for "copy all" when nothing is selected) */
   textContent: string;
   children: ReactNode;
 }
+
+const primaryLabel = detectPlatform() === "mac" ? "⌘" : "Ctrl";
 
 /**
  * Wraps message content with a custom right-click context menu.
@@ -22,17 +24,19 @@ interface MessageContextMenuProps {
  */
 export function MessageContextMenu({ textContent, children }: MessageContextMenuProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const { open, setOpen, pos, onContextMenu } = usePositionedContextMenu();
 
   const handleCopy = useCallback(() => {
     const selection = window.getSelection();
     const selectedText = selection?.toString().trim();
 
     if (selectedText) {
-      navigator.clipboard.writeText(selectedText);
+      void navigator.clipboard.writeText(selectedText);
     } else {
-      navigator.clipboard.writeText(textContent);
+      void navigator.clipboard.writeText(textContent);
     }
-  }, [textContent]);
+    setOpen(false);
+  }, [textContent, setOpen]);
 
   const handleSelectAll = useCallback(() => {
     const el = containerRef.current;
@@ -44,26 +48,27 @@ export function MessageContextMenu({ textContent, children }: MessageContextMenu
     const selection = window.getSelection();
     selection?.removeAllRanges();
     selection?.addRange(range);
-  }, []);
+    setOpen(false);
+  }, [setOpen]);
 
   return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>
-        <div ref={containerRef}>{children}</div>
-      </ContextMenuTrigger>
-      <ContextMenuContent className="w-48">
-        <ContextMenuItem onClick={handleCopy}>
+    <>
+      <div ref={containerRef} onContextMenu={onContextMenu}>
+        {children}
+      </div>
+      <PositionedDropdown open={open} setOpen={setOpen} pos={pos}>
+        <PositionedMenuItem onClick={handleCopy}>
           <Copy size={14} />
           复制
-          <ContextMenuShortcut>Ctrl+C</ContextMenuShortcut>
-        </ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem onClick={handleSelectAll}>
+          <PositionedMenuShortcut>{primaryLabel}+C</PositionedMenuShortcut>
+        </PositionedMenuItem>
+        <PositionedMenuSeparator />
+        <PositionedMenuItem onClick={handleSelectAll}>
           <TextSelect size={14} />
           全选
-          <ContextMenuShortcut>Ctrl+A</ContextMenuShortcut>
-        </ContextMenuItem>
-      </ContextMenuContent>
-    </ContextMenu>
+          <PositionedMenuShortcut>{primaryLabel}+A</PositionedMenuShortcut>
+        </PositionedMenuItem>
+      </PositionedDropdown>
+    </>
   );
 }

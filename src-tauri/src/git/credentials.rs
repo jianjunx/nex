@@ -57,6 +57,12 @@ pub struct GitCredentialBroker {
     session_cache: Arc<Mutex<HashMap<String, CachedCredential>>>,
 }
 
+impl Default for GitCredentialBroker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GitCredentialBroker {
     pub fn new() -> Self {
         Self {

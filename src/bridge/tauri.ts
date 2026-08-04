@@ -284,11 +284,15 @@ export interface BranchInfo {
   isRemote: boolean;
   ahead: number | null;
   behind: number | null;
+  /** Tip commit time (seconds since epoch); null if unavailable. */
+  tipTime: number | null;
 }
 
 export interface StashEntry {
   index: number;
   message: string;
+  /** Stash commit OID — stable id for apply/pop/drop (index shifts on drop). */
+  id: string;
 }
 
 export interface CommitInfo {
@@ -334,16 +338,16 @@ export async function gitStashList(projectPath: string): Promise<StashEntry[]> {
   return invoke(COMMANDS.GIT_STASH_LIST, { projectPath });
 }
 
-export async function gitStashApply(projectPath: string, index: number): Promise<void> {
-  return invoke(COMMANDS.GIT_STASH_APPLY, { projectPath, index });
+export async function gitStashApply(projectPath: string, id: string): Promise<void> {
+  return invoke(COMMANDS.GIT_STASH_APPLY, { projectPath, id });
 }
 
-export async function gitStashPop(projectPath: string, index: number): Promise<void> {
-  return invoke(COMMANDS.GIT_STASH_POP, { projectPath, index });
+export async function gitStashPop(projectPath: string, id: string): Promise<void> {
+  return invoke(COMMANDS.GIT_STASH_POP, { projectPath, id });
 }
 
-export async function gitStashDrop(projectPath: string, index: number): Promise<void> {
-  return invoke(COMMANDS.GIT_STASH_DROP, { projectPath, index });
+export async function gitStashDrop(projectPath: string, id: string): Promise<void> {
+  return invoke(COMMANDS.GIT_STASH_DROP, { projectPath, id });
 }
 
 export async function gitFetch(projectPath: string, remote: string): Promise<void> {
@@ -372,8 +376,13 @@ export async function gitCredentialRespond(
 }
 
 // --- Terminal ---
-export async function terminalCreate(projectPath: string, shell?: string): Promise<string> {
-  return invoke(COMMANDS.TERMINAL_CREATE, { projectPath, shell });
+export async function terminalCreate(
+  projectPath: string,
+  shell?: string,
+  cols?: number,
+  rows?: number,
+): Promise<string> {
+  return invoke(COMMANDS.TERMINAL_CREATE, { projectPath, shell, cols, rows });
 }
 
 export async function terminalWrite(terminalId: string, data: string): Promise<void> {
@@ -470,6 +479,10 @@ export async function fsApplyReplace(
 
 export async function fsWatchStart(projectPath: string): Promise<void> {
   return invoke(COMMANDS.FS_WATCH_START, { projectPath });
+}
+
+export async function fsWatchStop(projectPath: string): Promise<void> {
+  return invoke(COMMANDS.FS_WATCH_STOP, { projectPath });
 }
 
 export async function fsCreateFile(parentDir: string, name: string): Promise<void> {

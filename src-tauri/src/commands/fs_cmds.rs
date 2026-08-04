@@ -10,8 +10,10 @@ use std::path::Path;
 use tauri::{AppHandle, State};
 
 #[tauri::command]
-pub fn fs_read_tree(project_path: String) -> Result<Vec<FsNode>, NexError> {
-    read_tree(Path::new(&project_path), 1)
+pub async fn fs_read_tree(project_path: String) -> Result<Vec<FsNode>, NexError> {
+    tauri::async_runtime::spawn_blocking(move || read_tree(Path::new(&project_path), 1))
+        .await
+        .map_err(|e| NexError::FileSystem(format!("fs_read_tree join: {e}")))?
 }
 
 #[tauri::command]
@@ -20,8 +22,10 @@ pub fn fs_expand_dir(dir_path: String) -> Result<Vec<FsNode>, NexError> {
 }
 
 #[tauri::command]
-pub fn fs_read_file(file_path: String) -> Result<FileContent, NexError> {
-    read_file(Path::new(&file_path))
+pub async fn fs_read_file(file_path: String) -> Result<FileContent, NexError> {
+    tauri::async_runtime::spawn_blocking(move || read_file(Path::new(&file_path)))
+        .await
+        .map_err(|e| NexError::FileSystem(format!("fs_read_file join: {e}")))?
 }
 
 #[tauri::command]
@@ -31,10 +35,28 @@ pub fn fs_write_file(file_path: String, content: String) -> Result<(), NexError>
 
 /// Starts the debounced watcher for a project (no-op if already watching),
 /// which emits `fs-changed` / `git-status-changed` events on external
-/// changes.
+/// changes. Runs on a blocking pool so recursive watch registration does not
+/// freeze the IPC thread. Unwatches every other project (active-only LRU).
 #[tauri::command]
-pub fn fs_watch_start(app: AppHandle, state: State<AppState>, project_path: String) -> Result<(), NexError> {
-    state.watcher_manager.watch(app, &project_path)
+pub async fn fs_watch_start(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project_path: String,
+) -> Result<(), NexError> {
+    let mgr = state.watcher_manager.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        mgr.unwatch_except(&project_path);
+        mgr.watch(app, &project_path)
+    })
+    .await
+    .map_err(|e| NexError::FileSystem(format!("fs_watch_start join: {e}")))?
+}
+
+/// Stop watching a project path (no-op if not watched).
+#[tauri::command]
+pub fn fs_watch_stop(state: State<'_, AppState>, project_path: String) -> Result<(), NexError> {
+    state.watcher_manager.unwatch(&project_path);
+    Ok(())
 }
 
 /// Global project search with match rules (case / whole-word / regex).

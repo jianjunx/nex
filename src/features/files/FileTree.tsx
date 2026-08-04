@@ -1,9 +1,20 @@
 import { ChevronRight, FilePlus, FolderPlus, RefreshCw, ChevronsDownUp } from "lucide-react";
 import { useFsStore } from "../../stores/fs.store";
 import { useProjectStore } from "../../stores/project.store";
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, memo } from "react";
 import FileIcon from "./FileIcon";
 import { TreeContextMenu } from "./TreeContextMenu";
+
+// Stable action references (zustand actions never change identity): passing
+// these down instead of re-created closures lets memo() actually skip work.
+const fsActions = {
+  expandDir: (p: string) => useFsStore.getState().expandDir(p),
+  collapseDir: (p: string) => useFsStore.getState().collapseDir(p),
+  openFile: (p: string, pin?: boolean) => useFsStore.getState().openFile(p, pin),
+  setSelectedPath: (p: string | null) => useFsStore.getState().setSelectedPath(p),
+  moveEntries: (s: string[], t: string) => useFsStore.getState().moveEntries(s, t),
+  importFiles: (s: string[], t: string) => useFsStore.getState().importFiles(s, t),
+};
 
 function CreatingInput({ type, depth, onDone }: {
   type: 'file' | 'dir';
@@ -139,10 +150,13 @@ function TreeNode({
     onCollapseAll: () => void;
   };
 }) {
-  const { expandedDirs, expandDir, collapseDir, nodesByDir, openFile, selectedPath, setSelectedPath, moveEntries, importFiles } = useFsStore();
-  const isExpanded = expandedDirs.has(node.path);
-  const children = nodesByDir[node.path];
-  const isSelected = selectedPath === node.path;
+  // Fine-grained selectors: this node only re-renders when ITS expansion
+  // state, children list, or selection changes — not on every store write
+  // (typing in the editor, search results, other nodes' selection…).
+  const isExpanded = useFsStore((s) => s.expandedDirs.has(node.path));
+  const children = useFsStore((s) => s.nodesByDir[node.path]);
+  const isSelected = useFsStore((s) => s.selectedPath === node.path);
+  const { expandDir, collapseDir, openFile, setSelectedPath, moveEntries, importFiles } = fsActions;
   const isCreatingHere = creatingIn === node.path;
   const isRenaming = renamingPath === node.path;
 
@@ -344,7 +358,7 @@ function TreeNode({
             />
           )}
           {children?.map((child) => (
-            <TreeNode
+            <MemoTreeNode
               key={child.path}
               node={child}
               depth={depth + 1}
@@ -362,6 +376,11 @@ function TreeNode({
     </div>
   );
 }
+
+// memo(): with stable action refs and fine-grained selectors above, a
+// store write (selection, editor draft, search…) now skips every node
+// whose own inputs didn't change — previously the whole tree re-rendered.
+const MemoTreeNode = memo(TreeNode);
 
 export function FileTree() {
   const { loadRoot, nodesByDir, expandDir, createFile, createDir, renameEntry, refreshDir, collapseAll, selectedPath, pendingRenamePath, consumePendingRename, importFiles } = useFsStore();
@@ -510,7 +529,7 @@ export function FileTree() {
         onDragOver={handleTreeDragOver}
         onDrop={handleTreeDrop}
       >
-        <TreeNode
+        <MemoTreeNode
           node={rootNode}
           depth={0}
           isRoot={true}

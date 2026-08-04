@@ -94,6 +94,8 @@ interface AgentStore {
   removeSession: (conversationId: string) => Promise<void>;
   /** Replace in-memory thread with hydrated history (used on cold restore). */
   hydrateEntries: (conversationId: string, entries: ThreadEntry[]) => void;
+  /** Drop hydrated thread entries for conversation ids not in `keepIds` (switch-project memory). */
+  pruneEntriesExcept: (keepIds: Set<string>) => void;
   appendUserMessage: (
     conversationId: string,
     text: string,
@@ -383,6 +385,20 @@ export const useAgentStore = create<AgentStore>()(
           delete s.sessions[conversationId];
           delete s.entriesByConversation[conversationId];
           delete s.metaByConversation[conversationId];
+          // Drop queued-but-unsent messages and any permission queues so a
+          // removed conversation leaves no orphaned state behind.
+          delete s.pendingMessagesByConversation[conversationId];
+          const liveSessionId = session.sessionId;
+          if (liveSessionId) {
+            // Drop inline-permission markers belonging to this session's queue.
+            for (const req of s.permissionQueues[liveSessionId] ?? []) {
+              delete s.inlinePermissionIds[req.requestId];
+            }
+            delete s.permissionQueues[liveSessionId];
+            if (s.pendingPermission?.sessionId === liveSessionId) {
+              s.pendingPermission = nextPendingPermission(s.permissionQueues, s.inlinePermissionIds);
+            }
+          }
         });
       }
     },
@@ -390,6 +406,14 @@ export const useAgentStore = create<AgentStore>()(
     hydrateEntries: (conversationId, entries) => {
       set((s) => {
         s.entriesByConversation[conversationId] = entries;
+      });
+    },
+
+    pruneEntriesExcept: (keepIds) => {
+      set((s) => {
+        for (const id of Object.keys(s.entriesByConversation)) {
+          if (!keepIds.has(id)) delete s.entriesByConversation[id];
+        }
       });
     },
 
@@ -428,45 +452,51 @@ export const useAgentStore = create<AgentStore>()(
         s.sessions[session.conversationId].status = "running";
         s.error = null;
       });
+      let promptFailed = false;
       try {
         await agentSendPrompt(sessionId, blocks);
       } catch (err) {
+        promptFailed = true;
         set((s) => {
           s.error = errorMessage(err);
         });
       } finally {
         const entries = get().entriesByConversation[session.conversationId] ?? [];
-        const assistantText = assistantTextAfterLastUser(entries);
-        if (assistantText) {
-          void useConversationStore.getState().persistMessage(
-            session.conversationId,
-            "assistant",
-            assistantText,
-          );
-        } else {
-          // Agents like Cursor may finish a turn with only tool cards and no
-          // agent_message_chunk. Surface an explicit completion so the thread
-          // doesn't look stuck after status returns to idle.
-          set((s) => {
-            const list = s.entriesByConversation[session.conversationId];
-            if (!list) return;
-            const last = list[list.length - 1];
-            if (last?.kind === "user_message") {
-              list.push({
-                id: crypto.randomUUID(),
-                kind: "assistant_message",
-                timestamp: Date.now(),
-                chunks: [{ type: "message", text: "（本回合已完成，未返回文本消息）" }],
-              });
-            } else if (last?.kind === "tool_call") {
-              list.push({
-                id: crypto.randomUUID(),
-                kind: "assistant_message",
-                timestamp: Date.now(),
-                chunks: [{ type: "message", text: "（本回合已完成）" }],
-              });
-            }
-          });
+        // Never synthesize a "turn completed" assistant message when the
+        // prompt itself failed — that would disguise an error as success.
+        if (!promptFailed) {
+          const assistantText = assistantTextAfterLastUser(entries);
+          if (assistantText) {
+            void useConversationStore.getState().persistMessage(
+              session.conversationId,
+              "assistant",
+              assistantText,
+            );
+          } else {
+            // Agents like Cursor may finish a turn with only tool cards and no
+            // agent_message_chunk. Surface an explicit completion so the thread
+            // doesn't look stuck after status returns to idle.
+            set((s) => {
+              const list = s.entriesByConversation[session.conversationId];
+              if (!list) return;
+              const last = list[list.length - 1];
+              if (last?.kind === "user_message") {
+                list.push({
+                  id: crypto.randomUUID(),
+                  kind: "assistant_message",
+                  timestamp: Date.now(),
+                  chunks: [{ type: "message", text: "（本回合已完成，未返回文本消息）" }],
+                });
+              } else if (last?.kind === "tool_call") {
+                list.push({
+                  id: crypto.randomUUID(),
+                  kind: "assistant_message",
+                  timestamp: Date.now(),
+                  chunks: [{ type: "message", text: "（本回合已完成）" }],
+                });
+              }
+            });
+          }
         }
         // Persist full thread snapshot (thought/tool_call/etc.) so the UI can
         // restore complete history after restart.
@@ -933,3 +963,38 @@ export const useAgentStore = create<AgentStore>()(
     },
   ),
 );
+
+/**
+ * Waits for the session of `conversationId` to leave "starting" without
+ * polling: subscribes to store changes and resolves on the first relevant
+ * transition. Resolves the live sessionId, or null when the session is gone.
+ * The timeout is only a safety net for a stuck handshake — success/failure
+ * transitions resolve immediately.
+ */
+export function waitSessionReady(
+  conversationId: string,
+  timeoutMs = 15_000,
+): Promise<string | null> {
+  return new Promise((resolve) => {
+    const current = useAgentStore.getState().sessions[conversationId];
+    if (!current) return resolve(null);
+    if (current.sessionId && current.status !== "starting") return resolve(current.sessionId);
+
+    let unsub: (() => void) | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (value: string | null) => {
+      if (timer !== undefined) clearTimeout(timer);
+      unsub?.();
+      resolve(value);
+    };
+    unsub = useAgentStore.subscribe(() => {
+      const s = useAgentStore.getState().sessions[conversationId];
+      if (!s) return finish(null);
+      if (s.sessionId && s.status !== "starting") return finish(s.sessionId);
+    });
+    timer = setTimeout(() => {
+      const s = useAgentStore.getState().sessions[conversationId];
+      finish(s?.sessionId || null);
+    }, timeoutMs);
+  });
+}

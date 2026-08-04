@@ -8,8 +8,8 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use agent_client_protocol::{self as acp, Agent as _};
 use tauri::{AppHandle, Emitter};
@@ -33,6 +33,27 @@ const AGENT_SESSION_TERMINATED_EVENT: &str = "agent-session-terminated";
 // Steady-state restarts complete in well under a second.
 const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 const STDERR_TAIL_LINES: usize = 50;
+
+/// Session metadata delivered by a successful handshake.
+type SessionHandshakeInfo = (
+    acp::SessionId,
+    Option<SessionModesDto>,
+    Option<SessionModelsDto>,
+    Option<Vec<SessionConfigOptionDto>>,
+);
+
+/// What run_session reports back through its oneshot channel: the live
+/// connection plus the flattened handshake metadata.
+type SessionInitResult = Result<
+    (
+        acp::ClientSideConnection,
+        acp::SessionId,
+        Option<SessionModesDto>,
+        Option<SessionModelsDto>,
+        Option<Vec<SessionConfigOptionDto>>,
+    ),
+    NexError,
+>;
 
 fn permission_option_kind_str(kind: acp::PermissionOptionKind) -> &'static str {
     match kind {
@@ -402,23 +423,93 @@ fn models_from_json(value: &serde_json::Value) -> Option<SessionModelsDto> {
 }
 
 /// ACP 0.7 agent methods return `!Send` futures (`async_trait(?Send)`).
-/// Tauri commands require `Send` futures, so we drive those calls on a
-/// dedicated current-thread runtime inside `spawn_blocking`.
+/// Tauri commands require `Send` futures, so we drive those calls with
+/// `block_on` on a current-thread runtime.
+///
+/// The runtimes live on a fixed pool of dedicated worker threads instead of
+/// being built per call: constructing+tearing down a tokio runtime on every
+/// prompt/cancel/mode-switch was pure overhead (each call pays the builder
+/// cost and occupies a blocking-pool thread for the whole agent turn). A
+/// prompt blocks its worker until the turn completes, so the pool keeps one
+/// worker per concurrently drivable session and dispatches round-robin.
+type AcpJob = Box<dyn FnOnce(Option<&tokio::runtime::Runtime>) + Send>;
+
+static ACP_WORKERS: OnceLock<(Vec<std::sync::mpsc::SyncSender<AcpJob>>, AtomicUsize)> =
+    OnceLock::new();
+
+fn acp_worker_count() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get().clamp(4, 8))
+        .unwrap_or(4)
+}
+
+fn acp_workers() -> &'static (Vec<std::sync::mpsc::SyncSender<AcpJob>>, AtomicUsize) {
+    ACP_WORKERS.get_or_init(|| {
+        let n = acp_worker_count();
+        let mut senders = Vec::with_capacity(n);
+        for i in 0..n {
+            let (tx, rx) = std::sync::mpsc::sync_channel::<AcpJob>(64);
+            // If the thread fails to spawn, drop the sender: dispatch reports
+            // a dead worker as an Internal error instead of hanging.
+            if std::thread::Builder::new()
+                .name(format!("acp-worker-{i}"))
+                .spawn(move || {
+                    // One long-lived current-thread runtime per worker; jobs
+                    // run sequentially, and the future is built + polled on
+                    // this thread so `!Send` futures are fine.
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .ok();
+                    for job in rx {
+                        job(rt.as_ref());
+                    }
+                })
+                .is_ok()
+            {
+                senders.push(tx);
+            }
+        }
+        (senders, AtomicUsize::new(0))
+    })
+}
+
 async fn run_acp<T, F, Fut>(op: F) -> Result<T, NexError>
 where
     T: Send + 'static,
     F: FnOnce() -> Fut + Send + 'static,
     Fut: Future<Output = Result<T, acp::Error>> + 'static,
 {
-    tokio::task::spawn_blocking(move || {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| NexError::Internal(format!("failed to start acp worker runtime: {e}")))?;
-        rt.block_on(op()).map_err(NexError::from)
-    })
-    .await
-    .map_err(|e| NexError::Agent(format!("acp worker join error: {e}")))?
+    let (senders, next) = acp_workers();
+    if senders.is_empty() {
+        return Err(NexError::Internal(
+            "no acp worker thread could be started".to_string(),
+        ));
+    }
+    let (tx, rx) = oneshot::channel::<Result<T, NexError>>();
+    let job: AcpJob = Box::new(move |rt| {
+        let result = match rt {
+            Some(rt) => rt.block_on(op()).map_err(NexError::from),
+            None => Err(NexError::Internal(
+                "failed to start acp worker runtime".to_string(),
+            )),
+        };
+        let _ = tx.send(result);
+    });
+    // Round-robin so concurrent sessions spread across workers instead of
+    // stacking behind one busy worker's queue.
+    let idx = next.fetch_add(1, Ordering::Relaxed) % senders.len();
+    senders[idx]
+        .send(job)
+        .map_err(|_| NexError::Internal("acp worker thread died".to_string()))?;
+    rx.await
+        .map_err(|_| NexError::Agent("acp worker dropped the job".to_string()))?
+}
+
+impl Default for AcpSessionManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AcpSessionManager {
@@ -663,9 +754,7 @@ async fn run_session(
     spec: LaunchSpec,
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
     sessions: Arc<Mutex<HashMap<String, Arc<SessionHandle>>>>,
-    init_tx: oneshot::Sender<
-        Result<(acp::ClientSideConnection, acp::SessionId, Option<SessionModesDto>, Option<SessionModelsDto>, Option<Vec<SessionConfigOptionDto>>), NexError>,
-    >,
+    init_tx: oneshot::Sender<SessionInitResult>,
     shutdown_rx: oneshot::Receiver<()>,
 ) {
     let program = spec.program.clone();
@@ -774,15 +863,7 @@ async fn run_session(
     })
     .await;
 
-    let handshake: Result<
-        (
-            acp::SessionId,
-            Option<SessionModesDto>,
-            Option<SessionModelsDto>,
-            Option<Vec<SessionConfigOptionDto>>,
-        ),
-        NexError,
-    > = match handshake {
+    let handshake: Result<SessionHandshakeInfo, NexError> = match handshake {
         Ok(Ok(v)) => Ok(v),
         Ok(Err(e)) => Err(enrich(e, &mut child, &stderr_tail, &program, &spec.args)),
         Err(_) => Err(NexError::Agent(format!(

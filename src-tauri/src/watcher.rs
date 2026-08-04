@@ -48,10 +48,17 @@ type ProjectDebouncer = Debouncer<RecommendedWatcher, RecommendedCache>;
 
 /// Manages one debounced watcher per project path.
 ///
-/// The `Debouncer` must stay in the map: dropping it stops the watcher
-/// thread. v1 never unwatches — watchers live until app exit.
+/// Dropping a `Debouncer` from the map stops its watcher thread.
 pub struct WatcherManager {
     watchers: Arc<Mutex<HashMap<String, ProjectDebouncer>>>,
+}
+
+impl Clone for WatcherManager {
+    fn clone(&self) -> Self {
+        Self {
+            watchers: Arc::clone(&self.watchers),
+        }
+    }
 }
 
 impl WatcherManager {
@@ -105,5 +112,17 @@ impl WatcherManager {
 
         watchers.insert(project_path.to_string(), debouncer);
         Ok(())
+    }
+
+    /// Stop watching a project path (no-op if not watched).
+    pub fn unwatch(&self, project_path: &str) {
+        let mut watchers = self.watchers.lock().unwrap();
+        watchers.remove(project_path);
+    }
+
+    /// Keep only `keep_path` watched; drop every other watcher (LRU=1 active).
+    pub fn unwatch_except(&self, keep_path: &str) {
+        let mut watchers = self.watchers.lock().unwrap();
+        watchers.retain(|path, _| path == keep_path);
     }
 }

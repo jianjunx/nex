@@ -54,8 +54,14 @@ export function BranchSelector({ projectPath, open, onOpenChange }: BranchSelect
   const busy = !!opRunning;
   const q = query.trim().toLowerCase();
   const match = (name: string) => name.toLowerCase().includes(q);
-  const locals = branches.filter((b) => !b.isRemote && match(b.name));
-  const remotes = branches.filter((b) => b.isRemote && match(b.name));
+  const byRecency = <T extends { tipTime?: number | null; name: string }>(a: T, b: T) => {
+    const ta = a.tipTime ?? Number.NEGATIVE_INFINITY;
+    const tb = b.tipTime ?? Number.NEGATIVE_INFINITY;
+    if (tb !== ta) return tb - ta;
+    return a.name.localeCompare(b.name);
+  };
+  const locals = branches.filter((b) => !b.isRemote && match(b.name)).slice().sort(byRecency);
+  const remotes = branches.filter((b) => b.isRemote && match(b.name)).slice().sort(byRecency);
 
   const doCheckout = async (name: string) => {
     if (busy) return;
@@ -153,7 +159,7 @@ export function BranchSelector({ projectPath, open, onOpenChange }: BranchSelect
               </div>
             </>
           )}
-          {error && <p className="px-2 py-1 text-xs text-[var(--error)]">{error}</p>}
+          {error && <p className="px-2 py-1 text-xs text-[var(--error)]">{error.split(/\r?\n/)[0]}</p>}
           <DropdownMenuSeparator />
           {/* 选中后菜单自动关闭，弹新建分支小窗 */}
           <DropdownMenuItem data-testid="new-branch-item" onSelect={() => setCreateOpen(true)}>

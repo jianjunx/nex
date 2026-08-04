@@ -156,20 +156,19 @@ pub struct AgentSessionManager {
     /// distributions into `(node, bin)` pairs.
     package_cache: Arc<dyn PackageResolver>,
     /// Cached shell env (PATH, etc.) loaded from the user's login shell.
-    /// Held as `Arc` for the same reason as `node_runtime`.
-    #[allow(dead_code)] // surfaced in a follow-up PR for diagnostics UI
     shell_env: Arc<ShellEnv>,
+    /// Per-cwd env (direnv / nix) layered on top of `shell_env`.
+    project_envs: Arc<super::project_env::ProjectEnvCache>,
 }
 
 impl AgentSessionManager {
-    pub fn new(app_data_dir: &Path) -> Self {
-        // Kick off the shell-env loader on Tauri's async runtime. This must
-        // happen *before* we try to construct the node runtime so the PATH
-        // lookup has the user's real PATH. `ShellEnv::try_trigger_lazy_load`
-        // is idempotent and uses `tauri::async_runtime::spawn`, which works
-        // correctly when called from the sync `setup` hook.
-        let shell_env = ShellEnv::new();
-        shell_env.try_trigger_lazy_load();
+    pub fn new(
+        app_data_dir: &Path,
+        shell_env: Arc<ShellEnv>,
+        project_envs: Arc<super::project_env::ProjectEnvCache>,
+    ) -> Self {
+        // Shell-env loader must already have been kicked off by the caller
+        // (shared with TerminalManager) before node resolution starts.
 
         // Build the node runtime handle and warm it up in the background.
         // The first `create_session` will block on `get()` if resolution is
@@ -196,7 +195,13 @@ impl AgentSessionManager {
             node_runtime,
             package_cache,
             shell_env,
+            project_envs,
         }
+    }
+
+    /// PATH for a project cwd: prefers direnv-enriched capture, else login shell.
+    pub async fn path_for_cwd(&self, cwd: &str) -> std::ffi::OsString {
+        self.project_envs.path_for_cwd(cwd, &self.shell_env).await
     }
 
     /// Resolves the target to a concrete launch spec and starts the session.
@@ -222,13 +227,25 @@ impl AgentSessionManager {
                 // Block on node runtime resolution if it isn't done yet. This
                 // is the one place that intentionally awaits the handle.
                 let _ = self.node_runtime.get().await;
-                launch::resolve_registry(&entry, cwd, &self.binary_cache, &*self.package_cache).await?
+                // Prefer project-scoped PATH (direnv) over bare login-shell
+                // PATH so agents see the same tools as an interactive shell
+                // in this cwd. Falls back to ShellEnv when capture fails.
+                let shell_path = self.path_for_cwd(cwd).await;
+                launch::resolve_registry(
+                    &entry,
+                    cwd,
+                    &self.binary_cache,
+                    &*self.package_cache,
+                    &shell_path,
+                )
+                .await?
             }
             SessionTarget::Custom { id } => {
                 let server = self.custom.find(&id).ok_or_else(|| {
                     NexError::Agent(format!("unknown custom server `{id}`"))
                 })?;
-                launch::resolve_custom(&server.command, server.env.clone(), cwd)?
+                let shell_path = self.path_for_cwd(cwd).await;
+                launch::resolve_custom(&server.command, server.env.clone(), cwd, &shell_path)?
             }
         };
         self.acp.create_session(app, conversation_id, spec).await

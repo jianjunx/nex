@@ -31,8 +31,10 @@ impl BinaryCache {
         let install_dir = self
             .root
             .join(sanitize(&entry.id))
-            .join(&entry.version)
-            .join(platform_key);
+            // Sanitize version too: registry data is remote-supplied and a
+            // hostile `../` component must not escape the cache root.
+            .join(sanitize(&entry.version))
+            .join(sanitize(platform_key));
         let marker = install_dir.join(".nex-install-ok");
 
         if marker.exists() {
@@ -48,9 +50,16 @@ impl BinaryCache {
 
         let bytes = download_archive(&target.archive).await?;
 
-        if let Some(expected) = &target.sha256 {
-            verify_sha256(&bytes, expected)?;
-        }
+        // Checksum verification is mandatory: executing an unverified
+        // remote binary is a supply-chain hole. Registry entries without
+        // a sha256 are rejected outright.
+        let Some(expected) = &target.sha256 else {
+            return Err(NexError::Agent(format!(
+                "agent 分发缺少 sha256 校验值，拒绝安装: {}",
+                entry.id
+            )));
+        };
+        verify_sha256(&bytes, expected)?;
 
         extract_archive(&bytes, &target.archive, &install_dir)?;
 
@@ -62,10 +71,21 @@ impl BinaryCache {
     }
 }
 
+/// Hard cap on archive downloads so a stalled connection can't hang the
+/// agent install forever.
+const DOWNLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
 async fn download_archive(url: &str) -> Result<Vec<u8>, NexError> {
-    let response = reqwest::get(url).await.map_err(|e| {
-        NexError::Agent(format!("failed to download agent archive: {e}"))
-    })?;
+    let client = reqwest::Client::builder()
+        .timeout(DOWNLOAD_TIMEOUT)
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| NexError::Agent(format!("failed to build download client: {e}")))?;
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| NexError::Agent(format!("failed to download agent archive: {e}")))?;
 
     let status = response.status();
     if !status.is_success() {

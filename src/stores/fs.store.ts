@@ -16,6 +16,17 @@ export { clearAllAutoSaveTimers };
 // Required by immer before a Set can be drafted (expandedDirs).
 enableMapSet();
 
+/**
+ * Joins `name` onto `parent` using the separator dominant in `parent`
+ * (Windows paths use `\`, unix paths use `/`). Hardcoding `\\` produced
+ * mixed-separator paths on macOS/Linux that broke tab/save matching.
+ */
+function joinWithParentSep(parent: string, name: string): string {
+  if (!parent) return name;
+  const sep = parent.includes("\\") && !parent.includes("/") ? "\\" : "/";
+  return `${parent}${sep}${name}`;
+}
+
 function scheduleAutoSave(path: string) {
   if (!useSettingsStore.getState().editorAutoSave) return;
   scheduleAutoSaveTimer(path, () => {
@@ -62,6 +73,31 @@ export type EditorLayout = { paths: string[]; activePath: string | null };
 
 /** In-memory per-project editor cache — full EditorFile[] preserving dirty drafts within a session. */
 export type EditorCache = { openFiles: EditorFile[]; activePath: string | null };
+
+/** Cap on in-memory editor caches; least-recently-used projects fall back to
+ *  cold restore from the persisted layout (drafts are flushed to disk on save). */
+export const EDITOR_CACHE_MAX_PROJECTS = 10;
+
+// LRU recency order for editorCacheByProject (tail = most recent). Module
+// scope and non-reactive: it only drives eviction, never rendered UI.
+const editorCacheOrder: string[] = [];
+
+function touchEditorCache(projectId: string) {
+  const i = editorCacheOrder.indexOf(projectId);
+  if (i >= 0) editorCacheOrder.splice(i, 1);
+  editorCacheOrder.push(projectId);
+}
+
+/** Pops least-recently-used ids while over the cap. */
+function overflowedEditorCacheIds(): string[] {
+  const overflow = editorCacheOrder.length - EDITOR_CACHE_MAX_PROJECTS;
+  return overflow > 0 ? editorCacheOrder.splice(0, overflow) : [];
+}
+
+/** Test-only hook: reset the module-level LRU bookkeeping. */
+export function __resetEditorCacheLru() {
+  editorCacheOrder.length = 0;
+}
 
 /** 「打开并跳到行」的待消费目标；EditorPanel 读出即清。 */
 export type PendingLine = { path: string; line: number };
@@ -136,6 +172,8 @@ interface FsStore {
   loadEditorState: (projectId: string) => Promise<void>;
   /** Synchronously persist current open-file paths for the project (for beforeunload). */
   persistEditorLayout: (projectId: string) => void;
+  /** Drop file-tree nodes that do not belong under `projectPath`. */
+  clearTreeExcept: (projectPath: string) => void;
 }
 
 // Backend errors arrive as { type, message }; fall back to String(err).
@@ -454,7 +492,7 @@ export const useFsStore = create<FsStore>()(
       set((s) => { s.error = null; });
       try {
         const parent = path.replace(/[/\\][^/\\]*$/, "");
-        const newPath = parent ? `${parent}\\${newName}` : newName;
+        const newPath = joinWithParentSep(parent, newName);
         await fsRenameEntry(path, newName);
         // Update open file path if the renamed file was open
         const openIndex = get().openFiles.findIndex((f) => f.path === path);
@@ -498,7 +536,7 @@ export const useFsStore = create<FsStore>()(
           const openIndex = get().openFiles.findIndex((f) => f.path === src);
           if (openIndex >= 0) {
             const name = src.replace(/^.*[/\\]/, "");
-            const newPath = `${targetDir}\\${name}`;
+            const newPath = joinWithParentSep(targetDir, name);
             set((s) => {
               s.openFiles[openIndex].path = newPath;
               if (s.activePath === src) s.activePath = newPath;
@@ -726,6 +764,12 @@ export const useFsStore = create<FsStore>()(
           openFiles: s.openFiles,
           activePath: s.activePath,
         };
+        // LRU eviction: keep the cache bounded; evicted projects still have
+        // their persisted layout for cold restore below.
+        touchEditorCache(projectId);
+        for (const old of overflowedEditorCacheIds()) {
+          delete s.editorCacheByProject[old];
+        }
         // Persist only paths — content is re-read from disk on cold restore.
         s.editorLayoutByProject[projectId] = {
           paths: s.openFiles.filter((f) => !f.diff).map((f) => f.path), // diff 标签不进冷恢复
@@ -741,6 +785,7 @@ export const useFsStore = create<FsStore>()(
       // 1. In-memory cache (instant, preserves unsaved drafts).
       const cached = get().editorCacheByProject[projectId];
       if (cached) {
+        touchEditorCache(projectId);
         set((s) => {
           s.openFiles = cached.openFiles;
           s.activePath = cached.activePath;
@@ -759,12 +804,18 @@ export const useFsStore = create<FsStore>()(
         // Dedupe in case a prior buggy persist wrote the same path twice
         // (React keys would collide and remount editors incorrectly).
         const uniquePaths = [...new Set(layout.paths)];
-        for (const path of uniquePaths) {
-          try {
-            await get().openFile(path, true);
-          } catch {
-            // File may have been deleted/moved since last session — skip.
-          }
+        const CONCURRENCY = 4;
+        for (let i = 0; i < uniquePaths.length; i += CONCURRENCY) {
+          const chunk = uniquePaths.slice(i, i + CONCURRENCY);
+          await Promise.all(
+            chunk.map(async (path) => {
+              try {
+                await get().openFile(path, true);
+              } catch {
+                // File may have been deleted/moved since last session — skip.
+              }
+            }),
+          );
         }
         // Restore the saved active tab if it survived re-opening.
         if (layout.activePath && get().openFiles.some((f) => f.path === layout.activePath)) {
@@ -789,6 +840,25 @@ export const useFsStore = create<FsStore>()(
           paths: openFiles.filter((f) => !f.diff).map((f) => f.path), // diff 标签不进冷恢复
           activePath,
         };
+      });
+    },
+
+    clearTreeExcept: (projectPath: string) => {
+      set((s) => {
+        const nextNodes: Record<string, typeof s.nodesByDir[string]> = {};
+        for (const [dir, nodes] of Object.entries(s.nodesByDir)) {
+          if (dir === projectPath || dir.startsWith(projectPath + "/") || dir.startsWith(projectPath + "\\")) {
+            nextNodes[dir] = nodes;
+          }
+        }
+        s.nodesByDir = nextNodes;
+        const nextExpanded = new Set<string>();
+        for (const dir of s.expandedDirs) {
+          if (dir === projectPath || dir.startsWith(projectPath + "/") || dir.startsWith(projectPath + "\\")) {
+            nextExpanded.add(dir);
+          }
+        }
+        s.expandedDirs = nextExpanded;
       });
     },
     })),

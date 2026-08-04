@@ -17,7 +17,7 @@ interface TerminalStore {
   settingsVersion: number;
   bumpSettingsVersion: () => void;
 
-  create: (projectPath: string, shell?: string) => Promise<void>;
+  create: (projectPath: string, shell?: string, cols?: number, rows?: number) => Promise<void>;
   write: (id: string, data: string) => void;
   resize: (id: string, cols: number, rows: number) => void;
   kill: (id: string) => Promise<void>;
@@ -99,24 +99,47 @@ export const useTerminalStore = create<TerminalStore>()(
     settingsVersion: 0,
     bumpSettingsVersion: () => { set((s) => { s.settingsVersion += 1; }); },
 
-    create: async (projectPath: string, shell?: string) => {
+    create: async (projectPath: string, shell?: string, cols?: number, rows?: number) => {
       set((s) => { s.loading = true; s.error = null; });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let timedOut = false;
+      // Pass the live xterm size so the PTY/zsh `$COLUMNS` match from the
+      // first prompt — avoids a spurious inverse `%` (PROMPT_EOL_MARK) when
+      // the frontend already fitted before any session existed (onResize
+      // was a no-op then, so a default 80×24 PTY never caught up).
+      const spawn = terminalCreate(projectPath, shell, cols, rows);
       try {
         // Race the spawn against a deadline: if the PTY invoke hangs (a blocked
         // ConPTY never resolving), surface it instead of a forever-loading "+".
         const id = await Promise.race([
-          terminalCreate(projectPath, shell),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error("终端启动超时：底层 PTY 未响应。可能是安全软件拦截了 ConPTY，或指定的 shell 无效。")), 8000)
-          ),
+          spawn,
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => {
+              timedOut = true;
+              reject(new Error("终端启动超时：底层 PTY 未响应。可能是安全软件拦截了 ConPTY，或指定的 shell 无效。"));
+            }, 8000);
+          }),
         ]);
         set((s) => {
           s.sessions.push({ id, title: `Terminal ${s.sessions.length + 1}` });
           s.activeSessionId = id;
         });
+        // Belt-and-braces: push size again now that the session exists, in
+        // case xterm fitted between invoke start and session registration.
+        if (cols && rows) {
+          void terminalResize(id, cols, rows).catch(() => { /* best-effort */ });
+        }
       } catch (err) {
         set((s) => { s.error = errorMessage(err); });
+        // If we timed out but the backend PTY still materializes moments
+        // later, kill it so it doesn't linger as an orphan session.
+        if (timedOut) {
+          void spawn
+            .then((lateId) => terminalKill(lateId))
+            .catch(() => { /* spawn failed too — nothing to clean up */ });
+        }
       } finally {
+        if (timer !== undefined) clearTimeout(timer);
         set((s) => { s.loading = false; });
       }
     },

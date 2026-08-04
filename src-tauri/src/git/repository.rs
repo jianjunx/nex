@@ -157,6 +157,11 @@ pub fn get_commit_patch(repo_path: &Path, hash: &str) -> Result<String, NexError
 
 pub fn get_log(repo_path: &Path, limit: usize) -> Result<Vec<CommitInfo>, NexError> {
     let repo = Repository::open(repo_path)?;
+    // Fresh repo with no commits yet: HEAD is unborn, so there is simply
+    // no history — return an empty list instead of erroring.
+    if repo.head().is_err() {
+        return Ok(Vec::new());
+    }
     let mut walk = repo.revwalk()?;
     walk.push_head()?;
     walk.set_sorting(git2::Sort::TIME)?;
@@ -225,9 +230,24 @@ pub fn commit(repo_path: &Path, message: &str) -> Result<String, NexError> {
         Ok(head) => vec![head],
         Err(_) => Vec::new(),
     };
+    // Reject no-op commits: staging identical to HEAD would silently create
+    // an empty commit (git CLI refuses this without --allow-empty).
+    if let Some(parent) = parents.first() {
+        if parent.tree_id() == tree_id {
+            return Err(NexError::Git("暂存区为空：没有可提交的更改".to_string()));
+        }
+    }
     let parent_refs: Vec<&git2::Commit> = parents.iter().collect();
     let oid = repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &parent_refs)?;
     Ok(oid.to_string())
+}
+
+fn branch_tip_time(branch: &git2::Branch<'_>) -> Option<i64> {
+    branch
+        .get()
+        .peel_to_commit()
+        .ok()
+        .map(|c| c.time().seconds())
 }
 
 pub fn list_branches(repo_path: &Path) -> Result<Vec<BranchInfo>, NexError> {
@@ -238,6 +258,7 @@ pub fn list_branches(repo_path: &Path) -> Result<Vec<BranchInfo>, NexError> {
         let (branch, _) = entry?;
         let name = branch.name()?.unwrap_or("").to_string();
         let is_head = branch.is_head();
+        let tip_time = branch_tip_time(&branch);
         // ahead/behind is only meaningful for the HEAD branch against its
         // upstream; every other branch reports None (UI shows badges once).
         let (ahead, behind) = if is_head {
@@ -245,8 +266,8 @@ pub fn list_branches(repo_path: &Path) -> Result<Vec<BranchInfo>, NexError> {
                 .upstream()
                 .ok()
                 .and_then(|u| u.get().target())
-                .and_then(|u| branch.get().target().map(|l| (l, u)))
-                .map(|(l, u)| {
+                .zip(branch.get().target())
+                .map(|(u, l)| {
                     let (a, b) = repo.graph_ahead_behind(l, u).unwrap_or((0, 0));
                     (Some(a as u32), Some(b as u32))
                 })
@@ -254,13 +275,28 @@ pub fn list_branches(repo_path: &Path) -> Result<Vec<BranchInfo>, NexError> {
         } else {
             (None, None)
         };
-        out.push(BranchInfo { name, is_head, is_remote: false, ahead, behind });
+        out.push(BranchInfo {
+            name,
+            is_head,
+            is_remote: false,
+            ahead,
+            behind,
+            tip_time,
+        });
     }
 
     for entry in repo.branches(Some(git2::BranchType::Remote))? {
         let (branch, _) = entry?;
         let name = branch.name()?.unwrap_or("").to_string();
-        out.push(BranchInfo { name, is_head: false, is_remote: true, ahead: None, behind: None });
+        let tip_time = branch_tip_time(&branch);
+        out.push(BranchInfo {
+            name,
+            is_head: false,
+            is_remote: true,
+            ahead: None,
+            behind: None,
+            tip_time,
+        });
     }
 
     Ok(out)
@@ -319,12 +355,29 @@ pub fn delete_branch(repo_path: &Path, name: &str) -> Result<(), NexError> {
     Ok(())
 }
 
+/// Rejects repo-relative paths that could escape the working directory
+/// (`..` components, absolute paths). All discard/revert file lists pass
+/// through here before touching the filesystem or checkout APIs.
+fn validate_repo_relative(file: &str) -> Result<(), NexError> {
+    let p = Path::new(file);
+    if p.is_absolute()
+        || p.components().any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(NexError::Git(format!("非法的仓库相对路径: {file}")));
+    }
+    Ok(())
+}
+
 pub fn discard_changes(repo_path: &Path, files: &[String]) -> Result<(), NexError> {
     let repo = Repository::open(repo_path)?;
     let workdir = repo
         .workdir()
         .ok_or_else(|| NexError::Git("cannot discard changes in a bare repository".to_string()))?
         .to_path_buf();
+
+    for file in files {
+        validate_repo_relative(file)?;
+    }
 
     // Untracked paths have no index entry: delete them from disk directly.
     for file in files {
@@ -353,6 +406,9 @@ pub fn discard_changes(repo_path: &Path, files: &[String]) -> Result<(), NexErro
 
 pub fn revert_staged(repo_path: &Path, files: &[String]) -> Result<(), NexError> {
     let repo = Repository::open(repo_path)?;
+    for file in files {
+        validate_repo_relative(file)?;
+    }
     match repo.head() {
         Ok(head) => {
             // 1) Reset index entries back to HEAD (unstage)…
@@ -410,27 +466,52 @@ pub fn stash_save(repo_path: &Path, message: &str) -> Result<(), NexError> {
 pub fn stash_list(repo_path: &Path) -> Result<Vec<StashEntry>, NexError> {
     let mut repo = Repository::open(repo_path)?;
     let mut out = Vec::new();
-    repo.stash_foreach(|index, message, _oid| {
-        out.push(StashEntry { index: index as u32, message: message.to_string() });
+    repo.stash_foreach(|index, message, oid| {
+        out.push(StashEntry {
+            index: index as u32,
+            message: message.to_string(),
+            id: oid.to_string(),
+        });
         true
     })?;
     Ok(out)
 }
 
-pub fn stash_apply(repo_path: &Path, index: u32) -> Result<(), NexError> {
+/// Resolves a stable stash id (commit OID) to its *current* positional
+/// index. Callers previously passed UI-time indexes, which silently hit the
+/// wrong stash whenever the list shifted (any drop renumbers everything).
+fn resolve_stash_index(repo: &mut Repository, id: &str) -> Result<usize, NexError> {
+    let wanted = git2::Oid::from_str(id)
+        .map_err(|_| NexError::Git(format!("非法的 stash id: {id:?}")))?;
+    let mut found: Option<usize> = None;
+    repo.stash_foreach(|index, _message, oid| {
+        if *oid == wanted {
+            found = Some(index);
+            false // stop iterating
+        } else {
+            true
+        }
+    })?;
+    found.ok_or_else(|| NexError::Git("stash 条目已不存在（列表可能已变化，请刷新）".to_string()))
+}
+
+pub fn stash_apply(repo_path: &Path, id: &str) -> Result<(), NexError> {
     let mut repo = Repository::open(repo_path)?;
-    repo.stash_apply(index as usize, None)?;
+    let index = resolve_stash_index(&mut repo, id)?;
+    repo.stash_apply(index, None)?;
     Ok(())
 }
 
-pub fn stash_pop(repo_path: &Path, index: u32) -> Result<(), NexError> {
+pub fn stash_pop(repo_path: &Path, id: &str) -> Result<(), NexError> {
     let mut repo = Repository::open(repo_path)?;
-    repo.stash_pop(index as usize, None)?;
+    let index = resolve_stash_index(&mut repo, id)?;
+    repo.stash_pop(index, None)?;
     Ok(())
 }
 
-pub fn stash_drop(repo_path: &Path, index: u32) -> Result<(), NexError> {
+pub fn stash_drop(repo_path: &Path, id: &str) -> Result<(), NexError> {
     let mut repo = Repository::open(repo_path)?;
-    repo.stash_drop(index as usize)?;
+    let index = resolve_stash_index(&mut repo, id)?;
+    repo.stash_drop(index)?;
     Ok(())
 }

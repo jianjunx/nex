@@ -11,6 +11,7 @@ pub mod binary;
 pub mod launch;
 pub mod node_runtime;
 pub mod package_cache;
+pub mod project_env;
 pub mod registry;
 pub mod server;
 pub mod shell_env;

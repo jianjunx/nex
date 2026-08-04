@@ -15,6 +15,7 @@
 //!   does not need a system Node just to run Nex.
 
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -42,11 +43,16 @@ pub struct LaunchSpec {
 /// dir (via `PackageResolver::resolve_npx`) and emit a `LaunchSpec` that
 /// runs `<node> <bin-path> <args...>` directly. For `binary` distributions
 /// we reuse the existing `BinaryCache` download/extract path.
+///
+/// `shell_path` is the user's login-shell PATH (from `ShellEnv`). Packaged
+/// GUI apps inherit a stripped process PATH that omits Homebrew / nvm /
+/// etc.; agents need the real PATH so tools like `git` resolve.
 pub async fn resolve_registry(
     entry: &RegistryEntry,
     cwd: &str,
     binary_cache: &BinaryCache,
     package_resolver: &dyn PackageResolver,
+    shell_path: &OsStr,
 ) -> Result<LaunchSpec, NexError> {
     if let Some(npx) = &entry.distribution.npx {
         let resolved = package_resolver.resolve_npx(entry, npx).await?;
@@ -58,10 +64,9 @@ pub async fn resolve_registry(
         // Per-agent env override (e.g. clear ANTHROPIC_API_KEY for claude-acp)
         // is applied at the **final** spawn env, never during `npm install`.
         apply_per_id_env(&entry.id, &mut env);
-        // Prepend the managed Node dir to PATH so any auxiliary tooling the
-        // agent spawns (npm shims, husky hooks, etc.) sees the same node we
-        // do. Per-agent env above takes precedence.
-        env.extend(node_path_env_overlay(&resolved.node_path));
+        // Prepend the managed Node dir to the login-shell PATH so agents see
+        // both our node and system tools (git, rg, …).
+        env.extend(node_path_env_overlay(&resolved.node_path, shell_path));
 
         log::info!(
             "resolved npx agent `{}`: {} {}",
@@ -78,7 +83,7 @@ pub async fn resolve_registry(
     }
 
     if let Some(binaries) = &entry.distribution.binary {
-        let key = current_platform_key();
+        let key = registry_platform_key();
         if let Some(target) = binaries.get(&key) {
             let exe_path = binary_cache
                 .ensure_installed(entry, target, &key)
@@ -87,6 +92,9 @@ pub async fn resolve_registry(
             let args = target.args.clone();
             let mut env = target.env.clone();
             apply_per_id_env(&entry.id, &mut env);
+            // Binary agents (e.g. Cursor) also need the login-shell PATH —
+            // without it `git: command not found` in packaged builds.
+            apply_shell_path(&mut env, shell_path);
             log::info!(
                 "resolved binary agent `{}`: {} {}",
                 entry.id,
@@ -107,43 +115,61 @@ pub async fn resolve_registry(
     )))
 }
 
-/// Build the env map used by `PackageCache` to spawn `node <bin> <args>`.
-/// Layers the node-managed PATH over the per-agent env so the child sees
-/// our node and any npm-installed shims.
-fn node_path_env_overlay(node_path: &Path) -> HashMap<String, String> {
-    let mut env = HashMap::new();
-    if let Some(parent) = node_path.parent() {
-        let path_value = parent.to_string_lossy().into_owned();
-        // Unconditional PATH: Node reads `process.env.PATH` regardless of OS.
-        env.insert("PATH".to_string(), path_value.clone());
-        // Belt-and-braces on Windows.
-        #[cfg(windows)]
-        {
-            env.insert("Path".to_string(), path_value);
-        }
-    }
-    env
+/// Build the env map used when spawning `<node> <bin> <args>`.
+/// Prepends the node-managed dir onto the login-shell PATH (not a PATH that
+/// contains only the node dir — that made `git` invisible in .app builds).
+fn node_path_env_overlay(node_path: &Path, shell_path: &OsStr) -> HashMap<String, String> {
+    super::node_runtime::npm_command_env_with_base(node_path, Some(shell_path))
 }
 
-/// Builds the platform key used to index binary targets in the registry
-/// (e.g. `windows-x86_64`, `darwin-aarch64`). Re-exported here so the
-/// existing `current_platform_key()` callers in this module keep working
-/// without churn; the canonical definition is in `node_runtime.rs` to keep
-/// the Windows / macOS / Linux OS-name remapping in one place.
-fn current_platform_key() -> String {
-    super::node_runtime::current_platform_key()
+/// Ensure `env` carries the login-shell PATH unless the agent already set one.
+fn apply_shell_path(env: &mut HashMap<String, String>, shell_path: &OsStr) {
+    if env.contains_key("PATH") || env.contains_key("Path") {
+        return;
+    }
+    let value = shell_path.to_string_lossy().into_owned();
+    env.insert("PATH".to_string(), value.clone());
+    #[cfg(windows)]
+    {
+        env.insert("Path".to_string(), value);
+    }
+}
+
+/// Platform key used to index `distribution.binary` in the shared ACP
+/// registry (same schema as Zed). Distinct from Node's release triples
+/// (`darwin-arm64` / `win-x64` in `node_runtime::current_platform_key`).
+///
+/// Registry examples: `darwin-aarch64`, `darwin-x86_64`, `linux-aarch64`,
+/// `linux-x86_64`, `windows-aarch64`, `windows-x86_64`.
+pub fn registry_platform_key() -> String {
+    let (os, arch) = match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "aarch64") => ("darwin", "aarch64"),
+        ("macos", "x86_64") => ("darwin", "x86_64"),
+        ("windows", "aarch64") => ("windows", "aarch64"),
+        ("windows", "x86_64") => ("windows", "x86_64"),
+        ("linux", "aarch64") => ("linux", "aarch64"),
+        ("linux", "x86_64") => ("linux", "x86_64"),
+        (other, other_arch) => (other, other_arch),
+    };
+    format!("{os}-{arch}")
 }
 
 /// Resolves a user-defined custom server (a raw command string) into a launch
 /// spec. Unlike registry agents this string is the *user's* input, not a Nex
 /// guess, so splitting it on whitespace is appropriate.
-pub fn resolve_custom(command: &str, env: HashMap<String, String>, cwd: &str) -> Result<LaunchSpec, NexError> {
+pub fn resolve_custom(
+    command: &str,
+    mut env: HashMap<String, String>,
+    cwd: &str,
+    shell_path: &OsStr,
+) -> Result<LaunchSpec, NexError> {
     let mut parts = command.split_whitespace();
     let program = parts
         .next()
         .ok_or_else(|| NexError::Agent("empty agent command".to_string()))?
         .to_string();
     let args: Vec<String> = parts.map(str::to_string).collect();
+    apply_shell_path(&mut env, shell_path);
     Ok(LaunchSpec { program, args, env, cwd: cwd.to_string() })
 }
 
@@ -296,6 +322,11 @@ mod tests {
         BinaryCache::new(&std::env::temp_dir().join("nex-test-binary-cache"))
     }
 
+    /// Login-shell PATH stand-in used by resolve_* tests.
+    fn test_shell_path() -> &'static OsStr {
+        OsStr::new("/opt/homebrew/bin:/usr/bin:/bin")
+    }
+
     /// Test double for `PackageResolver` that returns a canned `ResolvedNpx`
     /// without ever touching the filesystem. The optional `installed_version`
     /// field lets tests pin what `newest_installed_version` reports.
@@ -402,19 +433,27 @@ mod tests {
             "/opt/homebrew/bin/node",
             "/cache/agent-packages/_codex-acp/_pkg_1.1.7/node-/node_modules/.../cli.js",
         ));
-        let spec = resolve_registry(&e, "/work", &test_cache(), &resolver).await.unwrap();
+        let spec = resolve_registry(&e, "/work", &test_cache(), &resolver, test_shell_path()).await.unwrap();
         assert_eq!(spec.program, "/opt/homebrew/bin/node");
         assert!(spec.args[0].ends_with("cli.js"));
         assert_eq!(spec.cwd, "/work");
         assert!(!spec.env.contains_key("ANTHROPIC_API_KEY"));
-        assert!(spec.env.contains_key("PATH"));
+        let path = spec.env.get("PATH").expect("PATH set for agent");
+        assert!(
+            path.starts_with("/opt/homebrew/bin"),
+            "node dir should lead PATH: {path}"
+        );
+        assert!(
+            path.contains("/usr/bin"),
+            "login-shell PATH must be preserved so git resolves: {path}"
+        );
     }
 
     #[tokio::test]
     async fn resolve_registry_appends_entry_args() {
         let e = entry("gemini", Some(npx("@google/gemini-cli@0.52.0", &["--acp"])));
         let resolver = FakePackageResolver::ok(fake_resolved("/usr/bin/node", "/cache/bin"));
-        let spec = resolve_registry(&e, "/w", &test_cache(), &resolver).await.unwrap();
+        let spec = resolve_registry(&e, "/w", &test_cache(), &resolver, test_shell_path()).await.unwrap();
         // args: [bin, --acp]
         assert_eq!(spec.args.len(), 2);
         assert_eq!(spec.args[0], "/cache/bin");
@@ -425,7 +464,7 @@ mod tests {
     async fn resolve_registry_clears_anthropic_key_for_claude() {
         let e = entry("claude-acp", Some(npx("@agentclientprotocol/claude-agent-acp@0.62.0", &[])));
         let resolver = FakePackageResolver::ok(fake_resolved("/usr/bin/node", "/cache/bin"));
-        let spec = resolve_registry(&e, "/w", &test_cache(), &resolver).await.unwrap();
+        let spec = resolve_registry(&e, "/w", &test_cache(), &resolver, test_shell_path()).await.unwrap();
         assert_eq!(spec.env.get("ANTHROPIC_API_KEY").map(String::as_str), Some(""));
     }
 
@@ -436,7 +475,7 @@ mod tests {
             what: "npm package",
             hint: "synthetic failure".into(),
         });
-        let err = resolve_registry(&e, "/w", &test_cache(), &resolver).await.unwrap_err();
+        let err = resolve_registry(&e, "/w", &test_cache(), &resolver, test_shell_path()).await.unwrap_err();
         match err {
             NexError::AgentNotInstalled { what, hint } => {
                 assert_eq!(what, "npm package");
@@ -447,11 +486,11 @@ mod tests {
     }
 
     #[test]
-    fn platform_key_uses_darwin_on_macos() {
-        let key = current_platform_key();
+    fn registry_platform_key_uses_darwin_on_macos() {
+        let key = registry_platform_key();
         assert!(
             !key.starts_with("macos-"),
-            "platform key must not use Rust's macos OS name: {key}"
+            "registry key must not use Rust's macos OS name: {key}"
         );
         #[cfg(target_os = "macos")]
         {
@@ -460,52 +499,50 @@ mod tests {
                 "macOS should map to darwin-*: {key}"
             );
             assert!(
-                key.ends_with("-arm64") || key.ends_with("-x64"),
-                "unexpected arch in platform key: {key}"
+                key.ends_with("-aarch64") || key.ends_with("-x86_64"),
+                "unexpected arch in registry platform key: {key}"
+            );
+            // Must NOT use Node release naming (arm64/x64) — ACP registry
+            // keys are aarch64/x86_64 (see shared registry.json).
+            assert!(
+                !key.contains("arm64") && !key.ends_with("-x64"),
+                "registry key must not use Node triples, got: {key}"
             );
         }
     }
 
-    /// Platform key must match Node's official release triples
-    /// (https://nodejs.org/dist/), otherwise the managed download URL 404s
-    /// and the binary cache lookup misses. Real triples seen on the CDN:
-    /// `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`,
-    /// `linux-ppc64le`, `linux-s390x`, `win-arm64`, `win-x64`.
+    /// Binary agents look up `distribution.binary` with ACP/Zed triples,
+    /// not Node CDN names. Mixing them yields
+    /// `has no binary for platform darwin-arm64 (available: [..., darwin-aarch64])`.
     #[test]
-    fn platform_key_matches_node_release_triples() {
-        let key = current_platform_key();
+    fn registry_platform_key_matches_acp_triples() {
+        let key = registry_platform_key();
         assert!(
             matches!(
                 key.as_str(),
-                "darwin-arm64"
-                    | "darwin-x64"
-                    | "linux-arm64"
-                    | "linux-x64"
-                    | "linux-ppc64le"
-                    | "linux-s390x"
-                    | "win-arm64"
-                    | "win-x64"
+                "darwin-aarch64"
+                    | "darwin-x86_64"
+                    | "linux-aarch64"
+                    | "linux-x86_64"
+                    | "windows-aarch64"
+                    | "windows-x86_64"
             ),
-            "platform key `{key}` doesn't match any Node release triple"
+            "registry platform key `{key}` doesn't match any ACP binary triple"
         );
     }
 
-    /// Specifically guards against the regression where Rust's
-    /// `consts::OS = "windows"` produced URLs like
-    /// `node-vX.Y.Z-windows-x86_64.zip` — which 404s because Node publishes
-    /// `win-x64.zip`. On Windows runners, this test must pass; on others it
-    /// is a no-op.
+    /// Guards against reusing Node's `win-x64` naming for registry lookup.
     #[cfg(windows)]
     #[test]
-    fn platform_key_uses_win_prefix_on_windows() {
-        let key = current_platform_key();
+    fn registry_platform_key_uses_windows_prefix_on_windows() {
+        let key = registry_platform_key();
         assert!(
-            key.starts_with("win-"),
-            "Windows platform key should use `win-` prefix, got: {key}"
+            key.starts_with("windows-"),
+            "Windows registry key should use `windows-` prefix, got: {key}"
         );
         assert!(
-            !key.contains("windows"),
-            "Windows platform key must NOT contain `windows`: {key}"
+            !key.starts_with("win-"),
+            "Windows registry key must NOT use Node's `win-` prefix: {key}"
         );
     }
 
@@ -532,21 +569,25 @@ mod tests {
             distribution: RegistryDistribution { binary: Some(binary), npx: None },
         };
         let resolver = FakePackageResolver::ok(fake_resolved("/usr/bin/node", "/cache/bin"));
-        let err = resolve_registry(&e, "/w", &test_cache(), &resolver).await.unwrap_err();
+        let err = resolve_registry(&e, "/w", &test_cache(), &resolver, test_shell_path()).await.unwrap_err();
         let msg = format!("{err}");
         assert!(msg.contains("has no binary for platform"), "error should mention missing platform: {msg}");
     }
 
     #[test]
     fn resolve_custom_splits_command() {
-        let spec = resolve_custom("my-agent --acp --verbose", HashMap::new(), "/w").unwrap();
+        let spec = resolve_custom("my-agent --acp --verbose", HashMap::new(), "/w", test_shell_path()).unwrap();
         assert_eq!(spec.program, "my-agent");
         assert_eq!(spec.args, vec!["--acp", "--verbose"]);
+        assert_eq!(
+            spec.env.get("PATH").map(String::as_str),
+            Some("/opt/homebrew/bin:/usr/bin:/bin")
+        );
     }
 
     #[test]
     fn resolve_custom_rejects_empty() {
-        assert!(resolve_custom("   ", HashMap::new(), "/w").is_err());
+        assert!(resolve_custom("   ", HashMap::new(), "/w", test_shell_path()).is_err());
     }
 
     #[test]

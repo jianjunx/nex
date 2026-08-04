@@ -1,6 +1,7 @@
 use crate::error::NexError;
 use crate::terminal::types::{TerminalExitedPayload, TerminalOutputPayload};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+use std::ffi::OsStr;
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
@@ -25,15 +26,47 @@ pub struct TerminalManager {
     sessions: Arc<Mutex<Vec<Arc<TerminalSession>>>>,
 }
 
+impl Default for TerminalManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TerminalManager {
     pub fn new() -> Self {
         Self { sessions: Arc::new(Mutex::new(Vec::new())) }
     }
 
-    pub fn create(&self, app: AppHandle, cwd: &str, shell: Option<&str>) -> Result<String, NexError> {
+    /// Create a PTY session in `cwd`.
+    ///
+    /// `path_env` should be the login-shell / project PATH (from `ShellEnv` /
+    /// `ProjectEnvCache`). Packaged GUI apps otherwise inherit a stripped
+    /// PATH and interactive shells started here can't find Homebrew `git`.
+    ///
+    /// `cols`/`rows` must match the frontend xterm size at spawn time. Opening
+    /// at a fixed 80×24 then relying on a later resize races the first prompt:
+    /// if xterm already fitted before the session existed, `onResize` was a
+    /// no-op and zsh keeps the wrong `$COLUMNS` — which shows up as a spurious
+    /// inverse `%` (PROMPT_EOL_MARK) after every command.
+    pub fn create(
+        &self,
+        app: AppHandle,
+        cwd: &str,
+        shell: Option<&str>,
+        path_env: &OsStr,
+        cols: u16,
+        rows: u16,
+    ) -> Result<String, NexError> {
+        let cols = cols.max(2);
+        let rows = rows.max(1);
         let pty_system = native_pty_system();
         let pair = pty_system
-            .openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 })
+            .openpty(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
             .map_err(|e| NexError::Terminal(e.to_string()))?;
 
         // No explicit shell: use the platform default login shell
@@ -46,6 +79,16 @@ impl TerminalManager {
         // So shells recognize CSI arrow sequences for history (↑/↓).
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
+        // Seed COLUMNS/LINES so zsh/bash don't briefly believe the PTY is
+        // 80×24 before the first SIGWINCH (matters for PROMPT_SP / `%`).
+        cmd.env("COLUMNS", cols.to_string());
+        cmd.env("LINES", rows.to_string());
+        let path_owned = path_env.to_string_lossy().into_owned();
+        cmd.env("PATH", &path_owned);
+        #[cfg(windows)]
+        {
+            cmd.env("Path", &path_owned);
+        }
 
         let child = pair
             .slave
@@ -72,6 +115,7 @@ impl TerminalManager {
         // next read completes it.
         let app_clone = app.clone();
         let sid = id.clone();
+        let sessions_ref = Arc::clone(&self.sessions);
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
             let mut pending: Vec<u8> = Vec::new();
@@ -156,8 +200,11 @@ impl TerminalManager {
             // Ignore emit errors — the window may already be gone.
             let _ = app_clone.emit(
                 TERMINAL_EXITED_EVENT,
-                TerminalExitedPayload { terminal_id: sid },
+                TerminalExitedPayload { terminal_id: sid.clone() },
             );
+            // Reap the dead session so the list doesn't grow forever with
+            // entries whose shell already exited naturally.
+            sessions_ref.lock().unwrap().retain(|s| s.id != sid);
         });
 
         let session = Arc::new(TerminalSession {
@@ -222,5 +269,16 @@ impl TerminalManager {
             .find(|s| s.id == id)
             .cloned()
             .ok_or_else(|| NexError::Terminal("session not found".into()))
+    }
+}
+
+/// Kill every still-alive shell when the manager is dropped (app exit),
+/// so quitting Nex never leaves orphaned PTY child processes behind.
+impl Drop for TerminalManager {
+    fn drop(&mut self) {
+        let sessions: Vec<_> = self.sessions.lock().unwrap().drain(..).collect();
+        for session in sessions {
+            let _ = session.child.lock().unwrap().kill();
+        }
     }
 }

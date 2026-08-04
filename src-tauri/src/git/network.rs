@@ -31,8 +31,8 @@ fn run_git_output(repo: Option<&Path>, args: &[&str]) -> Result<Output, NexError
     })
 }
 
-/// 从 git stderr 提取单行错误信息：优先 error:/fatal:/hint: 行，否则最后非空行。
-fn stderr_line(stderr: &[u8]) -> String {
+/// 从 git stderr 提取单行摘要：优先 error:/fatal:/hint: 行，否则最后非空行。
+fn stderr_summary(stderr: &[u8]) -> String {
     let text = String::from_utf8_lossy(stderr);
     text.lines()
         .rev()
@@ -46,29 +46,53 @@ fn stderr_line(stderr: &[u8]) -> String {
         .to_string()
 }
 
+/// 完整 stderr（供 UI 展开详情）；空则回退到摘要。
+fn git_err_from_stderr(stderr: &[u8]) -> NexError {
+    let full = String::from_utf8_lossy(stderr).trim().to_string();
+    if full.is_empty() {
+        NexError::Git(stderr_summary(stderr))
+    } else {
+        NexError::Git(full)
+    }
+}
+
 fn run_git(repo: Option<&Path>, args: &[&str]) -> Result<String, NexError> {
     let out = run_git_output(repo, args)?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {
-        Err(NexError::Git(stderr_line(&out.stderr)))
+        Err(git_err_from_stderr(&out.stderr))
     }
+}
+
+/// Refuses values that git would parse as option flags (e.g. a malicious
+/// remote named `--upload-pack=<cmd>`). Remotes/branches/URLs never need
+/// to start with `-`.
+fn validate_git_arg(kind: &str, value: &str) -> Result<(), NexError> {
+    if value.starts_with('-') || value.is_empty() {
+        return Err(NexError::Git(format!("非法的{kind}: {value}")));
+    }
+    Ok(())
 }
 
 /// `git fetch <remote>`（默认 refspecs，同 `git fetch` 的语义）。
 pub fn fetch_remote(repo_path: &Path, remote: &str) -> Result<(), NexError> {
+    validate_git_arg("远端名", remote)?;
     run_git(Some(repo_path), &["fetch", remote]).map(|_| ())
 }
 
 /// `git pull <remote>`：fetch 后合并远端 HEAD 到当前分支（与旧实现
 /// FETCH_HEAD 合并语义一致）；非快进冲突由 git 自身报错上抛。
 pub fn pull_remote(repo_path: &Path, remote: &str) -> Result<(), NexError> {
+    validate_git_arg("远端名", remote)?;
     run_git(Some(repo_path), &["pull", remote]).map(|_| ())
 }
 
 /// `git push <remote> <branch>`；非快进拒绝映射为既有中文文案
 /// （新版 git 文案为 "(fetch first)"，旧版为 "(non-fast-forward)"）。
 pub fn push_remote(repo_path: &Path, remote: &str, branch: &str) -> Result<(), NexError> {
+    validate_git_arg("远端名", remote)?;
+    validate_git_arg("分支名", branch)?;
     let out = run_git_output(Some(repo_path), &["push", remote, branch])?;
     if out.status.success() {
         return Ok(());
@@ -77,11 +101,12 @@ pub fn push_remote(repo_path: &Path, remote: &str, branch: &str) -> Result<(), N
     if stderr.contains("non-fast-forward") || stderr.contains("fetch first") {
         return Err(NexError::Git("推送被拒绝：非快进，请先拉取合并".to_string()));
     }
-    Err(NexError::Git(stderr_line(&out.stderr)))
+    Err(git_err_from_stderr(&out.stderr))
 }
 
 /// `git clone <url> <dest>`：克隆到 dest（与旧 libgit2 实现一致）。
 pub fn clone_repo(url: &str, dest: &Path) -> Result<(), NexError> {
+    validate_git_arg("仓库 URL", url)?;
     let dest_str = dest
         .to_str()
         .ok_or_else(|| NexError::Git("克隆目标路径无效".to_string()))?;

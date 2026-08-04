@@ -31,12 +31,18 @@ pub struct BranchInfo {
     pub is_remote: bool,
     pub ahead: Option<u32>,
     pub behind: Option<u32>,
+    /// Tip commit time (committer seconds since epoch); None if peel fails.
+    pub tip_time: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct StashEntry {
     pub index: u32,
     pub message: String,
+    /// Stash commit OID — stable identifier for apply/pop/drop. Positional
+    /// indexes shift whenever any stash is dropped, so operations must
+    /// resolve this id back to a current index at call time.
+    pub id: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

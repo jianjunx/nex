@@ -15,7 +15,6 @@
     "core:window:allow-is-maximized",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
-    "sql:default",
     "store:default",
     "dialog:default"
   ]

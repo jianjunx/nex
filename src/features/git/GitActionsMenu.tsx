@@ -56,7 +56,7 @@ export function GitActionsMenu({ projectPath, onOpenBranchSelector }: GitActions
   const [stashDialogOpen, setStashDialogOpen] = useState(false);
   const [stashMsg, setStashMsg] = useState("");
   const [stashSubOpen, setStashSubOpen] = useState(false);
-  const [selectedStash, setSelectedStash] = useState<number | null>(null);
+  const [selectedStash, setSelectedStash] = useState<string | null>(null);
   const [toDrop, setToDrop] = useState<StashEntry | null>(null);
 
   const busy = opRunning !== null;
@@ -67,7 +67,7 @@ export function GitActionsMenu({ projectPath, onOpenBranchSelector }: GitActions
 
   // 列表刷新后自动选中首条，让弹出/应用/删除开箱即用。
   useEffect(() => {
-    if (selectedStash === null && stashes.length > 0) setSelectedStash(stashes[0].index);
+    if (selectedStash === null && stashes.length > 0) setSelectedStash(stashes[0].id);
   }, [stashes, selectedStash]);
 
   // 照抄 ProjectSelector.tsx:85 模式：先尽力前台再开原生目录对话框，
@@ -144,9 +144,9 @@ export function GitActionsMenu({ projectPath, onOpenBranchSelector }: GitActions
               <DropdownMenuSeparator />
               <DropdownMenuLabel>存储列表（点选后下方三项作用于选中条目）</DropdownMenuLabel>
               {stashes.map((s) => (
-                <DropdownMenuItem key={s.index} data-testid={`stash-${s.index}`} onSelect={(e) => { e.preventDefault(); setSelectedStash(s.index); }}>
+                <DropdownMenuItem key={s.id} data-testid={`stash-${s.index}`} onSelect={(e) => { e.preventDefault(); setSelectedStash(s.id); }}>
                   <span className="mr-1 inline-flex w-3 justify-center">
-                    {selectedStash === s.index ? <Check size={12} /> : ""}
+                    {selectedStash === s.id ? <Check size={12} /> : ""}
                   </span>
                   {`stash@{${s.index}}: ${s.message || "（无消息）"}`}
                 </DropdownMenuItem>
@@ -157,9 +157,9 @@ export function GitActionsMenu({ projectPath, onOpenBranchSelector }: GitActions
                 disabled={selectedStash === null || busy}
                 onSelect={() => {
                   if (selectedStash !== null) {
-                    const idx = selectedStash;
+                    const id = selectedStash;
                     // R2：pop 成功后 stash 索引整体前移——清选中让自动选首项接管
-                    void stashPop(projectPath, idx).then((ok) => {
+                    void stashPop(projectPath, id).then((ok) => {
                       if (ok) setSelectedStash(null);
                     });
                   }
@@ -179,7 +179,7 @@ export function GitActionsMenu({ projectPath, onOpenBranchSelector }: GitActions
                 data-testid="stash-drop"
                 disabled={selectedStash === null || busy}
                 onSelect={() => {
-                  const entry = stashes.find((x) => x.index === selectedStash);
+                  const entry = stashes.find((x) => x.id === selectedStash);
                   if (entry) setToDrop(entry);
                 }}
               >
@@ -266,7 +266,7 @@ export function GitActionsMenu({ projectPath, onOpenBranchSelector }: GitActions
           // R2：await 期间保持确认框打开渲染 busy；成功后关框并清选中（索引前移）
           const entry = toDrop;
           if (!entry) return;
-          const ok = await stashDrop(projectPath, entry.index);
+          const ok = await stashDrop(projectPath, entry.id);
           if (ok) {
             setToDrop(null);
             setSelectedStash(null);

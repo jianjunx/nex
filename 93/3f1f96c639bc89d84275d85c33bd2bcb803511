@@ -1,0 +1,29 @@
+src/stores/terminal.store.ts
+  s_a9bf9370cfd8b1::t_ec299f8fbcc4df 20
+  s_a9bf9370cfd8b1::t_5b83014915145e 102,106-110,127-131
+src/features/terminal/TerminalPanel.tsx
+  s_a9bf9370cfd8b1::t_fd953f62f74983 172-173,180-183
+  s_a9bf9370cfd8b1::t_ce96b78099a42d 154-165
+src/bridge/tauri.ts
+  s_a9bf9370cfd8b1::t_e610d4ababde91 379-385
+src-tauri/src/terminal/pty.rs
+  s_a9bf9370cfd8b1::t_f596fbd8285924 45-50,57-58,60-61,64-69,82-85
+src-tauri/src/commands/terminal_cmds.rs
+  s_a9bf9370cfd8b1::t_8dc92dd452b075 11-12,17-26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "933f1f96c639bc89d84275d85c33bd2bcb803511",
+  "prompts": {},
+  "sessions": {
+    "s_a9bf9370cfd8b1": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "3964547a-67f0-47a7-ace3-a297d09748e6",
+        "model": "default"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

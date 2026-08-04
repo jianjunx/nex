@@ -91,9 +91,14 @@ pub async fn update_check_latest(app: AppHandle) -> Result<UpdateInfo, NexError>
             resp.status()
         )));
     }
-    let body: serde_json::Value = resp
-        .json()
+    // Note: use text() + from_str instead of resp.json() — the crate enables
+    // reqwest without the `json` feature, and we must not rely on feature
+    // unification from other dependencies.
+    let text = resp
+        .text()
         .await
+        .map_err(|e| NexError::Internal(format!("读取更新信息失败: {e}")))?;
+    let body: serde_json::Value = serde_json::from_str(&text)
         .map_err(|e| NexError::Internal(format!("解析更新信息失败: {e}")))?;
 
     let tag = body

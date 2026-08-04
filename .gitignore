@@ -35,3 +35,6 @@ dist-ssr
 # Local-only perl shim for openssl vendored builds (do not commit)
 perl-stub/
 
+# Local clippy reproduction crate (do not commit)
+clippy-repro/
+

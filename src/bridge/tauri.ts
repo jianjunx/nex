@@ -20,6 +20,11 @@ export async function projectList(): Promise<Project[]> {
   return invoke(COMMANDS.PROJECT_LIST);
 }
 
+/** Bump last_opened for activity-ordered project switcher. */
+export async function projectTouch(id: string): Promise<number> {
+  return invoke(COMMANDS.PROJECT_TOUCH, { id });
+}
+
 // --- Conversations ---
 export interface Conversation {
   id: string;

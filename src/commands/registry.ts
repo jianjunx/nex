@@ -19,12 +19,19 @@ function isInCodeMirror(): boolean {
   return !!document.activeElement?.closest(".cm-editor, .cm-content");
 }
 
-/** File-tree clipboard shortcuts must not steal from text inputs or the editor. */
+/** File-tree clipboard shortcuts must not steal from text inputs, the editor,
+ *  or an active text selection (e.g. copying from a conversation card). */
+function hasTextSelection(): boolean {
+  const sel = window.getSelection();
+  return !!sel && sel.toString().length > 0;
+}
+
 function filesClipboardWhen(): boolean {
   const sel = useFsStore.getState().selectedPath;
   if (!sel) return false;
   if (isInCodeMirror()) return false;
   if (isTypingInInput()) return false;
+  if (hasTextSelection()) return false;
   return true;
 }
 

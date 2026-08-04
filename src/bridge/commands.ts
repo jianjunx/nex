@@ -3,6 +3,7 @@ export const COMMANDS = {
   // Projects
   PROJECT_OPEN: "project_open",
   PROJECT_LIST: "project_list",
+  PROJECT_TOUCH: "project_touch",
   // Conversations
   CONVERSATION_CREATE: "conversation_create",
   CONVERSATION_LIST: "conversation_list",

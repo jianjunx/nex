@@ -6,22 +6,33 @@ import { terminalCreate, terminalWrite, terminalResize, terminalKill, onTerminal
 interface TerminalSession {
   id: string;
   title: string;
+  /** Owning project — sessions survive project switches (PTY kept alive). */
+  projectId: string;
 }
 
 interface TerminalStore {
   sessions: TerminalSession[];
+  /**
+   * Active session for the current project (derived UI). Kept in sync with
+   * `activeSessionByProject[activeProjectId]` via setActive / create / kill.
+   * Background projects keep their own active id in `activeSessionByProject`.
+   */
   activeSessionId: string | null;
+  /** Last-focused session id per project. */
+  activeSessionByProject: Record<string, string | null>;
   loading: boolean;
   error: string | null;
   /** Bumped when terminal-affecting settings change; TerminalPanel's construction effect depends on it, so a bump disposes + rebuilds xterm with the new options while the module-level output buffers keep the content alive across the rebuild. */
   settingsVersion: number;
   bumpSettingsVersion: () => void;
 
-  create: (projectPath: string, shell?: string, cols?: number, rows?: number) => Promise<void>;
+  create: (projectId: string, projectPath: string, shell?: string, cols?: number, rows?: number) => Promise<void>;
   write: (id: string, data: string) => void;
   resize: (id: string, cols: number, rows: number) => void;
   kill: (id: string) => Promise<void>;
   setActive: (id: string) => void;
+  /** Switch visible terminal set to a project's sessions (no PTY kill). */
+  focusProject: (projectId: string | null) => void;
   clearError: () => void;
   /** Subscribes to terminal events. Returns an unlisten cleanup; safe to call from a StrictMode effect. */
   initListeners: () => () => void;
@@ -33,6 +44,18 @@ function errorMessage(err: unknown): string {
     return (err as { message: string }).message;
   }
   return String(err);
+}
+
+/** Sessions belonging to a project (stable empty array for selectors). */
+const EMPTY_SESSIONS: TerminalSession[] = [];
+
+export function selectProjectSessions(
+  sessions: TerminalSession[],
+  projectId: string | null | undefined,
+): TerminalSession[] {
+  if (!projectId) return EMPTY_SESSIONS;
+  const list = sessions.filter((s) => s.projectId === projectId);
+  return list.length === 0 ? EMPTY_SESSIONS : list;
 }
 
 // Per-session output ring buffers, kept OUTSIDE zustand state: output arrives
@@ -90,16 +113,33 @@ export function setLiveSink(fn: ((terminalId: string, data: string) => void) | n
   liveSink = fn;
 }
 
+function nextTitle(sessions: TerminalSession[], projectId: string): string {
+  const n = sessions.filter((s) => s.projectId === projectId).length + 1;
+  return `Terminal ${n}`;
+}
+
+function pickActiveForProject(
+  sessions: TerminalSession[],
+  projectId: string,
+  preferred: string | null | undefined,
+): string | null {
+  if (preferred && sessions.some((s) => s.id === preferred && s.projectId === projectId)) {
+    return preferred;
+  }
+  return sessions.find((s) => s.projectId === projectId)?.id ?? null;
+}
+
 export const useTerminalStore = create<TerminalStore>()(
   immer((set) => ({
     sessions: [],
     activeSessionId: null,
+    activeSessionByProject: {},
     loading: false,
     error: null,
     settingsVersion: 0,
     bumpSettingsVersion: () => { set((s) => { s.settingsVersion += 1; }); },
 
-    create: async (projectPath: string, shell?: string, cols?: number, rows?: number) => {
+    create: async (projectId, projectPath, shell?, cols?, rows?) => {
       set((s) => { s.loading = true; s.error = null; });
       let timer: ReturnType<typeof setTimeout> | undefined;
       let timedOut = false;
@@ -121,7 +161,12 @@ export const useTerminalStore = create<TerminalStore>()(
           }),
         ]);
         set((s) => {
-          s.sessions.push({ id, title: `Terminal ${s.sessions.length + 1}` });
+          s.sessions.push({
+            id,
+            title: nextTitle(s.sessions, projectId),
+            projectId,
+          });
+          s.activeSessionByProject[projectId] = id;
           s.activeSessionId = id;
         });
         // Belt-and-braces: push size again now that the session exists, in
@@ -163,8 +208,19 @@ export const useTerminalStore = create<TerminalStore>()(
       try {
         await terminalKill(id);
         set((s) => {
+          const dying = s.sessions.find((t) => t.id === id);
           s.sessions = s.sessions.filter((t) => t.id !== id);
-          if (s.activeSessionId === id) s.activeSessionId = s.sessions[0]?.id ?? null;
+          if (dying) {
+            const next = pickActiveForProject(
+              s.sessions,
+              dying.projectId,
+              s.activeSessionByProject[dying.projectId] === id
+                ? null
+                : s.activeSessionByProject[dying.projectId],
+            );
+            s.activeSessionByProject[dying.projectId] = next;
+            if (s.activeSessionId === id) s.activeSessionId = next;
+          }
         });
         dropBuffer(id);
       } catch (err) {
@@ -174,7 +230,30 @@ export const useTerminalStore = create<TerminalStore>()(
       }
     },
 
-    setActive: (id: string) => { set((s) => { s.activeSessionId = id; }); },
+    setActive: (id: string) => {
+      set((s) => {
+        const session = s.sessions.find((t) => t.id === id);
+        if (!session) return;
+        s.activeSessionId = id;
+        s.activeSessionByProject[session.projectId] = id;
+      });
+    },
+
+    focusProject: (projectId) => {
+      set((s) => {
+        if (!projectId) {
+          s.activeSessionId = null;
+          return;
+        }
+        const next = pickActiveForProject(
+          s.sessions,
+          projectId,
+          s.activeSessionByProject[projectId],
+        );
+        s.activeSessionByProject[projectId] = next;
+        s.activeSessionId = next;
+      });
+    },
 
     clearError: () => { set((s) => { s.error = null; }); },
 
@@ -205,8 +284,17 @@ export const useTerminalStore = create<TerminalStore>()(
         set((s) => {
           const idx = s.sessions.findIndex((t) => t.id === terminalId);
           if (idx === -1) return;
+          const dying = s.sessions[idx]!;
           s.sessions.splice(idx, 1);
-          if (s.activeSessionId === terminalId) s.activeSessionId = s.sessions[0]?.id ?? null;
+          const next = pickActiveForProject(
+            s.sessions,
+            dying.projectId,
+            s.activeSessionByProject[dying.projectId] === terminalId
+              ? null
+              : s.activeSessionByProject[dying.projectId],
+          );
+          s.activeSessionByProject[dying.projectId] = next;
+          if (s.activeSessionId === terminalId) s.activeSessionId = next;
           if (!hadOutput) {
             s.error = "终端进程启动后立即退出。请在 设置 → 终端 → Shell 指定一个有效 shell（如 cmd.exe 或 powershell.exe），或检查是否有安全软件拦截终端（ConPTY）。";
           }

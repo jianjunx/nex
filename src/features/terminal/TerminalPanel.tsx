@@ -3,41 +3,36 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { Plus, X } from "lucide-react";
-import { useTerminalStore, getReplay, setLiveSink } from "../../stores/terminal.store";
+import {
+  useTerminalStore,
+  getReplay,
+  setLiveSink,
+  selectProjectSessions,
+} from "../../stores/terminal.store";
 import { useSettingsStore } from "../../stores/settings.store";
 import { useProjectStore } from "../../stores/project.store";
 import { useUiStore } from "../../stores/ui.store";
 import { Button } from "@/components/ui/button";
 
-function isPasteKey(ev: KeyboardEvent): boolean {
-  if (ev.type !== "keydown") return false;
-  if (ev.key === "Insert" && ev.shiftKey && !ev.ctrlKey && !ev.metaKey && !ev.altKey) return true;
-  const key = ev.key.toLowerCase();
-  if (key !== "v") return false;
-  // Windows/Linux: Ctrl+V (and Ctrl+Shift+V in some terminals). macOS: Cmd+V.
-  if (ev.altKey) return false;
-  return ev.ctrlKey || ev.metaKey;
-}
-
-async function readClipboardText(): Promise<string | null> {
-  try {
-    const text = await navigator.clipboard.readText();
-    return text || null;
-  } catch {
-    return null;
-  }
-}
-
 export function TerminalPanel() {
   const termRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
-  const { sessions, activeSessionId, loading, error, create, kill, setActive, clearError } = useTerminalStore();
+  const allSessions = useTerminalStore((s) => s.sessions);
+  const activeSessionId = useTerminalStore((s) => s.activeSessionId);
+  const loading = useTerminalStore((s) => s.loading);
+  const error = useTerminalStore((s) => s.error);
+  const create = useTerminalStore((s) => s.create);
+  const kill = useTerminalStore((s) => s.kill);
+  const setActive = useTerminalStore((s) => s.setActive);
+  const focusProject = useTerminalStore((s) => s.focusProject);
+  const clearError = useTerminalStore((s) => s.clearError);
   const settingsVersion = useTerminalStore((s) => s.settingsVersion);
   const terminalShell = useSettingsStore((s) => s.terminalShell);
   const projects = useProjectStore((s) => s.projects);
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const project = projects.find((p) => p.id === activeProjectId);
+  const sessions = selectProjectSessions(allSessions, activeProjectId);
 
   // Open = usable: the tray mounts only when the terminal is toggled visible
   // (SidePanel gates it on terminalVisible), so creating a session on mount
@@ -46,6 +41,12 @@ export function TerminalPanel() {
   // session does NOT respawn (this effect won't re-run); reopening the tray
   // remounts and respawns, which matches "open = usable".
   const autoCreatedFor = useRef<string | null>(null);
+
+  // When the active project changes, show that project's PTY tabs without
+  // killing other projects' sessions (buffers + liveSink keep them warm).
+  useEffect(() => {
+    focusProject(activeProjectId);
+  }, [activeProjectId, focusProject]);
 
   // Construct the single xterm instance; session switches reuse it via
   // reset + replay (effect below) instead of dispose/reconstruct.
@@ -96,16 +97,18 @@ export function TerminalPanel() {
       if (activeSessionId) resize(activeSessionId, cols, rows);
     });
 
-    // Tauri/WebView clipboard paste is unreliable via the default DOM path.
-    // Handle paste shortcuts ourselves and feed xterm.paste → PTY.
-    term.attachCustomKeyEventHandler((ev) => {
-      if (!isPasteKey(ev)) return true;
-      ev.preventDefault();
-      void readClipboardText().then((text) => {
-        if (text) term.paste(text);
-      });
-      return false;
-    });
+    // Paste via the paste event's clipboardData (user-gesture, no permission
+    // chip). Capture + stopImmediatePropagation so we own the event and xterm
+    // does not also paste. Avoid navigator.clipboard.readText() — on macOS
+    // WKWebView that surfaces a "Paste" button and blocks until clicked.
+    const onPaste = (e: ClipboardEvent) => {
+      const text = e.clipboardData?.getData("text/plain") || e.clipboardData?.getData("text");
+      if (text == null || text === "") return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      term.paste(text);
+    };
+    term.textarea?.addEventListener("paste", onPaste, true);
 
     xtermRef.current = term;
 
@@ -136,6 +139,7 @@ export function TerminalPanel() {
 
     return () => {
       if (fitTimer !== undefined) clearTimeout(fitTimer);
+      term.textarea?.removeEventListener("paste", onPaste, true);
       setLiveSink(null); observer.disconnect(); term.dispose(); xtermRef.current = null;
     };
   }, [settingsVersion]);
@@ -148,14 +152,13 @@ export function TerminalPanel() {
   // previous session; the buffer is the single source of truth.
   useEffect(() => {
     const term = xtermRef.current;
-    if (!term || !activeSessionId) return;
+    if (!term) return;
     term.reset();
+    if (!activeSessionId) return;
     term.write(getReplay(activeSessionId));
     // Fit after the session is active so onResize can push cols/rows to the
     // PTY (the mount-time fit often ran with no activeSessionId).
     try {
-      // FitAddon is on the terminal; proposeDimensions via public API:
-      // calling resize with current dims is a no-op unless we re-fit.
       const { cols, rows } = term;
       if (cols > 0 && rows > 0) {
         useTerminalStore.getState().resize(activeSessionId, cols, rows);
@@ -167,11 +170,16 @@ export function TerminalPanel() {
   }, [activeSessionId, settingsVersion]);
 
   useEffect(() => {
-    if (project && sessions.length === 0 && !loading && autoCreatedFor.current !== project.id) {
+    if (!project) return;
+    // Already have sessions for this project — just show them (focusProject).
+    if (sessions.length > 0) {
       autoCreatedFor.current = project.id;
-      const term = xtermRef.current;
-      void create(project.path, terminalShell || undefined, term?.cols, term?.rows);
+      return;
     }
+    if (loading || autoCreatedFor.current === project.id) return;
+    autoCreatedFor.current = project.id;
+    const term = xtermRef.current;
+    void create(project.id, project.path, terminalShell || undefined, term?.cols, term?.rows);
   }, [project, sessions.length, loading, create, terminalShell]);
 
   const handleCreate = () => {
@@ -179,14 +187,18 @@ export function TerminalPanel() {
     // Option<String> None).
     if (project) {
       const term = xtermRef.current;
-      void create(project.path, terminalShell || undefined, term?.cols, term?.rows);
+      void create(project.id, project.path, terminalShell || undefined, term?.cols, term?.rows);
     }
   };
 
   const handleClose = (id: string) => {
-    const isLast = useTerminalStore.getState().sessions.length <= 1;
+    const projectSessions = selectProjectSessions(
+      useTerminalStore.getState().sessions,
+      activeProjectId,
+    );
+    const isLastForProject = projectSessions.length <= 1;
     void kill(id).then(() => {
-      if (isLast) useUiStore.getState().setTerminalVisible(false);
+      if (isLastForProject) useUiStore.getState().setTerminalVisible(false);
     });
   };
 

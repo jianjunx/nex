@@ -18,6 +18,12 @@ pub fn project_list(state: State<AppState>) -> Result<Vec<Project>, NexError> {
     state.db.list_projects()
 }
 
+/// Bump `last_opened` when switching to an already-listed project (dropdown).
+#[tauri::command]
+pub fn project_touch(state: State<AppState>, id: String) -> Result<i64, NexError> {
+    state.db.update_project_last_opened(&id)
+}
+
 #[tauri::command]
 pub fn conversation_create(state: State<AppState>, project_id: String, agent_type: String) -> Result<Conversation, NexError> {
     state.db.create_conversation(&project_id, &agent_type)

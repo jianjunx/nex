@@ -174,6 +174,18 @@ export const useGitStore = create<GitStore>()(
       commitWith: async (projectPath, mode) => {
         const msg = get().commitMessage.trim();
         if (!msg || get().opRunning) return;
+
+        // Smart commit (VS Code / Cursor): if the index is empty but there
+        // are working-tree changes, stage them all before committing. When
+        // the user already staged a subset, leave the rest alone.
+        const files = get().status?.files ?? [];
+        const hasStaged = files.some((f) => f.staged);
+        const unstagedPaths = files.filter((f) => !f.staged).map((f) => f.path);
+        if (!hasStaged && unstagedPaths.length > 0) {
+          const stagedOk = await runOp("暂存", () => gitStage(projectPath, unstagedPaths));
+          if (!stagedOk) return;
+        }
+
         const ok = await get().commit(projectPath, msg);
         if (!ok) return;
         set((s) => { s.commitMessage = ""; });

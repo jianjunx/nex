@@ -154,6 +154,65 @@ describe("git.store commitWith", () => {
     expect(useGitStore.getState().commitMessage).toBe("hello");
     expect(gitPushMock).not.toHaveBeenCalled();
   });
+
+  it("auto-stages all unstaged files when nothing is staged, then commits", async () => {
+    gitStageMock.mockResolvedValue(undefined);
+    gitCommitMock.mockResolvedValue("oid");
+    gitStatusMock.mockResolvedValue(STATUS);
+    useGitStore.setState({
+      commitMessage: "wip",
+      status: {
+        branch: "main",
+        ahead: 0,
+        behind: 0,
+        files: [
+          { path: "a.txt", status: "modified", staged: false },
+          { path: "b.txt", status: "untracked", staged: false },
+        ],
+      },
+    });
+    await useGitStore.getState().commitWith("/p", "commit");
+    expect(gitStageMock).toHaveBeenCalledWith("/p", ["a.txt", "b.txt"]);
+    expect(gitCommitMock).toHaveBeenCalledWith("/p", "wip");
+    expect(useGitStore.getState().commitMessage).toBe("");
+  });
+
+  it("does not auto-stage when some files are already staged", async () => {
+    gitCommitMock.mockResolvedValue("oid");
+    gitStatusMock.mockResolvedValue(STATUS);
+    useGitStore.setState({
+      commitMessage: "partial",
+      status: {
+        branch: "main",
+        ahead: 0,
+        behind: 0,
+        files: [
+          { path: "staged.txt", status: "modified", staged: true },
+          { path: "left.txt", status: "modified", staged: false },
+        ],
+      },
+    });
+    await useGitStore.getState().commitWith("/p", "commit");
+    expect(gitStageMock).not.toHaveBeenCalled();
+    expect(gitCommitMock).toHaveBeenCalledWith("/p", "partial");
+  });
+
+  it("skips commit when auto-stage fails", async () => {
+    gitStageMock.mockRejectedValue({ type: "Git", message: "stage failed" });
+    useGitStore.setState({
+      commitMessage: "wip",
+      status: {
+        branch: "main",
+        ahead: 0,
+        behind: 0,
+        files: [{ path: "a.txt", status: "modified", staged: false }],
+      },
+    });
+    await useGitStore.getState().commitWith("/p", "commit");
+    expect(gitCommitMock).not.toHaveBeenCalled();
+    expect(useGitStore.getState().commitMessage).toBe("wip");
+    expect(useGitStore.getState().error).toBe("stage failed");
+  });
 });
 
 describe("git.store push guard", () => {

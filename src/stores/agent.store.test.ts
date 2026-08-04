@@ -305,4 +305,28 @@ describe("switch-project memory: live sessions", () => {
     ]);
     expect(useAgentStore.getState().entriesByConversation["conv-a"]?.[0]?.id).toBe("new");
   });
+
+  it("hydrateEntries hydrates a starting session whose thread is still empty (cold restart race)", () => {
+    // Cold restart: the composer auto-spawns the active tab's session
+    // ("starting", empty thread) before restore finishes. The hydrate must
+    // still land or the conversation renders blank until revisited.
+    useAgentStore.setState({
+      sessions: {
+        "conv-cold": {
+          sessionId: "",
+          conversationId: "conv-cold",
+          status: "starting",
+        },
+      },
+      entriesByConversation: { "conv-cold": [] },
+    });
+
+    useAgentStore.getState().hydrateEntries("conv-cold", [
+      { id: "h1", kind: "user_message", text: "from-db", timestamp: 1 },
+    ]);
+
+    const entries = useAgentStore.getState().entriesByConversation["conv-cold"];
+    expect(entries).toHaveLength(1);
+    expect(entries?.[0]?.id).toBe("h1");
+  });
 });

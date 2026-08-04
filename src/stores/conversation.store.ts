@@ -42,7 +42,7 @@ interface ConversationStore {
    * the first user message. No-op once the title has been customized.
    */
   autoTitleFromFirstMessage: (conversationId: string, text: string) => void;
-  loadMessages: (conversationId: string) => Promise<void>;
+  loadMessages: (conversationId: string) => Promise<Message[] | null>;
   appendMessage: (conversationId: string, message: Message) => void;
   /** Persist a turn message to SQLite (and mirror into messagesByConversation). */
   persistMessage: (
@@ -69,8 +69,13 @@ const MESSAGE_PAGE_SIZE = 50;
 /** 防异常超大会话把 UI 拖死；50×200 = 1 万条上限。 */
 const MESSAGE_MAX_PAGES = 200;
 
-/** Monotonic id so a slow loadMessages cannot overwrite a newer conversation. */
-let loadMessagesGeneration = 0;
+/**
+ * Per-conversation monotonic id so a slow loadMessages cannot overwrite a
+ * newer load OF THE SAME conversation. A global counter used to cancel
+ * concurrent loads of DIFFERENT conversations (parallel tab restore),
+ * silently dropping their history.
+ */
+const loadMessagesGenerations = new Map<string, number>();
 
 export function selectProjectOpenTabs(
   s: Pick<ConversationStore, "tabsByProject">,
@@ -267,7 +272,9 @@ export const useConversationStore = create<ConversationStore>()(
       },
 
       loadMessages: async (conversationId: string) => {
-        const generation = ++loadMessagesGeneration;
+        const generation = (loadMessagesGenerations.get(conversationId) ?? 0) + 1;
+        loadMessagesGenerations.set(conversationId, generation);
+        const isStale = () => generation !== loadMessagesGenerations.get(conversationId);
         set((s) => {
           s.loading = true;
           s.error = null;
@@ -277,23 +284,25 @@ export const useConversationStore = create<ConversationStore>()(
           const all: Message[] = [];
           let offset = 0;
           for (let pageIdx = 0; pageIdx < MESSAGE_MAX_PAGES; pageIdx++) {
-            if (generation !== loadMessagesGeneration) return;
+            if (isStale()) return null;
             const page = await conversationGetMessages(conversationId, MESSAGE_PAGE_SIZE, offset);
             all.push(...page);
             if (page.length < MESSAGE_PAGE_SIZE) break;
             offset += MESSAGE_PAGE_SIZE;
           }
-          if (generation !== loadMessagesGeneration) return;
+          if (isStale()) return null;
           set((s) => {
             s.messagesByConversation[conversationId] = all;
           });
+          return all;
         } catch (err) {
-          if (generation !== loadMessagesGeneration) return;
+          if (isStale()) return null;
           set((s) => {
             s.error = errorMessage(err);
           });
+          return null;
         } finally {
-          if (generation === loadMessagesGeneration) {
+          if (!isStale()) {
             set((s) => {
               s.loading = false;
             });

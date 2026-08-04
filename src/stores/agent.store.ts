@@ -94,6 +94,8 @@ interface AgentStore {
   removeSession: (conversationId: string) => Promise<void>;
   /** Replace in-memory thread with hydrated history (used on cold restore). */
   hydrateEntries: (conversationId: string, entries: ThreadEntry[]) => void;
+  /** Best-effort persist of all in-memory thread snapshots (window close / quit). */
+  flushThreadSnapshots: () => Promise<void>;
   /** Drop hydrated thread entries for conversation ids not in `keepIds` (switch-project memory). */
   pruneEntriesExcept: (keepIds: Set<string>) => void;
   appendUserMessage: (
@@ -407,18 +409,47 @@ export const useAgentStore = create<AgentStore>()(
       set((s) => {
         // Mid-turn / live ACP session: in-memory thread is ahead of DB.
         // Switching projects must not clobber streaming tool cards with a
-        // stale hydrate from disk.
+        // stale hydrate from disk. Guard only when the in-memory thread is
+        // non-empty: on cold restart the composer auto-spawns a "starting"
+        // session with an EMPTY thread, and refusing the hydrate there would
+        // leave the conversation blank until the user revisits it.
         const live = s.sessions[conversationId];
+        const current = s.entriesByConversation[conversationId];
         if (
           live &&
           (live.status === "running" ||
             live.status === "waiting" ||
-            live.status === "starting")
+            live.status === "starting") &&
+          (current?.length ?? 0) > 0
         ) {
           return;
         }
         s.entriesByConversation[conversationId] = entries;
       });
+    },
+
+    flushThreadSnapshots: async () => {
+      // Closing mid-turn loses everything since the last completed turn
+      // (sendPrompt persists only in its finally). Flush whatever is in
+      // memory now; empty threads are skipped so we never wipe DB rows.
+      const snapshots = Object.entries(get().entriesByConversation).filter(
+        ([, list]) => list.length > 0,
+      );
+      await Promise.all(
+        snapshots.map(([conversationId, list]) =>
+          conversationReplaceThreadEntries(
+            conversationId,
+            list.map((e, sequence) => ({
+              kind: e.kind,
+              sequence,
+              timestamp: e.timestamp,
+              payload: e,
+            })),
+          ).catch((err) => {
+            console.error("[conversation] flushThreadSnapshots failed:", err);
+          }),
+        ),
+      );
     },
 
     pruneEntriesExcept: (keepIds) => {

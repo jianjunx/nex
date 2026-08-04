@@ -25,8 +25,9 @@ async function hydrateTab(tabId: string): Promise<void> {
     return;
   }
   const convStore = useConversationStore.getState();
-  await convStore.loadMessages(tabId);
-  const msgs = useConversationStore.getState().messagesByConversation[tabId] ?? [];
+  const msgs = await convStore.loadMessages(tabId);
+  // null = load failed/aborted — hydrating with [] would blank the thread.
+  if (msgs === null) return;
   agentStore.hydrateEntries(tabId, messagesToThreadEntries(msgs));
 }
 

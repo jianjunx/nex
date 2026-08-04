@@ -79,6 +79,9 @@ export function AppLifecycleHost() {
   const confirmQuit = async () => {
     setQuitting(true);
     try {
+      // destroy() bypasses beforeunload — flush mid-turn thread snapshots
+      // here so interrupted conversations keep their history on next launch.
+      await useAgentStore.getState().flushThreadSnapshots();
       await getCurrentWindow().destroy();
     } catch {
       window.close();

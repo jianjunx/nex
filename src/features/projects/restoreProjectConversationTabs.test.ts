@@ -103,4 +103,29 @@ describe("restoreProjectConversationTabs", () => {
       ],
     );
   });
+
+  it("does not hydrate an empty thread when the message fallback fails", async () => {
+    conversationList.mockResolvedValueOnce([
+      {
+        id: "tab-1",
+        project_id: "proj-a",
+        title: "Hello",
+        agent_type: "cursor",
+        status: "idle",
+        created_at: 0,
+        updated_at: 0,
+      },
+    ]);
+    useConversationStore.setState({
+      tabsByProject: { "proj-a": ["tab-1"] },
+      activeTabByProject: { "proj-a": "tab-1" },
+    });
+    conversationGetThreadEntries.mockResolvedValueOnce([]);
+    conversationGetMessages.mockRejectedValueOnce(new Error("db down"));
+
+    await restoreProjectConversationTabs("proj-a");
+
+    // Hydrating [] would blank a thread whose data still lives in the DB.
+    expect(hydrateEntries).not.toHaveBeenCalled();
+  });
 });

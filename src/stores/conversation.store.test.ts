@@ -194,4 +194,30 @@ describe("conversation.store project-scoped tabs", () => {
     expect(conversationGetMessages.mock.calls.map((c) => c[2])).toEqual([0]);
     expect(useConversationStore.getState().messagesByConversation["c1"]).toEqual([]);
   });
+
+  it("并行 loadMessages 不同会话互不取消(修复全局 generation 误杀)", async () => {
+    conversationGetMessages.mockImplementation(async (id: string) => [
+      { id: `${id}-m1`, conversation_id: id, role: "user", content: id, timestamp: 1, sequence: 1 },
+    ]);
+
+    const [r1, r2] = await Promise.all([
+      useConversationStore.getState().loadMessages("c1"),
+      useConversationStore.getState().loadMessages("c2"),
+    ]);
+
+    expect(r1).toHaveLength(1);
+    expect(r2).toHaveLength(1);
+    expect(useConversationStore.getState().messagesByConversation["c1"]).toHaveLength(1);
+    expect(useConversationStore.getState().messagesByConversation["c2"]).toHaveLength(1);
+  });
+
+  it("loadMessages 失败返回 null 且不写入消息", async () => {
+    conversationGetMessages.mockRejectedValueOnce(new Error("db down"));
+
+    const result = await useConversationStore.getState().loadMessages("c1");
+
+    expect(result).toBeNull();
+    expect(useConversationStore.getState().messagesByConversation["c1"]).toBeUndefined();
+    expect(useConversationStore.getState().error).toBe("db down");
+  });
 });

@@ -89,12 +89,15 @@ function App() {
     });
 
     // Persist the active project's editor layout before the window closes so
-    // the next launch restores exactly which files were open.
+    // the next launch restores exactly which files were open. Also flush
+    // in-memory thread snapshots so turns not yet persisted by sendPrompt
+    // (e.g. closing right after a cancel) survive the restart.
     const handleBeforeUnload = () => {
       const { activeProjectId } = useProjectStore.getState();
       if (activeProjectId) {
         useFsStore.getState().persistEditorLayout(activeProjectId);
       }
+      void useAgentStore.getState().flushThreadSnapshots();
     };
     window.addEventListener("beforeunload", handleBeforeUnload);
 

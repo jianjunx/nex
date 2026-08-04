@@ -78,7 +78,7 @@ pub async fn resolve_registry(
     }
 
     if let Some(binaries) = &entry.distribution.binary {
-        let key = current_platform_key();
+        let key = registry_platform_key();
         if let Some(target) = binaries.get(&key) {
             let exe_path = binary_cache
                 .ensure_installed(entry, target, &key)
@@ -125,13 +125,23 @@ fn node_path_env_overlay(node_path: &Path) -> HashMap<String, String> {
     env
 }
 
-/// Builds the platform key used to index binary targets in the registry
-/// (e.g. `windows-x86_64`, `darwin-aarch64`). Re-exported here so the
-/// existing `current_platform_key()` callers in this module keep working
-/// without churn; the canonical definition is in `node_runtime.rs` to keep
-/// the Windows / macOS / Linux OS-name remapping in one place.
-fn current_platform_key() -> String {
-    super::node_runtime::current_platform_key()
+/// Platform key used to index `distribution.binary` in the shared ACP
+/// registry (same schema as Zed). Distinct from Node's release triples
+/// (`darwin-arm64` / `win-x64` in `node_runtime::current_platform_key`).
+///
+/// Registry examples: `darwin-aarch64`, `darwin-x86_64`, `linux-aarch64`,
+/// `linux-x86_64`, `windows-aarch64`, `windows-x86_64`.
+pub fn registry_platform_key() -> String {
+    let (os, arch) = match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "aarch64") => ("darwin", "aarch64"),
+        ("macos", "x86_64") => ("darwin", "x86_64"),
+        ("windows", "aarch64") => ("windows", "aarch64"),
+        ("windows", "x86_64") => ("windows", "x86_64"),
+        ("linux", "aarch64") => ("linux", "aarch64"),
+        ("linux", "x86_64") => ("linux", "x86_64"),
+        (other, other_arch) => (other, other_arch),
+    };
+    format!("{os}-{arch}")
 }
 
 /// Resolves a user-defined custom server (a raw command string) into a launch
@@ -447,11 +457,11 @@ mod tests {
     }
 
     #[test]
-    fn platform_key_uses_darwin_on_macos() {
-        let key = current_platform_key();
+    fn registry_platform_key_uses_darwin_on_macos() {
+        let key = registry_platform_key();
         assert!(
             !key.starts_with("macos-"),
-            "platform key must not use Rust's macos OS name: {key}"
+            "registry key must not use Rust's macos OS name: {key}"
         );
         #[cfg(target_os = "macos")]
         {
@@ -460,52 +470,50 @@ mod tests {
                 "macOS should map to darwin-*: {key}"
             );
             assert!(
-                key.ends_with("-arm64") || key.ends_with("-x64"),
-                "unexpected arch in platform key: {key}"
+                key.ends_with("-aarch64") || key.ends_with("-x86_64"),
+                "unexpected arch in registry platform key: {key}"
+            );
+            // Must NOT use Node release naming (arm64/x64) — ACP registry
+            // keys are aarch64/x86_64 (see shared registry.json).
+            assert!(
+                !key.contains("arm64") && !key.ends_with("-x64"),
+                "registry key must not use Node triples, got: {key}"
             );
         }
     }
 
-    /// Platform key must match Node's official release triples
-    /// (https://nodejs.org/dist/), otherwise the managed download URL 404s
-    /// and the binary cache lookup misses. Real triples seen on the CDN:
-    /// `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`,
-    /// `linux-ppc64le`, `linux-s390x`, `win-arm64`, `win-x64`.
+    /// Binary agents look up `distribution.binary` with ACP/Zed triples,
+    /// not Node CDN names. Mixing them yields
+    /// `has no binary for platform darwin-arm64 (available: [..., darwin-aarch64])`.
     #[test]
-    fn platform_key_matches_node_release_triples() {
-        let key = current_platform_key();
+    fn registry_platform_key_matches_acp_triples() {
+        let key = registry_platform_key();
         assert!(
             matches!(
                 key.as_str(),
-                "darwin-arm64"
-                    | "darwin-x64"
-                    | "linux-arm64"
-                    | "linux-x64"
-                    | "linux-ppc64le"
-                    | "linux-s390x"
-                    | "win-arm64"
-                    | "win-x64"
+                "darwin-aarch64"
+                    | "darwin-x86_64"
+                    | "linux-aarch64"
+                    | "linux-x86_64"
+                    | "windows-aarch64"
+                    | "windows-x86_64"
             ),
-            "platform key `{key}` doesn't match any Node release triple"
+            "registry platform key `{key}` doesn't match any ACP binary triple"
         );
     }
 
-    /// Specifically guards against the regression where Rust's
-    /// `consts::OS = "windows"` produced URLs like
-    /// `node-vX.Y.Z-windows-x86_64.zip` — which 404s because Node publishes
-    /// `win-x64.zip`. On Windows runners, this test must pass; on others it
-    /// is a no-op.
+    /// Guards against reusing Node's `win-x64` naming for registry lookup.
     #[cfg(windows)]
     #[test]
-    fn platform_key_uses_win_prefix_on_windows() {
-        let key = current_platform_key();
+    fn registry_platform_key_uses_windows_prefix_on_windows() {
+        let key = registry_platform_key();
         assert!(
-            key.starts_with("win-"),
-            "Windows platform key should use `win-` prefix, got: {key}"
+            key.starts_with("windows-"),
+            "Windows registry key should use `windows-` prefix, got: {key}"
         );
         assert!(
-            !key.contains("windows"),
-            "Windows platform key must NOT contain `windows`: {key}"
+            !key.starts_with("win-"),
+            "Windows registry key must NOT use Node's `win-` prefix: {key}"
         );
     }
 

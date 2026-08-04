@@ -1,0 +1,39 @@
+src/features/terminal/TerminalPanel.tsx
+  s_a9bf9370cfd8b1::t_c88eb265907a77 100-111
+  s_a9bf9370cfd8b1::t_e7376faa288f8c 6-11,21-29,35,45-49,155,157,173-175,177,179-182,190,195-199,201
+  s_a9bf9370cfd8b1::t_bd16872311ec8c 142
+  s_a9bf9370cfd8b1::t_c69d0bb2b18a7f 50
+src-tauri/src/commands/project_cmds.rs
+  s_a9bf9370cfd8b1::t_ffaf6c8040c80e 21-26
+src/bridge/commands.ts
+  s_a9bf9370cfd8b1::t_4f7e4d2598e0ca 6
+src/bridge/tauri.ts
+  s_a9bf9370cfd8b1::t_99696db5264b57 23-27
+src/stores/project.store.ts
+  s_a9bf9370cfd8b1::t_8251a834e52bad 4,25-34,46-47,76-90
+  s_a9bf9370cfd8b1::t_58b3de468ccbdd 62-65
+src-tauri/src/lib.rs
+  s_a9bf9370cfd8b1::t_74f01d809bdc6c 29
+src/stores/terminal.store.ts
+  s_a9bf9370cfd8b1::t_edae277343b436 9-10,15-19,21-22,29,34-35,49-60,116-131,136,142,164-169,211,213-223,233-256,287,289-297
+src-tauri/capabilities/default.json
+  s_a9bf9370cfd8b1::t_5900121540d7d8 15
+src/commands/registry.ts
+  s_a9bf9370cfd8b1::t_091b631dfaeeb0 22-28,34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "500f4d5ae170176127bbbd17a9533c93ff6eda3b",
+  "prompts": {},
+  "sessions": {
+    "s_a9bf9370cfd8b1": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "3964547a-67f0-47a7-ace3-a297d09748e6",
+        "model": "default"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

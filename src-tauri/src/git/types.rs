@@ -39,6 +39,10 @@ pub struct BranchInfo {
 pub struct StashEntry {
     pub index: u32,
     pub message: String,
+    /// Stash commit OID — stable identifier for apply/pop/drop. Positional
+    /// indexes shift whenever any stash is dropped, so operations must
+    /// resolve this id back to a current index at call time.
+    pub id: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

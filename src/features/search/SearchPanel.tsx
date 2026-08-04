@@ -136,6 +136,8 @@ export function SearchPanel() {
   const inlineError = regexError ?? searchError;
 
   // Debounced live search; clearing the input clears the results.
+  // `activeProjectId` is a dependency: switching projects must re-run the
+  // search (or clear stale results from the previous project).
   useEffect(() => {
     const path = activeProjectPath();
     if (!path || !query.trim()) {
@@ -145,7 +147,7 @@ export function SearchPanel() {
     if (regexError) return; // 非法正则不搜
     const timer = setTimeout(() => { void search(path, query); }, DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [query, searchOptions, regexError, search, clearSearch]);
+  }, [query, searchOptions, regexError, activeProjectId, search, clearSearch]);
 
   // search.focus 命令经计数触发聚焦；0 为初值，挂载时不抢焦点。
   useEffect(() => {

@@ -25,7 +25,7 @@ vi.mock("./settings.store", () => ({
   },
 }));
 
-import { clearAllAutoSaveTimers, useFsStore } from "./fs.store";
+import { clearAllAutoSaveTimers, EDITOR_CACHE_MAX_PROJECTS, useFsStore, __resetEditorCacheLru } from "./fs.store";
 
 describe("fs.store multi-tab editor", () => {
   beforeEach(() => {
@@ -283,5 +283,34 @@ describe("fs.store diff tabs", () => {
     await useFsStore.getState().reloadEditor();
     expect(fsReadFile).not.toHaveBeenCalled();
     expect(useFsStore.getState().openFiles[0].diff?.revised).toBe("v2");
+  });
+
+  it("editorCacheByProject evicts LRU projects beyond the cap (layout kept for cold restore)", async () => {
+    __resetEditorCacheLru();
+    useFsStore.setState({
+      editorCacheByProject: {},
+      editorLayoutByProject: {},
+      openFiles: [],
+      activePath: null,
+    });
+    const g = useFsStore.getState();
+    // Save cap+1 projects → the oldest (proj-0) must be evicted.
+    for (let i = 0; i <= EDITOR_CACHE_MAX_PROJECTS; i++) {
+      await g.saveCurrentEditorState(`proj-${i}`);
+    }
+    let s = useFsStore.getState();
+    expect(Object.keys(s.editorCacheByProject)).toHaveLength(EDITOR_CACHE_MAX_PROJECTS);
+    expect(s.editorCacheByProject["proj-0"]).toBeUndefined();
+    expect(s.editorCacheByProject[`proj-${EDITOR_CACHE_MAX_PROJECTS}`]).toBeDefined();
+    // Evicted project keeps its persisted layout so cold restore still works.
+    expect(s.editorLayoutByProject["proj-0"]).toBeDefined();
+
+    // Touch proj-1 (re-save), then add one more → proj-2 is evicted, proj-1 kept.
+    await g.saveCurrentEditorState("proj-1");
+    await g.saveCurrentEditorState("proj-new");
+    s = useFsStore.getState();
+    expect(Object.keys(s.editorCacheByProject)).toHaveLength(EDITOR_CACHE_MAX_PROJECTS);
+    expect(s.editorCacheByProject["proj-1"]).toBeDefined();
+    expect(s.editorCacheByProject["proj-2"]).toBeUndefined();
   });
 });

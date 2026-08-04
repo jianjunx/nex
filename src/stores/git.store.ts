@@ -53,9 +53,9 @@ interface GitStore {
   clone: (url: string, dest: string) => Promise<boolean>;
   loadStashes: (projectPath: string) => Promise<void>;
   stashSave: (projectPath: string, message?: string) => Promise<boolean>;
-  stashApply: (projectPath: string, index: number) => Promise<boolean>;
-  stashPop: (projectPath: string, index: number) => Promise<boolean>;
-  stashDrop: (projectPath: string, index: number) => Promise<boolean>;
+  stashApply: (projectPath: string, id: string) => Promise<boolean>;
+  stashPop: (projectPath: string, id: string) => Promise<boolean>;
+  stashDrop: (projectPath: string, id: string) => Promise<boolean>;
   discard: (projectPath: string, files: string[]) => Promise<boolean>;
   revertStaged: (projectPath: string, files: string[]) => Promise<boolean>;
   loadHistory: (projectPath: string) => Promise<void>;
@@ -264,14 +264,14 @@ export const useGitStore = create<GitStore>()(
         return ok;
       },
 
-      stashApply: async (projectPath, index) => {
-        const ok = await runOp("应用存储", () => gitStashApply(projectPath, index));
+      stashApply: async (projectPath, id) => {
+        const ok = await runOp("应用存储", () => gitStashApply(projectPath, id));
         if (ok) await get().refresh(projectPath);
         return ok;
       },
 
-      stashPop: async (projectPath, index) => {
-        const ok = await runOp("弹出存储", () => gitStashPop(projectPath, index));
+      stashPop: async (projectPath, id) => {
+        const ok = await runOp("弹出存储", () => gitStashPop(projectPath, id));
         if (ok) {
           await get().refresh(projectPath);
           await get().loadStashes(projectPath);
@@ -279,8 +279,8 @@ export const useGitStore = create<GitStore>()(
         return ok;
       },
 
-      stashDrop: async (projectPath, index) => {
-        const ok = await runOp("删除存储", () => gitStashDrop(projectPath, index));
+      stashDrop: async (projectPath, id) => {
+        const ok = await runOp("删除存储", () => gitStashDrop(projectPath, id));
         if (ok) await get().loadStashes(projectPath);
         return ok;
       },

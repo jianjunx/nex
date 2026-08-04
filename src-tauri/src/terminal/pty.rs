@@ -25,6 +25,12 @@ pub struct TerminalManager {
     sessions: Arc<Mutex<Vec<Arc<TerminalSession>>>>,
 }
 
+impl Default for TerminalManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TerminalManager {
     pub fn new() -> Self {
         Self { sessions: Arc::new(Mutex::new(Vec::new())) }
@@ -72,6 +78,7 @@ impl TerminalManager {
         // next read completes it.
         let app_clone = app.clone();
         let sid = id.clone();
+        let sessions_ref = Arc::clone(&self.sessions);
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
             let mut pending: Vec<u8> = Vec::new();
@@ -156,8 +163,11 @@ impl TerminalManager {
             // Ignore emit errors — the window may already be gone.
             let _ = app_clone.emit(
                 TERMINAL_EXITED_EVENT,
-                TerminalExitedPayload { terminal_id: sid },
+                TerminalExitedPayload { terminal_id: sid.clone() },
             );
+            // Reap the dead session so the list doesn't grow forever with
+            // entries whose shell already exited naturally.
+            sessions_ref.lock().unwrap().retain(|s| s.id != sid);
         });
 
         let session = Arc::new(TerminalSession {
@@ -222,5 +232,16 @@ impl TerminalManager {
             .find(|s| s.id == id)
             .cloned()
             .ok_or_else(|| NexError::Terminal("session not found".into()))
+    }
+}
+
+/// Kill every still-alive shell when the manager is dropped (app exit),
+/// so quitting Nex never leaves orphaned PTY child processes behind.
+impl Drop for TerminalManager {
+    fn drop(&mut self) {
+        let sessions: Vec<_> = self.sessions.lock().unwrap().drain(..).collect();
+        for session in sessions {
+            let _ = session.child.lock().unwrap().kill();
+        }
     }
 }

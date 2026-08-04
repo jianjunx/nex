@@ -117,12 +117,27 @@ export function TerminalPanel() {
     });
 
     const el = termRef.current;
+    // Debounced fit: while dragging the panel divider the observer fires
+    // every frame, and each fit() reflows xterm + sends a PTY resize IPC.
+    // Coalescing to a trailing ~66ms keeps the final size exact without
+    // reflowing on every pointermove.
+    let fitTimer: ReturnType<typeof setTimeout> | undefined;
     const observer = new ResizeObserver(() => {
-      if (el.offsetWidth > 0 && el.offsetHeight > 0) fitAddon.fit();
+      if (el.offsetWidth <= 0 || el.offsetHeight <= 0) return;
+      if (fitTimer !== undefined) clearTimeout(fitTimer);
+      fitTimer = setTimeout(() => {
+        fitTimer = undefined;
+        fitAddon.fit();
+      }, 66);
     });
     observer.observe(el);
+    // Initial fit without debounce so the first paint is correct.
+    if (el.offsetWidth > 0 && el.offsetHeight > 0) fitAddon.fit();
 
-    return () => { setLiveSink(null); observer.disconnect(); term.dispose(); xtermRef.current = null; };
+    return () => {
+      if (fitTimer !== undefined) clearTimeout(fitTimer);
+      setLiveSink(null); observer.disconnect(); term.dispose(); xtermRef.current = null;
+    };
   }, [settingsVersion]);
 
   // Replay the active session's buffered output: on first mount (the

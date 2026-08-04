@@ -93,18 +93,18 @@ pub fn git_stash_list(project_path: String) -> Result<Vec<StashEntry>, NexError>
 }
 
 #[tauri::command]
-pub fn git_stash_apply(project_path: String, index: u32) -> Result<(), NexError> {
-    repository::stash_apply(Path::new(&project_path), index)
+pub fn git_stash_apply(project_path: String, id: String) -> Result<(), NexError> {
+    repository::stash_apply(Path::new(&project_path), &id)
 }
 
 #[tauri::command]
-pub fn git_stash_pop(project_path: String, index: u32) -> Result<(), NexError> {
-    repository::stash_pop(Path::new(&project_path), index)
+pub fn git_stash_pop(project_path: String, id: String) -> Result<(), NexError> {
+    repository::stash_pop(Path::new(&project_path), &id)
 }
 
 #[tauri::command]
-pub fn git_stash_drop(project_path: String, index: u32) -> Result<(), NexError> {
-    repository::stash_drop(Path::new(&project_path), index)
+pub fn git_stash_drop(project_path: String, id: String) -> Result<(), NexError> {
+    repository::stash_drop(Path::new(&project_path), &id)
 }
 
 #[tauri::command]

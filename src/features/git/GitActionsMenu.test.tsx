@@ -6,7 +6,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 
 let gitState: {
   opRunning: string | null;
-  stashes: { index: number; message: string }[];
+  stashes: { index: number; message: string; id: string }[];
   opLog: string[];
   opLogOpen: boolean;
   setOpLogOpen: ReturnType<typeof vi.fn>;
@@ -87,13 +87,13 @@ describe("GitActionsMenu", () => {
   });
 
   it("dropping a stash goes through the confirm dialog", async () => {
-    gitState.stashes = [{ index: 0, message: "wip" }];
+    gitState.stashes = [{ index: 0, message: "wip", id: "oid-0" }];
     await openMenu();
     fireEvent.click(screen.getByText("存储"));
     fireEvent.click(await screen.findByTestId("stash-0"));
     fireEvent.click(screen.getByTestId("stash-drop"));
     expect(await screen.findByText(/永久删除存储条目 stash@\{0\}/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "删除" }));
-    await waitFor(() => expect(gitState.stashDrop).toHaveBeenCalledWith("/p", 0));
+    await waitFor(() => expect(gitState.stashDrop).toHaveBeenCalledWith("/p", "oid-0"));
   });
 });

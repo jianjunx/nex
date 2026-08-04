@@ -101,14 +101,20 @@ export const useTerminalStore = create<TerminalStore>()(
 
     create: async (projectPath: string, shell?: string) => {
       set((s) => { s.loading = true; s.error = null; });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let timedOut = false;
+      const spawn = terminalCreate(projectPath, shell);
       try {
         // Race the spawn against a deadline: if the PTY invoke hangs (a blocked
         // ConPTY never resolving), surface it instead of a forever-loading "+".
         const id = await Promise.race([
-          terminalCreate(projectPath, shell),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error("终端启动超时：底层 PTY 未响应。可能是安全软件拦截了 ConPTY，或指定的 shell 无效。")), 8000)
-          ),
+          spawn,
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => {
+              timedOut = true;
+              reject(new Error("终端启动超时：底层 PTY 未响应。可能是安全软件拦截了 ConPTY，或指定的 shell 无效。"));
+            }, 8000);
+          }),
         ]);
         set((s) => {
           s.sessions.push({ id, title: `Terminal ${s.sessions.length + 1}` });
@@ -116,7 +122,15 @@ export const useTerminalStore = create<TerminalStore>()(
         });
       } catch (err) {
         set((s) => { s.error = errorMessage(err); });
+        // If we timed out but the backend PTY still materializes moments
+        // later, kill it so it doesn't linger as an orphan session.
+        if (timedOut) {
+          void spawn
+            .then((lateId) => terminalKill(lateId))
+            .catch(() => { /* spawn failed too — nothing to clean up */ });
+        }
       } finally {
+        if (timer !== undefined) clearTimeout(timer);
         set((s) => { s.loading = false; });
       }
     },

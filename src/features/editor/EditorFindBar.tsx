@@ -22,18 +22,52 @@ import {
 
 export const SEARCH_SYNC_EVENT = "nex-search-sync";
 
+// Match ranges cached per document object + query: recomputing every match
+// on each cursor move was O(n) and visibly lagged on large documents.
+// The doc object keeps its identity while unchanged, so a WeakMap keyed on
+// it invalidates automatically on edits and never leaks.
+type MatchCache = { queryKey: string; froms: number[]; tos: number[] };
+const matchCache = new WeakMap<object, MatchCache>();
+
 function matchStats(view: EditorView): { current: number; total: number } {
   const query = getSearchQuery(view.state);
   if (!query.valid || !query.search) return { current: 0, total: 0 };
 
-  let total = 0;
-  let current = 0;
-  const head = view.state.selection.main.head;
-  const cursor = query.getCursor(view.state);
-  for (let m = cursor.next(); !m.done; m = cursor.next()) {
-    total += 1;
-    if (m.value.from <= head && head <= m.value.to) current = total;
+  const queryKey = `${query.search}|${query.caseSensitive}|${query.regexp}|${query.wholeWord}`;
+  const doc = view.state.doc;
+  let cache = matchCache.get(doc);
+  if (!cache || cache.queryKey !== queryKey) {
+    const froms: number[] = [];
+    const tos: number[] = [];
+    const cursor = query.getCursor(view.state);
+    for (let m = cursor.next(); !m.done; m = cursor.next()) {
+      froms.push(m.value.from);
+      tos.push(m.value.to);
+    }
+    cache = { queryKey, froms, tos };
+    matchCache.set(doc, cache);
   }
+
+  const { froms, tos } = cache;
+  const total = froms.length;
+  if (total === 0) return { current: 0, total: 0 };
+
+  // Binary search for the rightmost match starting at/before the cursor
+  // (O(log n) instead of the previous full scan per cursor move).
+  const head = view.state.selection.main.head;
+  let lo = 0;
+  let hi = total - 1;
+  let idx = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (froms[mid] <= head) {
+      idx = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  const current = idx >= 0 && tos[idx] >= head ? idx + 1 : 0;
   return { current, total };
 }
 

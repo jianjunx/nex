@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback, type ClipboardEvent, type Key
 import { Send, Square, X, AtSign } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { useAgentStore, pendingMessagePreview } from "../../stores/agent.store";
+import { useAgentStore, pendingMessagePreview, waitSessionReady } from "../../stores/agent.store";
 import { useProjectStore } from "../../stores/project.store";
 import {
   selectProjectActiveTabId,
@@ -119,15 +119,10 @@ export function AgentComposer() {
     const current = useAgentStore.getState().sessions[activeTabId];
     if (current?.sessionId && current.status !== "starting") return current.sessionId;
 
-    // Wait briefly if a create is already in flight for this tab.
+    // Wait if a create is already in flight for this tab — event-driven
+    // (store subscription), not a fixed-delay polling loop.
     if (current?.status === "starting") {
-      for (let i = 0; i < 60; i++) {
-        await new Promise((r) => setTimeout(r, 250));
-        const s = useAgentStore.getState().sessions[activeTabId];
-        if (s?.sessionId && s.status !== "starting") return s.sessionId;
-        if (!s) break;
-      }
-      return useAgentStore.getState().sessions[activeTabId]?.sessionId || null;
+      return waitSessionReady(activeTabId);
     }
 
     const servers = useAgentStore.getState().servers;

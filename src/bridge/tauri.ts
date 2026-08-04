@@ -291,6 +291,8 @@ export interface BranchInfo {
 export interface StashEntry {
   index: number;
   message: string;
+  /** Stash commit OID — stable id for apply/pop/drop (index shifts on drop). */
+  id: string;
 }
 
 export interface CommitInfo {
@@ -336,16 +338,16 @@ export async function gitStashList(projectPath: string): Promise<StashEntry[]> {
   return invoke(COMMANDS.GIT_STASH_LIST, { projectPath });
 }
 
-export async function gitStashApply(projectPath: string, index: number): Promise<void> {
-  return invoke(COMMANDS.GIT_STASH_APPLY, { projectPath, index });
+export async function gitStashApply(projectPath: string, id: string): Promise<void> {
+  return invoke(COMMANDS.GIT_STASH_APPLY, { projectPath, id });
 }
 
-export async function gitStashPop(projectPath: string, index: number): Promise<void> {
-  return invoke(COMMANDS.GIT_STASH_POP, { projectPath, index });
+export async function gitStashPop(projectPath: string, id: string): Promise<void> {
+  return invoke(COMMANDS.GIT_STASH_POP, { projectPath, id });
 }
 
-export async function gitStashDrop(projectPath: string, index: number): Promise<void> {
-  return invoke(COMMANDS.GIT_STASH_DROP, { projectPath, index });
+export async function gitStashDrop(projectPath: string, id: string): Promise<void> {
+  return invoke(COMMANDS.GIT_STASH_DROP, { projectPath, id });
 }
 
 export async function gitFetch(projectPath: string, remote: string): Promise<void> {

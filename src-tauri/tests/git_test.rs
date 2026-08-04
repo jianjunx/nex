@@ -220,7 +220,8 @@ fn stash_pop_restores_changes_and_drops_entry() {
     fs::write(dir.path().join("a.txt"), "dirty").unwrap();
     repository::stash_save(dir.path(), "wip").unwrap();
 
-    repository::stash_pop(dir.path(), 0).unwrap();
+    let id = repository::stash_list(dir.path()).unwrap()[0].id.clone();
+    repository::stash_pop(dir.path(), &id).unwrap();
 
     assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "dirty");
     assert!(repository::stash_list(dir.path()).unwrap().is_empty());
@@ -234,7 +235,8 @@ fn stash_apply_restores_but_keeps_entry() {
     fs::write(dir.path().join("a.txt"), "dirty").unwrap();
     repository::stash_save(dir.path(), "wip").unwrap();
 
-    repository::stash_apply(dir.path(), 0).unwrap();
+    let id = repository::stash_list(dir.path()).unwrap()[0].id.clone();
+    repository::stash_apply(dir.path(), &id).unwrap();
 
     assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "dirty");
     assert_eq!(repository::stash_list(dir.path()).unwrap().len(), 1);
@@ -248,10 +250,43 @@ fn stash_drop_removes_entry_without_restoring() {
     fs::write(dir.path().join("a.txt"), "dirty").unwrap();
     repository::stash_save(dir.path(), "wip").unwrap();
 
-    repository::stash_drop(dir.path(), 0).unwrap();
+    let id = repository::stash_list(dir.path()).unwrap()[0].id.clone();
+    repository::stash_drop(dir.path(), &id).unwrap();
 
     assert!(repository::stash_list(dir.path()).unwrap().is_empty());
     assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "v1");
+}
+
+#[test]
+fn stash_ops_follow_id_when_list_shifts() {
+    // Regression: operations locate entries by stable id, not by the UI-time
+    // positional index (which renumbers whenever any stash is dropped).
+    let dir = tempdir().unwrap();
+    init_repo(dir.path());
+    commit_file(dir.path(), "a.txt", "v1", "init");
+
+    // Two stashes: older holds "first", newer holds "second".
+    fs::write(dir.path().join("a.txt"), "first").unwrap();
+    repository::stash_save(dir.path(), "first").unwrap();
+    fs::write(dir.path().join("a.txt"), "second").unwrap();
+    repository::stash_save(dir.path(), "second").unwrap();
+
+    let list = repository::stash_list(dir.path()).unwrap();
+    assert_eq!(list.len(), 2);
+    let newer = list.iter().find(|e| e.message.contains("second")).unwrap().id.clone();
+    let older = list.iter().find(|e| e.message.contains("first")).unwrap().id.clone();
+
+    // Drop the newer entry → the older one shifts from index 1 to 0, but
+    // popping it by id must still restore "first".
+    repository::stash_drop(dir.path(), &newer).unwrap();
+    repository::stash_pop(dir.path(), &older).unwrap();
+
+    assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "first");
+    assert!(repository::stash_list(dir.path()).unwrap().is_empty());
+
+    // A stale id (already dropped) must fail cleanly, not hit another entry.
+    let err = repository::stash_apply(dir.path(), &older).unwrap_err();
+    assert!(err.to_string().contains("已不存在"));
 }
 
 #[test]

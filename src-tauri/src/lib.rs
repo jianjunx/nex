@@ -21,7 +21,6 @@ use watcher::WatcherManager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
@@ -95,22 +94,24 @@ pub fn run() {
         .setup(|app| {
             #[cfg(target_os = "windows")]
             {
-                let window = app
-                    .get_webview_window("main")
-                    .expect("main window not found");
+                let Some(window) = app.get_webview_window("main") else {
+                    return Err("main window not found".into());
+                };
                 // Hide the native title bar on Windows; we draw our own tab bar
                 // with custom window controls in the frontend.
                 let _ = window.set_decorations(false);
             }
 
-            // Initialize database
+            // Initialize database. Returning Err lets Tauri shut down with a
+            // readable error instead of panicking mid-setup.
             let app_data_dir = app
                 .path()
                 .app_data_dir()
-                .expect("failed to get app data dir");
+                .map_err(|e| format!("failed to get app data dir: {e}"))?;
             std::fs::create_dir_all(&app_data_dir).ok();
             let db_path = app_data_dir.join("nex.db");
-            let db = Database::new(&db_path).expect("failed to initialize database");
+            let db = Database::new(&db_path)
+                .map_err(|e| format!("failed to initialize database: {e}"))?;
 
             app.manage(AppState {
                 db: Arc::new(db),

@@ -32,6 +32,13 @@ use crate::error::NexError;
 /// 120s gives headroom for slow networks without hanging the GUI.
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// Platform null device for npm `--userconfig`/`--globalconfig`: `/dev/null`
+/// does not exist on Windows and npm errors out with ENOENT there.
+#[cfg(windows)]
+const NULL_DEVICE: &str = "NUL";
+#[cfg(not(windows))]
+const NULL_DEVICE: &str = "/dev/null";
+
 /// Keep this many recent spec versions per agent id when sweeping old
 /// caches. The newest is always the live install; older ones are kept just
 /// in case a downgrade is requested. Three strikes a balance between disk
@@ -160,9 +167,9 @@ impl PackageCache {
             "--cache".to_string(),
             cache_dir.to_string_lossy().into_owned(),
             "--userconfig".to_string(),
-            "/dev/null".to_string(),
+            NULL_DEVICE.to_string(),
             "--globalconfig".to_string(),
-            "/dev/null".to_string(),
+            NULL_DEVICE.to_string(),
             "--save-exact".to_string(),
             "--no-audit".to_string(),
             "--no-fund".to_string(),
@@ -182,6 +189,9 @@ impl PackageCache {
         cmd.stdin(std::process::Stdio::null());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
+        // On INSTALL_TIMEOUT the output() future is dropped; without
+        // kill_on_drop the npm/node process would keep running forever.
+        cmd.kill_on_drop(true);
 
         let node_path = node_binary.to_path_buf();
         let output = match tokio::time::timeout(INSTALL_TIMEOUT, cmd.output()).await {
@@ -456,7 +466,7 @@ async fn sweep_lru(root: &Path, keep_recent: usize) -> std::io::Result<usize> {
                 specs.push((mtime, spec_path));
             }
             // Newest first.
-            specs.sort_by(|a, b| b.0.cmp(&a.0));
+            specs.sort_by_key(|(mtime, _)| std::cmp::Reverse(*mtime));
             for (_, stale_path) in specs.into_iter().skip(keep_recent) {
                 match std::fs::remove_dir_all(&stale_path) {
                     Ok(()) => {

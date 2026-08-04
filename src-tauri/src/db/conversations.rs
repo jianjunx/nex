@@ -70,9 +70,12 @@ impl Database {
     }
 
     pub fn append_message(&self, conversation_id: &str, role: &str, content: &str, tool_summary: Option<&str>) -> Result<Message, NexError> {
-        let conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock().unwrap();
         let now = chrono::Utc::now().timestamp_millis();
-        let seq: i32 = conn.query_row(
+        // Sequence computation + INSERT + conversation touch must be atomic:
+        // two concurrent appends could otherwise read the same MAX(sequence).
+        let tx = conn.transaction()?;
+        let seq: i32 = tx.query_row(
             "SELECT COALESCE(MAX(sequence), 0) + 1 FROM messages WHERE conversation_id = ?1",
             params![conversation_id],
             |row| row.get(0),
@@ -86,11 +89,12 @@ impl Database {
             timestamp: now,
             sequence: seq,
         };
-        conn.execute(
+        tx.execute(
             "INSERT INTO messages (id, conversation_id, role, content, tool_summary, timestamp, sequence) VALUES (?1,?2,?3,?4,?5,?6,?7)",
             params![msg.id, msg.conversation_id, msg.role, msg.content, msg.tool_summary, msg.timestamp, msg.sequence],
         )?;
-        conn.execute("UPDATE conversations SET updated_at = ?1 WHERE id = ?2", params![now, conversation_id])?;
+        tx.execute("UPDATE conversations SET updated_at = ?1 WHERE id = ?2", params![now, conversation_id])?;
+        tx.commit()?;
         Ok(msg)
     }
 
@@ -182,7 +186,7 @@ impl Database {
                 let timestamp: i64 = row.get(2)?;
                 let payload_json: String = row.get(3)?;
                 let payload: Value = serde_json::from_str(&payload_json)
-                    .unwrap_or_else(|_| Value::Null);
+                    .unwrap_or(Value::Null);
 
                 Ok(ThreadEntryPersisted {
                     kind,

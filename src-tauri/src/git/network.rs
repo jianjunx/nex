@@ -65,20 +65,34 @@ fn run_git(repo: Option<&Path>, args: &[&str]) -> Result<String, NexError> {
     }
 }
 
+/// Refuses values that git would parse as option flags (e.g. a malicious
+/// remote named `--upload-pack=<cmd>`). Remotes/branches/URLs never need
+/// to start with `-`.
+fn validate_git_arg(kind: &str, value: &str) -> Result<(), NexError> {
+    if value.starts_with('-') || value.is_empty() {
+        return Err(NexError::Git(format!("非法的{kind}: {value}")));
+    }
+    Ok(())
+}
+
 /// `git fetch <remote>`（默认 refspecs，同 `git fetch` 的语义）。
 pub fn fetch_remote(repo_path: &Path, remote: &str) -> Result<(), NexError> {
+    validate_git_arg("远端名", remote)?;
     run_git(Some(repo_path), &["fetch", remote]).map(|_| ())
 }
 
 /// `git pull <remote>`：fetch 后合并远端 HEAD 到当前分支（与旧实现
 /// FETCH_HEAD 合并语义一致）；非快进冲突由 git 自身报错上抛。
 pub fn pull_remote(repo_path: &Path, remote: &str) -> Result<(), NexError> {
+    validate_git_arg("远端名", remote)?;
     run_git(Some(repo_path), &["pull", remote]).map(|_| ())
 }
 
 /// `git push <remote> <branch>`；非快进拒绝映射为既有中文文案
 /// （新版 git 文案为 "(fetch first)"，旧版为 "(non-fast-forward)"）。
 pub fn push_remote(repo_path: &Path, remote: &str, branch: &str) -> Result<(), NexError> {
+    validate_git_arg("远端名", remote)?;
+    validate_git_arg("分支名", branch)?;
     let out = run_git_output(Some(repo_path), &["push", remote, branch])?;
     if out.status.success() {
         return Ok(());
@@ -92,6 +106,7 @@ pub fn push_remote(repo_path: &Path, remote: &str, branch: &str) -> Result<(), N
 
 /// `git clone <url> <dest>`：克隆到 dest（与旧 libgit2 实现一致）。
 pub fn clone_repo(url: &str, dest: &Path) -> Result<(), NexError> {
+    validate_git_arg("仓库 URL", url)?;
     let dest_str = dest
         .to_str()
         .ok_or_else(|| NexError::Git("克隆目标路径无效".to_string()))?;

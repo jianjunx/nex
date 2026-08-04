@@ -1,5 +1,6 @@
-import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useUiStore } from "../../stores/ui.store";
+import { useProjectStore } from "../../stores/project.store";
 import { FileTree } from "../files/FileTree";
 import { GitPanel } from "../git/GitPanel";
 import { SearchPanel } from "../search/SearchPanel";
@@ -15,8 +16,15 @@ function clamp(n: number, min: number, max: number) {
 }
 
 export function SidePanel() {
-  const { sidePanelTab, terminalVisible, terminalHeight, setTerminalHeight } = useUiStore();
+  const { sidePanelTab, terminalVisible, terminalHeight, setTerminalHeight, syncTerminalVisibleForProject } = useUiStore();
+  const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  // Terminal show/hide is per-project (like PTY tabs). Sync before TerminalPanel
+  // mounts/unmounts so a hidden project does not keep another project's tray open.
+  useEffect(() => {
+    syncTerminalVisibleForProject(activeProjectId);
+  }, [activeProjectId, syncTerminalVisibleForProject]);
 
   // Live height during drag — keep pointer moves off the persisted store so
   // localStorage writes don't stutter the resize.

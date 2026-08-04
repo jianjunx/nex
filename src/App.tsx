@@ -59,6 +59,7 @@ function App() {
         useFsStore.getState().loadEditorState(activeProjectId),
         watchP,
       ]);
+      useUiStore.getState().syncTerminalVisibleForProject(activeProjectId);
     })();
 
     // External-change events: the file tree and git panel only render the

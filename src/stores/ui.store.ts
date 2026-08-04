@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { persist } from "zustand/middleware";
+import { useProjectStore } from "./project.store";
 
 export type SidePanelTab = "files" | "git" | "search";
 
@@ -22,7 +23,10 @@ export type SettingsSection =
 interface UiState {
   sidePanelVisible: boolean;
   sidePanelTab: SidePanelTab;
+  /** Visible terminal tray for the *current* project (mirrored from by-project map). */
   terminalVisible: boolean;
+  /** Per-project terminal tray visibility; survives project switches. */
+  terminalVisibleByProject: Record<string, boolean>;
   sidePanelWidth: number;
   terminalHeight: number;
   editorVisible: boolean;
@@ -42,6 +46,8 @@ interface UiState {
   toggleSidePanelTab: (tab: SidePanelTab) => void;
   toggleTerminal: () => void;
   setTerminalVisible: (v: boolean) => void;
+  /** Restore `terminalVisible` from the per-project map (call on project switch). */
+  syncTerminalVisibleForProject: (projectId: string | null) => void;
   setSidePanelWidth: (w: number) => void;
   setTerminalHeight: (h: number) => void;
   setEditorVisible: (v: boolean) => void;
@@ -58,6 +64,13 @@ interface UiState {
   consumeCloseTabRequest: () => void;
 }
 
+function rememberTerminalVisible(s: UiState, visible: boolean) {
+  s.terminalVisible = visible;
+  if (visible) s.sidePanelVisible = true;
+  const projectId = useProjectStore.getState().activeProjectId;
+  if (projectId) s.terminalVisibleByProject[projectId] = visible;
+}
+
 // Persist layout state so the window reopens exactly as the user left it
 // (panel visibility/width, terminal toggle/height, active side-panel tab).
 export const useUiStore = create<UiState>()(
@@ -66,6 +79,7 @@ export const useUiStore = create<UiState>()(
       sidePanelVisible: true,
       sidePanelTab: "files",
       terminalVisible: false,
+      terminalVisibleByProject: {},
       sidePanelWidth: 320,
       terminalHeight: 200,
       editorVisible: false,
@@ -87,15 +101,27 @@ export const useUiStore = create<UiState>()(
         }
       }),
       toggleTerminal: () => set((s) => {
-        s.terminalVisible = !s.terminalVisible;
-        // The terminal tray lives INSIDE the side panel; turning it on while
-        // the panel is hidden would light the icon with nothing appearing.
-        // (Same force-show precedent as setSidePanelTab.)
-        if (s.terminalVisible) s.sidePanelVisible = true;
+        rememberTerminalVisible(s, !s.terminalVisible);
       }),
       setTerminalVisible: (v) => set((s) => {
-        s.terminalVisible = v;
-        if (v) s.sidePanelVisible = true;
+        rememberTerminalVisible(s, v);
+      }),
+      syncTerminalVisibleForProject: (projectId) => set((s) => {
+        if (!projectId) {
+          s.terminalVisible = false;
+          return;
+        }
+        if (Object.prototype.hasOwnProperty.call(s.terminalVisibleByProject, projectId)) {
+          s.terminalVisible = !!s.terminalVisibleByProject[projectId];
+          return;
+        }
+        // First visit for this project: migrate legacy single-flag once when
+        // the map is still empty; otherwise default to hidden.
+        const inheritLegacy =
+          Object.keys(s.terminalVisibleByProject).length === 0 && s.terminalVisible;
+        const next = inheritLegacy;
+        s.terminalVisibleByProject[projectId] = next;
+        s.terminalVisible = next;
       }),
       setSidePanelWidth: (w) => set((s) => { s.sidePanelWidth = w; }),
       setTerminalHeight: (h) => set((s) => { s.terminalHeight = h; }),
@@ -129,6 +155,7 @@ export const useUiStore = create<UiState>()(
         sidePanelVisible: s.sidePanelVisible,
         sidePanelTab: s.sidePanelTab,
         terminalVisible: s.terminalVisible,
+        terminalVisibleByProject: s.terminalVisibleByProject,
         sidePanelWidth: s.sidePanelWidth,
         terminalHeight: s.terminalHeight,
         editorVisible: s.editorVisible,
@@ -137,14 +164,22 @@ export const useUiStore = create<UiState>()(
       // I-2: 水合时校验 sidePanelTab，防止陈旧持久化值（如旧版 "settings"）导致侧栏空白
       // Clamp panel sizes so corrupted persisted values cannot hide the UI.
       merge: (persisted, current) => {
-        const merged = { ...current, ...(persisted as Partial<UiState>) };
+        const p = (persisted ?? {}) as Partial<UiState>;
+        const merged = { ...current, ...p };
         const clamp = (n: unknown, min: number, max: number, fallback: number) => {
           if (typeof n !== "number" || !Number.isFinite(n)) return fallback;
           return Math.min(max, Math.max(min, n));
         };
+        const byProject =
+          p.terminalVisibleByProject &&
+          typeof p.terminalVisibleByProject === "object" &&
+          !Array.isArray(p.terminalVisibleByProject)
+            ? p.terminalVisibleByProject
+            : {};
         return {
           ...merged,
           sidePanelTab: sanitizeSidePanelTab(merged.sidePanelTab),
+          terminalVisibleByProject: byProject,
           sidePanelWidth: clamp(merged.sidePanelWidth, 160, 800, current.sidePanelWidth),
           terminalHeight: clamp(merged.terminalHeight, 80, 800, current.terminalHeight),
           editorWidth: clamp(merged.editorWidth, 200, 2000, current.editorWidth),

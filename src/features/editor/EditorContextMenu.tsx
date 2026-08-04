@@ -2,13 +2,12 @@ import { useCallback, type ReactNode, type RefObject } from "react";
 import { ClipboardPaste, Copy, Scissors, TextSelect } from "lucide-react";
 import type { EditorView } from "@codemirror/view";
 import {
-  ContextMenu,
-  ContextMenuTrigger,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuShortcut,
-} from "@/components/ui/context-menu";
+  PositionedDropdown,
+  PositionedMenuItem,
+  PositionedMenuSeparator,
+  PositionedMenuShortcut,
+  usePositionedContextMenu,
+} from "@/components/ui/TextEditContextMenu";
 import { detectPlatform } from "@/commands/types";
 
 interface EditorContextMenuProps {
@@ -21,13 +20,16 @@ interface EditorContextMenuProps {
 const primaryLabel = detectPlatform() === "mac" ? "⌘" : "Ctrl";
 
 export function EditorContextMenu({ children, viewRef, readOnly = false }: EditorContextMenuProps) {
+  const { open, setOpen, pos, onContextMenu } = usePositionedContextMenu();
+
   const handleCopy = useCallback(() => {
     const view = viewRef.current;
     if (!view) return;
     const { from, to } = view.state.selection.main;
     const text = from === to ? view.state.doc.toString() : view.state.sliceDoc(from, to);
     void navigator.clipboard.writeText(text);
-  }, [viewRef]);
+    setOpen(false);
+  }, [viewRef, setOpen]);
 
   const handleCut = useCallback(() => {
     const view = viewRef.current;
@@ -37,7 +39,8 @@ export function EditorContextMenu({ children, viewRef, readOnly = false }: Edito
     const text = view.state.sliceDoc(from, to);
     void navigator.clipboard.writeText(text);
     view.dispatch({ changes: { from, to, insert: "" } });
-  }, [viewRef, readOnly]);
+    setOpen(false);
+  }, [viewRef, readOnly, setOpen]);
 
   const handlePaste = useCallback(async () => {
     const view = viewRef.current;
@@ -53,47 +56,49 @@ export function EditorContextMenu({ children, viewRef, readOnly = false }: Edito
       changes: { from, to, insert: text },
       selection: { anchor: from + text.length },
     });
-  }, [viewRef, readOnly]);
+    setOpen(false);
+  }, [viewRef, readOnly, setOpen]);
 
   const handleSelectAll = useCallback(() => {
     const view = viewRef.current;
     if (!view) return;
     view.dispatch({ selection: { anchor: 0, head: view.state.doc.length } });
     view.focus();
-  }, [viewRef]);
+    setOpen(false);
+  }, [viewRef, setOpen]);
 
   return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>
-        <div className="h-full min-h-0">{children}</div>
-      </ContextMenuTrigger>
-      <ContextMenuContent className="w-48" data-testid="editor-context-menu">
+    <>
+      <div className="h-full min-h-0" onContextMenu={onContextMenu}>
+        {children}
+      </div>
+      <PositionedDropdown open={open} setOpen={setOpen} pos={pos} testId="editor-context-menu">
         {!readOnly && (
-          <ContextMenuItem onClick={() => void handleCut()}>
+          <PositionedMenuItem onClick={() => void handleCut()}>
             <Scissors size={14} />
             剪切
-            <ContextMenuShortcut>{primaryLabel}+X</ContextMenuShortcut>
-          </ContextMenuItem>
+            <PositionedMenuShortcut>{primaryLabel}+X</PositionedMenuShortcut>
+          </PositionedMenuItem>
         )}
-        <ContextMenuItem onClick={() => void handleCopy()}>
+        <PositionedMenuItem onClick={() => void handleCopy()}>
           <Copy size={14} />
           复制
-          <ContextMenuShortcut>{primaryLabel}+C</ContextMenuShortcut>
-        </ContextMenuItem>
+          <PositionedMenuShortcut>{primaryLabel}+C</PositionedMenuShortcut>
+        </PositionedMenuItem>
         {!readOnly && (
-          <ContextMenuItem onClick={() => void handlePaste()}>
+          <PositionedMenuItem onClick={() => void handlePaste()}>
             <ClipboardPaste size={14} />
             粘贴
-            <ContextMenuShortcut>{primaryLabel}+V</ContextMenuShortcut>
-          </ContextMenuItem>
+            <PositionedMenuShortcut>{primaryLabel}+V</PositionedMenuShortcut>
+          </PositionedMenuItem>
         )}
-        <ContextMenuSeparator />
-        <ContextMenuItem onClick={handleSelectAll}>
+        <PositionedMenuSeparator />
+        <PositionedMenuItem onClick={handleSelectAll}>
           <TextSelect size={14} />
           全选
-          <ContextMenuShortcut>{primaryLabel}+A</ContextMenuShortcut>
-        </ContextMenuItem>
-      </ContextMenuContent>
-    </ContextMenu>
+          <PositionedMenuShortcut>{primaryLabel}+A</PositionedMenuShortcut>
+        </PositionedMenuItem>
+      </PositionedDropdown>
+    </>
   );
 }

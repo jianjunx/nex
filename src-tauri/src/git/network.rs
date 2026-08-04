@@ -31,8 +31,8 @@ fn run_git_output(repo: Option<&Path>, args: &[&str]) -> Result<Output, NexError
     })
 }
 
-/// 从 git stderr 提取单行错误信息：优先 error:/fatal:/hint: 行，否则最后非空行。
-fn stderr_line(stderr: &[u8]) -> String {
+/// 从 git stderr 提取单行摘要：优先 error:/fatal:/hint: 行，否则最后非空行。
+fn stderr_summary(stderr: &[u8]) -> String {
     let text = String::from_utf8_lossy(stderr);
     text.lines()
         .rev()
@@ -46,12 +46,22 @@ fn stderr_line(stderr: &[u8]) -> String {
         .to_string()
 }
 
+/// 完整 stderr（供 UI 展开详情）；空则回退到摘要。
+fn git_err_from_stderr(stderr: &[u8]) -> NexError {
+    let full = String::from_utf8_lossy(stderr).trim().to_string();
+    if full.is_empty() {
+        NexError::Git(stderr_summary(stderr))
+    } else {
+        NexError::Git(full)
+    }
+}
+
 fn run_git(repo: Option<&Path>, args: &[&str]) -> Result<String, NexError> {
     let out = run_git_output(repo, args)?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {
-        Err(NexError::Git(stderr_line(&out.stderr)))
+        Err(git_err_from_stderr(&out.stderr))
     }
 }
 
@@ -77,7 +87,7 @@ pub fn push_remote(repo_path: &Path, remote: &str, branch: &str) -> Result<(), N
     if stderr.contains("non-fast-forward") || stderr.contains("fetch first") {
         return Err(NexError::Git("推送被拒绝：非快进，请先拉取合并".to_string()));
     }
-    Err(NexError::Git(stderr_line(&out.stderr)))
+    Err(git_err_from_stderr(&out.stderr))
 }
 
 /// `git clone <url> <dest>`：克隆到 dest（与旧 libgit2 实现一致）。

@@ -15,6 +15,7 @@ import { KeybindingHost } from "./commands/KeybindingHost";
 import { useKeybindingsStore } from "./stores/keybindings.store";
 import { SettingsDialog } from "./features/settings/SettingsDialog";
 import { GitCredentialModal } from "./features/git/GitCredentialModal";
+import { AppLifecycleHost } from "./features/layout/AppLifecycleHost";
 
 /** Path of the currently active project, if any. */
 function activeProjectPath(): string | undefined {
@@ -48,15 +49,16 @@ function App() {
       }
 
       // Watcher failures are non-fatal (e.g. path no longer exists).
-      fsWatchStart(activeProject.path).catch(() => {});
+      const watchP = fsWatchStart(activeProject.path).catch(() => {});
 
       // Validate persisted tabs (incl. one-shot legacy migration) against
       // backend conversations, then reload each surviving tab's messages.
-      await restoreProjectConversationTabs(activeProjectId);
-
-      // Restore the editor panel for the active project (open files + active
-      // tab), mirroring how conversation tabs are restored on cold start.
-      await useFsStore.getState().loadEditorState(activeProjectId);
+      // Editor restore runs in parallel with conversation hydrate.
+      await Promise.all([
+        restoreProjectConversationTabs(activeProjectId),
+        useFsStore.getState().loadEditorState(activeProjectId),
+        watchP,
+      ]);
     })();
 
     // External-change events: the file tree and git panel only render the
@@ -65,8 +67,20 @@ function App() {
     // clobber the active project's view.
     const unlistenFs = onFsChanged((payload) => {
       if (payload.projectPath !== activeProjectPath()) return;
-      useFsStore.getState().loadRoot(payload.projectPath);
-      void useFsStore.getState().syncExternalChange(payload.paths);
+      const fs = useFsStore.getState();
+      const parents = new Set<string>([payload.projectPath]);
+      for (const p of payload.paths) {
+        const parent = p.replace(/[/\\][^/\\]*$/, "");
+        if (parent) parents.add(parent);
+      }
+      for (const dir of parents) {
+        if (dir === payload.projectPath) {
+          void fs.loadRoot(payload.projectPath);
+        } else if (dir in fs.nodesByDir) {
+          void fs.refreshDir(dir);
+        }
+      }
+      void fs.syncExternalChange(payload.paths);
     });
     const unlistenGit = onGitStatusChanged((payload) => {
       if (payload.projectPath !== activeProjectPath()) return;
@@ -98,6 +112,7 @@ function App() {
   return (
     <>
       <KeybindingHost />
+      <AppLifecycleHost />
       <SettingsDialog />
       <GitCredentialModal />
       <MainLayout

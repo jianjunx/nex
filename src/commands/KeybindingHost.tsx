@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import {
-  comboToCanonical,
+  combosMatch,
   detectPlatform,
   eventToLogicalCombo,
   isModifierOnly,
@@ -9,7 +9,18 @@ import { listCommands } from "./registry";
 import { useKeybindingsStore } from "../stores/keybindings.store";
 
 // Commands that must work even while typing (VSCode semantics).
-const ALLOW_IN_INPUT = new Set(["editor.save", "editor.close", "scm.commit", "files.copy", "files.cut", "files.paste", "files.rename", "files.delete"]);
+const ALLOW_IN_INPUT = new Set([
+  "editor.save",
+  "editor.close",
+  "scm.commit",
+  "files.copy",
+  "files.cut",
+  "files.paste",
+  "files.rename",
+  "files.delete",
+  "workbench.closeActiveTab",
+  "terminal.toggle",
+]);
 
 /** Workbench shortcuts still allowed while the integrated terminal is focused. */
 const ALLOW_IN_TERMINAL = new Set(["terminal.toggle"]);
@@ -41,8 +52,7 @@ export function KeybindingHost() {
       const dlg = dialogOpen();
 
       const combo = eventToLogicalCombo(e, platform);
-      const canonical = comboToCanonical(combo);
-      if (!combo || !canonical) return;
+      if (!combo || combo.key == null) return;
 
       // C-1: 裸可打印字符（字母/数字/单字符标点）绝不放行白名单旁路，防止吞掉正常输入
       const isTypingKey =
@@ -55,7 +65,7 @@ export function KeybindingHost() {
         (a, b) => (a.id in overrides ? 0 : 1) - (b.id in overrides ? 0 : 1),
       );
       for (const cmd of cmds) {
-        if (comboToCanonical(resolve(cmd.id)) !== canonical) continue;
+        if (!combosMatch(resolve(cmd.id), combo, platform)) continue;
         if (dlg) continue; // 模态对话框打开时全局键位全部让行（Esc 交给 radix）
         // Terminal owns arrow/history/paste keys — only allow a small workbench set.
         // xterm's helper textarea is also an "input", so terminal checks must win.
@@ -64,7 +74,8 @@ export function KeybindingHost() {
         } else {
           // 放行条件：命令在白名单，且（带 primary/alt，或键 token 为功能键/非可打印字符）
           const allowBypass =
-            ALLOW_IN_INPUT.has(cmd.id) && (!isTypingKey || !!combo.primary || !!combo.alt);
+            ALLOW_IN_INPUT.has(cmd.id) &&
+            (!isTypingKey || !!combo.primary || !!combo.alt || !!combo.ctrl);
           if (inInput && !allowBypass) continue;
         }
         if (cmd.when && !cmd.when()) continue;

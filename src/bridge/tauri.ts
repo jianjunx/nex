@@ -284,6 +284,8 @@ export interface BranchInfo {
   isRemote: boolean;
   ahead: number | null;
   behind: number | null;
+  /** Tip commit time (seconds since epoch); null if unavailable. */
+  tipTime: number | null;
 }
 
 export interface StashEntry {
@@ -470,6 +472,10 @@ export async function fsApplyReplace(
 
 export async function fsWatchStart(projectPath: string): Promise<void> {
   return invoke(COMMANDS.FS_WATCH_START, { projectPath });
+}
+
+export async function fsWatchStop(projectPath: string): Promise<void> {
+  return invoke(COMMANDS.FS_WATCH_STOP, { projectPath });
 }
 
 export async function fsCreateFile(parentDir: string, name: string): Promise<void> {

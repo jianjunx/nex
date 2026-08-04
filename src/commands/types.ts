@@ -1,8 +1,9 @@
 export type Platform = "mac" | "other";
 
-/** Cross-platform logical combo. `primary` = Ctrl on win/linux, Cmd on mac. `key` null = unbound. */
+/** Cross-platform logical combo. `primary` = Ctrl on win/linux, Cmd on mac. `ctrl` = physical Control on all platforms. `key` null = unbound. */
 export interface KeyCombo {
   primary?: boolean;
+  ctrl?: boolean;
   alt?: boolean;
   shift?: boolean;
   key: string | null;
@@ -25,7 +26,12 @@ export function detectPlatform(): Platform {
   return p.startsWith("Mac") || /Macintosh/.test(ua) ? "mac" : "other";
 }
 
-const ORDER: (keyof Pick<KeyCombo, "primary" | "alt" | "shift">)[] = ["primary", "alt", "shift"];
+const ORDER: (keyof Pick<KeyCombo, "primary" | "ctrl" | "alt" | "shift">)[] = [
+  "primary",
+  "ctrl",
+  "alt",
+  "shift",
+];
 
 export function comboToCanonical(c: KeyCombo | null): string | null {
   if (!c || c.key == null) return null;
@@ -41,6 +47,7 @@ export function canonicalToCombo(s: string | null): KeyCombo | null {
   const c: KeyCombo = { key: null };
   for (const t of tokens) {
     if (t === "primary") c.primary = true;
+    else if (t === "ctrl") c.ctrl = true;
     else if (t === "alt") c.alt = true;
     else if (t === "shift") c.shift = true;
     else c.key = t;
@@ -62,14 +69,43 @@ export function eventToLogicalCombo(
   e: { ctrlKey: boolean; metaKey: boolean; altKey: boolean; shiftKey: boolean; code: string; key: string },
   p: Platform,
 ): KeyCombo | null {
-  const primary = p === "mac" ? e.metaKey : e.ctrlKey;
   const token = normalizeKeyToken(e.code, e.key);
   if (!token) return null;
   const c: KeyCombo = { key: token };
-  if (primary) c.primary = true;
+  if (p === "mac") {
+    if (e.metaKey) c.primary = true;
+    // Physical Control is distinct from Cmd on mac (e.g. Ctrl+`).
+    if (e.ctrlKey) c.ctrl = true;
+  } else {
+    // On win/linux, Ctrl IS primary — do not also set `ctrl` or recordings
+    // become primary+ctrl+key and clash with defaults.
+    if (e.ctrlKey) c.primary = true;
+  }
   if (e.altKey) c.alt = true;
   if (e.shiftKey) c.shift = true;
   return c;
+}
+
+/**
+ * Match a command combo against an event combo.
+ * Physical-`ctrl` bindings (no `primary`) match Ctrl on every platform:
+ * - mac: event must have `ctrl` and must not be Cmd (`primary`)
+ * - win/linux: Ctrl is `primary`, so accept primary-only events
+ */
+export function combosMatch(cmd: KeyCombo | null, ev: KeyCombo | null, p: Platform): boolean {
+  if (!cmd || !ev || cmd.key == null || ev.key == null) return false;
+  if (cmd.key.toLowerCase() !== ev.key.toLowerCase()) return false;
+  const cmdCtrlOnly = !!cmd.ctrl && !cmd.primary;
+  if (cmdCtrlOnly) {
+    if (p === "mac") {
+      if (!ev.ctrl || ev.primary) return false;
+      return !!cmd.alt === !!ev.alt && !!cmd.shift === !!ev.shift;
+    }
+    // win/linux: physical Ctrl arrives as primary
+    if (!ev.primary) return false;
+    return !!cmd.alt === !!ev.alt && !!cmd.shift === !!ev.shift;
+  }
+  return comboToCanonical(cmd) === comboToCanonical(ev);
 }
 
 function labelKey(token: string): string {
@@ -90,6 +126,8 @@ export function comboToLabel(c: KeyCombo | null, p: Platform): string {
   const mac = p === "mac";
   const parts: string[] = [];
   if (c.primary) parts.push(mac ? "⌘" : "Ctrl");
+  // Physical Ctrl when distinct from primary (mac Ctrl+` vs ⌘)
+  if (c.ctrl && !(c.primary && !mac)) parts.push("Ctrl");
   if (c.alt) parts.push(mac ? "⌥" : "Alt");
   if (c.shift) parts.push(mac ? "⇧" : "Shift");
   parts.push(labelKey(c.key));

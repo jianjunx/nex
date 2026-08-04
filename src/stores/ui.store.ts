@@ -33,6 +33,8 @@ interface UiState {
   settingsSection: SettingsSection | null;
   /** 自增计数触发搜索面板聚焦；不持久化（partialize 未收录即生效）。 */
   searchFocusRequest: number;
+  /** 自增计数请求关闭当前对话页签（Cmd/Ctrl+W）；不持久化。 */
+  closeTabRequest: number;
 
   toggleSidePanel: () => void;
   setSidePanelTab: (tab: SidePanelTab) => void;
@@ -52,6 +54,8 @@ interface UiState {
   toggleNewConversation: () => void;
   setSettingsSection: (section: SettingsSection | null) => void;
   requestSearchFocus: () => void;
+  requestCloseActiveTab: () => void;
+  consumeCloseTabRequest: () => void;
 }
 
 // Persist layout state so the window reopens exactly as the user left it
@@ -70,6 +74,7 @@ export const useUiStore = create<UiState>()(
       newConversationOpen: false,
       settingsSection: null,
       searchFocusRequest: 0,
+      closeTabRequest: 0,
 
       toggleSidePanel: () => set((s) => { s.sidePanelVisible = !s.sidePanelVisible; }),
       setSidePanelTab: (tab) => set((s) => { s.sidePanelTab = tab; s.sidePanelVisible = true; }),
@@ -114,6 +119,8 @@ export const useUiStore = create<UiState>()(
         s.sidePanelVisible = true;
         s.searchFocusRequest += 1;
       }),
+      requestCloseActiveTab: () => set((s) => { s.closeTabRequest += 1; }),
+      consumeCloseTabRequest: () => set((s) => { s.closeTabRequest = 0; }),
     })),
     {
       name: "nex-ui",

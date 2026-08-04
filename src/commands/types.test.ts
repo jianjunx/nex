@@ -3,6 +3,7 @@ import {
   canonicalToCombo,
   comboToCanonical,
   comboToLabel,
+  combosMatch,
   eventToLogicalCombo,
   isModifierOnly,
   normalizeKeyToken,
@@ -55,8 +56,20 @@ describe("eventToLogicalCombo", () => {
   });
   it("ignores the platform-native cmd/ctrl cross bit", () => {
     // On mac a Ctrl+B should NOT be primary; on other a Cmd+B should NOT be primary.
-    expect(eventToLogicalCombo({ ctrlKey: true, metaKey: false, altKey: false, shiftKey: false, code: "KeyB", key: "b" }, "mac")).toEqual({ key: "keyb" });
+    expect(eventToLogicalCombo({ ctrlKey: true, metaKey: false, altKey: false, shiftKey: false, code: "KeyB", key: "b" }, "mac")).toEqual({
+      ctrl: true,
+      key: "keyb",
+    });
     expect(eventToLogicalCombo({ ctrlKey: false, metaKey: true, altKey: false, shiftKey: false, code: "KeyB", key: "b" }, "other")).toEqual({ key: "keyb" });
+  });
+});
+
+describe("combosMatch physical ctrl", () => {
+  it("matches Ctrl+` on mac and win/linux", () => {
+    const cmd = { ctrl: true, key: "`" };
+    expect(combosMatch(cmd, { ctrl: true, key: "`" }, "mac")).toBe(true);
+    expect(combosMatch(cmd, { primary: true, key: "`" }, "other")).toBe(true);
+    expect(combosMatch(cmd, { primary: true, key: "`" }, "mac")).toBe(false);
   });
 });
 

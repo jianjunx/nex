@@ -7,8 +7,10 @@ use std::path::{Path, PathBuf};
 use tauri::State;
 
 #[tauri::command]
-pub fn git_status(project_path: String) -> Result<GitStatus, NexError> {
-    repository::get_status(Path::new(&project_path))
+pub async fn git_status(project_path: String) -> Result<GitStatus, NexError> {
+    tauri::async_runtime::spawn_blocking(move || repository::get_status(Path::new(&project_path)))
+        .await
+        .map_err(|e| NexError::Git(format!("git_status join: {e}")))?
 }
 
 #[tauri::command]
@@ -27,8 +29,10 @@ pub fn git_commit_patch(project_path: String, hash: String) -> Result<String, Ne
 }
 
 #[tauri::command]
-pub fn git_log(project_path: String, limit: usize) -> Result<Vec<CommitInfo>, NexError> {
-    repository::get_log(Path::new(&project_path), limit)
+pub async fn git_log(project_path: String, limit: usize) -> Result<Vec<CommitInfo>, NexError> {
+    tauri::async_runtime::spawn_blocking(move || repository::get_log(Path::new(&project_path), limit))
+        .await
+        .map_err(|e| NexError::Git(format!("git_log join: {e}")))?
 }
 
 #[tauri::command]
@@ -47,8 +51,10 @@ pub fn git_commit(project_path: String, message: String) -> Result<String, NexEr
 }
 
 #[tauri::command]
-pub fn git_list_branches(project_path: String) -> Result<Vec<BranchInfo>, NexError> {
-    repository::list_branches(Path::new(&project_path))
+pub async fn git_list_branches(project_path: String) -> Result<Vec<BranchInfo>, NexError> {
+    tauri::async_runtime::spawn_blocking(move || repository::list_branches(Path::new(&project_path)))
+        .await
+        .map_err(|e| NexError::Git(format!("git_list_branches join: {e}")))?
 }
 
 #[tauri::command]

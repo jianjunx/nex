@@ -13,6 +13,7 @@ import { fsSearch, fsReadFile, type PromptBlock, type SearchMatch, type SessionT
 import { ComposerOptionMenu } from "./ComposerOptionMenu";
 import { PlanBar } from "./thread/PlanBar";
 import { PendingMessagesBar } from "./thread/PendingMessagesBar";
+import { TextEditContextMenu } from "@/components/ui/TextEditContextMenu";
 
 // Text area only — toolbar lives inside the same chrome below this.
 const MIN_HEIGHT = 48;
@@ -429,23 +430,25 @@ export function AgentComposer() {
           className="flex flex-col gap-1.5 rounded-[var(--radius-md)] bg-[var(--glass-3-surface)] border border-[color:var(--glass-border)] px-2.5 pt-2 pb-1.5 shadow-xs transition-[border-color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50"
           onClick={() => textareaRef.current?.focus()}
         >
-          <Textarea
-            ref={textareaRef}
-            value={text}
-            onChange={(e) => onChange(e.target.value)}
-            onKeyDown={handleKeyDown}
-            onPaste={handlePaste}
-            placeholder={
-              isStarting
-                ? "Agent starting…"
-                : activeTabId
-                  ? "Send a message…  / commands  @ files  粘贴图片"
-                  : "Start a conversation to chat"
-            }
-            className="flex-1 min-h-0 border-0 bg-transparent p-1 shadow-none rounded-none text-sm font-normal leading-[21px] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] resize-none overflow-y-auto focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
-            style={{ minHeight: MIN_HEIGHT, maxHeight: MAX_HEIGHT }}
-            disabled={!activeTabId}
-          />
+          <TextEditContextMenu getTarget={() => textareaRef.current}>
+            <Textarea
+              ref={textareaRef}
+              value={text}
+              onChange={(e) => onChange(e.target.value)}
+              onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
+              placeholder={
+                isStarting
+                  ? "Agent starting…"
+                  : activeTabId
+                    ? "Send a message…  / commands  @ files  粘贴图片"
+                    : "Start a conversation to chat"
+              }
+              className="flex-1 min-h-0 border-0 bg-transparent p-1 shadow-none rounded-none text-sm font-normal leading-[21px] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] resize-none overflow-y-auto focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
+              style={{ minHeight: MIN_HEIGHT, maxHeight: MAX_HEIGHT }}
+              disabled={!activeTabId}
+            />
+          </TextEditContextMenu>
 
           <div
             className="flex items-center gap-1 pt-0.5"

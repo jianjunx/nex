@@ -4,12 +4,54 @@ import { messagesToThreadEntries } from "../agent/thread/messagesToThreadEntries
 import { conversationGetThreadEntries, type ThreadEntryPayloadDto } from "../../bridge/tauri";
 import type { ThreadEntry } from "../agent/thread/types";
 
-/** Load, validate, and hydrate conversation tabs for a project (startup / switch). */
-export async function restoreProjectConversationTabs(projectId: string) {
+/** Bumped on every restore call so stale async work can bail out. */
+let restoreGeneration = 0;
+
+export function currentRestoreGeneration(): number {
+  return restoreGeneration;
+}
+
+async function hydrateTab(tabId: string): Promise<void> {
+  const agentStore = useAgentStore.getState();
+  let payloads: ThreadEntryPayloadDto[] = [];
+  try {
+    payloads = await conversationGetThreadEntries(tabId);
+  } catch {
+    payloads = [];
+  }
+  if (payloads.length > 0) {
+    const entries = payloads.map((p) => p.payload as ThreadEntry);
+    agentStore.hydrateEntries(tabId, entries);
+    return;
+  }
+  const convStore = useConversationStore.getState();
+  await convStore.loadMessages(tabId);
+  const msgs = useConversationStore.getState().messagesByConversation[tabId] ?? [];
+  agentStore.hydrateEntries(tabId, messagesToThreadEntries(msgs));
+}
+
+function scheduleIdle(cb: () => void): void {
+  const ric = (globalThis as unknown as { requestIdleCallback?: (fn: () => void) => number })
+    .requestIdleCallback;
+  if (typeof ric === "function") {
+    ric(cb);
+  } else {
+    setTimeout(cb, 32);
+  }
+}
+
+/**
+ * Load, validate, and hydrate conversation tabs for a project (startup / switch).
+ * Hydrates the active tab first; remaining tabs load in idle batches and abort if
+ * a newer restore (generation) has started.
+ */
+export async function restoreProjectConversationTabs(projectId: string): Promise<number> {
+  const gen = ++restoreGeneration;
   const convStore = useConversationStore.getState();
   const convs = await convStore.loadConversations(projectId);
+  if (gen !== restoreGeneration) return gen;
   // List failure must not overwrite persisted tabs with empty validIds.
-  if (convs === null) return;
+  if (convs === null) return gen;
 
   const validIds = new Set(convs.map((c) => c.id));
 
@@ -26,41 +68,45 @@ export async function restoreProjectConversationTabs(projectId: string) {
     convStore.restoreTabs(projectId, tabs, active, validIds);
   }
 
+  if (gen !== restoreGeneration) return gen;
+
   const restored = useConversationStore.getState().tabsByProject[projectId] ?? [];
+  const activeId = useConversationStore.getState().activeTabByProject[projectId] ?? null;
 
-  // Prefer full thread entries (thought/tool_call/etc). Fall back to legacy
-  // user/assistant message table for older conversations.
-  const threadEntriesPayloads: ThreadEntryPayloadDto[][] = await Promise.all(
-    restored.map(async (tabId) => {
-      try {
-        return await conversationGetThreadEntries(tabId);
-      } catch {
-        return [];
+  // Active tab first for snappy switch, then idle-hydrate the rest.
+  const ordered = activeId
+    ? [activeId, ...restored.filter((id) => id !== activeId)]
+    : restored;
+
+  if (ordered.length === 0) return gen;
+
+  const [first, ...rest] = ordered;
+  if (first) {
+    await hydrateTab(first);
+    if (gen !== restoreGeneration) return gen;
+  }
+
+  if (rest.length === 0) return gen;
+
+  await new Promise<void>((resolve) => {
+    let i = 0;
+    const step = () => {
+      if (gen !== restoreGeneration) {
+        resolve();
+        return;
       }
-    }),
-  );
+      const batch = rest.slice(i, i + 2);
+      i += batch.length;
+      void Promise.all(batch.map((id) => hydrateTab(id))).then(() => {
+        if (gen !== restoreGeneration || i >= rest.length) {
+          resolve();
+          return;
+        }
+        scheduleIdle(step);
+      });
+    };
+    scheduleIdle(step);
+  });
 
-  const agentStore = useAgentStore.getState();
-  const emptyTabIds: string[] = [];
-
-  for (let i = 0; i < restored.length; i++) {
-    const tabId = restored[i]!;
-    const payloads = threadEntriesPayloads[i] ?? [];
-    if (payloads.length > 0) {
-      // payload is the full ThreadEntry object serialized from the client.
-      const entries = payloads.map((p) => p.payload as ThreadEntry);
-      agentStore.hydrateEntries(tabId, entries);
-    } else {
-      emptyTabIds.push(tabId);
-    }
-  }
-
-  if (emptyTabIds.length > 0) {
-    await Promise.all(emptyTabIds.map((tabId) => convStore.loadMessages(tabId)));
-    const messagesByConversation = useConversationStore.getState().messagesByConversation;
-    for (const tabId of emptyTabIds) {
-      const msgs = messagesByConversation[tabId] ?? [];
-      agentStore.hydrateEntries(tabId, messagesToThreadEntries(msgs));
-    }
-  }
+  return gen;
 }

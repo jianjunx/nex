@@ -21,7 +21,7 @@ vi.mock("../stores/keybindings.store", () => ({
         if (id === "editor.save") return { primary: true, key: "keys" };
         if (id === "editor.close") return { key: "escape" };
         if (id === "scm.commit") return { primary: true, key: "enter" };
-        if (id === "terminal.toggle") return { primary: true, key: "`" };
+        if (id === "terminal.toggle") return { ctrl: true, key: "`" };
         return null;
       },
     }),

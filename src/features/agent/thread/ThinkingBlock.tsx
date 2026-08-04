@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
 import { Brain } from "lucide-react";
+import { Markdown } from "./Markdown";
 
 export function ThinkingBlock({ text, defaultOpen = true }: { text: string; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -28,9 +28,9 @@ export function ThinkingBlock({ text, defaultOpen = true }: { text: string; defa
       {open && (
         <div
           ref={bodyRef}
-          className="max-h-[300px] overflow-y-auto px-2.5 pb-2 text-sm text-[var(--text-tertiary)] [&_pre]:overflow-x-auto [&_p]:my-1"
+          className="max-h-[300px] overflow-y-auto px-2.5 pb-2 text-sm text-[var(--text-tertiary)]"
         >
-          <ReactMarkdown>{text}</ReactMarkdown>
+          <Markdown compact>{text}</Markdown>
         </div>
       )}
     </div>

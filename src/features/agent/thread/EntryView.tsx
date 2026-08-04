@@ -1,10 +1,10 @@
 import { memo, useMemo } from "react";
-import ReactMarkdown from "react-markdown";
 import { ListChecks } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { ToolCallCard } from "./ToolCallCard";
 import { MessageContextMenu } from "./MessageContextMenu";
+import { Markdown } from "./Markdown";
 import { groupChunks } from "./groupChunks";
 import type { ThreadEntry } from "./types";
 
@@ -57,9 +57,7 @@ export const EntryView = memo(function EntryView({ entry }: { entry: ThreadEntry
               <MessageContextMenu key={i} textContent={g.text}>
                 <Card className="gap-0 px-3 py-1.5 text-sm shadow-none bg-[var(--glass-2-surface)] border-[color:var(--border-subtle)]">
                   <CardContent className="px-0">
-                    <div className="[&_pre]:overflow-x-auto [&_code]:text-[0.85em] [&_p]:my-1">
-                      <ReactMarkdown>{g.text}</ReactMarkdown>
-                    </div>
+                    <Markdown>{g.text}</Markdown>
                   </CardContent>
                 </Card>
               </MessageContextMenu>

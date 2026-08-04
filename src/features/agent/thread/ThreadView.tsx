@@ -30,8 +30,10 @@ function estimateRowHeight(item: ThreadRenderItem | undefined): number {
   const e = item.entry;
   // edit 卡行高估值贴近「内容区封顶 350 + 头/边距」实测(~386),首帧布局即准,减小上滚首测 delta。
   if (e.kind === "tool_call") return isEditTool(e) ? 386 : 48;
-  // 64:贴近单行气泡实测(用户/助手消息行多在 40~80px),降低「首次上滚未见行」的首滚 delta。
-  return 64;
+  // 120: 贴近含代码块/表格/Mermaid 的助手消息实测高度（多在 80~500px）。
+  // 上调首帧估值以减小「首次上滚未见行」的首滚 delta；measureElement
+  // 仍持续校正（流式消息尾行常大幅超出，依赖实时测量）。
+  return 120;
 }
 
 function rowKey(item: ThreadRenderItem | undefined): string {

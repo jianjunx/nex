@@ -8,13 +8,22 @@ pub async fn terminal_create(
     state: State<'_, AppState>,
     project_path: String,
     shell: Option<String>,
+    cols: Option<u16>,
+    rows: Option<u16>,
 ) -> Result<String, NexError> {
     // Resolve project/login PATH before spawn so packaged builds see
     // Homebrew git / direnv tooling the same way agent sessions do.
     let path_env = state.agent_manager.path_for_cwd(&project_path).await;
-    state
-        .terminal_manager
-        .create(app, &project_path, shell.as_deref(), &path_env)
+    let cols = cols.unwrap_or(80);
+    let rows = rows.unwrap_or(24);
+    state.terminal_manager.create(
+        app,
+        &project_path,
+        shell.as_deref(),
+        &path_env,
+        cols,
+        rows,
+    )
 }
 
 #[tauri::command]

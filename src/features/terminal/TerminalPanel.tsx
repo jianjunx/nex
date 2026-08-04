@@ -151,20 +151,36 @@ export function TerminalPanel() {
     if (!term || !activeSessionId) return;
     term.reset();
     term.write(getReplay(activeSessionId));
+    // Fit after the session is active so onResize can push cols/rows to the
+    // PTY (the mount-time fit often ran with no activeSessionId).
+    try {
+      // FitAddon is on the terminal; proposeDimensions via public API:
+      // calling resize with current dims is a no-op unless we re-fit.
+      const { cols, rows } = term;
+      if (cols > 0 && rows > 0) {
+        useTerminalStore.getState().resize(activeSessionId, cols, rows);
+      }
+    } catch {
+      /* ignore */
+    }
     term.focus();
   }, [activeSessionId, settingsVersion]);
 
   useEffect(() => {
     if (project && sessions.length === 0 && !loading && autoCreatedFor.current !== project.id) {
       autoCreatedFor.current = project.id;
-      void create(project.path, terminalShell || undefined);
+      const term = xtermRef.current;
+      void create(project.path, terminalShell || undefined, term?.cols, term?.rows);
     }
   }, [project, sessions.length, loading, create, terminalShell]);
 
   const handleCreate = () => {
     // Empty shell = system default ("" -> undefined, the bridge's
     // Option<String> None).
-    if (project) void create(project.path, terminalShell || undefined);
+    if (project) {
+      const term = xtermRef.current;
+      void create(project.path, terminalShell || undefined, term?.cols, term?.rows);
+    }
   };
 
   const handleClose = (id: string) => {

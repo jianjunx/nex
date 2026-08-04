@@ -376,8 +376,13 @@ export async function gitCredentialRespond(
 }
 
 // --- Terminal ---
-export async function terminalCreate(projectPath: string, shell?: string): Promise<string> {
-  return invoke(COMMANDS.TERMINAL_CREATE, { projectPath, shell });
+export async function terminalCreate(
+  projectPath: string,
+  shell?: string,
+  cols?: number,
+  rows?: number,
+): Promise<string> {
+  return invoke(COMMANDS.TERMINAL_CREATE, { projectPath, shell, cols, rows });
 }
 
 export async function terminalWrite(terminalId: string, data: string): Promise<void> {

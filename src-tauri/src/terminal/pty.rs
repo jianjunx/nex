@@ -42,16 +42,31 @@ impl TerminalManager {
     /// `path_env` should be the login-shell / project PATH (from `ShellEnv` /
     /// `ProjectEnvCache`). Packaged GUI apps otherwise inherit a stripped
     /// PATH and interactive shells started here can't find Homebrew `git`.
+    ///
+    /// `cols`/`rows` must match the frontend xterm size at spawn time. Opening
+    /// at a fixed 80×24 then relying on a later resize races the first prompt:
+    /// if xterm already fitted before the session existed, `onResize` was a
+    /// no-op and zsh keeps the wrong `$COLUMNS` — which shows up as a spurious
+    /// inverse `%` (PROMPT_EOL_MARK) after every command.
     pub fn create(
         &self,
         app: AppHandle,
         cwd: &str,
         shell: Option<&str>,
         path_env: &OsStr,
+        cols: u16,
+        rows: u16,
     ) -> Result<String, NexError> {
+        let cols = cols.max(2);
+        let rows = rows.max(1);
         let pty_system = native_pty_system();
         let pair = pty_system
-            .openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 })
+            .openpty(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
             .map_err(|e| NexError::Terminal(e.to_string()))?;
 
         // No explicit shell: use the platform default login shell
@@ -64,6 +79,10 @@ impl TerminalManager {
         // So shells recognize CSI arrow sequences for history (↑/↓).
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
+        // Seed COLUMNS/LINES so zsh/bash don't briefly believe the PTY is
+        // 80×24 before the first SIGWINCH (matters for PROMPT_SP / `%`).
+        cmd.env("COLUMNS", cols.to_string());
+        cmd.env("LINES", rows.to_string());
         let path_owned = path_env.to_string_lossy().into_owned();
         cmd.env("PATH", &path_owned);
         #[cfg(windows)]

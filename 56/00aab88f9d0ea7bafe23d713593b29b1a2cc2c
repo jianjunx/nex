@@ -1,0 +1,25 @@
+src/stores/ui.store.ts
+  s_a9bf9370cfd8b1::t_2830599ea17ae3 4,26,28-29,49-50,67-73,82,104,107-124,158,167-168,173-178,182
+src/App.tsx
+  s_a9bf9370cfd8b1::t_d101c31196a7fe 62
+src/features/layout/SidePanel.tsx
+  s_a9bf9370cfd8b1::t_1a7e99ff66a744 19-20,23-27
+  s_a9bf9370cfd8b1::t_98ba6089d1a681 1,3
+  s_a9bf9370cfd8b1::t_264ece5e9be007 28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "5600aab88f9d0ea7bafe23d713593b29b1a2cc2c",
+  "prompts": {},
+  "sessions": {
+    "s_a9bf9370cfd8b1": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "3964547a-67f0-47a7-ace3-a297d09748e6",
+        "model": "default"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

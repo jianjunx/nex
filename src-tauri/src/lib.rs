@@ -113,10 +113,15 @@ pub fn run() {
             let db = Database::new(&db_path)
                 .map_err(|e| format!("failed to initialize database: {e}"))?;
 
+            // Shared login-shell env: one zsh/cmd fork for agents + terminals.
+            let shell_env = agent::shell_env::ShellEnv::new();
+            shell_env.try_trigger_lazy_load();
+            let project_envs = agent::project_env::ProjectEnvCache::new();
+
             app.manage(AppState {
                 db: Arc::new(db),
                 terminal_manager: TerminalManager::new(),
-                agent_manager: AgentSessionManager::new(&app_data_dir),
+                agent_manager: AgentSessionManager::new(&app_data_dir, shell_env, project_envs),
                 watcher_manager: WatcherManager::new(),
             });
 

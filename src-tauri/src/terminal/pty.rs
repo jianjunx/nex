@@ -1,6 +1,7 @@
 use crate::error::NexError;
 use crate::terminal::types::{TerminalExitedPayload, TerminalOutputPayload};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+use std::ffi::OsStr;
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
@@ -36,7 +37,18 @@ impl TerminalManager {
         Self { sessions: Arc::new(Mutex::new(Vec::new())) }
     }
 
-    pub fn create(&self, app: AppHandle, cwd: &str, shell: Option<&str>) -> Result<String, NexError> {
+    /// Create a PTY session in `cwd`.
+    ///
+    /// `path_env` should be the login-shell / project PATH (from `ShellEnv` /
+    /// `ProjectEnvCache`). Packaged GUI apps otherwise inherit a stripped
+    /// PATH and interactive shells started here can't find Homebrew `git`.
+    pub fn create(
+        &self,
+        app: AppHandle,
+        cwd: &str,
+        shell: Option<&str>,
+        path_env: &OsStr,
+    ) -> Result<String, NexError> {
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 })
@@ -52,6 +64,12 @@ impl TerminalManager {
         // So shells recognize CSI arrow sequences for history (↑/↓).
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
+        let path_owned = path_env.to_string_lossy().into_owned();
+        cmd.env("PATH", &path_owned);
+        #[cfg(windows)]
+        {
+            cmd.env("Path", &path_owned);
+        }
 
         let child = pair
             .slave

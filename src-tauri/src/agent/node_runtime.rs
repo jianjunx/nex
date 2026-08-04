@@ -504,11 +504,23 @@ pub async fn resolve_node_runtime(
 // -- Helpers --------------------------------------------------------------
 
 /// Build the env map for child processes that should see the Node-managed
-/// `node` / `npm` on PATH. Prepends the node binary's parent dir to PATH
-/// (so any npm-installed shim resolves back to *our* node).
+/// `node` / `npm` on PATH. Prepends the node binary's parent dir to `base_path`
+/// (typically the login-shell PATH from `ShellEnv`, falling back to the
+/// process PATH).
 pub fn npm_command_env(node_binary: &Path) -> HashMap<String, String> {
+    npm_command_env_with_base(node_binary, None)
+}
+
+/// Like [`npm_command_env`], but uses an explicit base PATH (e.g. login-shell
+/// PATH) instead of the process environment. Packaged macOS/Windows GUI apps
+/// have a stripped process PATH that omits Homebrew `/opt/homebrew/bin` —
+/// agents need the shell PATH so `git`, `rg`, etc. resolve.
+pub fn npm_command_env_with_base(
+    node_binary: &Path,
+    base_path: Option<&std::ffi::OsStr>,
+) -> HashMap<String, String> {
     let mut env_map = HashMap::new();
-    let env_path = path_with_node_binary_prepended(node_binary).unwrap_or_default();
+    let env_path = path_with_node_binary_prepended(node_binary, base_path).unwrap_or_default();
     let path_value = env_path.to_string_lossy().into_owned();
     env_map.insert("PATH".to_string(), path_value.clone());
     // Windows: also set "Path" to match the system's casing.
@@ -530,8 +542,13 @@ pub fn npm_command_env(node_binary: &Path) -> HashMap<String, String> {
     env_map
 }
 
-fn path_with_node_binary_prepended(node_binary: &Path) -> Option<OsString> {
-    let existing = env::var_os("PATH");
+fn path_with_node_binary_prepended(
+    node_binary: &Path,
+    base_path: Option<&std::ffi::OsStr>,
+) -> Option<OsString> {
+    let existing = base_path
+        .map(OsString::from)
+        .or_else(|| env::var_os("PATH"));
     let node_dir = node_binary.parent().map(|p| p.as_os_str());
     match (existing, node_dir) {
         (Some(existing), Some(node_dir)) => env::join_paths(
@@ -1173,7 +1190,7 @@ mod tests {
     #[test]
     fn path_with_node_binary_prepended_unix() {
         let node = PathBuf::from("/opt/homebrew/bin/node");
-        let result = path_with_node_binary_prepended(&node).unwrap();
+        let result = path_with_node_binary_prepended(&node, None).unwrap();
         let joined = result.to_string_lossy();
         // node's dir should be at the front.
         assert!(
@@ -1188,6 +1205,22 @@ mod tests {
                 "existing PATH should be preserved: {joined}"
             );
         }
+    }
+
+    #[test]
+    fn path_with_node_binary_prepended_uses_explicit_base() {
+        let node = PathBuf::from("/managed/node/bin/node");
+        let base = OsString::from("/opt/homebrew/bin:/usr/bin:/bin");
+        let result = path_with_node_binary_prepended(&node, Some(&base)).unwrap();
+        let joined = result.to_string_lossy();
+        assert!(
+            joined.starts_with("/managed/node/bin"),
+            "node dir should be first: {joined}"
+        );
+        assert!(
+            joined.contains("/opt/homebrew/bin"),
+            "shell PATH entries must remain so agents can find git: {joined}"
+        );
     }
 
     #[test]

@@ -37,8 +37,8 @@ const SHELL_LOAD_TIMEOUT: Duration = Duration::from_secs(10);
 /// the channel never closes (which would break `Sender::borrow()` and any
 /// later `send`).
 pub struct ShellEnv {
-    /// Cached PATH from the login shell, if loaded.
-    path: StdMutex<Option<OsString>>,
+    /// Full login-shell environment once loaded (PATH, HOME, SSH_AUTH_SOCK, …).
+    env: StdMutex<Option<HashMap<String, String>>>,
     /// `true` once `signal_loaded` has fired.
     loaded_tx: watch::Sender<bool>,
     /// Kept so the watch channel stays open. Without it, the first
@@ -57,7 +57,7 @@ impl ShellEnv {
     pub fn new() -> std::sync::Arc<Self> {
         let (loaded_tx, loaded_rx) = watch::channel(false);
         std::sync::Arc::new(Self {
-            path: StdMutex::new(None),
+            env: StdMutex::new(None),
             loaded_tx,
             _loaded_rx: loaded_rx,
             lazy_started: AtomicBool::new(false),
@@ -67,11 +67,17 @@ impl ShellEnv {
     /// Returns the loaded PATH, or the current process PATH as a fallback if
     /// the shell env hasn't been captured yet (or capture failed).
     pub fn path(&self) -> OsString {
-        self.path
+        self.env
             .lock()
             .unwrap()
-            .clone()
+            .as_ref()
+            .and_then(|e| e.get("PATH").map(OsString::from))
             .unwrap_or_else(|| std::env::var_os("PATH").unwrap_or_default())
+    }
+
+    /// Snapshot of the full login-shell env (empty if not yet loaded).
+    pub fn snapshot(&self) -> HashMap<String, String> {
+        self.env.lock().unwrap().clone().unwrap_or_default()
     }
 
     /// True once `signal_loaded` has fired. Cheap synchronous read.
@@ -113,12 +119,10 @@ impl ShellEnv {
     }
 
     /// Mark the shell env as loaded. Called by the background task spawned
-    /// from `try_trigger_lazy_load`. Caches PATH so `path()` returns it
-    /// synchronously from now on.
+    /// from `try_trigger_lazy_load`. Caches the full map so `path()` /
+    /// `snapshot()` return it synchronously from now on.
     pub fn signal_loaded(&self, env: HashMap<String, String>) {
-        if let Some(p) = env.get("PATH") {
-            *self.path.lock().unwrap() = Some(OsString::from(p));
-        }
+        *self.env.lock().unwrap() = Some(env);
         // Ignore send errors — they only happen if there are no receivers,
         // which can't happen because `Self::new` always retains a `_rx`.
         let _ = self.loaded_tx.send(true);
@@ -214,7 +218,7 @@ async fn load_shell_env_windows() -> HashMap<String, String> {
     not(windows),
     allow(dead_code, reason = "Windows-only at runtime; cross-platform tests still call it")
 )]
-fn parse_env_cmd_windows(bytes: &[u8]) -> HashMap<String, String> {
+pub(crate) fn parse_env_cmd_windows(bytes: &[u8]) -> HashMap<String, String> {
     let mut words: Vec<u16> = Vec::with_capacity(bytes.len() / 2);
     let chunks = bytes.chunks_exact(2);
     for chunk in chunks {
@@ -330,8 +334,13 @@ mod tests {
         let env = ShellEnv::new();
         let mut captured = HashMap::new();
         captured.insert("PATH".to_string(), "/from/shell/bin".to_string());
+        captured.insert("SSH_AUTH_SOCK".to_string(), "/tmp/ssh".to_string());
         env.signal_loaded(captured);
         assert_eq!(env.path(), OsString::from("/from/shell/bin"));
+        assert_eq!(
+            env.snapshot().get("SSH_AUTH_SOCK").map(String::as_str),
+            Some("/tmp/ssh")
+        );
         assert!(env.is_loaded());
     }
 

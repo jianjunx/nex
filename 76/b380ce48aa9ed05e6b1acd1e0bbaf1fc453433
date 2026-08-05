@@ -1,0 +1,46 @@
+src/features/editor/pathUtils.ts
+  s_d78fd293ddc6fe::t_a6ecc2b19e9721 9-20
+  s_d78fd293ddc6fe::t_d890429fa0b69e 8
+src/features/projects/ProjectSelector.tsx
+  s_d78fd293ddc6fe::t_aa7b54a3e2ee52 20,27-32
+  s_d78fd293ddc6fe::t_72564e44625b0f 103
+  s_d78fd293ddc6fe::t_b20f4ba9202200 167
+  s_d78fd293ddc6fe::t_fdf43c929ef98b 33
+src-tauri/src/fs/operations.rs
+  s_d78fd293ddc6fe::t_5cf5cb17183c9d 31-46,50-70,78,95-100,104
+  s_d78fd293ddc6fe::t_516428b95bc71d 47-49
+  s_d78fd293ddc6fe::t_8bd9f1e12ddb9a 184
+  s_d78fd293ddc6fe::t_65b2c35a39b3fb 229
+src-tauri/tests/fs_test.rs
+  s_d78fd293ddc6fe::t_e1e5083fbb7e3a 226-295
+src/commands/registry.ts
+  s_d78fd293ddc6fe::t_b478b5c59b5d1e 9
+  s_d78fd293ddc6fe::t_aa6680395821db 172-174,176,179
+src/stores/fs.store.ts
+  s_d78fd293ddc6fe::t_01ef43f31361fa 557-567,580-589,614-630
+  s_d78fd293ddc6fe::t_f8ea0b8bbf33b9 933-942
+src/features/files/FileTree.tsx
+  s_d78fd293ddc6fe::t_725114b1ff80f0 233-234,243-247
+src/features/editor/pathUtils.test.ts
+  s_d78fd293ddc6fe::t_07d0182a2d52fc 2,12-17
+  s_d78fd293ddc6fe::t_cf832bb1778212 18-20
+src/features/files/TreeContextMenu.tsx
+  s_d78fd293ddc6fe::t_0f1df882145d7e 66-72,75,79
+  s_d78fd293ddc6fe::t_8e0ce414bb3fbc 23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "76b380ce48aa9ed05e6b1acd1e0bbaf1fc453433",
+  "prompts": {},
+  "sessions": {
+    "s_d78fd293ddc6fe": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "6af0a5ab-8e6b-4c52-a4f7-e92a37c13e62",
+        "model": "default"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+.github/workflows/release.yml
+  s_bdf673a5b5efb9::t_42bdac385476c2 56-87
+  s_bdf673a5b5efb9::t_e8e0adb5a78333 3,7,32-44,100,102,148
+  s_bdf673a5b5efb9::t_9ffde036a1c180 88
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "3b1700eab0b63cb2960f76189ed5d2b8f4c55e7f",
+  "prompts": {},
+  "sessions": {
+    "s_bdf673a5b5efb9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "4393904f-865e-4a7f-8ee6-8f878c9dcd51",
+        "model": "default"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

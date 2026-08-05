@@ -1,9 +1,10 @@
 name: Release
 
+# 仅在推送 release-vX.Y.Z 格式标签时触发构建（如 release-v1.0.0）
 on:
   push:
     tags:
-      - "v*"
+      - "release-v*.*.*"
 
 permissions:
   contents: write
@@ -28,6 +29,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Resolve version from tag
+        id: version
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if [[ ! "$TAG" =~ ^release-v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "::error::Tag '$TAG' must match release-vX.Y.Z (e.g. release-v1.0.0)"
+            exit 1
+          fi
+          VERSION="${BASH_REMATCH[1]}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved app version: $VERSION (from tag $TAG)"
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -38,6 +52,39 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
+
+      - name: Sync version into project files
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          node <<'EOF'
+          const fs = require('fs');
+          const version = process.env.VERSION;
+
+          for (const file of ['package.json', 'src-tauri/tauri.conf.json']) {
+            const json = JSON.parse(fs.readFileSync(file, 'utf8'));
+            json.version = version;
+            fs.writeFileSync(file, JSON.stringify(json, null, 2) + '\n');
+          }
+
+          // Cargo.toml: only replace the [package] version (first occurrence)
+          const cargoPath = 'src-tauri/Cargo.toml';
+          let cargo = fs.readFileSync(cargoPath, 'utf8');
+          let replaced = false;
+          cargo = cargo.replace(/^version = "[^"]+"/m, (match) => {
+            if (replaced) return match;
+            replaced = true;
+            return `version = "${version}"`;
+          });
+          if (!replaced) {
+            console.error('Failed to update version in Cargo.toml');
+            process.exit(1);
+          }
+          fs.writeFileSync(cargoPath, cargo);
+
+          console.log(`Synced version ${version} -> package.json, tauri.conf.json, Cargo.toml`);
+          EOF
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -50,9 +97,9 @@ jobs:
           OPENSSL_NO_VENDOR: "0"
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: "Nex ${{ github.ref_name }}"
+          releaseName: "Nex ${{ steps.version.outputs.version }}"
           releaseBody: |
-            ## Nex ${{ github.ref_name }}
+            ## Nex ${{ steps.version.outputs.version }}
 
             AI Agent 集成环境桌面客户端。
 
@@ -98,7 +145,7 @@ jobs:
 
             查看 [CHANGELOG](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) 了解详细变更。
           releaseDraft: true
-          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+          prerelease: false
           args: "--target ${{ matrix.target }}"
 
       - name: Sign Windows binaries (self-signed)

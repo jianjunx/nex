@@ -130,13 +130,6 @@ Nex 在 macOS、Linux、Windows 上跑。**新加的功能必须三个平台都
   不是 `Send`；每个 session 的工作跑在专用 current-thread
   runtime 里（`std::thread::Builder` 启动）。
 
-## 已知 follow-up
+## 性能要求
 
-不在本次 PR 范围，留给单独 PR：
-
-- `NodeBinaryOptions` 的 settings UI（`allow_path_lookup`、
-  `allow_binary_download`、`use_paths`）。
-- "Registry 离线 / 缓存是 N 小时前" 的 UI 提示。
-- 手动"清除 agent 缓存"按钮（调 `PackageCache::sweep_lru`）。
-- Windows 端到端验证（需要 Windows runner）。
-- `nodejs.org/dist/index.json` 缓存到磁盘 + 24h TTL。
+由于支持多项目、多Agent、多会话任务同时工作，所以对性能的要求需要非常高，在实现功能时应该充分考虑对性能的影响和内存的占用。

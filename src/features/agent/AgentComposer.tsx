@@ -826,10 +826,10 @@ export function AgentComposer() {
               onPaste={handlePaste}
               placeholder={
                 isStarting
-                  ? "Agent starting…"
+                  ? "Agent 启动中…"
                   : activeTabId
-                    ? "Send a message…  / commands  @ files"
-                    : "Start a conversation to chat"
+                    ? "描述计划,@引用上下文,/使用命"
+                    : "开始您的对话"
               }
               className="flex-1 min-h-0 border-0 bg-transparent p-1 shadow-none rounded-none text-sm font-normal leading-[21px] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] resize-none overflow-y-auto focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
               style={{ minHeight: MIN_HEIGHT, maxHeight: MAX_HEIGHT }}

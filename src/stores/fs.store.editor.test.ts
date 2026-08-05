@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const fsReadFile = vi.fn();
 const fsWriteFile = vi.fn();
 const setEditorVisible = vi.fn();
+const syncEditorVisibleForProject = vi.fn();
 
 vi.mock("../bridge/tauri", () => ({
   fsReadFile: (...args: unknown[]) => fsReadFile(...args),
@@ -14,7 +15,7 @@ vi.mock("../bridge/tauri", () => ({
 
 vi.mock("./ui.store", () => ({
   useUiStore: {
-    getState: () => ({ setEditorVisible }),
+    getState: () => ({ setEditorVisible, syncEditorVisibleForProject }),
   },
 }));
 

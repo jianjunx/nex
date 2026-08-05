@@ -31,6 +31,10 @@ function resetFsSelectionForProjectSwitch(projectPath: string) {
   useClipboardStore.getState().clear();
 }
 
+function onProjectActivated(projectId: string) {
+  useFsStore.getState().switchSearchProject(projectId);
+}
+
 // Radix highlights items on hover/keyboard via focus + data-[highlighted];
 // override shadcn's solid accent focus with the app's subtle overlay token.
 const ITEM_HIGHLIGHT =
@@ -101,6 +105,7 @@ export function ProjectSelector() {
         const active = all.find((p) => p.id === id);
         if (active) {
           resetFsSelectionForProjectSwitch(active.path);
+          onProjectActivated(active.id);
           await Promise.all([
             useFsStore.getState().loadEditorState(active.id),
             restoreProjectConversationTabs(active.id),
@@ -165,6 +170,7 @@ export function ProjectSelector() {
                   }
                   switchProject(p.id);
                   resetFsSelectionForProjectSwitch(p.path);
+                  onProjectActivated(p.id);
                   // Keep only this project's tab ids hydrated; others re-fetch on visit.
                   const keep = new Set(useConversationStore.getState().tabsByProject[p.id] ?? []);
                   useAgentStore.getState().pruneEntriesExcept(keep);

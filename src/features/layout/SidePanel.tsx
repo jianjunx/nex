@@ -78,7 +78,7 @@ export function SidePanel() {
             className="border-t border-[color:var(--border-subtle)] bg-[var(--surface-sidebar)] shrink-0 overflow-hidden"
             style={{ height: liveHeight ?? terminalHeight }}
           >
-            <TerminalPanel />
+            <TerminalPanel key={activeProjectId ?? "none"} />
           </div>
         </>
       )}

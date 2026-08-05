@@ -17,8 +17,18 @@ import { useUiStore } from "../../stores/ui.store";
 import { useProjectStore } from "../../stores/project.store";
 import { relativeToProject } from "../editor/pathUtils";
 import { buildHighlightRegExp, matchRanges, type MatchRange } from "./searchHighlight";
+import { readSearchQuery, writeSearchQuery } from "../../stores/searchProjectQuery";
 
 const DEBOUNCE_MS = 300;
+
+/** Per-project replace-row chrome; kept outside React so unmounting the
+ *  search tab does not lose it, and results stay in fs.store only. */
+const replaceUiByProject = new Map<string, { showReplace: boolean; replacement: string }>();
+
+/** Test-only. */
+export function __resetReplaceUiByProject(): void {
+  replaceUiByProject.clear();
+}
 
 // Read at effect/handler time (App.tsx pattern) so renders don't subscribe
 // the panel to the whole project store.
@@ -70,7 +80,7 @@ function Highlighted({ text, ranges }: { text: string; ranges: MatchRange[] }) {
 }
 
 export function SearchPanel() {
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(() => readSearchQuery());
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [showReplace, setShowReplace] = useState(false);
   const [replacement, setReplacement] = useState("");
@@ -91,6 +101,26 @@ export function SearchPanel() {
   const projects = useProjectStore((s) => s.projects);
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const project = projects.find((p) => p.id === activeProjectId);
+
+  // Per-project replace chrome (not worth a store slot — tiny strings).
+  const replaceUiRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = replaceUiRef.current;
+    if (prev && prev !== activeProjectId) {
+      replaceUiByProject.set(prev, { showReplace, replacement });
+    }
+    replaceUiRef.current = activeProjectId;
+    // Query is swapped by switchSearchProject → focusSearchQueryProject;
+    // mirror it into local state when the active project changes.
+    setQuery(readSearchQuery());
+    const snap = activeProjectId ? replaceUiByProject.get(activeProjectId) : undefined;
+    setShowReplace(snap?.showReplace ?? false);
+    setReplacement(snap?.replacement ?? "");
+    setCollapsed(new Set());
+    setActiveIndex(-1);
+    setConfirmOpen(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only swap chrome on project change
+  }, [activeProjectId]);
 
   const groups = useMemo(() => {
     const map = new Map<string, { path: string; name: string; matches: typeof searchResults }>();
@@ -244,7 +274,7 @@ export function SearchPanel() {
         >
           <RefreshCw size={13} />
         </Button>
-        <Button variant="ghost" size="icon-xs" title="清除" onClick={() => setQuery("")}>
+        <Button variant="ghost" size="icon-xs" title="清除" onClick={() => { setQuery(""); writeSearchQuery(""); }}>
           <X size={13} />
         </Button>
         <Button variant="ghost" size="icon-xs" title="折叠全部" onClick={() => setCollapsed(new Set(groups.map((g) => g.path)))}>
@@ -264,14 +294,29 @@ export function SearchPanel() {
             title={showReplace ? "折叠替换" : "展开替换"}
             aria-expanded={showReplace}
             aria-label={showReplace ? "折叠替换" : "展开替换"}
-            onClick={() => setShowReplace((v) => !v)}
+            onClick={() => {
+              setShowReplace((v) => {
+                const next = !v;
+                if (activeProjectId) {
+                  replaceUiByProject.set(activeProjectId, {
+                    showReplace: next,
+                    replacement,
+                  });
+                }
+                return next;
+              });
+            }}
           >
             {showReplace ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
           </Button>
           <Input
             ref={inputRef}
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              const v = e.target.value;
+              setQuery(v);
+              writeSearchQuery(v);
+            }}
             onKeyDown={handleSearchKeyDown}
             placeholder="输入关键词搜索文件名与内容。"
             aria-label="搜索"
@@ -310,7 +355,13 @@ export function SearchPanel() {
           <div className="flex items-center gap-1">
             <Input
               value={replacement}
-              onChange={(e) => setReplacement(e.target.value)}
+              onChange={(e) => {
+                const v = e.target.value;
+                setReplacement(v);
+                if (activeProjectId) {
+                  replaceUiByProject.set(activeProjectId, { showReplace, replacement: v });
+                }
+              }}
               placeholder="替换…"
               aria-label="替换"
             />

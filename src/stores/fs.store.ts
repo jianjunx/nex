@@ -10,6 +10,7 @@ import {
   clearAutoSaveTimer,
   scheduleAutoSaveTimer,
 } from "./editorAutosave";
+import { focusSearchQueryProject } from "./searchProjectQuery";
 
 export { clearAllAutoSaveTimers };
 
@@ -115,6 +116,13 @@ interface FsStore {
   searching: boolean;
   searchOptions: SearchOptions;
   searchError: string | null;
+  /** Which project the live search* mirrors belong to. */
+  searchOwnerProjectId: string | null;
+  /**
+   * Per-project search options (query lives in searchProjectQuery.ts to avoid
+   * immer on every keystroke; results are not cached across projects).
+   */
+  searchByProject: Record<string, { options: SearchOptions }>;
   replacePreview: ReplacePreview | null;
   replacing: boolean;
   pendingLine: PendingLine | null;
@@ -161,6 +169,8 @@ interface FsStore {
   syncExternalChange: (paths: string[]) => Promise<void>;
   reloadEditor: () => Promise<void>;
   dismissStale: () => void;
+  /** Stash current search options for the previous owner, restore `projectId`'s, clear results. */
+  switchSearchProject: (projectId: string | null) => void;
   search: (projectPath: string, query: string) => Promise<void>;
   clearSearch: () => void;
   setSearchOptions: (patch: Partial<SearchOptions>) => void;
@@ -206,6 +216,8 @@ export const useFsStore = create<FsStore>()(
     searching: false,
     searchOptions: { caseSensitive: false, wholeWord: false, regex: false },
     searchError: null,
+    searchOwnerProjectId: null,
+    searchByProject: {},
     replacePreview: null,
     replacing: false,
     pendingLine: null,
@@ -734,29 +746,67 @@ export const useFsStore = create<FsStore>()(
       });
     },
 
+    switchSearchProject: (projectId) => {
+      focusSearchQueryProject(projectId);
+      set((s) => {
+        const prev = s.searchOwnerProjectId;
+        if (prev && prev !== projectId) {
+          s.searchByProject[prev] = { options: { ...s.searchOptions } };
+        }
+        if (prev === projectId) return;
+        const snap = projectId ? s.searchByProject[projectId] : undefined;
+        s.searchOptions = snap?.options
+          ? { ...snap.options }
+          : { caseSensitive: false, wholeWord: false, regex: false };
+        // Drop results immediately — never show another project's hits.
+        s.searchResults = [];
+        s.searching = false;
+        s.searchError = null;
+        s.replacePreview = null;
+        s.searchOwnerProjectId = projectId;
+      });
+    },
+
     search: async (projectPath: string, query: string) => {
       if (!query.trim()) {
         set((s) => { s.searchResults = []; s.searching = false; s.searchError = null; });
         return;
       }
+      const ownerAtStart = get().searchOwnerProjectId;
+      const queryAtStart = query.trim();
       set((s) => { s.searching = true; s.searchError = null; });
       try {
-        const results = await fsSearch(projectPath, query.trim(), get().searchOptions);
+        const results = await fsSearch(projectPath, queryAtStart, get().searchOptions);
+        // Drop late responses after a project switch (owner changed).
+        if (get().searchOwnerProjectId !== ownerAtStart) return;
         set((s) => { s.searchResults = results; });
       } catch (err) {
+        if (get().searchOwnerProjectId !== ownerAtStart) return;
         // 独立错误槽：共享 error 会在 EditorPanel 渲染红条，搜索错误不该出现在那里。
         set((s) => { s.searchError = errorMessage(err); });
       } finally {
-        set((s) => { s.searching = false; });
+        if (get().searchOwnerProjectId === ownerAtStart) {
+          set((s) => { s.searching = false; });
+        }
       }
     },
 
     clearSearch: () => {
-      set((s) => { s.searchResults = []; s.searching = false; s.searchError = null; });
+      set((s) => {
+        s.searchResults = [];
+        s.searching = false;
+        s.searchError = null;
+      });
     },
 
     setSearchOptions: (patch) => {
-      set((s) => { s.searchOptions = { ...s.searchOptions, ...patch }; });
+      set((s) => {
+        s.searchOptions = { ...s.searchOptions, ...patch };
+        const owner = s.searchOwnerProjectId;
+        if (owner) {
+          s.searchByProject[owner] = { options: { ...s.searchOptions } };
+        }
+      });
     },
 
     previewReplace: async (projectPath, query, replacement) => {
@@ -861,13 +911,21 @@ export const useFsStore = create<FsStore>()(
           s.openFiles = cached.openFiles;
           s.activePath = cached.activePath;
         });
-        useUiStore.getState().setEditorVisible(cached.openFiles.length > 0);
+        useUiStore.getState().syncEditorVisibleForProject(projectId, cached.openFiles.length > 0);
         return;
       }
 
       // 2. Persisted layout — re-open each file from disk as a pinned tab.
       const layout = get().editorLayoutByProject[projectId];
       if (layout && layout.paths.length > 0) {
+        // Snapshot preference before openFile forces visible=true into the map.
+        const ui = useUiStore.getState();
+        const hadPreferred = Object.prototype.hasOwnProperty.call(
+          ui.editorVisibleByProject,
+          projectId,
+        );
+        const preferred = ui.editorVisibleByProject[projectId];
+
         set((s) => {
           s.openFiles = [];
           s.activePath = null;
@@ -892,7 +950,12 @@ export const useFsStore = create<FsStore>()(
         if (layout.activePath && get().openFiles.some((f) => f.path === layout.activePath)) {
           set((s) => { s.activePath = layout.activePath; });
         }
-        useUiStore.getState().setEditorVisible(get().openFiles.length > 0);
+        if (hadPreferred) {
+          // Re-apply Esc-hidden (or explicitly shown) preference after hydrate.
+          useUiStore.getState().setEditorVisible(!!preferred);
+        } else {
+          useUiStore.getState().syncEditorVisibleForProject(projectId, get().openFiles.length > 0);
+        }
         return;
       }
 
@@ -901,7 +964,7 @@ export const useFsStore = create<FsStore>()(
         s.openFiles = [];
         s.activePath = null;
       });
-      useUiStore.getState().setEditorVisible(false);
+      useUiStore.getState().syncEditorVisibleForProject(projectId, false);
     },
 
     persistEditorLayout: (projectId: string) => {

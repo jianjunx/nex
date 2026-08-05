@@ -6,6 +6,7 @@ const fsSearchReplace = vi.fn();
 const fsApplyReplace = vi.fn();
 const fsWriteFile = vi.fn();
 const setEditorVisible = vi.fn();
+const syncEditorVisibleForProject = vi.fn();
 
 vi.mock("../bridge/tauri", () => ({
   fsReadFile: (...args: unknown[]) => fsReadFile(...args),
@@ -20,7 +21,7 @@ vi.mock("../bridge/tauri", () => ({
 }));
 
 vi.mock("./ui.store", () => ({
-  useUiStore: { getState: () => ({ setEditorVisible }) },
+  useUiStore: { getState: () => ({ setEditorVisible, syncEditorVisibleForProject }) },
 }));
 
 let editorAutoSave = false;

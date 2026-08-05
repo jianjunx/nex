@@ -34,11 +34,14 @@ vi.mock("../../stores/project.store", () => ({
   ),
 }));
 
-import { SearchPanel } from "./SearchPanel";
+import { SearchPanel, __resetReplaceUiByProject } from "./SearchPanel";
 import { useUiStore } from "../../stores/ui.store";
+import { __resetSearchProjectQuery } from "../../stores/searchProjectQuery";
 
 beforeEach(() => {
   vi.useFakeTimers();
+  __resetReplaceUiByProject();
+  __resetSearchProjectQuery();
   fsState = {
     searchResults: [],
     searching: false,

@@ -11,6 +11,7 @@ import {
   type Message,
 } from "../bridge/tauri";
 import { useProjectStore } from "./project.store";
+import { clearComposerDraft } from "./composerDrafts";
 import {
   DEFAULT_CONVERSATION_TITLE,
   deriveConversationTitle,
@@ -218,6 +219,7 @@ export const useConversationStore = create<ConversationStore>()(
       closeTab: (id: string) => {
         const projectId = useProjectStore.getState().activeProjectId;
         if (!projectId) return;
+        clearComposerDraft(id);
         set((s) => {
           const tabs = (s.tabsByProject[projectId] ?? []).filter((t) => t !== id);
           s.tabsByProject[projectId] = tabs;

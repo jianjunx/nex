@@ -32,7 +32,8 @@ vi.mock("../../stores/project.store", () => ({
   ),
 }));
 
-import { SearchPanel } from "./SearchPanel";
+import { SearchPanel, __resetReplaceUiByProject } from "./SearchPanel";
+import { __resetSearchProjectQuery } from "../../stores/searchProjectQuery";
 
 const RESULTS: SearchMatch[] = [
   { path: "/proj/src/a.ts", name: "a.ts", line: 1, text: "const foo = 1;" },
@@ -42,6 +43,8 @@ const RESULTS: SearchMatch[] = [
 ];
 
 beforeEach(() => {
+  __resetReplaceUiByProject();
+  __resetSearchProjectQuery();
   fsState = {
     searchResults: RESULTS,
     searching: false,

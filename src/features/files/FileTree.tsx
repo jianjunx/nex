@@ -309,7 +309,7 @@ function TreeNode({
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
-          className={`flex items-center gap-1.5 px-2 py-1 text-sm cursor-pointer rounded-[var(--radius-sm)] transition-colors duration-100 outline-none group ${
+          className={`flex items-center gap-1.5 px-2 py-px text-sm cursor-pointer rounded-[var(--radius-sm)] transition-colors duration-100 outline-none group ${
             isDragOver
               ? "bg-[var(--accent)]/30 ring-1 ring-[var(--accent)]"
               : isSelected

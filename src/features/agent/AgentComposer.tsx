@@ -14,6 +14,11 @@ import { ComposerOptionMenu } from "./ComposerOptionMenu";
 import { PlanBar } from "./thread/PlanBar";
 import { PendingMessagesBar } from "./thread/PendingMessagesBar";
 import { TextEditContextMenu } from "@/components/ui/TextEditContextMenu";
+import {
+  clearComposerDraft,
+  loadComposerDraft,
+  saveComposerDraft,
+} from "../../stores/composerDrafts";
 
 // Text area only — toolbar lives inside the same chrome below this.
 const MIN_HEIGHT = 48;
@@ -42,6 +47,13 @@ export function AgentComposer() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const imagesRef = useRef(images);
   imagesRef.current = images;
+  // Refs so tab-switch effect can stash the latest draft without re-subscribing
+  // on every keystroke (and without putting drafts through zustand).
+  const textRef = useRef(text);
+  textRef.current = text;
+  const mentionsRef = useRef(mentions);
+  mentionsRef.current = mentions;
+  const draftTabRef = useRef<string | null>(null);
 
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const projects = useProjectStore((s) => s.projects);
@@ -79,12 +91,45 @@ export function AgentComposer() {
   const authMode =
     (activeTabId ? sessionPrefsByConversation[activeTabId]?.authMode : undefined) ?? "menu";
 
-  // Revoke leftover object URLs on unmount.
+  // Revoke leftover object URLs on unmount; stash the open tab's draft first.
   useEffect(() => {
     return () => {
+      const tab = draftTabRef.current;
+      if (tab) {
+        saveComposerDraft(tab, { text: textRef.current, mentions: mentionsRef.current });
+      }
       for (const img of imagesRef.current) URL.revokeObjectURL(img.previewUrl);
     };
   }, []);
+
+  // Per-conversation draft: save outgoing tab, restore incoming (images stay
+  // ephemeral — blob URLs are not worth the memory across many tabs).
+  useEffect(() => {
+    const prev = draftTabRef.current;
+    if (prev && prev !== activeTabId) {
+      saveComposerDraft(prev, { text: textRef.current, mentions: mentionsRef.current });
+    }
+    draftTabRef.current = activeTabId;
+    const draft = activeTabId ? loadComposerDraft(activeTabId) : null;
+    setText(draft?.text ?? "");
+    setMentions(draft?.mentions ?? []);
+    setSlashOpen(false);
+    setAtOpen(false);
+    setAtQuery("");
+    setAtResults([]);
+    // Drop pending images on tab switch — they are tab-local and holding
+    // base64 across many conversations would dominate memory.
+    setImages((prevImgs) => {
+      for (const img of prevImgs) URL.revokeObjectURL(img.previewUrl);
+      return [];
+    });
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.style.height = "auto";
+      el.style.height = `${Math.min(Math.max(el.scrollHeight, MIN_HEIGHT), MAX_HEIGHT)}px`;
+    });
+  }, [activeTabId]);
 
   const removeImage = useCallback((id: string) => {
     setImages((prev) => {
@@ -190,6 +235,7 @@ export function AgentComposer() {
     setText("");
     setMentions([]);
     setImages([]);
+    clearComposerDraft(activeTabId);
     for (const img of pendingImages) URL.revokeObjectURL(img.previewUrl);
     setSlashOpen(false);
     setAtOpen(false);

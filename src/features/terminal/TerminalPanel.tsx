@@ -116,7 +116,14 @@ export function TerminalPanel() {
     // tabs buffer only (their replay runs on switch). getState() at call
     // time — never capture activeSessionId.
     setLiveSink((id, data) => {
-      if (useTerminalStore.getState().activeSessionId === id) term.write(data);
+      const { activeSessionId, sessions } = useTerminalStore.getState();
+      if (activeSessionId !== id) return;
+      // Ignore stray output if the active session no longer matches the
+      // project this panel instance was keyed for (belt-and-suspenders with
+      // key={activeProjectId} remounts).
+      const session = sessions.find((s) => s.id === id);
+      if (session && activeProjectId && session.projectId !== activeProjectId) return;
+      term.write(data);
     });
 
     const el = termRef.current;

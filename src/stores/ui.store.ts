@@ -30,7 +30,10 @@ interface UiState {
   terminalVisibleByProject: Record<string, boolean>;
   sidePanelWidth: number;
   terminalHeight: number;
+  /** Editor panel visible for the *current* project (mirrored from by-project map). */
   editorVisible: boolean;
+  /** Per-project editor panel visibility; survives project switches (Esc hide sticks). */
+  editorVisibleByProject: Record<string, boolean>;
   editorWidth: number;
   settingsOpen: boolean;
   newConversationOpen: boolean;
@@ -52,6 +55,8 @@ interface UiState {
   setSidePanelWidth: (w: number) => void;
   setTerminalHeight: (h: number) => void;
   setEditorVisible: (v: boolean) => void;
+  /** Restore `editorVisible` from the per-project map (call on project switch / editor hydrate). */
+  syncEditorVisibleForProject: (projectId: string | null, hasOpenFiles?: boolean) => void;
   setEditorWidth: (w: number) => void;
   resetLayoutDims: () => void;
   openSettings: () => void;
@@ -72,6 +77,12 @@ function rememberTerminalVisible(s: UiState, visible: boolean) {
   if (projectId) s.terminalVisibleByProject[projectId] = visible;
 }
 
+function rememberEditorVisible(s: UiState, visible: boolean) {
+  s.editorVisible = visible;
+  const projectId = useProjectStore.getState().activeProjectId;
+  if (projectId) s.editorVisibleByProject[projectId] = visible;
+}
+
 // Persist layout state so the window reopens exactly as the user left it
 // (panel visibility/width, terminal toggle/height, active side-panel tab).
 export const useUiStore = create<UiState>()(
@@ -84,6 +95,7 @@ export const useUiStore = create<UiState>()(
       sidePanelWidth: 320,
       terminalHeight: 200,
       editorVisible: false,
+      editorVisibleByProject: {},
       editorWidth: 480,
       settingsOpen: false,
       newConversationOpen: false,
@@ -126,7 +138,26 @@ export const useUiStore = create<UiState>()(
       }),
       setSidePanelWidth: (w) => set((s) => { s.sidePanelWidth = w; }),
       setTerminalHeight: (h) => set((s) => { s.terminalHeight = h; }),
-      setEditorVisible: (v) => set((s) => { s.editorVisible = v; }),
+      setEditorVisible: (v) => set((s) => { rememberEditorVisible(s, v); }),
+      syncEditorVisibleForProject: (projectId, hasOpenFiles) => set((s) => {
+        if (!projectId) {
+          s.editorVisible = false;
+          return;
+        }
+        if (Object.prototype.hasOwnProperty.call(s.editorVisibleByProject, projectId)) {
+          s.editorVisible = !!s.editorVisibleByProject[projectId];
+          return;
+        }
+        // First visit: show when hydrate brought tabs; else migrate legacy
+        // single-flag once when the map is empty; otherwise stay hidden.
+        const next = hasOpenFiles === true
+          ? true
+          : hasOpenFiles === false
+            ? false
+            : (Object.keys(s.editorVisibleByProject).length === 0 && s.editorVisible);
+        s.editorVisibleByProject[projectId] = next;
+        s.editorVisible = next;
+      }),
       setEditorWidth: (w) => set((s) => { s.editorWidth = w; }),
       // "Restore defaults" in the settings panel: reset sizes only, never
       // visibility, so a tidy-up can't hide the user's panels.
@@ -160,6 +191,7 @@ export const useUiStore = create<UiState>()(
         sidePanelWidth: s.sidePanelWidth,
         terminalHeight: s.terminalHeight,
         editorVisible: s.editorVisible,
+        editorVisibleByProject: s.editorVisibleByProject,
         editorWidth: s.editorWidth,
       }),
       // I-2: 水合时校验 sidePanelTab，防止陈旧持久化值（如旧版 "settings"）导致侧栏空白
@@ -171,16 +203,13 @@ export const useUiStore = create<UiState>()(
           if (typeof n !== "number" || !Number.isFinite(n)) return fallback;
           return Math.min(max, Math.max(min, n));
         };
-        const byProject =
-          p.terminalVisibleByProject &&
-          typeof p.terminalVisibleByProject === "object" &&
-          !Array.isArray(p.terminalVisibleByProject)
-            ? p.terminalVisibleByProject
-            : {};
+        const asBoolMap = (v: unknown): Record<string, boolean> =>
+          v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, boolean>) : {};
         return {
           ...merged,
           sidePanelTab: sanitizeSidePanelTab(merged.sidePanelTab),
-          terminalVisibleByProject: byProject,
+          terminalVisibleByProject: asBoolMap(p.terminalVisibleByProject),
+          editorVisibleByProject: asBoolMap(p.editorVisibleByProject),
           sidePanelWidth: clamp(merged.sidePanelWidth, 160, 800, current.sidePanelWidth),
           terminalHeight: clamp(merged.terminalHeight, 80, 800, current.terminalHeight),
           editorWidth: clamp(merged.editorWidth, 200, 2000, current.editorWidth),

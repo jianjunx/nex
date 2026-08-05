@@ -38,11 +38,14 @@ vi.mock("../../stores/project.store", () => ({
   ),
 }));
 
-import { SearchPanel } from "./SearchPanel";
+import { SearchPanel, __resetReplaceUiByProject } from "./SearchPanel";
+import { __resetSearchProjectQuery } from "../../stores/searchProjectQuery";
 
 beforeEach(() => {
   // 假定时器：冻结搜索防抖，替换流断言只验证显式路径（预览/写盘/重搜）
   vi.useFakeTimers();
+  __resetReplaceUiByProject();
+  __resetSearchProjectQuery();
   fsState = {
     searchResults: [
       { path: "/proj/src/a.ts", name: "a.ts", line: 1, text: "const foo = 1;" },

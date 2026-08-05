@@ -6,6 +6,7 @@ import { useFsStore } from "../stores/fs.store";
 import { useProjectStore } from "../stores/project.store";
 import { useGitStore } from "../stores/git.store";
 import { useClipboardStore } from "../stores/clipboard.store";
+import { isSameOrDescendant } from "../features/editor/pathUtils";
 
 /** Keep in sync with KeybindingHost.INPUT_SELECTOR (avoid circular import). */
 const INPUT_SELECTOR = "input, textarea, select, [contenteditable=''], [contenteditable='true']";
@@ -168,11 +169,14 @@ const COMMANDS: Command[] = [
       const entries = useClipboardStore.getState().entries;
       // Determine target directory
       const targetDir = sel in fs.nodesByDir ? sel : sel.replace(/[/\\][^/\\]*$/, "");
+      const sources = entries.map((e) => e.path);
+      // Refuse paste of a directory into itself / a descendant.
+      if (sources.some((src) => isSameOrDescendant(targetDir, src))) return;
       if (entries.some((e) => e.isCut)) {
-        void fs.moveEntries(entries.map((e) => e.path), targetDir);
+        void fs.moveEntries(sources, targetDir);
         useClipboardStore.getState().clear();
       } else {
-        void fs.copyEntries(entries.map((e) => e.path), targetDir);
+        void fs.copyEntries(sources, targetDir);
       }
     },
   },

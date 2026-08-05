@@ -17,11 +17,19 @@ import { useFsStore } from "../../stores/fs.store";
 import { fsWatchStart } from "../../bridge/tauri";
 import { projectSessionIndicators } from "../agent/projectSessionIndicators";
 import { restoreProjectConversationTabs } from "./restoreProjectConversationTabs";
+import { useClipboardStore } from "../../stores/clipboard.store";
 
 const platform = typeof navigator !== "undefined" ? navigator.platform : "";
 const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
 // Match TopBar's compact fused bar on macOS (see TopBar for the rationale).
 const isMac = platform.startsWith("Mac") || /Macintosh/.test(ua);
+
+/** Drop tree selection + file clipboard so Cmd+V after a switch cannot
+ *  paste into a stale path (e.g. previous project's `src` into itself). */
+function resetFsSelectionForProjectSwitch(projectPath: string) {
+  useFsStore.getState().clearTreeExcept(projectPath);
+  useClipboardStore.getState().clear();
+}
 
 // Radix highlights items on hover/keyboard via focus + data-[highlighted];
 // override shadcn's solid accent focus with the app's subtle overlay token.
@@ -92,7 +100,7 @@ export function ProjectSelector() {
         const { activeProjectId: id, projects: all } = useProjectStore.getState();
         const active = all.find((p) => p.id === id);
         if (active) {
-          useFsStore.getState().clearTreeExcept(active.path);
+          resetFsSelectionForProjectSwitch(active.path);
           await Promise.all([
             useFsStore.getState().loadEditorState(active.id),
             restoreProjectConversationTabs(active.id),
@@ -156,7 +164,7 @@ export function ProjectSelector() {
                     await useFsStore.getState().saveCurrentEditorState(oldId);
                   }
                   switchProject(p.id);
-                  useFsStore.getState().clearTreeExcept(p.path);
+                  resetFsSelectionForProjectSwitch(p.path);
                   // Keep only this project's tab ids hydrated; others re-fetch on visit.
                   const keep = new Set(useConversationStore.getState().tabsByProject[p.id] ?? []);
                   useAgentStore.getState().pruneEntriesExcept(keep);

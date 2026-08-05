@@ -223,3 +223,73 @@ fn test_apply_replace_invalid_regex_is_validation_error() {
     let err = search_replace(dir.path(), "(broken", "x", Some(opts(false, false, true))).unwrap_err();
     assert!(format!("{err}").contains("无效的正则表达式"));
 }
+
+// ---- copy / move into-self guards -----------------------------------
+use nex_lib::fs::operations::{copy_entry, import_file, move_entry};
+
+#[test]
+fn copy_entry_rejects_directory_into_itself() {
+    let dir = tempdir().unwrap();
+    let src = dir.path().join("src");
+    fs::create_dir_all(src.join("a")).unwrap();
+    fs::write(src.join("a/f.txt"), "hello").unwrap();
+
+    let err = copy_entry(&src, &src).unwrap_err();
+    assert!(
+        format!("{err}").contains("自身或其子目录"),
+        "unexpected: {err}"
+    );
+    // Must not have created src/src
+    assert!(!src.join("src").exists());
+}
+
+#[test]
+fn copy_entry_rejects_directory_into_descendant() {
+    let dir = tempdir().unwrap();
+    let src = dir.path().join("src");
+    let nested = src.join("nested");
+    fs::create_dir_all(&nested).unwrap();
+    fs::write(src.join("f.txt"), "x").unwrap();
+
+    let err = copy_entry(&src, &nested).unwrap_err();
+    assert!(format!("{err}").contains("自身或其子目录"), "unexpected: {err}");
+    assert!(!nested.join("src").exists());
+}
+
+#[test]
+fn copy_entry_to_sibling_parent_succeeds() {
+    let dir = tempdir().unwrap();
+    let src = dir.path().join("src");
+    let other = dir.path().join("other");
+    fs::create_dir_all(src.join("a")).unwrap();
+    fs::write(src.join("a/f.txt"), "hello").unwrap();
+    fs::create_dir(&other).unwrap();
+
+    copy_entry(&src, &other).unwrap();
+    assert_eq!(
+        fs::read_to_string(other.join("src/a/f.txt")).unwrap(),
+        "hello"
+    );
+}
+
+#[test]
+fn import_file_rejects_directory_into_itself() {
+    let dir = tempdir().unwrap();
+    let src = dir.path().join("src");
+    fs::create_dir_all(src.join("a")).unwrap();
+
+    let err = import_file(&src, &src).unwrap_err();
+    assert!(format!("{err}").contains("自身或其子目录"), "unexpected: {err}");
+}
+
+#[test]
+fn move_entry_rejects_directory_into_descendant() {
+    let dir = tempdir().unwrap();
+    let src = dir.path().join("src");
+    let nested = src.join("nested");
+    fs::create_dir_all(&nested).unwrap();
+
+    let err = move_entry(&src, &nested).unwrap_err();
+    assert!(format!("{err}").contains("自身或其子目录"), "unexpected: {err}");
+    assert!(src.exists());
+}

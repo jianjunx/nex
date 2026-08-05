@@ -28,6 +28,46 @@ pub fn rename_entry(path: &Path, new_name: &str) -> Result<(), NexError> {
         .map_err(|e| NexError::FileSystem(format!("重命名失败: {}", e)))
 }
 
+/// True when `path` is `ancestor` or lives under it (component-wise).
+/// Prefer canonicalized inputs so symlink / `..` aliases are caught.
+fn is_same_or_descendant(path: &Path, ancestor: &Path) -> bool {
+    path == ancestor || path.starts_with(ancestor)
+}
+
+/// Resolve an existing path for containment checks. Falls back to the
+/// original path when canonicalize fails (e.g. broken symlink source).
+fn try_canonicalize(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// Refuse to copy/move a directory into itself or a descendant — that
+/// yields `src/src/src/...` nesting as `read_dir` observes the newly
+/// created destination mid-walk.
+fn reject_into_self(source: &Path, dest: &Path) -> Result<(), NexError> {
+    // Follow symlinks: a dir symlink into its own target tree has the
+    // same nesting hazard as a plain directory.
+    if !source.is_dir() {
+        return Ok(());
+    }
+    let source_canon = try_canonicalize(source);
+    // `dest` usually does not exist yet; resolve via its parent + name.
+    let dest_canon = match dest.parent() {
+        Some(parent) if parent.exists() => try_canonicalize(parent).join(
+            dest.file_name()
+                .ok_or_else(|| NexError::FileSystem("无效的目标路径".into()))?,
+        ),
+        _ => dest.to_path_buf(),
+    };
+    if is_same_or_descendant(&dest_canon, &source_canon) {
+        return Err(NexError::FileSystem(format!(
+            "不能将目录复制/移动到自身或其子目录内: {} → {}",
+            source.display(),
+            dest.display()
+        )));
+    }
+    Ok(())
+}
+
 /// Recursively copy a file or directory to a target directory.
 /// The target directory must exist. The entry keeps its original name.
 pub fn copy_entry(source: &Path, target_dir: &Path) -> Result<(), NexError> {
@@ -35,6 +75,7 @@ pub fn copy_entry(source: &Path, target_dir: &Path) -> Result<(), NexError> {
         .file_name()
         .ok_or_else(|| NexError::FileSystem("无效的源路径".into()))?;
     let dest = target_dir.join(name);
+    reject_into_self(source, &dest)?;
     if source.is_dir() {
         copy_dir_recursive(source, &dest)
     } else {
@@ -51,12 +92,16 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), NexError> {
             dst.display()
         )));
     }
+    // Snapshot entries *before* creating `dst`. If `dst` somehow lands
+    // under `src`, a live `read_dir` would see the new folder and nest
+    // forever (`src/src/src/...`).
+    let entries: Vec<_> = fs::read_dir(src)
+        .map_err(|e| NexError::FileSystem(format!("读取目录失败: {}", e)))?
+        .collect();
     fs::create_dir(dst).map_err(|e| {
         NexError::FileSystem(format!("创建目录失败: {}", e))
     })?;
-    for entry in
-        fs::read_dir(src).map_err(|e| NexError::FileSystem(format!("读取目录失败: {}", e)))?
-    {
+    for entry in entries {
         let entry = entry.map_err(|e| NexError::FileSystem(format!("读取条目失败: {}", e)))?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
@@ -136,6 +181,7 @@ pub fn move_entry(source: &Path, target_dir: &Path) -> Result<(), NexError> {
         .file_name()
         .ok_or_else(|| NexError::FileSystem("无效的源路径".into()))?;
     let dest = target_dir.join(name);
+    reject_into_self(source, &dest)?;
     if dest.exists() {
         return Err(NexError::FileSystem(format!(
             "目标已存在: {}",
@@ -180,6 +226,7 @@ pub fn import_file(source: &Path, target_dir: &Path) -> Result<PathBuf, NexError
         .file_name()
         .ok_or_else(|| NexError::FileSystem("无效的源路径".into()))?;
     let dest = resolve_unique_path(target_dir, name);
+    reject_into_self(source, &dest)?;
     if source.is_dir() {
         copy_dir_recursive(source, &dest)?;
     } else {

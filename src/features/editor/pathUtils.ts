@@ -6,6 +6,19 @@ export function fileBasename(path: string): string {
 }
 
 /**
+ * True when `path` is `ancestor`, or a file/dir under it.
+ * Component-aware via trailing separator (avoids `/foo` matching `/foo-bar`).
+ */
+export function isSameOrDescendant(path: string, ancestor: string): boolean {
+  const p = path.replace(/\\/g, "/");
+  let a = ancestor.replace(/\\/g, "/");
+  if (a.endsWith("/")) a = a.slice(0, -1);
+  const pCmp = /^[a-zA-Z]:/.test(p) ? p.toLowerCase() : p;
+  const aCmp = /^[a-zA-Z]:/.test(a) ? a.toLowerCase() : a;
+  return pCmp === aCmp || pCmp.startsWith(aCmp + "/");
+}
+
+/**
  * Path relative to project root for tooltips.
  * Normalizes separators to `/` in the relative result.
  * Falls back to the original `filePath` when root is missing or file is outside root.

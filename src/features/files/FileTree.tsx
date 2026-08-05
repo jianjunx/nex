@@ -230,7 +230,8 @@ function TreeNode({
       return;
     }
 
-    // External file drop (from OS)
+    // External file drop (from OS) — refuse importing a folder into itself
+    // or a descendant (same nesting hazard as copy/paste).
     if (e.dataTransfer.files.length > 0) {
       const paths: string[] = [];
       for (let i = 0; i < e.dataTransfer.files.length; i++) {
@@ -239,8 +240,11 @@ function TreeNode({
         const fp = (file as any).path as string | undefined;
         if (fp) paths.push(fp);
       }
-      if (paths.length > 0) {
-        void importFiles(paths, targetDir);
+      const safe = paths.filter(
+        (p) => !(targetDir === p || targetDir.startsWith(p + '/') || targetDir.startsWith(p + '\\')),
+      );
+      if (safe.length > 0) {
+        void importFiles(safe, targetDir);
       }
     }
   };

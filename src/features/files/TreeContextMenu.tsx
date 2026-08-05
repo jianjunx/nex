@@ -20,6 +20,7 @@ import { useClipboardStore } from "@/stores/clipboard.store";
 import { useFsStore } from "@/stores/fs.store";
 import { useProjectStore } from "@/stores/project.store";
 import { detectPlatform } from "@/commands/types";
+import { isSameOrDescendant } from "@/features/editor/pathUtils";
 
 interface TreeContextMenuProps {
   open: boolean;
@@ -62,20 +63,20 @@ export function TreeContextMenu({
   const handlePaste = () => {
     if (!canPaste) return;
     const entries = clipboard.entries;
-    // Paste into this directory
+    // Paste into this directory — refuse copying/moving a folder into itself
+    // or a descendant (otherwise backend would nest `src/src/src/...`).
+    const sources = entries.map((e) => e.path);
+    if (sources.some((src) => isSameOrDescendant(node.path, src))) {
+      onClose();
+      return;
+    }
     if (entries.some((e) => e.isCut)) {
       // Move: cut entries
-      void fs.moveEntries(
-        entries.map((e) => e.path),
-        node.path,
-      );
+      void fs.moveEntries(sources, node.path);
       clipboard.clear();
     } else {
       // Copy
-      void fs.copyEntries(
-        entries.map((e) => e.path),
-        node.path,
-      );
+      void fs.copyEntries(sources, node.path);
     }
     onClose();
   };

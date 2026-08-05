@@ -1,11 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { fileBasename, relativeToProject } from "./pathUtils";
+import { fileBasename, isSameOrDescendant, relativeToProject } from "./pathUtils";
 
 describe("fileBasename", () => {
   it("handles posix and windows separators", () => {
     expect(fileBasename("/a/b/c.ts")).toBe("c.ts");
     expect(fileBasename("C:\\a\\b\\c.ts")).toBe("c.ts");
     expect(fileBasename("c.ts")).toBe("c.ts");
+  });
+});
+
+describe("isSameOrDescendant", () => {
+  it("matches self and children, not sibling prefixes", () => {
+    expect(isSameOrDescendant("/proj/src", "/proj/src")).toBe(true);
+    expect(isSameOrDescendant("/proj/src/a", "/proj/src")).toBe(true);
+    expect(isSameOrDescendant("/proj/src2", "/proj/src")).toBe(false);
+    expect(isSameOrDescendant("C:\\proj\\src\\a", "C:\\proj\\src")).toBe(true);
   });
 });
 

@@ -554,6 +554,17 @@ export const useFsStore = create<FsStore>()(
       set((s) => { s.error = null; });
       try {
         for (const src of sources) {
+          // Mirror backend reject_into_self: never copy a dir into itself.
+          if (
+            targetDir === src ||
+            targetDir.startsWith(src + "/") ||
+            targetDir.startsWith(src + "\\")
+          ) {
+            set((s) => {
+              s.error = `不能将目录复制到自身或其子目录内: ${src}`;
+            });
+            return;
+          }
           await fsCopyEntry(src, targetDir);
         }
         await get().refreshDir(targetDir);
@@ -566,6 +577,16 @@ export const useFsStore = create<FsStore>()(
       set((s) => { s.error = null; });
       try {
         for (const src of sources) {
+          if (
+            targetDir === src ||
+            targetDir.startsWith(src + "/") ||
+            targetDir.startsWith(src + "\\")
+          ) {
+            set((s) => {
+              s.error = `不能将目录移动到自身或其子目录内: ${src}`;
+            });
+            return;
+          }
           // Close any open editor tabs for moved files
           const openIndex = get().openFiles.findIndex((f) => f.path === src);
           if (openIndex >= 0) {
@@ -590,7 +611,23 @@ export const useFsStore = create<FsStore>()(
     importFiles: async (sources, targetDir) => {
       set((s) => { s.error = null; });
       try {
-        await fsImportFiles(sources, targetDir);
+        const safe = sources.filter(
+          (src) =>
+            !(
+              targetDir === src ||
+              targetDir.startsWith(src + "/") ||
+              targetDir.startsWith(src + "\\")
+            ),
+        );
+        if (safe.length === 0) {
+          if (sources.length > 0) {
+            set((s) => {
+              s.error = "不能将目录导入到自身或其子目录内";
+            });
+          }
+          return;
+        }
+        await fsImportFiles(safe, targetDir);
         await get().refreshDir(targetDir);
       } catch (err) {
         set((s) => { s.error = errorMessage(err); });
@@ -893,6 +930,16 @@ export const useFsStore = create<FsStore>()(
           }
         }
         s.expandedDirs = nextExpanded;
+        // Drop selection that belongs to another project — otherwise
+        // Cmd+C/V still target the old path after a project switch.
+        if (
+          s.selectedPath &&
+          s.selectedPath !== projectPath &&
+          !s.selectedPath.startsWith(projectPath + "/") &&
+          !s.selectedPath.startsWith(projectPath + "\\")
+        ) {
+          s.selectedPath = null;
+        }
       });
     },
     })),

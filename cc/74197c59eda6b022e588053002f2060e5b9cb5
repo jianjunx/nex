@@ -1,0 +1,25 @@
+src/styles/globals.css
+  s_e91e1be62d14f4::t_3dfdf8c437acdb 280-283
+src/features/agent/thread/ThinkingBlock.tsx
+  s_e91e1be62d14f4::t_0e70dc5347ec84 21,31,33
+src/features/agent/thread/Markdown.tsx
+  s_e91e1be62d14f4::t_fdb77d449d1760 234-235,239,249,258,265,272,279,304-305,308,315
+  s_e91e1be62d14f4::t_70af98e437bbc9 12-13,34-41,43
+  s_e91e1be62d14f4::t_f001df7dbbeea0 128
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "cc74197c59eda6b022e588053002f2060e5b9cb5",
+  "prompts": {},
+  "sessions": {
+    "s_e91e1be62d14f4": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "5f523441-b507-4345-b668-112549d7aa49",
+        "model": "default"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

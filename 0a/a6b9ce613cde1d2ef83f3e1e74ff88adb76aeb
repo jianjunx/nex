@@ -1,0 +1,20 @@
+src-tauri/src/commands/update_cmds.rs
+  s_e91e1be62d14f4::t_c48b81c364b2e3 8-12
+  s_e91e1be62d14f4::t_80e0dafa54f6f8 7,15-16,27,52-69,72-73,83-85,88,92,99-144,147-148,152,157-160,162-165,171,177-185,187,204,208-381,512-579
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "0aa6b9ce613cde1d2ef83f3e1e74ff88adb76aeb",
+  "prompts": {},
+  "sessions": {
+    "s_e91e1be62d14f4": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "5f523441-b507-4345-b668-112549d7aa49",
+        "model": "default"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

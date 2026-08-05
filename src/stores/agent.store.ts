@@ -627,6 +627,8 @@ export const useAgentStore = create<AgentStore>()(
           if (sessionIdForStatus) {
             const session = Object.values(s.sessions).find((ss) => ss.sessionId === sessionIdForStatus);
             if (session) {
+              // 已处理（同意/拒绝）：撤掉该会话的「等待确认」通知，避免误导。
+              useNotificationStore.getState().dismissForConversation(session.conversationId);
               const stillWaiting = (s.permissionQueues[sessionIdForStatus] ?? []).length > 0;
               if (session.status === "waiting" && !stillWaiting) session.status = "running";
             }

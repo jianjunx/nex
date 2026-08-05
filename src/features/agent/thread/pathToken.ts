@@ -42,11 +42,30 @@ export function resolveTokenPath(
   token: string,
 ): { absPath: string; line?: number } | null {
   const { path, line } = splitLineSuffix(token.trim());
-  if (path.startsWith("/")) return { absPath: path, line };
   const root = activeProjectRoot();
   if (!root) return null;
-  const clean = path.replace(/^~\//, "").replace(/^\.\//, "");
-  return { absPath: `${root.replace(/\/+$/, "")}/${clean}`, line };
+  // 绝对路径也必须位于当前项目根内，防止 Agent 输出诱导点击项目外文件。
+  const joined = path.startsWith("/") ? path : `${root.replace(/\/+$/, "")}/${path}`;
+  const norm = normalizeSegments(joined);
+  const rootNorm = normalizeSegments(root);
+  if (norm === rootNorm) return null; // 根目录本身不是文件
+  if (!norm.startsWith(rootNorm + "/")) return null; // 逃出项目根（含 .. 段）
+  return { absPath: norm, line };
+}
+
+/** 规范化路径段：去除重复斜杠与 .，解析 ..（纯字符串，不做文件系统 IO）。 */
+function normalizeSegments(p: string): string {
+  const parts = p.replace(/\\/g, "/").split("/");
+  const out: string[] = [];
+  for (const part of parts) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      out.pop();
+    } else {
+      out.push(part);
+    }
+  }
+  return "/" + out.join("/");
 }
 
 /** Open the token's file in the editor panel. Resolves false when it fails. */

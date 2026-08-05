@@ -85,11 +85,11 @@ const COMMANDS: Command[] = [
     // CodeMirror's own keymap which closes the bar).
     run: () => {
       if (isFindBarOpen()) {
-        // Focus inside the find bar's HTML input never reaches CodeMirror's
-        // own keymap — close the bar explicitly. Focus inside the editor
-        // content yields to CodeMirror's keymap (cadence kept either way).
+        // KeybindingHost 在 window 捕获阶段已拦截该 Esc，CodeMirror 自身
+        // 的 keymap 收不到事件——无论焦点在搜索输入框还是编辑器内容，
+        // 都必须在这里显式关掉搜索栏（拍子照记，双击节奏不中断）。
         noteCloseEsc();
-        if (!isInCodeMirror()) closeFindBar();
+        closeFindBar();
         return;
       }
       if (noteCloseEsc()) useUiStore.getState().setEditorVisible(false);

@@ -19,6 +19,8 @@ interface NotificationStore {
   items: AppNotification[];
   push: (n: Omit<AppNotification, "id">) => void;
   dismiss: (id: string) => void;
+  /** 清除指定会话的所有通知（该会话已处理/切换后不再提示）。 */
+  dismissForConversation: (conversationId: string) => void;
   /** 点击通知：切换到目标项目并激活目标会话。 */
   activate: (id: string) => void;
 }
@@ -31,6 +33,9 @@ export const useNotificationStore = create<NotificationStore>()(
 
     push: (n) => {
       set((s) => {
+        // 同一会话已有未处理通知时替换（置顶）而不是堆叠。
+        const dup = s.items.findIndex((x) => x.conversationId === n.conversationId);
+        if (dup >= 0) s.items.splice(dup, 1);
         s.items.unshift({ ...n, id: crypto.randomUUID() });
         if (s.items.length > MAX_ITEMS) s.items.length = MAX_ITEMS;
       });
@@ -40,6 +45,14 @@ export const useNotificationStore = create<NotificationStore>()(
       set((s) => {
         const i = s.items.findIndex((x) => x.id === id);
         if (i >= 0) s.items.splice(i, 1);
+      });
+    },
+
+    dismissForConversation: (conversationId) => {
+      set((s) => {
+        for (let i = s.items.length - 1; i >= 0; i--) {
+          if (s.items[i]!.conversationId === conversationId) s.items.splice(i, 1);
+        }
       });
     },
 
@@ -84,7 +97,17 @@ export const useNotificationStore = create<NotificationStore>()(
           })(),
           fsWatchStart(project?.path ?? "").catch(() => {}),
         ]);
-        useConversationStore.getState().switchTab(conversationId);
+        // 末尾校验：异步流程期间用户可能又切走了项目，或目标会话已不存在
+        // （restoreTabs 未执行）——此时不激活，避免 activeTabByProject
+        // 指向不在 tabs 列表里的未知 id。
+        const st = useConversationStore.getState();
+        const tabs = st.tabsByProject[projectId] ?? [];
+        if (
+          useProjectStore.getState().activeProjectId === projectId &&
+          tabs.includes(conversationId)
+        ) {
+          st.switchTab(conversationId);
+        }
       })();
     },
   })),

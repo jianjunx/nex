@@ -5,6 +5,7 @@ import { enableMapSet } from "immer";
 import { fsReadTree, fsExpandDir, fsReadFile, fsSearch, fsSearchReplace, fsApplyReplace, fsWriteFile, fsCreateFile, fsCreateDir, fsDeleteEntry, fsRenameEntry, fsCopyEntry, fsMoveEntry, fsImportFiles, type FsNode, type SearchMatch, type SearchOptions, type ReplacePreview, type ReplaceResult } from "../bridge/tauri";
 import { useUiStore } from "./ui.store";
 import { useSettingsStore } from "./settings.store";
+import { useProjectStore } from "./project.store";
 import {
   clearAllAutoSaveTimers,
   clearAutoSaveTimer,
@@ -13,15 +14,22 @@ import {
 import { focusSearchQueryProject } from "./searchProjectQuery";
 
 // 自写盘时间戳：watcher 对自己写入（含自动保存）触发的事件不得误报为
-// 外部修改（「文件在磁盘上已被修改」黄条）。宽限期内直接忽略。
+// 外部修改（「文件在磁盘上已被修改」黄条）。宽限期需比 watcher 事件
+// 延迟略大即可（通常 <100ms），过长会吞掉真实的外部修改。
 const SELF_WRITE_AT = new Map<string, number>();
-const SELF_WRITE_GRACE_MS = 2000;
+const SELF_WRITE_GRACE_MS = 600;
 function noteSelfWrite(path: string): void {
   SELF_WRITE_AT.set(path, Date.now());
 }
 function isRecentSelfWrite(path: string): boolean {
   const at = SELF_WRITE_AT.get(path);
-  return at != null && Date.now() - at < SELF_WRITE_GRACE_MS;
+  if (at == null) return false;
+  // 顺带清理过期条目，防止 Map 无界增长。
+  if (Date.now() - at >= SELF_WRITE_GRACE_MS) {
+    SELF_WRITE_AT.delete(path);
+    return false;
+  }
+  return true;
 }
 
 /** Test-only hook: clear the self-write grace bookkeeping. */
@@ -31,7 +39,10 @@ export function __resetSelfWriteForTest() {
 
 export { clearAllAutoSaveTimers };
 
-/** 文件树可撤销操作（Ctrl/Cmd+Z）。模块级栈，不入 state 以免被 persist。 */
+/** 撤销操作执行中标记：防止并发触发交错操作磁盘。 */
+let undoFsOperationInFlight = false;
+
+/** 文件树可撤销操作（Ctrl/Cmd+Z）。按项目分栈，不入 state 以免被 persist。 */
 type FsUndoEntry =
   | { kind: "create"; path: string }
   | { kind: "rename"; fromPath: string; toPath: string }
@@ -39,19 +50,34 @@ type FsUndoEntry =
   | { kind: "copy"; destPath: string }
   | { kind: "deleteFile"; path: string; content: string };
 
-const FS_UNDO_STACK: FsUndoEntry[] = [];
+/** 按项目 id 分栈：切项目后 Ctrl+Z 只作用于当前项目，绝不改写其它项目磁盘。 */
+const FS_UNDO_STACKS = new Map<string, FsUndoEntry[]>();
 const FS_UNDO_MAX = 50;
 
 function pushFsUndo(entry: FsUndoEntry): void {
-  FS_UNDO_STACK.push(entry);
-  if (FS_UNDO_STACK.length > FS_UNDO_MAX) FS_UNDO_STACK.shift();
+  const projectId = useProjectStore.getState().activeProjectId ?? "__none__";
+  let stack = FS_UNDO_STACKS.get(projectId);
+  if (!stack) {
+    stack = [];
+    FS_UNDO_STACKS.set(projectId, stack);
+  }
+  stack.push(entry);
+  if (stack.length > FS_UNDO_MAX) stack.shift();
+}
+
+function popFsUndo(): FsUndoEntry | undefined {
+  const projectId = useProjectStore.getState().activeProjectId ?? "__none__";
+  return FS_UNDO_STACKS.get(projectId)?.pop();
 }
 
 function parentDirOf(path: string): string {
   return path.replace(/[/\\][^/\\]*$/, "");
 }
 
-/** 删除前为纯文本文件快照内容（目录/二进制无法安全恢复，不入撤销栈）。 */
+/** 撤销快照的内容大小上限：超过则放弃恢复（目录/二进制/超大文件一律不撤销）。 */
+const FS_UNDO_SNAPSHOT_MAX_BYTES = 1024 * 1024;
+
+/** 删除前为纯文本文件快照内容（目录/二进制/超大文件无法安全恢复，不入撤销栈）。 */
 async function snapshotForDelete(path: string): Promise<FsUndoEntry | null> {
   let isFile = false;
   for (const nodes of Object.values(useFsStore.getState().nodesByDir)) {
@@ -61,7 +87,9 @@ async function snapshotForDelete(path: string): Promise<FsUndoEntry | null> {
   if (!isFile) return null;
   try {
     const r = await fsReadFile(path);
-    if (r.is_text && r.content != null) return { kind: "deleteFile", path, content: r.content };
+    if (r.is_text && r.content != null && r.size <= FS_UNDO_SNAPSHOT_MAX_BYTES) {
+      return { kind: "deleteFile", path, content: r.content };
+    }
   } catch {
     // 读取失败：放弃快照，删除仍照常执行。
   }
@@ -711,12 +739,16 @@ export const useFsStore = create<FsStore>()(
     },
 
     undoFsOperation: async () => {
-      const entry = FS_UNDO_STACK.pop();
-      if (!entry) return;
-      set((s) => { s.error = null; });
+      // 串行化：快速连按 Ctrl+Z 时避免多个撤销流程并发操作磁盘。
+      if (undoFsOperationInFlight) return;
+      undoFsOperationInFlight = true;
       try {
-        const refresh = new Set<string>();
-        switch (entry.kind) {
+        const entry = popFsUndo();
+        if (!entry) return;
+        set((s) => { s.error = null; });
+        try {
+          const refresh = new Set<string>();
+          switch (entry.kind) {
           case "create": {
             await fsDeleteEntry(entry.path);
             refresh.add(parentDirOf(entry.path));
@@ -775,8 +807,11 @@ export const useFsStore = create<FsStore>()(
         for (const dir of refresh) {
           if (dir) await get().refreshDir(dir);
         }
-      } catch (err) {
-        set((s) => { s.error = errorMessage(err); });
+        } catch (err) {
+          set((s) => { s.error = errorMessage(err); });
+        }
+      } finally {
+        undoFsOperationInFlight = false;
       }
     },
 

@@ -295,9 +295,11 @@ export function AgentComposer() {
   useEffect(() => {
     if (!projectPath) return;
     void useGitStore.getState().refresh(projectPath).then(() => {
-      // Non-git project: don't leave an error behind from the composer probe.
+      // 非 git 项目的探测失败不打扰用户；其它真实错误（权限/仓库损坏）保留。
       const st = useGitStore.getState();
-      if (!st.status && st.error) st.clearError();
+      if (!st.status && st.error && /not a git repository/i.test(st.error)) {
+        st.clearError();
+      }
     });
   }, [projectPath]);
 

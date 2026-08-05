@@ -6,6 +6,7 @@ import { ToolCallCard } from "./ToolCallCard";
 import { MessageContextMenu } from "./MessageContextMenu";
 import { Markdown } from "./Markdown";
 import { groupChunks } from "./groupChunks";
+import { ThreadImageThumb } from "./ThreadImageThumb";
 import type { ThreadEntry } from "./types";
 
 /**
@@ -32,12 +33,7 @@ export const EntryView = memo(function EntryView({ entry }: { entry: ThreadEntry
                 {entry.images && entry.images.length > 0 && (
                   <div className="flex flex-wrap gap-2">
                     {entry.images.map((img, i) => (
-                      <img
-                        key={i}
-                        src={`data:${img.mimeType};base64,${img.data}`}
-                        alt=""
-                        className="max-h-48 max-w-full rounded-[var(--radius-sm)] object-contain"
-                      />
+                      <ThreadImageThumb key={i} image={img} />
                     ))}
                   </div>
                 )}

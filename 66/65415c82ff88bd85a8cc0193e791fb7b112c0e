@@ -1,0 +1,21 @@
+src/features/agent/thread/EntryView.tsx
+  s_e91e1be62d14f4::t_f87f9fc1410c7b 9,36
+src/features/agent/thread/ThreadImageThumb.tsx
+  s_e91e1be62d14f4::t_df3b48048f6e77 1-42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "6665415c82ff88bd85a8cc0193e791fb7b112c0e",
+  "prompts": {},
+  "sessions": {
+    "s_e91e1be62d14f4": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "5f523441-b507-4345-b668-112549d7aa49",
+        "model": "default"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

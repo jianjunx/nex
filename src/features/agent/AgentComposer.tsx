@@ -1,7 +1,13 @@
-import { useState, useRef, useEffect, useCallback, type ClipboardEvent, type KeyboardEvent } from "react";
-import { Send, Square, X, AtSign } from "lucide-react";
+import { useState, useRef, useEffect, useCallback, useMemo, type ClipboardEvent, type CSSProperties, type KeyboardEvent } from "react";
+import { Send, Square, X, Plus, ImagePlus, FilePlus } from "lucide-react";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useAgentStore, pendingMessagePreview, waitSessionReady } from "../../stores/agent.store";
 import { useProjectStore } from "../../stores/project.store";
 import {
@@ -19,13 +25,19 @@ import {
   loadComposerDraft,
   saveComposerDraft,
 } from "../../stores/composerDrafts";
+import { fuzzyFilter } from "./composerFuzzy";
+import { measureCaretInTextarea } from "./composerCaret";
+import { fileBasename, relativeToProject } from "../editor/pathUtils";
+import FileIcon from "../files/FileIcon";
+import type { AvailableCommand } from "./thread/types";
 
-// Text area only — toolbar lives inside the same chrome below this.
-const MIN_HEIGHT = 48;
+// Compact default; grows with content / attached images inside the chrome.
+const MIN_HEIGHT = 36;
 const MAX_HEIGHT = 200;
 
 interface FileMention {
   path: string;
+  /** Token inserted after `@` in the textarea (basename or project-relative). */
   name: string;
 }
 
@@ -36,19 +48,107 @@ interface PendingImage {
   previewUrl: string;
 }
 
+/** Match `/query` at end of input (allows mid-message slash after whitespace). */
+function matchSlashTrigger(value: string): { query: string; start: number } | null {
+  const m = value.match(/(?:^|\s)\/([^\s]*)$/);
+  if (!m) return null;
+  const query = m[1] ?? "";
+  const slashAt = value.lastIndexOf("/");
+  return { query, start: slashAt };
+}
+
+function matchAtTrigger(value: string): { query: string } | null {
+  const m = value.match(/(?:^|\s)@([^\s@]*)$/);
+  if (!m) return null;
+  return { query: m[1] ?? "" };
+}
+
+/** Prefer a short project-relative path for the inline `@token`. */
+function mentionTokenFor(path: string, projectPath: string | undefined): string {
+  const rel = relativeToProject(path, projectPath);
+  if (rel !== path && !rel.startsWith("..") && rel.length > 0 && rel.length < 96) {
+    return rel.replace(/\\/g, "/");
+  }
+  return fileBasename(path);
+}
+
+/** Replace trailing `@query` or append `@token ` at the end. */
+function insertAtToken(text: string, token: string): string {
+  if (/(?:^|\s)@[^\s@]*$/.test(text)) {
+    return text.replace(/(?:^|\s)@[^\s@]*$/, (m) => {
+      const lead = /^\s/.test(m) ? m[0]! : "";
+      return `${lead}@${token} `;
+    });
+  }
+  const needsSpace = text.length > 0 && !/\s$/.test(text);
+  return `${text}${needsSpace ? " " : ""}@${token} `;
+}
+
+/** Filename + parent dir (with trailing `/`) for the @ picker row. */
+function mentionDisplayParts(
+  absPath: string,
+  projectPath: string | undefined,
+): { name: string; dir: string } {
+  const name = fileBasename(absPath);
+  const rel = relativeToProject(absPath, projectPath).replace(/\\/g, "/");
+  if (rel === absPath || rel.startsWith("..")) {
+    return { name, dir: "" };
+  }
+  const slash = rel.lastIndexOf("/");
+  if (slash < 0) return { name, dir: "" };
+  return { name, dir: rel.slice(0, slash + 1) };
+}
+
+/** Prefer filename hits; drop content-line duplicates for the @ picker. */
+function dedupeMentionHits(hits: SearchMatch[]): SearchMatch[] {
+  const seen = new Set<string>();
+  const out: SearchMatch[] = [];
+  const ordered = [...hits].sort((a, b) => {
+    const an = a.line == null ? 0 : 1;
+    const bn = b.line == null ? 0 : 1;
+    return an - bn;
+  });
+  for (const h of ordered) {
+    if (seen.has(h.path)) continue;
+    seen.add(h.path);
+    out.push(h);
+  }
+  return out;
+}
+
+function isImeKeyEvent(e: KeyboardEvent<HTMLTextAreaElement>): boolean {
+  // keyCode 229 = browser still composing (common on macOS Chinese IME).
+  return e.nativeEvent.isComposing || e.keyCode === 229;
+}
+
 export function AgentComposer() {
   const [text, setText] = useState("");
   const [mentions, setMentions] = useState<FileMention[]>([]);
   const [images, setImages] = useState<PendingImage[]>([]);
   const [slashOpen, setSlashOpen] = useState(false);
   const [atOpen, setAtOpen] = useState(false);
+  const [slashQuery, setSlashQuery] = useState("");
   const [atQuery, setAtQuery] = useState("");
   const [atResults, setAtResults] = useState<SearchMatch[]>([]);
+  const [suggestIndex, setSuggestIndex] = useState(0);
+  const [plusOpen, setPlusOpen] = useState(false);
+  const [previewImage, setPreviewImage] = useState<PendingImage | null>(null);
+  const [caretPos, setCaretPos] = useState<{ top: number; left: number; lineHeight: number } | null>(null);
+  const [imeComposing, setImeComposing] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const suggestListRef = useRef<HTMLDivElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const plusMenuRef = useRef<HTMLDivElement>(null);
+  const suggestQueryRef = useRef({ slash: "", at: "" });
+  const suggestNavRef = useRef({
+    slashOpen: false,
+    atOpen: false,
+    commandCount: 0,
+    atCount: 0,
+    suggestIndex: 0,
+  });
   const imagesRef = useRef(images);
   imagesRef.current = images;
-  // Refs so tab-switch effect can stash the latest draft without re-subscribing
-  // on every keystroke (and without putting drafts through zustand).
   const textRef = useRef(text);
   textRef.current = text;
   const mentionsRef = useRef(mentions);
@@ -91,7 +191,44 @@ export function AgentComposer() {
   const authMode =
     (activeTabId ? sessionPrefsByConversation[activeTabId]?.authMode : undefined) ?? "menu";
 
-  // Revoke leftover object URLs on unmount; stash the open tab's draft first.
+  const filteredCommands = useMemo(() => {
+    if (!slashOpen) return [] as AvailableCommand[];
+    const cmds = meta?.availableCommands ?? [];
+    return fuzzyFilter(cmds, slashQuery, (c) => `${c.name} ${c.description}`, 40);
+  }, [slashOpen, slashQuery, meta?.availableCommands]);
+
+  const filteredAtResults = useMemo(() => {
+    if (!atOpen) return [] as SearchMatch[];
+    const unique = dedupeMentionHits(atResults);
+    if (!atQuery.trim()) return unique.slice(0, 24);
+    return fuzzyFilter(
+      unique,
+      atQuery,
+      (h) => {
+        const parts = mentionDisplayParts(h.path, project?.path);
+        return `${parts.name} ${parts.dir}${parts.name}`;
+      },
+      24,
+    );
+  }, [atOpen, atQuery, atResults, project?.path]);
+
+  // Always show the slash popover when `/` is active — even if the agent has
+  // not published commands yet (otherwise "/" looks broken).
+  const suggestOpen = slashOpen || atOpen;
+  const suggestCount = slashOpen
+    ? filteredCommands.length
+    : atOpen
+      ? filteredAtResults.length
+      : 0;
+
+  suggestNavRef.current = {
+    slashOpen,
+    atOpen,
+    commandCount: filteredCommands.length,
+    atCount: filteredAtResults.length,
+    suggestIndex,
+  };
+
   useEffect(() => {
     return () => {
       const tab = draftTabRef.current;
@@ -102,8 +239,6 @@ export function AgentComposer() {
     };
   }, []);
 
-  // Per-conversation draft: save outgoing tab, restore incoming (images stay
-  // ephemeral — blob URLs are not worth the memory across many tabs).
   useEffect(() => {
     const prev = draftTabRef.current;
     if (prev && prev !== activeTabId) {
@@ -115,10 +250,12 @@ export function AgentComposer() {
     setMentions(draft?.mentions ?? []);
     setSlashOpen(false);
     setAtOpen(false);
+    setSlashQuery("");
     setAtQuery("");
     setAtResults([]);
-    // Drop pending images on tab switch — they are tab-local and holding
-    // base64 across many conversations would dominate memory.
+    setSuggestIndex(0);
+    setPlusOpen(false);
+    setImeComposing(false);
     setImages((prevImgs) => {
       for (const img of prevImgs) URL.revokeObjectURL(img.previewUrl);
       return [];
@@ -130,6 +267,39 @@ export function AgentComposer() {
       el.style.height = `${Math.min(Math.max(el.scrollHeight, MIN_HEIGHT), MAX_HEIGHT)}px`;
     });
   }, [activeTabId]);
+
+  // Close + menu on outside click.
+  useEffect(() => {
+    if (!plusOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (plusMenuRef.current?.contains(e.target as Node)) return;
+      setPlusOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [plusOpen]);
+
+  // Keep highlight in range when the filtered list shrinks.
+  useEffect(() => {
+    setSuggestIndex((i) => (suggestCount === 0 ? 0 : Math.min(i, suggestCount - 1)));
+  }, [suggestCount]);
+
+  // Keep the keyboard-highlighted row visible inside the suggest list
+  // without scrolling the page (scrollIntoView would move ancestors).
+  useEffect(() => {
+    if (!suggestOpen || suggestCount === 0) return;
+    const list = suggestListRef.current;
+    if (!list) return;
+    const row = list.querySelector<HTMLElement>(`[data-suggest-index="${suggestIndex}"]`);
+    if (!row) return;
+    const listRect = list.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
+    if (rowRect.bottom > listRect.bottom) {
+      list.scrollTop += rowRect.bottom - listRect.bottom;
+    } else if (rowRect.top < listRect.top) {
+      list.scrollTop -= listRect.top - rowRect.top;
+    }
+  }, [suggestOpen, suggestCount, suggestIndex]);
 
   const removeImage = useCallback((id: string) => {
     setImages((prev) => {
@@ -152,24 +322,19 @@ export function AgentComposer() {
           previewUrl: URL.createObjectURL(file),
         });
       } catch {
-        /* skip unreadable clipboard blobs */
+        /* skip */
       }
     }
     if (next.length > 0) setImages((prev) => [...prev, ...next]);
   }, []);
 
-  /** After restart, tabs restore without a live ACP process — spawn on first send. */
   const ensureLiveSession = async (): Promise<string | null> => {
     if (!activeTabId || !project || !activeConversation) return null;
     const current = useAgentStore.getState().sessions[activeTabId];
     if (current?.sessionId && current.status !== "starting") return current.sessionId;
-
-    // Wait if a create is already in flight for this tab — event-driven
-    // (store subscription), not a fixed-delay polling loop.
     if (current?.status === "starting") {
       return waitSessionReady(activeTabId);
     }
-
     const servers = useAgentStore.getState().servers;
     if (servers.length === 0) await useAgentStore.getState().loadServers();
     const descriptor =
@@ -185,8 +350,6 @@ export function AgentComposer() {
     }
   };
 
-  // Restore cold tabs without an active ACP process by starting the agent
-  // automatically when the active tab becomes available.
   useEffect(() => {
     if (!activeTabId || !project || !activeConversation) return;
     void ensureLiveSession();
@@ -202,17 +365,17 @@ export function AgentComposer() {
 
   useEffect(() => {
     adjustHeight();
-  }, [adjustHeight]);
+  }, [adjustHeight, images.length]);
 
   useEffect(() => {
-    if (!atOpen || !project || !atQuery.trim()) {
+    if (!atOpen || !project) {
       setAtResults([]);
       return;
     }
     let cancelled = false;
     const t = window.setTimeout(() => {
       void fsSearch(project.path, atQuery).then((hits) => {
-        if (!cancelled) setAtResults(hits.slice(0, 8));
+        if (!cancelled) setAtResults(hits.slice(0, 80));
       });
     }, 120);
     return () => {
@@ -221,20 +384,23 @@ export function AgentComposer() {
     };
   }, [atOpen, atQuery, project]);
 
-  const filteredCommands = (meta?.availableCommands ?? []).filter((c) => {
-    if (!slashOpen) return false;
-    const q = text.startsWith("/") ? text.slice(1).toLowerCase() : "";
-    return !q || c.name.toLowerCase().includes(q);
-  });
+  const updateCaretAnchor = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const pt = measureCaretInTextarea(el);
+    setCaretPos(pt);
+  }, []);
 
   const handleSend = async () => {
     if ((!text.trim() && images.length === 0) || !activeTabId) return;
     const content = text;
-    const fileMentions = [...mentions];
+    // Only attach files still referenced by an `@token` in the text.
+    const fileMentions = mentions.filter((m) => content.includes(`@${m.name}`));
     const pendingImages = [...images];
     setText("");
     setMentions([]);
     setImages([]);
+    setPreviewImage(null);
     clearComposerDraft(activeTabId);
     for (const img of pendingImages) URL.revokeObjectURL(img.previewUrl);
     setSlashOpen(false);
@@ -251,7 +417,6 @@ export function AgentComposer() {
       content.trim() || (threadImages.length > 0 ? "图片" : content),
     );
 
-    // Build prompt blocks eagerly (reads file mentions now, even if session isn't ready)
     const blocks: PromptBlock[] = [];
     if (content.trim()) blocks.push({ type: "text", text: content });
     for (const img of pendingImages) {
@@ -283,10 +448,8 @@ export function AgentComposer() {
       return;
     }
 
-    // If session is starting or busy, queue the message for later
     if (isStarting) {
       enqueuePendingMessage(activeTabId, blocks);
-      // Session may have become ready while we were building blocks — trigger check
       void useAgentStore.getState().processNextPending(activeTabId);
       return;
     }
@@ -295,10 +458,8 @@ export function AgentComposer() {
       return;
     }
 
-    // Normal flow: ensure session and send
     const sessionId = await ensureLiveSession();
     if (!sessionId) {
-      // appendUserMessage may have flipped idle → running; clear it if we never send.
       const sess = useAgentStore.getState().sessions[activeTabId];
       if (sess?.status === "running") {
         useAgentStore.setState((s) => {
@@ -331,48 +492,196 @@ export function AgentComposer() {
     void addImageFiles(imageFiles);
   };
 
+  const pickCommand = (name: string) => {
+    const el = textareaRef.current;
+    const slash = matchSlashTrigger(text);
+    let next: string;
+    if (slash) {
+      next = `${text.slice(0, slash.start)}/${name} `;
+    } else {
+      next = `/${name} `;
+    }
+    setText(next);
+    setSlashOpen(false);
+    setSlashQuery("");
+    requestAnimationFrame(() => {
+      el?.focus();
+      if (el) {
+        el.selectionStart = el.selectionEnd = next.length;
+        adjustHeight();
+      }
+    });
+  };
+
+  const pickFile = (hit: SearchMatch) => {
+    const token = mentionTokenFor(hit.path, project?.path);
+    setMentions((prev) => {
+      const withoutDup = prev.filter((m) => m.path !== hit.path && m.name !== token);
+      return [...withoutDup, { path: hit.path, name: token }];
+    });
+    const next = insertAtToken(text, token);
+    setText(next);
+    setAtOpen(false);
+    setAtQuery("");
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      el?.focus();
+      if (el) {
+        el.selectionStart = el.selectionEnd = next.length;
+        adjustHeight();
+      }
+    });
+  };
+
+  const applySuggest = () => {
+    const nav = suggestNavRef.current;
+    if (nav.slashOpen) {
+      const cmd = filteredCommands[nav.suggestIndex];
+      if (cmd) {
+        pickCommand(cmd.name);
+        return true;
+      }
+    }
+    if (nav.atOpen) {
+      const hit = filteredAtResults[nav.suggestIndex];
+      if (hit) {
+        pickFile(hit);
+        return true;
+      }
+    }
+    return false;
+  };
+
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey && !slashOpen && !atOpen) {
+    // Let the IME consume keys while composing (Enter confirms pinyin, arrows
+    // move IME candidates). Sending / picking here would truncate Chinese input.
+    if (imeComposing || isImeKeyEvent(e)) return;
+
+    const nav = suggestNavRef.current;
+    const menuActive = nav.slashOpen || nav.atOpen;
+    const count = nav.slashOpen ? nav.commandCount : nav.atOpen ? nav.atCount : 0;
+
+    if (menuActive && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+      e.preventDefault();
+      if (count === 0) return;
+      setSuggestIndex((i) => {
+        if (e.key === "ArrowDown") return (i + 1) % count;
+        return (i - 1 + count) % count;
+      });
+      return;
+    }
+    if (menuActive && (e.key === "Enter" || e.key === "Tab")) {
+      if (count > 0) {
+        e.preventDefault();
+        applySuggest();
+        return;
+      }
+      if (e.key === "Enter" && !e.shiftKey) {
+        // Empty menu: don't send either while trigger is open with zero hits.
+        e.preventDefault();
+        return;
+      }
+    }
+    if (e.key === "Enter" && !e.shiftKey && !nav.slashOpen && !nav.atOpen) {
       e.preventDefault();
       void handleSend();
     }
     if (e.key === "Escape") {
       setSlashOpen(false);
       setAtOpen(false);
+      setPlusOpen(false);
     }
   };
 
   const onChange = (value: string) => {
     setText(value);
     adjustHeight();
-    if (value.startsWith("/") && !value.includes("\n") && (meta?.availableCommands.length ?? 0) > 0) {
-      setSlashOpen(true);
-      setAtOpen(false);
-    } else {
-      setSlashOpen(false);
-    }
-    const atMatch = value.match(/(?:^|\s)@([^\s@]*)$/);
-    if (atMatch) {
+    // Drop mentions whose `@token` was deleted from the text.
+    setMentions((prev) => prev.filter((m) => value.includes(`@${m.name}`)));
+    const slash = matchSlashTrigger(value);
+    const at = matchAtTrigger(value);
+    // Prefer @ over / when both could match (shouldn't normally).
+    if (at) {
+      const qChanged = suggestQueryRef.current.at !== at.query;
+      suggestQueryRef.current = { slash: "", at: at.query };
       setAtOpen(true);
-      setAtQuery(atMatch[1] ?? "");
+      setAtQuery(at.query);
       setSlashOpen(false);
+      setSlashQuery("");
+      if (qChanged) setSuggestIndex(0);
+      requestAnimationFrame(updateCaretAnchor);
+      return;
+    }
+    setAtOpen(false);
+    setAtQuery("");
+    suggestQueryRef.current.at = "";
+    if (slash) {
+      const qChanged = suggestQueryRef.current.slash !== slash.query;
+      suggestQueryRef.current.slash = slash.query;
+      setSlashOpen(true);
+      setSlashQuery(slash.query);
+      if (qChanged) setSuggestIndex(0);
+      requestAnimationFrame(updateCaretAnchor);
     } else {
-      setAtOpen(false);
+      suggestQueryRef.current.slash = "";
+      setSlashOpen(false);
+      setSlashQuery("");
     }
   };
 
-  const pickCommand = (name: string) => {
-    setText(`/${name} `);
-    setSlashOpen(false);
-    textareaRef.current?.focus();
+  const attachFilesFromDialog = async () => {
+    setPlusOpen(false);
+    try {
+      const selected = await openDialog({
+        multiple: true,
+        title: "引入文件",
+      });
+      if (!selected) return;
+      const paths = Array.isArray(selected) ? selected : [selected];
+      let nextText = text;
+      setMentions((prev) => {
+        const next = [...prev];
+        for (const p of paths) {
+          if (typeof p !== "string") continue;
+          const token = mentionTokenFor(p, project?.path);
+          const existing = next.findIndex((m) => m.path === p || m.name === token);
+          if (existing >= 0) next[existing] = { path: p, name: token };
+          else next.push({ path: p, name: token });
+          nextText = insertAtToken(nextText, token);
+        }
+        return next;
+      });
+      setText(nextText);
+      requestAnimationFrame(() => {
+        const el = textareaRef.current;
+        el?.focus();
+        if (el) {
+          el.selectionStart = el.selectionEnd = nextText.length;
+          adjustHeight();
+        }
+      });
+    } catch {
+      /* cancelled / dialog error */
+    }
   };
 
-  const pickFile = (hit: SearchMatch) => {
-    setMentions((prev) => (prev.some((m) => m.path === hit.path) ? prev : [...prev, { path: hit.path, name: hit.name }]));
-    setText((t) => t.replace(/(?:^|\s)@[^\s@]*$/, " ").trimStart());
-    setAtOpen(false);
-    textareaRef.current?.focus();
-  };
+  const activeSlashCmd = slashOpen ? filteredCommands[suggestIndex] ?? null : null;
+
+  const popoverStyle: CSSProperties | undefined = caretPos
+    ? {
+        position: "fixed",
+        top: Math.max(8, caretPos.top - 8),
+        left: Math.min(Math.max(8, caretPos.left + 12), window.innerWidth - 160),
+        transform: "translateY(-100%)",
+        zIndex: 40,
+      }
+    : {
+        position: "absolute",
+        bottom: "100%",
+        left: 16,
+        marginBottom: 4,
+        zIndex: 40,
+      };
 
   return (
     <div>
@@ -385,104 +694,141 @@ export function AgentComposer() {
       />
 
       <div className="px-4 pb-3 relative">
-        {slashOpen && filteredCommands.length > 0 && (
-          <div className="absolute bottom-full left-4 right-4 mb-1 max-h-48 overflow-y-auto rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--glass-3-surface)] shadow-lg z-20">
-            {filteredCommands.map((c) => (
-              <button
-                key={c.name}
-                type="button"
-                className="w-full text-left px-2.5 py-1.5 text-sm hover:bg-[var(--glass-2-surface)]"
-                onClick={() => pickCommand(c.name)}
-              >
-                <span className="font-mono text-[var(--accent)]">/{c.name}</span>
-                <span className="ml-2 text-[var(--text-tertiary)]">{c.description}</span>
-              </button>
-            ))}
-          </div>
-        )}
-
-        {atOpen && (
-          <div className="absolute bottom-full left-4 right-4 mb-1 max-h-48 overflow-y-auto rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--glass-3-surface)] shadow-lg z-20">
-            {atResults.length === 0 ? (
-              <div className="px-2.5 py-1.5 text-xs text-[var(--text-tertiary)]">Search files…</div>
-            ) : (
-              atResults.map((hit) => (
-                <button
-                  key={hit.path}
-                  type="button"
-                  className="w-full text-left px-2.5 py-1.5 text-sm hover:bg-[var(--glass-2-surface)]"
-                  onClick={() => pickFile(hit)}
-                >
-                  <span className="font-medium">{hit.name}</span>
-                  <span className="ml-2 text-xs text-[var(--text-tertiary)]">{hit.path}</span>
-                </button>
-              ))
-            )}
-          </div>
-        )}
-
-        {(mentions.length > 0 || images.length > 0) && (
-          <div className="flex flex-wrap gap-1.5 mb-2">
-            {mentions.map((m) => (
-              <span
-                key={m.path}
-                className="inline-flex items-center gap-1 rounded-full bg-[var(--glass-2-surface)] border border-[color:var(--border-subtle)] px-2 py-0.5 text-xs"
-              >
-                <AtSign size={10} />
-                {m.name}
-                <button type="button" onClick={() => setMentions((prev) => prev.filter((x) => x.path !== m.path))}>
-                  <X size={10} />
-                </button>
-              </span>
-            ))}
-            {images.map((img) => (
-              <span
-                key={img.id}
-                className="relative inline-flex rounded-[var(--radius-sm)] border border-[color:var(--border-subtle)] overflow-hidden"
-              >
-                <img src={img.previewUrl} alt="" className="h-14 w-14 object-cover" />
-                <button
-                  type="button"
-                  className="absolute top-0.5 right-0.5 rounded-full bg-black/55 text-white p-0.5"
-                  onClick={() => removeImage(img.id)}
-                  title="移除图片"
-                >
-                  <X size={10} />
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-
         {(isStarting || agentError) && (
           <div className="mb-2 text-xs px-1">
-            {isStarting && (
-              <p className="text-[var(--text-tertiary)]">正在连接服务…</p>
-            )}
+            {isStarting && <p className="text-[var(--text-tertiary)]">正在连接服务…</p>}
             {agentError && !isStarting && (
               <p className="text-[var(--error)] whitespace-pre-wrap">{agentError}</p>
             )}
           </div>
         )}
 
-        {/* Single bordered surface: textarea + toolbar share one chrome so
-            Mode/Model/Send sit inside the input box (not below it). */}
+        {suggestOpen && (
+          <div style={popoverStyle} className="flex items-start gap-0 max-w-[min(92vw,640px)] pointer-events-auto">
+            <div
+              ref={suggestListRef}
+              className="min-w-[150px] max-w-[min(92vw,480px)] w-max max-h-56 overflow-y-auto overflow-x-hidden rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--glass-3-surface)] shadow-lg [scrollbar-width:none] [&::-webkit-scrollbar]:w-0 [&::-webkit-scrollbar]:h-0"
+            >
+              {slashOpen && filteredCommands.length === 0 && (
+                <div className="px-2 py-1 text-[12px] leading-4 text-[var(--text-tertiary)] whitespace-nowrap">
+                  {(meta?.availableCommands.length ?? 0) === 0
+                    ? "等待 Agent 提供斜杠命令…"
+                    : "没有匹配的命令"}
+                </div>
+              )}
+              {slashOpen &&
+                filteredCommands.map((c, i) => (
+                  <button
+                    key={c.name}
+                    type="button"
+                    data-suggest-index={i}
+                    className={`block min-w-full text-left px-2 py-0.5 text-[12px] leading-4 whitespace-nowrap ${
+                      i === suggestIndex ? "bg-[var(--overlay-active)]" : "hover:bg-[var(--glass-2-surface)]"
+                    }`}
+                    onMouseEnter={() => setSuggestIndex(i)}
+                    onClick={() => pickCommand(c.name)}
+                  >
+                    <span className="font-mono text-[var(--accent)]">/{c.name}</span>
+                  </button>
+                ))}
+              {atOpen && filteredAtResults.length === 0 && (
+                <div className="px-2 py-1 text-[12px] leading-4 text-[var(--text-tertiary)] whitespace-nowrap">
+                  搜索文件…
+                </div>
+              )}
+              {atOpen &&
+                filteredAtResults.map((hit, i) => {
+                  const { name, dir } = mentionDisplayParts(hit.path, project?.path);
+                  return (
+                    <button
+                      key={hit.path}
+                      type="button"
+                      data-suggest-index={i}
+                      title={dir ? `${dir}${name}` : name}
+                      className={`flex min-w-full items-center gap-1.5 text-left px-2 py-0.5 text-[12px] leading-4 whitespace-nowrap ${
+                        i === suggestIndex ? "bg-[var(--overlay-active)]" : "hover:bg-[var(--glass-2-surface)]"
+                      }`}
+                      onMouseEnter={() => setSuggestIndex(i)}
+                      onClick={() => pickFile(hit)}
+                    >
+                      <FileIcon filename={name} size={14} className="shrink-0" />
+                      <span className="text-[var(--text-primary)] font-medium">{name}</span>
+                      {dir ? (
+                        <span className="text-[var(--text-tertiary)] truncate">{dir}</span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+            </div>
+            {activeSlashCmd && (
+              <div className="ml-1 min-w-[150px] w-[200px] max-h-56 overflow-y-auto overflow-x-hidden rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--glass-2-surface)] shadow-lg px-2 py-1.5 text-[12px] leading-4 text-[var(--text-secondary)] [scrollbar-width:none] [&::-webkit-scrollbar]:w-0 [&::-webkit-scrollbar]:h-0">
+                <div className="font-mono text-[var(--accent)] mb-1">/{activeSlashCmd.name}</div>
+                <p className="leading-relaxed whitespace-pre-wrap">
+                  {activeSlashCmd.description || "无描述"}
+                </p>
+                {activeSlashCmd.inputHint && (
+                  <p className="mt-1 text-[var(--text-tertiary)]">用法：{activeSlashCmd.inputHint}</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         <div
-          className="flex flex-col gap-1.5 rounded-[var(--radius-md)] bg-[var(--glass-3-surface)] border border-[color:var(--glass-border)] px-2.5 pt-2 pb-1.5 shadow-xs transition-[border-color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50"
+          className="flex flex-col gap-1 rounded-[var(--radius-md)] bg-[var(--glass-3-surface)] border border-[color:var(--glass-border)] px-2.5 pt-2 pb-1.5 shadow-xs transition-[border-color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50"
           onClick={() => textareaRef.current?.focus()}
         >
+          {images.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 px-0.5">
+              {images.map((img) => (
+                <span
+                  key={img.id}
+                  className="relative inline-flex rounded-[var(--radius-sm)] border border-[color:var(--border-subtle)] overflow-hidden"
+                >
+                  <button
+                    type="button"
+                    className="block"
+                    title="预览图片"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPreviewImage(img);
+                    }}
+                  >
+                    <img src={img.previewUrl} alt="" className="h-14 w-14 object-cover" />
+                  </button>
+                  <button
+                    type="button"
+                    className="absolute top-0.5 right-0.5 rounded-full bg-black/55 text-white p-0.5"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (previewImage?.id === img.id) setPreviewImage(null);
+                      removeImage(img.id);
+                    }}
+                    title="移除图片"
+                  >
+                    <X size={10} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+
           <TextEditContextMenu getTarget={() => textareaRef.current}>
             <Textarea
               ref={textareaRef}
               value={text}
               onChange={(e) => onChange(e.target.value)}
               onKeyDown={handleKeyDown}
+              onCompositionStart={() => setImeComposing(true)}
+              onCompositionEnd={() => setImeComposing(false)}
+              onKeyUp={() => { if (slashOpen || atOpen) updateCaretAnchor(); }}
+              onClick={() => { if (slashOpen || atOpen) updateCaretAnchor(); }}
               onPaste={handlePaste}
               placeholder={
                 isStarting
                   ? "Agent starting…"
                   : activeTabId
-                    ? "Send a message…  / commands  @ files  粘贴图片"
+                    ? "Send a message…  / commands  @ files"
                     : "Start a conversation to chat"
               }
               className="flex-1 min-h-0 border-0 bg-transparent p-1 shadow-none rounded-none text-sm font-normal leading-[21px] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] resize-none overflow-y-auto focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
@@ -495,6 +841,54 @@ export function AgentComposer() {
             className="flex items-center gap-1 pt-0.5"
             onClick={(e) => e.stopPropagation()}
           >
+            <div className="relative" ref={plusMenuRef}>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                disabled={!activeTabId}
+                title="添加图片或文件"
+                className="rounded-full shrink-0"
+                onClick={() => setPlusOpen((v) => !v)}
+              >
+                <Plus size={16} />
+              </Button>
+              {plusOpen && (
+                <div className="absolute bottom-full left-0 mb-1 min-w-[140px] rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--glass-3-surface)] shadow-lg py-1 z-30">
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-sm hover:bg-[var(--overlay-hover)]"
+                    onClick={() => {
+                      setPlusOpen(false);
+                      imageInputRef.current?.click();
+                    }}
+                  >
+                    <ImagePlus size={14} />
+                    选择图片
+                  </button>
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-sm hover:bg-[var(--overlay-hover)]"
+                    onClick={() => void attachFilesFromDialog()}
+                  >
+                    <FilePlus size={14} />
+                    引入文件
+                  </button>
+                </div>
+              )}
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  const files = Array.from(e.target.files ?? []);
+                  e.target.value = "";
+                  if (files.length) void addImageFiles(files);
+                }}
+              />
+            </div>
+
             <div className="ml-auto flex items-center gap-0.5 min-w-0">
               {isCursorAgent && activeTabId && (
                 <ComposerOptionMenu
@@ -572,6 +966,22 @@ export function AgentComposer() {
           </div>
         </div>
       </div>
+
+      <Dialog open={!!previewImage} onOpenChange={(open) => { if (!open) setPreviewImage(null); }}>
+        <DialogContent
+          className="max-w-[min(92vw,900px)] p-2 border-[color:var(--glass-border)] bg-[var(--glass-3-surface)]"
+          showCloseButton
+        >
+          <DialogTitle className="sr-only">图片预览</DialogTitle>
+          {previewImage && (
+            <img
+              src={previewImage.previewUrl}
+              alt=""
+              className="max-h-[80vh] w-full object-contain rounded-[var(--radius-sm)]"
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

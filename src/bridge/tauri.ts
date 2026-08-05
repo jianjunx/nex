@@ -541,7 +541,7 @@ export async function updateDownloadAndInstall(assetUrl: string, assetName: stri
   return invoke(COMMANDS.UPDATE_DOWNLOAD_AND_INSTALL, { assetUrl, assetName });
 }
 
-/** Open a github.com URL in the system browser (host allowlisted in Rust). */
+/** Open an http(s) URL in the system browser (allowlisted in Rust). */
 export async function openExternal(url: string): Promise<void> {
   return invoke(COMMANDS.OPEN_EXTERNAL, { url });
 }

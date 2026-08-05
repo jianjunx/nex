@@ -73,7 +73,39 @@ pub fn search(
     options: Option<SearchOptions>,
 ) -> Result<Vec<SearchMatch>, NexError> {
     if query.is_empty() {
-        return Ok(Vec::new());
+        // Name-only listing for pickers (e.g. composer `@` mention).
+        // The project Search UI never sends an empty query.
+        let mut results = Vec::new();
+        let walker = WalkBuilder::new(project_path)
+            .hidden(true)
+            .git_ignore(true)
+            .git_exclude(true)
+            .build();
+        for entry in walker.flatten() {
+            if results.len() >= 48 {
+                break;
+            }
+            let path = entry.path();
+            if path == project_path {
+                continue;
+            }
+            let Ok(metadata) = entry.metadata() else { continue };
+            if !metadata.is_file() {
+                continue;
+            }
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            results.push(SearchMatch {
+                path: path.to_string_lossy().to_string(),
+                name,
+                line: None,
+                text: String::new(),
+            });
+        }
+        return Ok(results);
     }
     let opts = options.unwrap_or_default();
     let re = compile_pattern(query, &opts)?;

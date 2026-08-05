@@ -13,6 +13,7 @@ import { useSettingsStore } from "../../stores/settings.store";
 import { useProjectStore } from "../../stores/project.store";
 import { useUiStore } from "../../stores/ui.store";
 import { Button } from "@/components/ui/button";
+import { registerModWebLinks } from "./modWebLinks";
 
 export function TerminalPanel() {
   const termRef = useRef<HTMLDivElement>(null);
@@ -86,6 +87,8 @@ export function TerminalPanel() {
     fitAddon.fit();
     term.focus();
 
+    const disposeWebLinks = registerModWebLinks(term);
+
     // Read the session at call time via getState() — never capture
     // activeSessionId/write/resize from render scope (stale closures).
     term.onData((data) => {
@@ -122,7 +125,8 @@ export function TerminalPanel() {
       // project this panel instance was keyed for (belt-and-suspenders with
       // key={activeProjectId} remounts).
       const session = sessions.find((s) => s.id === id);
-      if (session && activeProjectId && session.projectId !== activeProjectId) return;
+      const pid = useProjectStore.getState().activeProjectId;
+      if (session && pid && session.projectId !== pid) return;
       term.write(data);
     });
 
@@ -146,9 +150,13 @@ export function TerminalPanel() {
 
     return () => {
       if (fitTimer !== undefined) clearTimeout(fitTimer);
+      disposeWebLinks();
       term.textarea?.removeEventListener("paste", onPaste, true);
       setLiveSink(null); observer.disconnect(); term.dispose(); xtermRef.current = null;
     };
+    // settingsVersion only: panel remounts per project via key={activeProjectId};
+    // liveSink reads project id via getState() so it must not rebuild xterm on switch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see above
   }, [settingsVersion]);
 
   // Replay the active session's buffered output: on first mount (the

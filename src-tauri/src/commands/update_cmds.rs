@@ -480,17 +480,11 @@ pub async fn update_download_and_install(
     Ok(())
 }
 
-/// Open an https URL in the system browser. Only github.com is allowed —
-/// this is the only external link surface the app has.
+/// Open an http(s) URL in the system browser (terminal links, About, etc.).
 #[tauri::command]
 pub async fn open_external(url: String) -> Result<(), NexError> {
-    // Host allowlist instead of a URL parser dependency; this is the only
-    // external link surface, so a strict prefix check is enough.
-    let allowed = url.starts_with("https://github.com/")
-        || url == "https://github.com"
-        || url.starts_with("https://www.github.com/");
-    if !allowed {
-        return Err(NexError::Internal("仅允许打开 github.com 链接".into()));
+    if !is_browser_safe_url(&url) {
+        return Err(NexError::Internal("仅允许打开 http(s) 链接".into()));
     }
 
     #[cfg(target_os = "windows")]
@@ -507,7 +501,39 @@ pub async fn open_external(url: String) -> Result<(), NexError> {
             .spawn()
             .map_err(|e| NexError::Internal(format!("打开浏览器失败: {e}")))?;
     }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| NexError::Internal(format!("打开浏览器失败: {e}")))?;
+    }
     Ok(())
+}
+
+fn is_browser_safe_url(url: &str) -> bool {
+    let trimmed = url.trim();
+    if trimmed.is_empty() || trimmed.chars().any(|c| c.is_control() || c == ' ') {
+        return false;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    (lower.starts_with("https://") || lower.starts_with("http://"))
+        && !lower.starts_with("https://.")
+        && !lower.starts_with("http://.")
+}
+
+#[cfg(test)]
+mod open_external_tests {
+    use super::is_browser_safe_url;
+
+    #[test]
+    fn accepts_http_https_rejects_other() {
+        assert!(is_browser_safe_url("https://github.com/jianjunx/nex"));
+        assert!(is_browser_safe_url("http://example.com/a?b=1"));
+        assert!(!is_browser_safe_url("javascript:alert(1)"));
+        assert!(!is_browser_safe_url("file:///etc/passwd"));
+        assert!(!is_browser_safe_url("https://evil.com\nhttps://good.com"));
+    }
 }
 
 #[cfg(test)]

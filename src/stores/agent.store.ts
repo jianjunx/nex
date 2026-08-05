@@ -48,6 +48,9 @@ export interface AgentSession {
 export interface PendingMessage {
   id: string;
   blocks: PromptBlock[];
+  /** 真正发送时才写入会话气泡的文本/图片（入队时不进对话框）。 */
+  text: string;
+  images?: { mimeType: string; data: string }[];
 }
 
 /** Build a short preview string from a list of PromptBlock for display. */
@@ -60,6 +63,23 @@ export function pendingMessagePreview(blocks: PromptBlock[]): string {
   if (imageCount > 0) preview += (preview ? " " : "") + `[图片 ×${imageCount}]`;
   if (hasResource) preview += (preview ? " " : "") + "[文件]";
   return preview.trim() || "(empty)";
+}
+
+/** 真正发送前：把排队消息写入会话气泡（入队时故意不写）。 */
+function deliverPendingUserBubble(
+  appendUserMessage: (
+    conversationId: string,
+    text: string,
+    images?: { mimeType: string; data: string }[],
+  ) => void,
+  conversationId: string,
+  pending: PendingMessage,
+): void {
+  appendUserMessage(conversationId, pending.text, pending.images);
+  const titleSrc =
+    pending.text.trim() ||
+    (pending.images && pending.images.length > 0 ? "图片" : pending.text);
+  useConversationStore.getState().autoTitleFromFirstMessage(conversationId, titleSrc);
 }
 
 export type AuthMode = "allow" | "menu";
@@ -112,7 +132,12 @@ interface AgentStore {
   setConfigOption: (sessionId: string, configId: string, value: string) => Promise<void>;
   setAuthMode: (conversationId: string, authMode: AuthMode) => void;
   /** Queue a message for later sending when the session is starting or busy. */
-  enqueuePendingMessage: (conversationId: string, blocks: PromptBlock[]) => string;
+  enqueuePendingMessage: (
+    conversationId: string,
+    blocks: PromptBlock[],
+    text: string,
+    images?: { mimeType: string; data: string }[],
+  ) => string;
   /** Remove a specific queued message (user dismissed it). */
   removePendingMessage: (conversationId: string, messageId: string) => void;
   /** Cancel current task and immediately send a specific queued message. */
@@ -732,13 +757,18 @@ export const useAgentStore = create<AgentStore>()(
       patchPrefs(set, conversationId, { authMode });
     },
 
-    enqueuePendingMessage: (conversationId, blocks) => {
+    enqueuePendingMessage: (conversationId, blocks, text, images) => {
       const id = crypto.randomUUID();
       set((s) => {
         if (!s.pendingMessagesByConversation[conversationId]) {
           s.pendingMessagesByConversation[conversationId] = [];
         }
-        s.pendingMessagesByConversation[conversationId].push({ id, blocks });
+        s.pendingMessagesByConversation[conversationId].push({
+          id,
+          blocks,
+          text,
+          ...(images && images.length > 0 ? { images } : {}),
+        });
       });
       return id;
     },
@@ -787,6 +817,7 @@ export const useAgentStore = create<AgentStore>()(
         }
       });
 
+      deliverPendingUserBubble(get().appendUserMessage, conversationId, pending);
       await get().sendPrompt(session.sessionId, pending.blocks);
     },
 
@@ -808,6 +839,7 @@ export const useAgentStore = create<AgentStore>()(
         }
       });
 
+      deliverPendingUserBubble(get().appendUserMessage, conversationId, pending);
       await get().sendPrompt(session.sessionId, pending.blocks);
     },
 

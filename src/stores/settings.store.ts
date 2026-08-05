@@ -62,7 +62,7 @@ export const useSettingsStore = create<SettingsState>()(
     terminalScrollback: TERMINAL_DEFAULTS.scrollback,
     editorAutoSave: true,
     editorWordWrap: true,
-    editorWrapColumn: 120,
+    editorWrapColumn: 70,
 
     // Reads every key, keeping the built-in default for missing/invalid
     // entries (a deleted settings.json yields a clean light-default start).
@@ -93,7 +93,8 @@ export const useSettingsStore = create<SettingsState>()(
           if (typeof autoSave === "boolean") s.editorAutoSave = autoSave;
           if (typeof wordWrap === "boolean") s.editorWordWrap = wordWrap;
           if (typeof wrapColumn === "number") {
-            s.editorWrapColumn = Math.min(400, Math.max(40, Math.round(wrapColumn)));
+            // 单个阈值（字符数），不是区间；仅做极端值保护。
+            s.editorWrapColumn = Math.min(1000, Math.max(20, Math.round(wrapColumn)));
           }
         });
       } catch {
@@ -145,7 +146,7 @@ export const useSettingsStore = create<SettingsState>()(
       void settingsStore.set(KEYS.wordWrap, v).catch(() => {});
     },
     setEditorWrapColumn: (v) => {
-      const clamped = Math.min(400, Math.max(40, Math.round(v)));
+      const clamped = Math.min(1000, Math.max(20, Math.round(v)));
       set((s) => { s.editorWrapColumn = clamped; });
       void settingsStore.set(KEYS.wrapColumn, clamped).catch(() => {});
     },

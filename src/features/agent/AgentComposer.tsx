@@ -435,11 +435,6 @@ export function AgentComposer() {
       mimeType: img.mimeType,
       data: img.data,
     }));
-    appendUserMessage(activeTabId, content, threadImages);
-    autoTitleFromFirstMessage(
-      activeTabId,
-      content.trim() || (threadImages.length > 0 ? "图片" : content),
-    );
 
     const blocks: PromptBlock[] = [];
     if (content.trim()) blocks.push({ type: "text", text: content });
@@ -472,15 +467,25 @@ export function AgentComposer() {
       return;
     }
 
-    if (isStarting) {
-      enqueuePendingMessage(activeTabId, blocks);
-      void useAgentStore.getState().processNextPending(activeTabId);
+    // 会话启动中/忙碌：只进等待发送列表，真正执行时再写入对话框。
+    const live = useAgentStore.getState().sessions[activeTabId];
+    const queueBecauseBusy =
+      live?.status === "starting" ||
+      live?.status === "running" ||
+      live?.status === "waiting";
+    if (queueBecauseBusy) {
+      enqueuePendingMessage(activeTabId, blocks, content, threadImages);
+      if (live?.status === "starting") {
+        void useAgentStore.getState().processNextPending(activeTabId);
+      }
       return;
     }
-    if (isRunning) {
-      enqueuePendingMessage(activeTabId, blocks);
-      return;
-    }
+
+    appendUserMessage(activeTabId, content, threadImages);
+    autoTitleFromFirstMessage(
+      activeTabId,
+      content.trim() || (threadImages.length > 0 ? "图片" : content),
+    );
 
     const sessionId = await ensureLiveSession();
     if (!sessionId) {

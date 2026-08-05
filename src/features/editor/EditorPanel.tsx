@@ -129,13 +129,17 @@ export function EditorPanel() {
     () => [
       ...languageExtensionsForPath(langPath),
       ...editorSearchExtensions(),
-      // 单行最大显示长度：软换行 + 内容宽度按字符数封顶（ch 相对等宽字体）。
+      // 单行最大显示长度：按阈值列宽软换行。
+      // 内容区宽度固定为 N ch —— 短于阈值的行不换行；视口更窄时出横向滚动条；
+      // 超出阈值才在该宽度内换行。若只用 max-width，窄视口会提前按视口边缘换行。
       ...(wordWrap
         ? [
             EditorView.lineWrapping,
             EditorView.theme({
-              ".cm-content": { maxWidth: `${wrapColumn}ch` },
-              ".cm-line": { maxWidth: `${wrapColumn}ch` },
+              ".cm-content": {
+                width: `${wrapColumn}ch`,
+                maxWidth: `${wrapColumn}ch`,
+              },
             }),
           ]
         : []),

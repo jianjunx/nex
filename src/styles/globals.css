@@ -277,6 +277,10 @@ html, body {
     font-size: 0.8125rem;
     line-height: 1.5;
   }
+  /* Thinking / secondary panes — lighter than assistant dialogue. */
+  .markdown-body--muted {
+    color: var(--text-tertiary);
+  }
 
   /* First / last element inside a markdown body shouldn't carry the
      vertical rhythm — otherwise the wrapping card has visible dead space

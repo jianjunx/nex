@@ -9,6 +9,8 @@ interface MarkdownProps {
   children: string;
   /** Tighter spacing for the ThinkingBlock's max-300px scrollable pane. */
   compact?: boolean;
+  /** Softer text color (thinking blocks) — inherits via `.markdown-body--muted`. */
+  muted?: boolean;
 }
 
 /**
@@ -29,9 +31,16 @@ interface MarkdownProps {
  * change during agent streaming. Acceptable for v1; revisit if long replies
  * with deep syntax trees cause visible jank.
  */
-export const Markdown = memo(function Markdown({ children, compact }: MarkdownProps) {
+export const Markdown = memo(function Markdown({ children, compact, muted }: MarkdownProps) {
+  const className = [
+    "markdown-body",
+    compact ? "markdown-body--compact" : null,
+    muted ? "markdown-body--muted" : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
   return (
-    <div className={compact ? "markdown-body markdown-body--compact" : "markdown-body"}>
+    <div className={className}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeHighlight]}
@@ -116,7 +125,7 @@ const components: Components = {
   th({ children, ...rest }) {
     return (
       <th
-        className="text-left font-semibold py-1.5 px-2.5 text-[var(--text-primary)] whitespace-nowrap"
+        className="text-left font-semibold py-1.5 px-2.5 whitespace-nowrap"
         {...rest}
       >
         {children}
@@ -222,11 +231,12 @@ const components: Components = {
   },
 
   // Headings — size gradient + subtle bottom border for h1/h2 to anchor
-  // the eye in long replies.
+  // the eye in long replies. Color inherits from `.markdown-body` so muted
+  // thinking panes stay softer than dialogue.
   h1({ children, ...rest }) {
     return (
       <h1
-        className="text-[1.4em] font-semibold mt-3 mb-1.5 pb-1 border-b border-[color:var(--border-subtle)] text-[var(--text-primary)]"
+        className="text-[1.4em] font-semibold mt-3 mb-1.5 pb-1 border-b border-[color:var(--border-subtle)]"
         {...rest}
       >
         {children}
@@ -236,7 +246,7 @@ const components: Components = {
   h2({ children, ...rest }) {
     return (
       <h2
-        className="text-[1.25em] font-semibold mt-3 mb-1.5 pb-1 border-b border-[color:var(--border-subtle)] text-[var(--text-primary)]"
+        className="text-[1.25em] font-semibold mt-3 mb-1.5 pb-1 border-b border-[color:var(--border-subtle)]"
         {...rest}
       >
         {children}
@@ -245,28 +255,28 @@ const components: Components = {
   },
   h3({ children, ...rest }) {
     return (
-      <h3 className="text-[1.1em] font-semibold mt-2.5 mb-1 text-[var(--text-primary)]" {...rest}>
+      <h3 className="text-[1.1em] font-semibold mt-2.5 mb-1" {...rest}>
         {children}
       </h3>
     );
   },
   h4({ children, ...rest }) {
     return (
-      <h4 className="text-[1.05em] font-semibold mt-2 mb-1 text-[var(--text-primary)]" {...rest}>
+      <h4 className="text-[1.05em] font-semibold mt-2 mb-1" {...rest}>
         {children}
       </h4>
     );
   },
   h5({ children, ...rest }) {
     return (
-      <h5 className="text-[1em] font-semibold mt-2 mb-1 text-[var(--text-primary)]" {...rest}>
+      <h5 className="text-[1em] font-semibold mt-2 mb-1" {...rest}>
         {children}
       </h5>
     );
   },
   h6({ children, ...rest }) {
     return (
-      <h6 className="text-[0.95em] font-semibold mt-1.5 mb-1 text-[var(--text-secondary)]" {...rest}>
+      <h6 className="text-[0.95em] font-semibold mt-1.5 mb-1 opacity-90" {...rest}>
         {children}
       </h6>
     );
@@ -291,18 +301,18 @@ const components: Components = {
     );
   },
 
-  // Strong / em — explicit theme colour so they don't drift toward the
-  // muted `--muted-foreground` token (which the docs voice uses).
+  // Strong / em — weight/style only; color inherits (dialogue primary /
+  // thinking tertiary via `.markdown-body` / `--muted`).
   strong({ children, ...rest }) {
     return (
-      <strong className="font-semibold text-[var(--text-primary)]" {...rest}>
+      <strong className="font-semibold" {...rest}>
         {children}
       </strong>
     );
   },
   em({ children, ...rest }) {
     return (
-      <em className="italic text-[var(--text-primary)]" {...rest}>
+      <em className="italic" {...rest}>
         {children}
       </em>
     );

@@ -191,7 +191,7 @@ export const useConversationStore = create<ConversationStore>()(
             if (!s.conversationsByProject[projectId]) s.conversationsByProject[projectId] = [];
             s.conversationsByProject[projectId].unshift(conv);
             const tabs = s.tabsByProject[projectId] ?? [];
-            tabs.push(conv.id);
+            tabs.unshift(conv.id);
             s.tabsByProject[projectId] = tabs;
             s.activeTabByProject[projectId] = conv.id;
           });
@@ -213,6 +213,15 @@ export const useConversationStore = create<ConversationStore>()(
         if (!projectId) return;
         set((s) => {
           s.activeTabByProject[projectId] = id;
+          // 活跃页签靠前：切到哪个页签，哪个就移到最前。
+          const tabs = s.tabsByProject[projectId];
+          if (tabs) {
+            const idx = tabs.indexOf(id);
+            if (idx > 0) {
+              tabs.splice(idx, 1);
+              tabs.unshift(id);
+            }
+          }
         });
       },
 

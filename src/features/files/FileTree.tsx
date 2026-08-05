@@ -48,6 +48,7 @@ function CreatingInput({ type, depth, onDone }: {
       <FileIcon filename="" isFolder={type === "dir"} size={14} className="shrink-0" />
       <input
         ref={inputRef}
+        data-filetree-edit-input
         value={name}
         onChange={(e) => setName(e.target.value)}
         onKeyDown={handleKeyDown}
@@ -106,6 +107,7 @@ function RenameInput({ name, depth, isFolder, onDone }: {
       <FileIcon filename={isFolder ? "" : name} isFolder={isFolder} size={14} className="shrink-0" />
       <input
         ref={inputRef}
+        data-filetree-edit-input
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={handleKeyDown}

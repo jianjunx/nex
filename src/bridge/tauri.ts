@@ -506,7 +506,7 @@ export async function fsRenameEntry(path: string, newName: string): Promise<void
   return invoke(COMMANDS.FS_RENAME_ENTRY, { path, newName });
 }
 
-export async function fsCopyEntry(source: string, targetDir: string): Promise<void> {
+export async function fsCopyEntry(source: string, targetDir: string): Promise<string> {
   return invoke(COMMANDS.FS_COPY_ENTRY, { source, targetDir });
 }
 

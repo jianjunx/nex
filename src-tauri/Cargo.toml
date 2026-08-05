@@ -1,6 +1,6 @@
 [package]
 name = "nex"
-version = "1.0.0"
+version = "1.1.0"
 description = "Nex - AI Agent Integration Environment. Unify Claude Code, Codex, Cursor CLI, Opencode and more into one workspace."
 authors = ["you"]
 license = ""

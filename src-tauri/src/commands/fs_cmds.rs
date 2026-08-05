@@ -105,8 +105,9 @@ pub fn fs_rename_entry(path: String, new_name: String) -> Result<(), NexError> {
 }
 
 #[tauri::command]
-pub fn fs_copy_entry(source: String, target_dir: String) -> Result<(), NexError> {
+pub fn fs_copy_entry(source: String, target_dir: String) -> Result<String, NexError> {
     copy_entry(Path::new(&source), Path::new(&target_dir))
+        .map(|dest| dest.to_string_lossy().to_string())
 }
 
 #[tauri::command]

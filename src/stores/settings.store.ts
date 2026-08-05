@@ -20,6 +20,8 @@ const KEYS = {
   fontFamily: "terminal.fontFamily",
   scrollback: "terminal.scrollback",
   autoSave: "editor.autoSave",
+  wordWrap: "editor.wordWrap",
+  wrapColumn: "editor.wrapColumn",
 } as const;
 
 export const TERMINAL_DEFAULTS = {
@@ -36,6 +38,8 @@ interface SettingsState {
   terminalFontFamily: string;
   terminalScrollback: number;
   editorAutoSave: boolean;
+  editorWordWrap: boolean;
+  editorWrapColumn: number;
 
   load: () => Promise<void>;
   setTheme: (theme: Theme) => void;
@@ -44,6 +48,8 @@ interface SettingsState {
   setTerminalFontFamily: (family: string) => void;
   setTerminalScrollback: (lines: number) => void;
   setEditorAutoSave: (v: boolean) => void;
+  setEditorWordWrap: (v: boolean) => void;
+  setEditorWrapColumn: (v: number) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -55,6 +61,8 @@ export const useSettingsStore = create<SettingsState>()(
     terminalFontFamily: TERMINAL_DEFAULTS.fontFamily,
     terminalScrollback: TERMINAL_DEFAULTS.scrollback,
     editorAutoSave: true,
+    editorWordWrap: true,
+    editorWrapColumn: 120,
 
     // Reads every key, keeping the built-in default for missing/invalid
     // entries (a deleted settings.json yields a clean light-default start).
@@ -62,13 +70,15 @@ export const useSettingsStore = create<SettingsState>()(
     // getter failure falls through to defaults.
     load: async () => {
       try {
-        const [theme, shell, fontSize, fontFamily, scrollback, autoSave] = await Promise.all([
+        const [theme, shell, fontSize, fontFamily, scrollback, autoSave, wordWrap, wrapColumn] = await Promise.all([
           settingsStore.get<Theme>(KEYS.theme),
           settingsStore.get<string>(KEYS.shell),
           settingsStore.get<number>(KEYS.fontSize),
           settingsStore.get<string>(KEYS.fontFamily),
           settingsStore.get<number>(KEYS.scrollback),
           settingsStore.get<boolean>(KEYS.autoSave),
+          settingsStore.get<boolean>(KEYS.wordWrap),
+          settingsStore.get<number>(KEYS.wrapColumn),
         ]);
         set((s) => {
           if (theme === "light" || theme === "dark") s.theme = theme;
@@ -81,6 +91,10 @@ export const useSettingsStore = create<SettingsState>()(
             s.terminalScrollback = Math.min(100_000, Math.max(100, Math.round(scrollback)));
           }
           if (typeof autoSave === "boolean") s.editorAutoSave = autoSave;
+          if (typeof wordWrap === "boolean") s.editorWordWrap = wordWrap;
+          if (typeof wrapColumn === "number") {
+            s.editorWrapColumn = Math.min(400, Math.max(40, Math.round(wrapColumn)));
+          }
         });
       } catch {
         // Unreadable store: keep defaults.
@@ -125,6 +139,15 @@ export const useSettingsStore = create<SettingsState>()(
       set((s) => { s.editorAutoSave = v; });
       if (!v) clearAllAutoSaveTimers();
       void settingsStore.set(KEYS.autoSave, v).catch(() => {});
+    },
+    setEditorWordWrap: (v) => {
+      set((s) => { s.editorWordWrap = v; });
+      void settingsStore.set(KEYS.wordWrap, v).catch(() => {});
+    },
+    setEditorWrapColumn: (v) => {
+      const clamped = Math.min(400, Math.max(40, Math.round(v)));
+      set((s) => { s.editorWrapColumn = clamped; });
+      void settingsStore.set(KEYS.wrapColumn, clamped).catch(() => {});
     },
   }))
 );

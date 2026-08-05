@@ -26,13 +26,14 @@ vi.mock("./settings.store", () => ({
   },
 }));
 
-import { clearAllAutoSaveTimers, EDITOR_CACHE_MAX_PROJECTS, useFsStore, __resetEditorCacheLru } from "./fs.store";
+import { clearAllAutoSaveTimers, EDITOR_CACHE_MAX_PROJECTS, useFsStore, __resetEditorCacheLru, __resetSelfWriteForTest } from "./fs.store";
 
 describe("fs.store multi-tab editor", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     editorAutoSave = false;
     clearAllAutoSaveTimers();
+    __resetSelfWriteForTest();
     useFsStore.setState({
       openFiles: [],
       activePath: null,

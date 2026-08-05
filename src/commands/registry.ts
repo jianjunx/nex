@@ -1,5 +1,5 @@
 import type { Command, KeyCombo } from "./types";
-import { isFindBarOpen } from "./editorKeybindings";
+import { isFindBarOpen, closeFindBar } from "./editorKeybindings";
 import { noteCloseEsc } from "./keybindingHostState";
 import { useUiStore } from "../stores/ui.store";
 import { useFsStore } from "../stores/fs.store";
@@ -7,6 +7,7 @@ import { useProjectStore } from "../stores/project.store";
 import { useGitStore } from "../stores/git.store";
 import { useClipboardStore } from "../stores/clipboard.store";
 import { isSameOrDescendant } from "../features/editor/pathUtils";
+import { isComposerSuggestOpen } from "../features/agent/composerPanelState";
 
 /** Keep in sync with KeybindingHost.INPUT_SELECTOR (avoid circular import). */
 const INPUT_SELECTOR = "input, textarea, select, [contenteditable=''], [contenteditable='true']";
@@ -36,6 +37,16 @@ function filesClipboardWhen(): boolean {
   return true;
 }
 
+/** 焦点在文件树新建/重命名内联输入框（Esc 应取消输入而非关面板）。 */
+function isInFileTreeEditInput(): boolean {
+  return !!document.activeElement?.closest("[data-filetree-edit-input]");
+}
+
+/** 焦点在 Composer 输入框。 */
+function isInComposerInput(): boolean {
+  return !!document.activeElement?.closest("[data-composer-input]");
+}
+
 const k = (
   key: string,
   o: { primary?: boolean; ctrl?: boolean; alt?: boolean; shift?: boolean } = {},
@@ -62,12 +73,23 @@ const COMMANDS: Command[] = [
     title: "关闭编辑器面板",
     category: "编辑器",
     defaultKey: k("escape"),
-    // No `when`: the dispatcher already gates this to the Escape combo. The
-    // find-bar case is handled inside run (record the cadence, then yield to
+    // 文件树新建/重命名输入框内的 Esc 交给输入框自己（取消编辑）；
+    // Composer 建议面板（斜杠指令/@文件）打开时 Esc 先关面板；
+    // 否则会被白名单旁路吞掉导致无法取消/关闭。
+    when: () => {
+      if (isInFileTreeEditInput()) return false;
+      if (isInComposerInput() && isComposerSuggestOpen()) return false;
+      return true;
+    },
+    // The find-bar case is handled inside run (record the cadence, then yield to
     // CodeMirror's own keymap which closes the bar).
     run: () => {
       if (isFindBarOpen()) {
-        noteCloseEsc(); // keep cadence; CodeMirror's own keymap closes the bar
+        // Focus inside the find bar's HTML input never reaches CodeMirror's
+        // own keymap — close the bar explicitly. Focus inside the editor
+        // content yields to CodeMirror's keymap (cadence kept either way).
+        noteCloseEsc();
+        if (!isInCodeMirror()) closeFindBar();
         return;
       }
       if (noteCloseEsc()) useUiStore.getState().setEditorVisible(false);
@@ -90,11 +112,23 @@ const COMMANDS: Command[] = [
   },
   {
     id: "workbench.closeActiveTab",
-    title: "关闭当前对话页签",
+    title: "关闭当前页签（按焦点区分文件/会话）",
     category: "会话",
     defaultKey: k("keyw", { primary: true }),
     // Allow while typing so Cmd/Ctrl+W closes the tab instead of the window.
-    run: () => useUiStore.getState().requestCloseActiveTab(),
+    // 焦点在编辑器面板 → 关文件页签；在会话面板/Composer → 关会话页签；
+    // 其它位置不生效。
+    run: () => {
+      const el = document.activeElement;
+      if (el instanceof HTMLElement && el.closest("[data-editor-area]")) {
+        const fs = useFsStore.getState();
+        if (fs.activePath) void fs.closeFile(fs.activePath);
+        return;
+      }
+      if (el instanceof HTMLElement && el.closest("[data-conversation-area]")) {
+        useUiStore.getState().requestCloseActiveTab();
+      }
+    },
   },
   {
     id: "search.focus",
@@ -210,6 +244,21 @@ const COMMANDS: Command[] = [
     run: () => {
       const sel = useFsStore.getState().selectedPath;
       if (sel) useFsStore.getState().requestDeleteEntry(sel);
+    },
+  },
+  {
+    id: "files.undo",
+    title: "撤销文件树操作",
+    category: "文件树",
+    defaultKey: k("keyz", { primary: true }),
+    when: () => {
+      if (isInCodeMirror()) return false;
+      if (isTypingInInput()) return false;
+      if (hasTextSelection()) return false;
+      return true;
+    },
+    run: () => {
+      void useFsStore.getState().undoFsOperation();
     },
   },
   {

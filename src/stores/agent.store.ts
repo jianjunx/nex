@@ -36,6 +36,7 @@ import {
 import { assistantTextAfterLastUser } from "../features/agent/thread/messagesToThreadEntries";
 import type { SessionMeta, ThreadEntry } from "../features/agent/thread/types";
 import { useConversationStore } from "./conversation.store";
+import { useNotificationStore } from "./notification.store";
 
 export interface AgentSession {
   sessionId: string;
@@ -975,6 +976,27 @@ export const useAgentStore = create<AgentStore>()(
             s.pendingPermission = payload;
           }
         });
+
+        // 软件内通知：用户可能在看其它项目/会话，需要提醒去处理确认。
+        if (session) {
+          let projectId: string | null = null;
+          let convTitle = "";
+          const byProject = useConversationStore.getState().conversationsByProject;
+          for (const [pid, list] of Object.entries(byProject)) {
+            const c = list.find((x) => x.id === session.conversationId);
+            if (c) {
+              projectId = pid;
+              convTitle = c.title;
+              break;
+            }
+          }
+          useNotificationStore.getState().push({
+            title: "Agent 等待确认",
+            body: `${payload.toolTitle ?? "工具调用"}${convTitle ? ` · ${convTitle}` : ""}`,
+            projectId,
+            conversationId: session.conversationId,
+          });
+        }
       }).then((fn) => {
         if (disposed) fn();
         else unlistenPermission = fn;

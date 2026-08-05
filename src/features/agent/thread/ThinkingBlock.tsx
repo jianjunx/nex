@@ -18,7 +18,7 @@ export function ThinkingBlock({ text, defaultOpen = true }: { text: string; defa
     <div className="rounded-[var(--radius-md)] border border-[color:var(--border-subtle)] bg-[var(--glass-2-surface)] overflow-hidden">
       <button
         type="button"
-        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-[var(--text-tertiary)] hover:bg-[var(--glass-3-surface)]"
+        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-[var(--text-primary)] hover:bg-[var(--glass-3-surface)]"
         onClick={() => setOpen((v) => !v)}
       >
         <Brain size={14} />

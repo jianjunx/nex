@@ -72,6 +72,50 @@ describe("applySessionUpdate", () => {
     expect(meta.plan).toBeNull();
   });
 
+  it("records context usage from session_info_update", () => {
+    const entries: ThreadEntry[] = [];
+    const meta = emptySessionMeta();
+    const r = applySessionUpdate(entries, meta, {
+      sessionUpdate: "session_info_update",
+      usage: {
+        size: { used: 42000, total: 200000 },
+        tokens: [
+          { type: "input", value: 40000 },
+          { type: "output", value: 2000 },
+        ],
+      },
+    });
+    expect(r.metaChanged).toBe(true);
+    expect(meta.contextUsage).toEqual({
+      used: 42000,
+      total: 200000,
+      tokens: [
+        { type: "input", name: undefined, value: 40000 },
+        { type: "output", name: undefined, value: 2000 },
+      ],
+    });
+
+    // 只有 tokens 无 size：used 退化为 tokens 之和。
+    const r2 = applySessionUpdate(entries, meta, {
+      sessionUpdate: "session_info_update",
+      usage: { tokens: [{ type: "input", value: 100 }] },
+    });
+    expect(r2.metaChanged).toBe(true);
+    expect(meta.contextUsage?.used).toBe(100);
+    expect(meta.contextUsage?.total).toBe(0);
+  });
+
+  it("ignores session_info_update without usage", () => {
+    const entries: ThreadEntry[] = [];
+    const meta = emptySessionMeta();
+    const r = applySessionUpdate(entries, meta, {
+      sessionUpdate: "session_info_update",
+      title: "Some title",
+    });
+    expect(r.metaChanged).toBe(false);
+    expect(meta.contextUsage).toBeNull();
+  });
+
   it("creates a waiting tool card from permission payload when none exists", () => {
     const entries: ThreadEntry[] = [];
     const attached = applyPermissionRequestToEntries(entries, {

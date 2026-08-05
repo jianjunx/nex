@@ -4,7 +4,7 @@ import { PermissionModal } from "./PermissionModal";
 
 export function ChatArea() {
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="flex flex-col h-full min-h-0" data-conversation-area>
       <ThreadView />
       <AgentComposer />
       <PermissionModal />

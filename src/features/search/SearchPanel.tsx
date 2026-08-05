@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, FileCode, Loader2, RefreshCw, Replace, X } from "lucide-react";
+import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Loader2, RefreshCw, Replace, X } from "lucide-react";
+import FileIcon from "../files/FileIcon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -415,7 +416,7 @@ export function SearchPanel() {
                     className="flex w-full items-center gap-1.5 px-2 py-1 rounded-[var(--radius-sm)] hover:bg-[var(--overlay-hover)] text-left"
                   >
                     <ChevronRight size={12} className={`flex-none text-[var(--text-tertiary)] transition-transform ${isCollapsed ? "" : "rotate-90"}`} />
-                    <FileCode size={13} className="flex-none text-[var(--text-tertiary)]" />
+                    <FileIcon filename={g.name} size={13} className="flex-none" />
                     <span className="flex-none max-w-[40%] truncate text-sm text-[var(--text-primary)]">{g.name}</span>
                     <span className="truncate text-xs text-[var(--text-tertiary)]">{relativeToProject(g.path, project?.path)}</span>
                     <span data-count-badge className="ml-auto flex-none rounded-full bg-[var(--overlay-ghost)] px-1.5 text-xs text-[var(--text-secondary)]">{g.matches.length}</span>

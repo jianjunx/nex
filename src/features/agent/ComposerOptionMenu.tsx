@@ -47,7 +47,7 @@ export function ComposerOptionMenu({
           disabled={disabled || options.length === 0}
           aria-label={ariaLabel}
           title={ariaLabel}
-          className="h-7 max-w-[12rem] shrink-0 gap-0.5 rounded-md px-1.5 text-xs font-normal text-[var(--text-secondary)] hover:bg-[var(--glass-2-surface)]"
+          className="h-7 max-w-[12rem] shrink-0 gap-0.5 rounded-md px-0.5 text-xs font-normal text-[var(--text-secondary)] hover:bg-[var(--glass-2-surface)]"
         >
           <span className="truncate">{label}</span>
           <ChevronDown size={12} className="shrink-0 opacity-50" />

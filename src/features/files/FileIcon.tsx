@@ -28,7 +28,7 @@ export type FileIconProps = {
 
 type IconData = {
   viewBox: string;
-  paths: { d: string; fill?: string }[];
+  paths: { d: string; fill?: string; stroke?: boolean }[];
 };
 
 const iconData: Record<string, IconData> = {
@@ -36,7 +36,7 @@ const iconData: Record<string, IconData> = {
   file: {
     viewBox: "0 0 16 16",
     paths: [
-      { d: "M4 1.5h5.5l4.25 4.25V14.5H4V1.5zM9.5 2v3.5H13M6.5 10h3m-3 2h3m-4-6h1" },
+      { d: "M4 1.5h5.5l4.25 4.25V14.5H4V1.5zM9.5 2v3.5H13M6.5 10h3m-3 2h3m-4-6h1", stroke: true },
     ],
   },
   folder: {
@@ -598,14 +598,14 @@ const iconData: Record<string, IconData> = {
     viewBox: "0 0 32 32",
     paths: [
       { d: "M13.844 7.5H4.72A1.72 1.72 0 0 0 3 9.22v13.56A1.72 1.72 0 0 0 4.72 24.5h22.56a1.72 1.72 0 0 0 1.72-1.72V11.22A1.72 1.72 0 0 0 27.28 9.5H16.5l-2.656-2z" },
-      { d: "M12 15.5h2l-1 2 1 1h-2" },
+      { d: "M12 15.5h2l-1 2 1 1h-2", stroke: true },
     ],
   },
   "folder-test": {
     viewBox: "0 0 32 32",
     paths: [
       { d: "M13.844 7.5H4.72A1.72 1.72 0 0 0 3 9.22v13.56A1.72 1.72 0 0 0 4.72 24.5h22.56a1.72 1.72 0 0 0 1.72-1.72V11.22A1.72 1.72 0 0 0 27.28 9.5H16.5l-2.656-2z" },
-      { d: "M15 17.5v.5a.5.5 0 0 0 1 0v-.5M14 16.5h3m-2-1v1.5m1-1.5v1.5" },
+      { d: "M15 17.5v.5a.5.5 0 0 0 1 0v-.5M14 16.5h3m-2-1v1.5m1-1.5v1.5", stroke: true },
     ],
   },
   "folder-components": {
@@ -619,28 +619,28 @@ const iconData: Record<string, IconData> = {
     viewBox: "0 0 32 32",
     paths: [
       { d: "M13.844 7.5H4.72A1.72 1.72 0 0 0 3 9.22v13.56A1.72 1.72 0 0 0 4.72 24.5h22.56a1.72 1.72 0 0 0 1.72-1.72V11.22A1.72 1.72 0 0 0 27.28 9.5H16.5l-2.656-2z" },
-      { d: "M13 14.5h4v3l-1.5 1.5H13zm2.5 3.5v-1.5l1.5 1.5zm-4.5-2.5h1m1 0h1m-3 1h1m1 0h1" },
+      { d: "M13 14.5h4v3l-1.5 1.5H13zm2.5 3.5v-1.5l1.5 1.5zm-4.5-2.5h1m1 0h1m-3 1h1m1 0h1", stroke: true },
     ],
   },
   "folder-config": {
     viewBox: "0 0 32 32",
     paths: [
       { d: "M13.844 7.5H4.72A1.72 1.72 0 0 0 3 9.22v13.56A1.72 1.72 0 0 0 4.72 24.5h22.56a1.72 1.72 0 0 0 1.72-1.72V11.22A1.72 1.72 0 0 0 27.28 9.5H16.5l-2.656-2z" },
-      { d: "M16 15.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3m0-2v1.5m0 4v-1.5m-2.5-1.5l1 .5m1.5 2.5l-1-.5m4-2l-1 .5m-3.5 2l1-.5" },
+      { d: "M16 15.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3m0-2v1.5m0 4v-1.5m-2.5-1.5l1 .5m1.5 2.5l-1-.5m4-2l-1 .5m-3.5 2l1-.5", stroke: true },
     ],
   },
   "folder-api": {
     viewBox: "0 0 32 32",
     paths: [
       { d: "M13.844 7.5H4.72A1.72 1.72 0 0 0 3 9.22v13.56A1.72 1.72 0 0 0 4.72 24.5h22.56a1.72 1.72 0 0 0 1.72-1.72V11.22A1.72 1.72 0 0 0 27.28 9.5H16.5l-2.656-2z" },
-      { d: "M14.5 16.5a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0m-1 0h5M16 15v3" },
+      { d: "M14.5 16.5a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0m-1 0h5M16 15v3", stroke: true },
     ],
   },
   "folder-database": {
     viewBox: "0 0 32 32",
     paths: [
       { d: "M13.844 7.5H4.72A1.72 1.72 0 0 0 3 9.22v13.56A1.72 1.72 0 0 0 4.72 24.5h22.56a1.72 1.72 0 0 0 1.72-1.72V11.22A1.72 1.72 0 0 0 27.28 9.5H16.5l-2.656-2z" },
-      { d: "M13 15.5a2.5.8 0 1 0 5 0 2.5.8 0 1 0-5 0m0 2a2.5.8 0 0 0 5 0" },
+      { d: "M13 15.5a2.5.8 0 1 0 5 0 2.5.8 0 1 0-5 0m0 2a2.5.8 0 0 0 5 0", stroke: true },
     ],
   },
   "folder-node": {
@@ -654,14 +654,14 @@ const iconData: Record<string, IconData> = {
     viewBox: "0 0 32 32",
     paths: [
       { d: "M13.844 7.5H4.72A1.72 1.72 0 0 0 3 9.22v13.56A1.72 1.72 0 0 0 4.72 24.5h22.56a1.72 1.72 0 0 0 1.72-1.72V11.22A1.72 1.72 0 0 0 27.28 9.5H16.5l-2.656-2z" },
-      { d: "M16 14.5a1.5 1.5 0 0 1-1 2.6v1.4l2 1 2-1v-1.4a1.5 1.5 0 1 1-1 0v.9l-1 .5-1-.5z" },
+      { d: "M16 14.5a1.5 1.5 0 0 1-1 2.6v1.4l2 1 2-1v-1.4a1.5 1.5 0 1 1-1 0v.9l-1 .5-1-.5z", stroke: true },
     ],
   },
   "folder-images": {
     viewBox: "0 0 32 32",
     paths: [
       { d: "M13.844 7.5H4.72A1.72 1.72 0 0 0 3 9.22v13.56A1.72 1.72 0 0 0 4.72 24.5h22.56a1.72 1.72 0 0 0 1.72-1.72V11.22A1.72 1.72 0 0 0 27.28 9.5H16.5l-2.656-2z" },
-      { d: "M12 15h7v5H12zm1 4 1.5-1.5 1 1L17 17l2 2z" },
+      { d: "M12 15h7v5H12zm1 4 1.5-1.5 1 1L17 17l2 2z", stroke: true },
     ],
   },
   "folder-svg": {
@@ -675,7 +675,7 @@ const iconData: Record<string, IconData> = {
     viewBox: "0 0 32 32",
     paths: [
       { d: "M13.844 7.5H4.72A1.72 1.72 0 0 0 3 9.22v13.56A1.72 1.72 0 0 0 4.72 24.5h22.56a1.72 1.72 0 0 0 1.72-1.72V11.22A1.72 1.72 0 0 0 27.28 9.5H16.5l-2.656-2z" },
-      { d: "M16 14.5a2 2 0 0 0-1.5 3.41v1.59h3v-1.59a2 2 0 0 0-1.5-3.41" },
+      { d: "M16 14.5a2 2 0 0 0-1.5 3.41v1.59h3v-1.59a2 2 0 0 0-1.5-3.41", stroke: true },
     ],
   },
   "folder-docker": {
@@ -1386,6 +1386,9 @@ const FileIcon = memo(function FileIcon({
   const name = isFolder ? resolveFolderIcon(filename) : resolveFileIcon(filename);
   const data = iconData[name] ?? iconData[isFolder ? "folder" : "file"];
   const color = iconColors[name] ?? DEFAULT_COLOR;
+  // Stroke weight scales with the viewBox so 16px and 32px art look consistent.
+  const vbWidth = Number(data.viewBox.split(" ")[2]) || 16;
+  const strokeWidth = vbWidth >= 32 ? 1.5 : 1.1;
 
   return (
     <svg
@@ -1397,9 +1400,21 @@ const FileIcon = memo(function FileIcon({
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
     >
-      {data.paths.map((p, i) => (
-        <path key={i} d={p.d} fill={p.fill ?? color} />
-      ))}
+      {data.paths.map((p, i) =>
+        p.stroke ? (
+          <path
+            key={i}
+            d={p.d}
+            fill="none"
+            stroke={p.fill ?? color}
+            strokeWidth={strokeWidth}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        ) : (
+          <path key={i} d={p.d} fill={p.fill ?? color} />
+        ),
+      )}
     </svg>
   );
 });

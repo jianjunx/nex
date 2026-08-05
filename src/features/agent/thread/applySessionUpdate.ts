@@ -231,6 +231,7 @@ export function emptySessionMeta(): SessionMeta {
     configOptions: [],
     availableCommands: [],
     plan: null,
+    contextUsage: null,
   };
 }
 
@@ -382,6 +383,39 @@ export function applySessionUpdate(
       const modelOpt = meta.configOptions.find((o) => o.id === "model" || o.category === "model");
       if (modelOpt?.currentValueId) meta.currentModelId = modelOpt.currentValueId;
       result.metaChanged = true;
+      return result;
+    }
+
+    case "session_info_update": {
+      // 上下文用量上报（新版 ACP；旧 schema 不识别，后端按原始 JSON 透传）。
+      const usage = u.usage;
+      if (usage && typeof usage === "object") {
+        const us = usage as Record<string, unknown>;
+        const size =
+          us.size && typeof us.size === "object"
+            ? (us.size as Record<string, unknown>)
+            : null;
+        const used = size && typeof size.used === "number" ? size.used : null;
+        const total = size && typeof size.total === "number" ? size.total : null;
+        const tokens = Array.isArray(us.tokens)
+          ? us.tokens
+              .filter((t): t is Record<string, unknown> => !!t && typeof t === "object")
+              .map((t) => ({
+                type: typeof t.type === "string" ? t.type : "",
+                name: typeof t.name === "string" ? t.name : undefined,
+                value: typeof t.value === "number" ? t.value : 0,
+              }))
+              .filter((t) => t.type)
+          : [];
+        if (used != null || tokens.length > 0) {
+          meta.contextUsage = {
+            used: used ?? tokens.reduce((acc, t) => acc + t.value, 0),
+            total: total ?? 0,
+            tokens,
+          };
+          result.metaChanged = true;
+        }
+      }
       return result;
     }
 

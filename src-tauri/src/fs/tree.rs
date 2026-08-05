@@ -11,13 +11,28 @@ pub struct FsNode {
     pub size: Option<u64>,
 }
 
+/// Directory names always skipped in the file tree regardless of gitignore
+/// (vcs metadata / dependency caches — noise, huge, and walking them stalls).
+const SKIP_DIR_NAMES: &[&str] = &["node_modules", ".git"];
+
 pub fn read_tree(root: &Path, depth: usize) -> Result<Vec<FsNode>, NexError> {
     let mut nodes = Vec::new();
+    // NOTE: git_ignore/git_exclude are OFF on purpose — honoring .gitignore
+    // hid legitimate directories (e.g. ignored `storage/`) from the tree.
+    // The tree is a file manager view, not a git view.
     let walker = WalkBuilder::new(root)
         .max_depth(Some(depth))
         .hidden(false)
-        .git_ignore(true)
-        .git_exclude(true)
+        .git_ignore(false)
+        .git_exclude(false)
+        .require_git(false)
+        .filter_entry(|entry| {
+            if !entry.file_type().is_some_and(|ft| ft.is_dir()) {
+                return true;
+            }
+            let name = entry.file_name().to_string_lossy();
+            !SKIP_DIR_NAMES.contains(&name.as_ref())
+        })
         .build();
 
     for entry in walker.flatten() {

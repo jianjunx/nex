@@ -109,6 +109,7 @@ describe("agent.store session prefs", () => {
           configOptions: [],
           availableCommands: [],
           plan: null,
+          contextUsage: null,
         },
       },
     });

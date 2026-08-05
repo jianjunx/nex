@@ -12,7 +12,61 @@ import {
 } from "./editorAutosave";
 import { focusSearchQueryProject } from "./searchProjectQuery";
 
+// 自写盘时间戳：watcher 对自己写入（含自动保存）触发的事件不得误报为
+// 外部修改（「文件在磁盘上已被修改」黄条）。宽限期内直接忽略。
+const SELF_WRITE_AT = new Map<string, number>();
+const SELF_WRITE_GRACE_MS = 2000;
+function noteSelfWrite(path: string): void {
+  SELF_WRITE_AT.set(path, Date.now());
+}
+function isRecentSelfWrite(path: string): boolean {
+  const at = SELF_WRITE_AT.get(path);
+  return at != null && Date.now() - at < SELF_WRITE_GRACE_MS;
+}
+
+/** Test-only hook: clear the self-write grace bookkeeping. */
+export function __resetSelfWriteForTest() {
+  SELF_WRITE_AT.clear();
+}
+
 export { clearAllAutoSaveTimers };
+
+/** 文件树可撤销操作（Ctrl/Cmd+Z）。模块级栈，不入 state 以免被 persist。 */
+type FsUndoEntry =
+  | { kind: "create"; path: string }
+  | { kind: "rename"; fromPath: string; toPath: string }
+  | { kind: "move"; path: string; fromDir: string }
+  | { kind: "copy"; destPath: string }
+  | { kind: "deleteFile"; path: string; content: string };
+
+const FS_UNDO_STACK: FsUndoEntry[] = [];
+const FS_UNDO_MAX = 50;
+
+function pushFsUndo(entry: FsUndoEntry): void {
+  FS_UNDO_STACK.push(entry);
+  if (FS_UNDO_STACK.length > FS_UNDO_MAX) FS_UNDO_STACK.shift();
+}
+
+function parentDirOf(path: string): string {
+  return path.replace(/[/\\][^/\\]*$/, "");
+}
+
+/** 删除前为纯文本文件快照内容（目录/二进制无法安全恢复，不入撤销栈）。 */
+async function snapshotForDelete(path: string): Promise<FsUndoEntry | null> {
+  let isFile = false;
+  for (const nodes of Object.values(useFsStore.getState().nodesByDir)) {
+    const n = nodes.find((x) => x.path === path);
+    if (n) { isFile = !n.is_dir; break; }
+  }
+  if (!isFile) return null;
+  try {
+    const r = await fsReadFile(path);
+    if (r.is_text && r.content != null) return { kind: "deleteFile", path, content: r.content };
+  } catch {
+    // 读取失败：放弃快照，删除仍照常执行。
+  }
+  return null;
+}
 
 // Required by immer before a Set can be drafted (expandedDirs).
 enableMapSet();
@@ -163,6 +217,8 @@ interface FsStore {
   moveEntries: (sources: string[], targetDir: string) => Promise<void>;
   /** Import external files (e.g. OS drag-and-drop) into a target directory. */
   importFiles: (sources: string[], targetDir: string) => Promise<void>;
+  /** 撤销最近一次文件树操作（创建/重命名/移动/复制/删除纯文本文件）。 */
+  undoFsOperation: () => Promise<void>;
   refreshDir: (dirPath: string) => Promise<void>;
   /** @returns false when a write was attempted and failed */
   saveFile: (filePath?: string) => Promise<boolean>;
@@ -461,6 +517,7 @@ export const useFsStore = create<FsStore>()(
       set((s) => { s.error = null; });
       try {
         await fsCreateFile(parentDir, name);
+        pushFsUndo({ kind: "create", path: joinWithParentSep(parentDir, name) });
         await get().refreshDir(parentDir);
       } catch (err) {
         set((s) => { s.error = errorMessage(err); });
@@ -471,6 +528,7 @@ export const useFsStore = create<FsStore>()(
       set((s) => { s.error = null; });
       try {
         await fsCreateDir(parentDir, name);
+        pushFsUndo({ kind: "create", path: joinWithParentSep(parentDir, name) });
         await get().refreshDir(parentDir);
       } catch (err) {
         set((s) => { s.error = errorMessage(err); });
@@ -481,6 +539,8 @@ export const useFsStore = create<FsStore>()(
       set((s) => { s.error = null; });
       try {
         const parent = path.replace(/[/\\][^/\\]*$/, "");
+        // 先快照（纯文本文件），删除成功后才入撤销栈。
+        const undoSnapshot = await snapshotForDelete(path);
         const openIndex = get().openFiles.findIndex((f) => f.path === path);
         if (openIndex >= 0) {
           const file = get().openFiles[openIndex];
@@ -502,6 +562,7 @@ export const useFsStore = create<FsStore>()(
           }
         }
         await fsDeleteEntry(path);
+        if (undoSnapshot) pushFsUndo(undoSnapshot);
         await get().refreshDir(parent);
         if (parent) {
           const parentInNodes = parent in get().nodesByDir;
@@ -540,6 +601,7 @@ export const useFsStore = create<FsStore>()(
         const parent = path.replace(/[/\\][^/\\]*$/, "");
         const newPath = joinWithParentSep(parent, newName);
         await fsRenameEntry(path, newName);
+        pushFsUndo({ kind: "rename", fromPath: path, toPath: newPath });
         // Update open file path if the renamed file was open
         const openIndex = get().openFiles.findIndex((f) => f.path === path);
         if (openIndex >= 0) {
@@ -577,7 +639,8 @@ export const useFsStore = create<FsStore>()(
             });
             return;
           }
-          await fsCopyEntry(src, targetDir);
+          const destPath = await fsCopyEntry(src, targetDir);
+          pushFsUndo({ kind: "copy", destPath });
         }
         await get().refreshDir(targetDir);
       } catch (err) {
@@ -612,6 +675,7 @@ export const useFsStore = create<FsStore>()(
           // Refresh source parent before move
           const srcParent = src.replace(/[/\\][^/\\]*$/, "");
           await fsMoveEntry(src, targetDir);
+          pushFsUndo({ kind: "move", path: joinWithParentSep(targetDir, src.replace(/^.*[/\\]/, "")), fromDir: srcParent });
           await get().refreshDir(srcParent);
         }
         await get().refreshDir(targetDir);
@@ -646,6 +710,76 @@ export const useFsStore = create<FsStore>()(
       }
     },
 
+    undoFsOperation: async () => {
+      const entry = FS_UNDO_STACK.pop();
+      if (!entry) return;
+      set((s) => { s.error = null; });
+      try {
+        const refresh = new Set<string>();
+        switch (entry.kind) {
+          case "create": {
+            await fsDeleteEntry(entry.path);
+            refresh.add(parentDirOf(entry.path));
+            break;
+          }
+          case "rename": {
+            const oldName = entry.fromPath.replace(/^.*[/\\]/, "");
+            await fsRenameEntry(entry.toPath, oldName);
+            // 反向回填打开页签与展开目录。
+            const openIndex = get().openFiles.findIndex((f) => f.path === entry.toPath);
+            if (openIndex >= 0) {
+              set((s) => {
+                s.openFiles[openIndex].path = entry.fromPath;
+                if (s.activePath === entry.toPath) s.activePath = entry.fromPath;
+              });
+            }
+            const dirs = new Set(get().expandedDirs);
+            if (dirs.has(entry.toPath)) {
+              dirs.delete(entry.toPath);
+              dirs.add(entry.fromPath);
+              set((s) => { s.expandedDirs = dirs; });
+            }
+            refresh.add(parentDirOf(entry.toPath));
+            break;
+          }
+          case "move": {
+            await fsMoveEntry(entry.path, entry.fromDir);
+            const name = entry.path.replace(/^.*[/\\]/, "");
+            const restored = joinWithParentSep(entry.fromDir, name);
+            const openIndex = get().openFiles.findIndex((f) => f.path === entry.path);
+            if (openIndex >= 0) {
+              set((s) => {
+                s.openFiles[openIndex].path = restored;
+                if (s.activePath === entry.path) s.activePath = restored;
+              });
+            }
+            refresh.add(parentDirOf(entry.path));
+            refresh.add(entry.fromDir);
+            break;
+          }
+          case "copy": {
+            await fsDeleteEntry(entry.destPath);
+            refresh.add(parentDirOf(entry.destPath));
+            break;
+          }
+          case "deleteFile": {
+            const parent = parentDirOf(entry.path);
+            const name = entry.path.replace(/^.*[/\\]/, "");
+            await fsCreateFile(parent, name);
+            await fsWriteFile(entry.path, entry.content);
+            noteSelfWrite(entry.path);
+            refresh.add(parent);
+            break;
+          }
+        }
+        for (const dir of refresh) {
+          if (dir) await get().refreshDir(dir);
+        }
+      } catch (err) {
+        set((s) => { s.error = errorMessage(err); });
+      }
+    },
+
     refreshDir: async (dirPath) => {
       set((s) => { s.loading = true; s.error = null; });
       try {
@@ -670,6 +804,8 @@ export const useFsStore = create<FsStore>()(
       set((s) => { s.loading = true; s.error = null; });
       try {
         await fsWriteFile(cur.path, intendedDraft);
+        // 自己的写入会触发 watcher 事件——记入宽限名单防止误报外部修改。
+        noteSelfWrite(cur.path);
         // Only clear dirty if the path is still open and draft still matches
         // the write intent (user may have kept typing during the write).
         set((s) => {
@@ -689,7 +825,9 @@ export const useFsStore = create<FsStore>()(
     },
 
     syncExternalChange: async (paths) => {
-      const affected = get().openFiles.filter((f) => paths.includes(f.path));
+      // 自己刚写盘的文件（自动保存等）不算外部修改，直接跳过。
+      const external = paths.filter((p) => !isRecentSelfWrite(p));
+      const affected = get().openFiles.filter((f) => external.includes(f.path));
       for (const cur of affected) {
         if (cur.dirty) {
           // Unsaved edits: keep them, surface the stale banner instead.

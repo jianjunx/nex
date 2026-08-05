@@ -18,6 +18,7 @@ import { fsWatchStart } from "../../bridge/tauri";
 import { projectSessionIndicators } from "../agent/projectSessionIndicators";
 import { restoreProjectConversationTabs } from "./restoreProjectConversationTabs";
 import { useClipboardStore } from "../../stores/clipboard.store";
+import { AgentIcon } from "../agent/AgentIcon";
 
 const platform = typeof navigator !== "undefined" ? navigator.platform : "";
 const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
@@ -58,16 +59,53 @@ function StatusDots({ projectId }: { projectId: string }) {
       {hasRunning && (
         <span
           className="w-2 h-2 rounded-full animate-pulse"
-          style={{ backgroundColor: "var(--accent)" }}
+          style={{ backgroundColor: "var(--accent)", boxShadow: "0 0 6px 1px color-mix(in srgb, var(--accent) 70%, transparent)" }}
           title="Agent running"
         />
       )}
       {hasWaiting && (
         <span
           className="w-2 h-2 rounded-full"
-          style={{ backgroundColor: "var(--warning)" }}
+          style={{ backgroundColor: "var(--warning)", boxShadow: "0 0 6px 1px color-mix(in srgb, var(--warning) 70%, transparent)" }}
           title="Agent waiting"
         />
+      )}
+    </span>
+  );
+}
+
+/** 运行中会话数量角标（0 时隐藏）。 */
+function RunningCountBadge({ projectId }: { projectId: string }) {
+  const sessions = useAgentStore((s) => s.sessions);
+  const conversationsByProject = useConversationStore((s) => s.conversationsByProject);
+  const ids = (conversationsByProject[projectId] ?? []).map((c) => c.id);
+  const running = ids.filter((id) => sessions[id]?.status === "running").length;
+  if (running === 0) return null;
+  return (
+    <span className="ml-1.5 inline-flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-[var(--accent)] px-1 text-[9px] font-semibold leading-none text-white">
+      {running}
+    </span>
+  );
+}
+
+/** 项目下最近活跃的一条会话（按 updated_at 降序取首）。 */
+function LatestConversationRow({ projectId }: { projectId: string }) {
+  const conversations = useConversationStore((s) => s.conversationsByProject[projectId]);
+  const sessions = useAgentStore((s) => s.sessions);
+  if (!conversations || conversations.length === 0) return null;
+  const latest = [...conversations].sort((a, b) => b.updated_at - a.updated_at)[0];
+  const status = sessions[latest.id]?.status ?? null;
+  return (
+    <span className="mt-0.5 flex items-center gap-1.5 pl-4 text-[11px] text-[var(--text-tertiary)]">
+      {latest.agent_type && (
+        <AgentIcon agentType={latest.agent_type} status={status} size={11} />
+      )}
+      <span className="max-w-[160px] truncate">{latest.title}</span>
+      {status === "running" && (
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full animate-pulse" style={{ backgroundColor: "var(--accent)" }} />
+      )}
+      {status === "waiting" && (
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: "var(--warning)" }} />
       )}
     </span>
   );
@@ -137,12 +175,25 @@ export function ProjectSelector() {
 
   return (
     <div className="relative" data-tauri-drag-region="false">
-      <DropdownMenu open={dropdownOpen} onOpenChange={setDropdownOpen}>
+      <DropdownMenu
+        open={dropdownOpen}
+        onOpenChange={(open) => {
+          setDropdownOpen(open);
+          // 展开时预拉未加载项目的会话列表，供「最近活跃会话」子项展示。
+          if (open) {
+            const st = useConversationStore.getState();
+            for (const p of projects) {
+              if (!st.conversationsByProject[p.id]) void st.loadConversations(p.id);
+            }
+          }
+        }}
+      >
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size="sm" className={`rounded-xl text-xs ${isMac ? "h-8" : ""}`}>
             <span className="inline-flex items-center">
-              {activeProject?.name || "Open Project"}
+              <span className="font-semibold">{activeProject?.name || "Open Project"}</span>
               {activeProjectId && <StatusDots projectId={activeProjectId} />}
+              {activeProjectId && <RunningCountBadge projectId={activeProjectId} />}
               <ChevronDown size={12} className="ml-1 opacity-60" />
             </span>
           </Button>
@@ -179,6 +230,15 @@ export function ProjectSelector() {
                     restoreProjectConversationTabs(p.id),
                     fsWatchStart(p.path).catch(() => {}),
                   ]);
+                  // 项目切换后激活其最近活跃会话（若在已开页签内）。
+                  const convs = useConversationStore.getState().conversationsByProject[p.id] ?? [];
+                  const latestId = [...convs].sort((a, b) => b.updated_at - a.updated_at)[0]?.id;
+                  if (
+                    latestId &&
+                    (useConversationStore.getState().tabsByProject[p.id] ?? []).includes(latestId)
+                  ) {
+                    useConversationStore.getState().switchTab(latestId);
+                  }
                 })();
               }}
               className={`px-3 transition-colors duration-100 ${ITEM_HIGHLIGHT} ${
@@ -187,9 +247,12 @@ export function ProjectSelector() {
                   : "text-[var(--text-secondary)]"
               }`}
             >
-              <span className="flex items-center justify-between w-full gap-2">
-                <span className="truncate">{p.name}</span>
-                <StatusDots projectId={p.id} />
+              <span className="flex w-full flex-col">
+                <span className="flex items-center justify-between w-full gap-2">
+                  <span className="truncate">{p.name}</span>
+                  <StatusDots projectId={p.id} />
+                </span>
+                <LatestConversationRow projectId={p.id} />
               </span>
             </DropdownMenuItem>
           ))}

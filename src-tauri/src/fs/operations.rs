@@ -69,20 +69,27 @@ fn reject_into_self(source: &Path, dest: &Path) -> Result<(), NexError> {
 }
 
 /// Recursively copy a file or directory to a target directory.
-/// The target directory must exist. The entry keeps its original name.
-pub fn copy_entry(source: &Path, target_dir: &Path) -> Result<(), NexError> {
+/// On name conflict a numeric suffix is appended ("file (1).txt") so an
+/// in-place paste never overwrites/truncates the source (OS file-manager
+/// semantics). Returns the final destination path.
+pub fn copy_entry(source: &Path, target_dir: &Path) -> Result<PathBuf, NexError> {
     let name = source
         .file_name()
         .ok_or_else(|| NexError::FileSystem("无效的源路径".into()))?;
-    let dest = target_dir.join(name);
+    let dest = resolve_unique_path(target_dir, name);
     reject_into_self(source, &dest)?;
     if source.is_dir() {
-        copy_dir_recursive(source, &dest)
+        copy_dir_recursive(source, &dest)?;
     } else {
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| NexError::FileSystem(format!("创建目录失败: {}", e)))?;
+        }
         fs::copy(source, &dest).map(|_| ()).map_err(|e| {
             NexError::FileSystem(format!("复制失败: {}", e))
-        })
+        })?
     }
+    Ok(dest)
 }
 
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), NexError> {

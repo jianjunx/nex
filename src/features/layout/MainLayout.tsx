@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { TopBar } from "./TopBar";
 import { IconBar } from "./IconBar";
 import { useUiStore } from "../../stores/ui.store";
@@ -11,6 +11,11 @@ const SIDE_PANEL_MAX = 640;
 const EDITOR_MIN = 320;
 const EDITOR_MAX = 960;
 
+// Fixed chrome widths used to budget panel space (IconBar w-10, handles w-1).
+const ICON_BAR_W = 40;
+const MAIN_MIN_W = 280;
+const HANDLE_W = 4;
+
 interface MainLayoutProps {
   mainContent: ReactNode;
   editorPanel: ReactNode;
@@ -21,8 +26,40 @@ function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n));
 }
 
+function useWindowWidth(): number {
+  const [w, setW] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const onResize = () => setW(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  return w;
+}
+
 export function MainLayout({ mainContent, editorPanel, sidePanel }: MainLayoutProps) {
   const { sidePanelVisible, sidePanelWidth, setSidePanelWidth, editorWidth, setEditorWidth } = useUiStore();
+  const winW = useWindowWidth();
+
+  // 宽度预算：保证主区最小宽 + IconBar 不被挤压，避免拖宽面板时
+  // 右侧边栏/IconBar 被推出视口。
+  const editorBudget = (): number =>
+    Math.max(
+      EDITOR_MIN,
+      Math.min(
+        EDITOR_MAX,
+        winW - ICON_BAR_W - MAIN_MIN_W - HANDLE_W - (sidePanelVisible ? HANDLE_W + SIDE_PANEL_MIN : 0),
+      ),
+    );
+  const sideBudget = (currentEditorW: number): number =>
+    Math.max(
+      SIDE_PANEL_MIN,
+      Math.min(
+        SIDE_PANEL_MAX,
+        winW - ICON_BAR_W - MAIN_MIN_W - HANDLE_W - (editorPanel ? HANDLE_W + currentEditorW : 0),
+      ),
+    );
+  const editorEffective = clamp(editorWidth, EDITOR_MIN, editorBudget());
+  const sideEffective = clamp(sidePanelWidth, SIDE_PANEL_MIN, sideBudget(editorEffective));
 
   // Live widths during drag — keep pointer moves off the persisted store so
   // localStorage writes don't stutter the resize, and avoid any CSS transition
@@ -40,10 +77,10 @@ export function MainLayout({ mainContent, editorPanel, sidePanel }: MainLayoutPr
     document.body.style.userSelect = "none";
 
     const onMove = (ev: PointerEvent) => {
-      setLiveSideWidth(clamp(startWidth + (startX - ev.clientX), SIDE_PANEL_MIN, SIDE_PANEL_MAX));
+      setLiveSideWidth(clamp(startWidth + (startX - ev.clientX), SIDE_PANEL_MIN, sideBudget(editorEffective)));
     };
     const onUp = (ev: PointerEvent) => {
-      const next = clamp(startWidth + (startX - ev.clientX), SIDE_PANEL_MIN, SIDE_PANEL_MAX);
+      const next = clamp(startWidth + (startX - ev.clientX), SIDE_PANEL_MIN, sideBudget(editorEffective));
       setSidePanelWidth(next);
       setLiveSideWidth(null);
       document.body.style.userSelect = prevUserSelect;
@@ -66,10 +103,10 @@ export function MainLayout({ mainContent, editorPanel, sidePanel }: MainLayoutPr
     document.body.style.userSelect = "none";
 
     const onMove = (ev: PointerEvent) => {
-      setLiveEditorWidth(clamp(startWidth + (startX - ev.clientX), EDITOR_MIN, EDITOR_MAX));
+      setLiveEditorWidth(clamp(startWidth + (startX - ev.clientX), EDITOR_MIN, editorBudget()));
     };
     const onUp = (ev: PointerEvent) => {
-      const next = clamp(startWidth + (startX - ev.clientX), EDITOR_MIN, EDITOR_MAX);
+      const next = clamp(startWidth + (startX - ev.clientX), EDITOR_MIN, editorBudget());
       setEditorWidth(next);
       setLiveEditorWidth(null);
       document.body.style.userSelect = prevUserSelect;
@@ -100,7 +137,7 @@ export function MainLayout({ mainContent, editorPanel, sidePanel }: MainLayoutPr
             />
             <div
               className="flex min-h-0 shrink-0 flex-col self-stretch border-l border-[color:var(--border-subtle)] bg-[var(--background)] overflow-hidden rounded-l-[var(--radius-md)] animate-in fade-in slide-in-from-right-2"
-              style={{ width: liveEditorWidth ?? editorWidth }}
+              style={{ width: liveEditorWidth ?? editorEffective }}
             >
               <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                 {editorPanel}
@@ -118,7 +155,7 @@ export function MainLayout({ mainContent, editorPanel, sidePanel }: MainLayoutPr
             />
             <div
               className="flex shrink-0 flex-col border-l border-[color:var(--border-subtle)] bg-[var(--surface-sidebar)] overflow-hidden rounded-l-[var(--radius-md)] animate-in fade-in slide-in-from-right-2"
-              style={{ width: liveSideWidth ?? sidePanelWidth }}
+              style={{ width: liveSideWidth ?? sideEffective }}
             >
               <div className="flex-1 overflow-hidden">
                 {sidePanel}

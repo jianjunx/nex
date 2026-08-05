@@ -3,6 +3,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import { MermaidBlock } from "./MermaidBlock";
+import { looksLikeFilePath, openPathToken } from "./pathToken";
 
 interface MarkdownProps {
   /** Markdown source text. */
@@ -64,6 +65,20 @@ const components: Components = {
       // Render in place of the outer <pre><code> — return a block element
       // that visually replaces the whole fenced block.
       return <MermaidBlock code={text.replace(/\n$/, "")} />;
+    }
+    // Inline code that looks like a file path → click opens it in the editor.
+    // Fenced-block inner <code> carries a `language-xxx` class, so plain
+    // inline spans are the only ones reaching here.
+    if (!className && !/\n/.test(text) && looksLikeFilePath(text)) {
+      return (
+        <code
+          className="cursor-pointer text-[var(--accent)] underline decoration-[color:var(--accent)]/30 underline-offset-2 hover:decoration-[color:var(--accent)] transition-colors"
+          title="在编辑器中打开"
+          onClick={() => void openPathToken(text)}
+        >
+          {children}
+        </code>
+      );
     }
     return (
       <code className={className} {...rest}>
@@ -172,10 +187,24 @@ const components: Components = {
     );
   },
 
-  // Links — open externally, never inside the Tauri webview. Subtle
-  // underline by default so links stay scannable; color follows the
-  // theme accent.
+  // Links — local file paths open in the editor; everything else opens
+  // externally, never inside the Tauri webview.
   a({ href, children, ...rest }) {
+    if (href && looksLikeFilePath(href)) {
+      return (
+        <a
+          href={href}
+          className="cursor-pointer text-[var(--accent)] underline decoration-[color:var(--accent)]/30 underline-offset-2 hover:decoration-[color:var(--accent)] hover:text-[var(--accent-hover)] transition-colors"
+          title="在编辑器中打开"
+          onClick={(e) => {
+            e.preventDefault();
+            void openPathToken(href);
+          }}
+        >
+          {children}
+        </a>
+      );
+    }
     return (
       <a
         href={href}

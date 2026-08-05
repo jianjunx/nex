@@ -24,6 +24,7 @@ vi.mock("../stores/fs.store", () => ({
 }));
 vi.mock("./editorKeybindings", () => ({
   isFindBarOpen: () => findBarOpen,
+  closeFindBar: () => findBarOpen,
 }));
 vi.mock("../stores/project.store", () => ({
   useProjectStore: { getState: () => projectState },

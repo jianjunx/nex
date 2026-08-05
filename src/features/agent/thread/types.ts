@@ -103,6 +103,21 @@ export interface SessionConfigOption {
   options: { id: string; name: string }[];
 }
 
+/** 单条 token 用量（ACP session_info_update.usage.tokens）。 */
+export interface ContextTokenUsage {
+  /** 如 "input" / "output"，部分 agent 附带 cache 等细分项。 */
+  type: string;
+  name?: string;
+  value: number;
+}
+
+/** 上下文窗口用量（ACP session_info_update.usage.size + tokens）。 */
+export interface ContextUsage {
+  used: number;
+  total: number;
+  tokens: ContextTokenUsage[];
+}
+
 export interface SessionMeta {
   modes: SessionModeOption[];
   currentModeId: string | null;
@@ -112,4 +127,6 @@ export interface SessionMeta {
   configOptions: SessionConfigOption[];
   availableCommands: AvailableCommand[];
   plan: PlanEntry[] | null;
+  /** 上下文窗口用量；agent 未上报时为 null。 */
+  contextUsage: ContextUsage | null;
 }

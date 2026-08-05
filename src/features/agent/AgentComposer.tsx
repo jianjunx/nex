@@ -17,6 +17,9 @@ import {
 } from "../../stores/conversation.store";
 import { fsSearch, fsReadFile, type PromptBlock, type SearchMatch, type SessionTarget } from "../../bridge/tauri";
 import { ComposerOptionMenu } from "./ComposerOptionMenu";
+import { ContextUsageRing } from "./ContextUsageRing";
+import { BranchSelector } from "../git/BranchSelector";
+import { useGitStore } from "../../stores/git.store";
 import { PlanBar } from "./thread/PlanBar";
 import { PendingMessagesBar } from "./thread/PendingMessagesBar";
 import { TextEditContextMenu } from "@/components/ui/TextEditContextMenu";
@@ -26,6 +29,7 @@ import {
   saveComposerDraft,
 } from "../../stores/composerDrafts";
 import { fuzzyFilter } from "./composerFuzzy";
+import { setComposerSuggestOpen } from "./composerPanelState";
 import { measureCaretInTextarea } from "./composerCaret";
 import { fileBasename, relativeToProject } from "../editor/pathUtils";
 import FileIcon from "../files/FileIcon";
@@ -132,6 +136,7 @@ export function AgentComposer() {
   const [atResults, setAtResults] = useState<SearchMatch[]>([]);
   const [suggestIndex, setSuggestIndex] = useState(0);
   const [plusOpen, setPlusOpen] = useState(false);
+  const [branchOpen, setBranchOpen] = useState(false);
   const [previewImage, setPreviewImage] = useState<PendingImage | null>(null);
   const [caretPos, setCaretPos] = useState<{ top: number; left: number; lineHeight: number } | null>(null);
   const [imeComposing, setImeComposing] = useState(false);
@@ -229,6 +234,12 @@ export function AgentComposer() {
     suggestIndex,
   };
 
+  // 供命令注册表判断 Esc 是否应先关建议面板（见 composerPanelState）。
+  useEffect(() => {
+    setComposerSuggestOpen(slashOpen || atOpen);
+  }, [slashOpen, atOpen]);
+  useEffect(() => () => setComposerSuggestOpen(false), []);
+
   useEffect(() => {
     return () => {
       const tab = draftTabRef.current;
@@ -278,6 +289,17 @@ export function AgentComposer() {
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, [plusOpen]);
+
+  // Composer branch button needs current branch — probe git status per project.
+  const projectPath = project?.path;
+  useEffect(() => {
+    if (!projectPath) return;
+    void useGitStore.getState().refresh(projectPath).then(() => {
+      // Non-git project: don't leave an error behind from the composer probe.
+      const st = useGitStore.getState();
+      if (!st.status && st.error) st.clearError();
+    });
+  }, [projectPath]);
 
   // Keep highlight in range when the filtered list shrinks.
   useEffect(() => {
@@ -816,6 +838,7 @@ export function AgentComposer() {
           <TextEditContextMenu getTarget={() => textareaRef.current}>
             <Textarea
               ref={textareaRef}
+              data-composer-input
               value={text}
               onChange={(e) => onChange(e.target.value)}
               onKeyDown={handleKeyDown}
@@ -889,6 +912,14 @@ export function AgentComposer() {
               />
             </div>
 
+            {project && (
+              <BranchSelector
+                projectPath={project.path}
+                open={branchOpen}
+                onOpenChange={setBranchOpen}
+              />
+            )}
+
             <div className="ml-auto flex items-center gap-0.5 min-w-0">
               {isCursorAgent && activeTabId && (
                 <ComposerOptionMenu
@@ -939,6 +970,10 @@ export function AgentComposer() {
                   </>
                 );
               })()}
+
+              {session?.sessionId && meta?.contextUsage && (
+                <ContextUsageRing usage={meta.contextUsage} />
+              )}
 
               {isRunning ? (
                 <Button

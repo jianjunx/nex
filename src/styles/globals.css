@@ -254,6 +254,17 @@ html, body {
   animation: search-stagger-in 150ms ease-out both;
 }
 
+/* 搜索跳转定位：目标行背景高亮闪烁后淡化（EditorPanel.applyPendingLine）。 */
+@keyframes nex-jump-highlight-fade {
+  0% { background-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+  60% { background-color: color-mix(in srgb, var(--accent) 22%, transparent); }
+  100% { background-color: transparent; }
+}
+.nex-jump-highlight {
+  animation: nex-jump-highlight-fade 2s ease-out both;
+  border-radius: 3px;
+}
+
 /* 组折叠高度过渡：grid-template-rows 0fr ↔ 1fr 技巧（150ms）。 */
 .search-collapse {
   display: grid;

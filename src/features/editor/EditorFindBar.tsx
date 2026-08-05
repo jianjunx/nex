@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { EditorView } from "@codemirror/view";
 import {
   SearchQuery,
@@ -131,6 +131,13 @@ export function EditorFindBar({ view }: { view: EditorView }) {
   const [regexp, setRegexp] = useState(initial.regexp);
   const [showReplace, setShowReplace] = useState(false);
   const [stats, setStats] = useState(() => matchStats(view));
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Ctrl/Cmd+F 打开后搜索框立即聚焦（面板 DOM 挂载晚于 React 提交，延迟到下一帧）。
+  useEffect(() => {
+    const t = window.setTimeout(() => searchInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(t);
+  }, []);
 
   const applyQuery = (partial: {
     search?: string;
@@ -176,6 +183,7 @@ export function EditorFindBar({ view }: { view: EditorView }) {
         <div className="flex min-w-0 flex-1 items-center gap-0.5 rounded-[var(--radius-sm)] border border-[color:var(--border-subtle)] bg-[var(--glass-1-surface)] px-1.5">
           <input
             {...{ "main-field": "true" }}
+            ref={searchInputRef}
             value={searchText}
             placeholder="查找"
             onChange={(e) => {
@@ -190,7 +198,12 @@ export function EditorFindBar({ view }: { view: EditorView }) {
                 else findNext(view);
                 setStats(matchStats(view));
               }
-              // Esc: handled in capture by EditorPanel (close find → then hide panel)
+              if (e.key === "Escape") {
+                // Fallback: 全局 editor.close 命令被改绑时仍可用 Esc 关闭搜索。
+                e.preventDefault();
+                closeSearchPanel(view);
+                view.focus();
+              }
             }}
             className="min-w-0 flex-1 bg-transparent py-1 text-xs text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)]"
           />

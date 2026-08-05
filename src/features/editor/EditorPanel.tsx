@@ -80,6 +80,22 @@ const applyPendingLine = (view: EditorView) => {
     selection: { anchor: pos },
     effects: EditorView.scrollIntoView(pos, { y: "center" }),
   });
+  // 跳转后目标行短暂背景高亮，帮助用户定位（CSS 动画自动淡化）。
+  // 延迟到下一帧：滚动生效前目标行 DOM 可能尚未渲染（虚拟滚动）。
+  requestAnimationFrame(() => {
+    const domPos = view.domAtPos(pos);
+    const lineEl =
+      domPos.node instanceof HTMLElement
+        ? domPos.node
+        : domPos.node.parentElement;
+    const cmLine = lineEl?.closest(".cm-line") ?? lineEl;
+    if (!(cmLine instanceof HTMLElement)) return;
+    cmLine.classList.remove("nex-jump-highlight");
+    // force reflow so removing+re-adding restarts the animation
+    void cmLine.offsetWidth;
+    cmLine.classList.add("nex-jump-highlight");
+    window.setTimeout(() => cmLine.classList.remove("nex-jump-highlight"), 2000);
+  });
   fs.consumePendingLine();
 };
 
@@ -99,6 +115,8 @@ export function EditorPanel() {
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const projectPath = projects.find((p) => p.id === activeProjectId)?.path;
   const appTheme = useSettingsStore((s) => s.theme);
+  const wordWrap = useSettingsStore((s) => s.editorWordWrap);
+  const wrapColumn = useSettingsStore((s) => s.editorWrapColumn);
   const editorTheme = useMemo(() => editorThemeFor(appTheme), [appTheme]);
   const viewRef = useRef<EditorView | null>(null);
   const pendingLine = useFsStore((s) => s.pendingLine);
@@ -108,8 +126,21 @@ export function EditorPanel() {
   const langPath = editorFile?.diff ? editorFile.diff.languageHint : (editorFile?.path ?? "");
 
   const extensions = useMemo(
-    () => [...languageExtensionsForPath(langPath), ...editorSearchExtensions()],
-    [langPath],
+    () => [
+      ...languageExtensionsForPath(langPath),
+      ...editorSearchExtensions(),
+      // 单行最大显示长度：软换行 + 内容宽度按字符数封顶（ch 相对等宽字体）。
+      ...(wordWrap
+        ? [
+            EditorView.lineWrapping,
+            EditorView.theme({
+              ".cm-content": { maxWidth: `${wrapColumn}ch` },
+              ".cm-line": { maxWidth: `${wrapColumn}ch` },
+            }),
+          ]
+        : []),
+    ],
+    [langPath, wordWrap, wrapColumn],
   );
 
   // CodeMirror measured at zero size while hidden; force a re-measure on mount.
@@ -130,7 +161,7 @@ export function EditorPanel() {
   if (openFiles.length === 0) return null;
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="flex flex-col h-full min-h-0" data-editor-area>
       <div className="flex items-center gap-1 px-1.5 py-1 border-b border-[color:var(--border-subtle)] overflow-x-auto shrink-0">
         {openFiles.map((f, index) => {
           const active = f.path === activePath;

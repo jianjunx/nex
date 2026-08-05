@@ -371,6 +371,10 @@ export async function gitClone(url: string, dest: string): Promise<void> {
   return invoke(COMMANDS.GIT_CLONE, { url, dest });
 }
 
+export async function gitMerge(projectPath: string, branch: string): Promise<void> {
+  return invoke(COMMANDS.GIT_MERGE, { projectPath, branch });
+}
+
 export async function gitCredentialRespond(
   requestId: string,
   username: string | null,

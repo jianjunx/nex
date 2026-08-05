@@ -79,6 +79,8 @@ describe("conversation.store project-scoped tabs", () => {
     useConversationStore.getState().switchTab("a2");
     expect(useConversationStore.getState().activeTabByProject["proj-a"]).toBe("a2");
     expect(useConversationStore.getState().activeTabByProject["proj-b"]).toBe("b1");
+    // 点击切换不立刻重排；顺序保持原样，等 restoreTabs 再排。
+    expect(useConversationStore.getState().tabsByProject["proj-a"]).toEqual(["a1", "a2"]);
 
     useConversationStore.getState().closeTab("a2");
     expect(useConversationStore.getState().tabsByProject["proj-a"]).toEqual(["a1"]);
@@ -95,6 +97,21 @@ describe("conversation.store project-scoped tabs", () => {
     );
     expect(useConversationStore.getState().tabsByProject["proj-a"]).toEqual(["keep"]);
     expect(useConversationStore.getState().activeTabByProject["proj-a"]).toBe("keep");
+  });
+
+  it("restoreTabs moves the active tab to the front", () => {
+    useConversationStore.getState().restoreTabs(
+      "proj-a",
+      ["a1", "a2", "a3"],
+      "a3",
+      new Set(["a1", "a2", "a3"]),
+    );
+    expect(useConversationStore.getState().tabsByProject["proj-a"]).toEqual([
+      "a3",
+      "a1",
+      "a2",
+    ]);
+    expect(useConversationStore.getState().activeTabByProject["proj-a"]).toBe("a3");
   });
 
   it("loadConversations returns null on list failure", async () => {

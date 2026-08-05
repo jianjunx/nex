@@ -22,6 +22,7 @@ const gitFetchMock = vi.fn();
 const gitPullMock = vi.fn();
 const gitPushMock = vi.fn();
 const gitCloneMock = vi.fn();
+const gitMergeMock = vi.fn();
 
 vi.mock("../bridge/tauri", () => ({
   gitStatus: (...a: unknown[]) => gitStatusMock(...a),
@@ -46,6 +47,7 @@ vi.mock("../bridge/tauri", () => ({
   gitPull: (...a: unknown[]) => gitPullMock(...a),
   gitPush: (...a: unknown[]) => gitPushMock(...a),
   gitClone: (...a: unknown[]) => gitCloneMock(...a),
+  gitMerge: (...a: unknown[]) => gitMergeMock(...a),
 }));
 
 const openDiffTabMock = vi.fn();
@@ -104,10 +106,30 @@ describe("git.store opLog", () => {
   it("fetch success appends a completion line and clears opRunning", async () => {
     gitFetchMock.mockResolvedValue(undefined);
     gitStatusMock.mockResolvedValue(STATUS);
+    gitListBranchesMock.mockResolvedValue([]);
+    gitLogMock.mockResolvedValue([]);
     await useGitStore.getState().fetch("/p");
     const s = useGitStore.getState();
     expect(s.opRunning).toBeNull();
-    expect(s.opLog.some((l) => l.includes("获取") && l.includes("完成"))).toBe(true);
+    expect(s.opLog.some((l) => l.includes("同步") && l.includes("完成"))).toBe(true);
+  });
+
+  it("pull success refreshes status and history", async () => {
+    gitPullMock.mockResolvedValue(undefined);
+    gitStatusMock.mockResolvedValue(STATUS);
+    gitListBranchesMock.mockResolvedValue([]);
+    gitLogMock.mockResolvedValue([{ hash: "abc", message: "m", author: "a", time: 1 }]);
+    const ok = await useGitStore.getState().pull("/p");
+    expect(ok).toBe(true);
+    expect(gitLogMock).toHaveBeenCalled();
+    expect(useGitStore.getState().commits).toHaveLength(1);
+  });
+
+  it("pull failure opens the operation log", async () => {
+    gitPullMock.mockRejectedValue({ type: "Git", message: "did not specify a branch" });
+    const ok = await useGitStore.getState().pull("/p");
+    expect(ok).toBe(false);
+    expect(useGitStore.getState().opLogOpen).toBe(true);
   });
 
   it("fetch failure records the backend message and still clears opRunning", async () => {
@@ -117,7 +139,7 @@ describe("git.store opLog", () => {
     const s = useGitStore.getState();
     expect(s.error).toBe("推送被拒绝：非快进，请先拉取合并");
     expect(s.opRunning).toBeNull();
-    expect(s.opLog.some((l) => l.includes("获取") && l.includes("失败"))).toBe(true);
+    expect(s.opLog.some((l) => l.includes("同步") && l.includes("失败"))).toBe(true);
   });
 
   it("opLog trims to 100 entries (ring buffer)", () => {

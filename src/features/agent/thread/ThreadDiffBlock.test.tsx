@@ -1,9 +1,14 @@
 /**
  * @vitest-environment jsdom
  */
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ThreadDiffBlock, estimateDiffHeight } from "./ThreadDiffBlock";
+
+const openPathToken = vi.fn().mockResolvedValue(true);
+vi.mock("./pathToken", () => ({
+  openPathToken: (...args: unknown[]) => openPathToken(...args),
+}));
 
 vi.mock("../../../stores/settings.store", () => ({
   useSettingsStore: (sel: (s: { theme: "light" | "dark" }) => unknown) =>
@@ -66,6 +71,19 @@ describe("ThreadDiffBlock", () => {
 
     await flushMountDelay();
     expect(container.querySelector(".cm-editor")).toBeTruthy();
+  });
+
+  it("点击路径头会打开编辑器中的文件", () => {
+    const { getByTitle } = render(
+      <ThreadDiffBlock
+        cacheKey="t:path-click"
+        path="src/foo.ts"
+        oldText="a"
+        newText="b"
+      />,
+    );
+    fireEvent.click(getByTitle("在编辑器中打开"));
+    expect(openPathToken).toHaveBeenCalledWith("src/foo.ts");
   });
 
   it("无 path 时不渲染头部(延迟后编辑器照常出现)", async () => {

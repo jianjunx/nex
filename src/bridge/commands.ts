@@ -50,6 +50,7 @@ export const COMMANDS = {
   GIT_PULL: "git_pull",
   GIT_PUSH: "git_push",
   GIT_CLONE: "git_clone",
+  GIT_MERGE: "git_merge",
   GIT_CREDENTIAL_RESPOND: "git_credential_respond",
   // Terminal
   TERMINAL_CREATE: "terminal_create",

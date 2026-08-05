@@ -192,9 +192,12 @@ async fn load_shell_env_windows() -> HashMap<String, String> {
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::null());
+    crate::win_process::no_window(&mut cmd);
 
     let output = match tokio::time::timeout(SHELL_LOAD_TIMEOUT, async {
-        tokio::process::Command::from(cmd).output().await
+        let mut tcmd = tokio::process::Command::from(cmd);
+        crate::win_process::no_window_tokio(&mut tcmd);
+        tcmd.output().await
     })
     .await
     {

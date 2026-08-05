@@ -82,7 +82,7 @@ function RunningCountBadge({ projectId }: { projectId: string }) {
   const running = ids.filter((id) => sessions[id]?.status === "running").length;
   if (running === 0) return null;
   return (
-    <span className="ml-1.5 inline-flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-[var(--accent)] px-1 text-[9px] font-semibold leading-none text-white">
+    <span className="mr-1.5 inline-flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-[var(--accent)] px-1 text-[9px] font-semibold leading-none text-white">
       {running}
     </span>
   );
@@ -96,7 +96,7 @@ function LatestConversationRow({ projectId }: { projectId: string }) {
   const latest = [...conversations].sort((a, b) => b.updated_at - a.updated_at)[0];
   const status = sessions[latest.id]?.status ?? null;
   return (
-    <span className="mt-0.5 flex items-center gap-1.5 pl-4 text-[11px] text-[var(--text-tertiary)]">
+    <span className="mt-1 flex items-center gap-1.5 border-t border-[color:var(--border-subtle)] pt-1 pl-3 text-[11px] text-[var(--text-tertiary)]">
       {latest.agent_type && (
         <AgentIcon agentType={latest.agent_type} status={status} size={11} />
       )}
@@ -191,9 +191,9 @@ export function ProjectSelector() {
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size="sm" className={`rounded-xl text-xs ${isMac ? "h-8" : ""}`}>
             <span className="inline-flex items-center">
+              {activeProjectId && <RunningCountBadge projectId={activeProjectId} />}
               <span className="font-semibold">{activeProject?.name || "Open Project"}</span>
               {activeProjectId && <StatusDots projectId={activeProjectId} />}
-              {activeProjectId && <RunningCountBadge projectId={activeProjectId} />}
               <ChevronDown size={12} className="ml-1 opacity-60" />
             </span>
           </Button>

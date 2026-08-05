@@ -38,13 +38,17 @@ interface GitActionsMenuProps {
 export function GitActionsMenu({ projectPath, onOpenBranchSelector }: GitActionsMenuProps) {
   const opRunning = useGitStore((s) => s.opRunning);
   const stashes = useGitStore((s) => s.stashes);
+  const branches = useGitStore((s) => s.branches);
+  const status = useGitStore((s) => s.status);
   const opLogOpen = useGitStore((s) => s.opLogOpen);
   const setOpLogOpen = useGitStore((s) => s.setOpLogOpen);
   const loadStashes = useGitStore((s) => s.loadStashes);
+  const loadBranches = useGitStore((s) => s.loadBranches);
   const gitFetchOp = useGitStore((s) => s.fetch);
   const gitPullOp = useGitStore((s) => s.pull);
   const gitPushOp = useGitStore((s) => s.push);
   const gitCloneOp = useGitStore((s) => s.clone);
+  const gitMergeOp = useGitStore((s) => s.merge);
   const stashSave = useGitStore((s) => s.stashSave);
   const stashApply = useGitStore((s) => s.stashApply);
   const stashPop = useGitStore((s) => s.stashPop);
@@ -53,6 +57,8 @@ export function GitActionsMenu({ projectPath, onOpenBranchSelector }: GitActions
   const [cloneOpen, setCloneOpen] = useState(false);
   const [cloneUrl, setCloneUrl] = useState("");
   const [cloneDest, setCloneDest] = useState("");
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [mergeBranch, setMergeBranch] = useState("");
   const [stashDialogOpen, setStashDialogOpen] = useState(false);
   const [stashMsg, setStashMsg] = useState("");
   const [stashSubOpen, setStashSubOpen] = useState(false);
@@ -89,6 +95,22 @@ export function GitActionsMenu({ projectPath, onOpenBranchSelector }: GitActions
     }
   };
 
+  const openMergeDialog = () => {
+    setMergeBranch("");
+    setMergeOpen(true);
+    void loadBranches(projectPath);
+  };
+
+  const confirmMerge = async () => {
+    const name = mergeBranch.trim();
+    if (!name || busy) return;
+    const ok = await gitMergeOp(projectPath, name);
+    if (ok) {
+      setMergeOpen(false);
+      setMergeBranch("");
+    }
+  };
+
   const confirmStashSave = async () => {
     const ok = await stashSave(projectPath, stashMsg.trim());
     if (ok) {
@@ -96,6 +118,11 @@ export function GitActionsMenu({ projectPath, onOpenBranchSelector }: GitActions
       setStashMsg("");
     }
   };
+
+  const currentBranch = status?.branch && status.branch !== "HEAD" ? status.branch : null;
+  const mergeCandidates = branches
+    .filter((b) => !b.isRemote && b.name !== currentBranch)
+    .map((b) => b.name);
 
   const spinner = (op: string) => (isRunning(op) ? <Loader2 size={13} className="mr-2 animate-spin" /> : null);
 
@@ -114,14 +141,21 @@ export function GitActionsMenu({ projectPath, onOpenBranchSelector }: GitActions
           <DropdownMenuItem disabled={othersDisabled("推送")} onSelect={() => void gitPushOp(projectPath)}>
             {spinner("推送")}推送
           </DropdownMenuItem>
-          <DropdownMenuItem disabled={othersDisabled("获取")} onSelect={() => void gitFetchOp(projectPath)}>
-            {spinner("获取")}获取
+          <DropdownMenuItem disabled={othersDisabled("同步")} onSelect={() => void gitFetchOp(projectPath)}>
+            {spinner("同步")}同步
           </DropdownMenuItem>
           <DropdownMenuItem
             disabled={othersDisabled("克隆")}
             onSelect={() => setCloneOpen(true)}
           >
             {spinner("克隆")}克隆…
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={othersDisabled("合并")}
+            data-testid="merge-item"
+            onSelect={openMergeDialog}
+          >
+            {spinner("合并")}合并…
           </DropdownMenuItem>
           <DropdownMenuItem disabled={busy} onSelect={onOpenBranchSelector}>
             检出远端分支…
@@ -222,6 +256,52 @@ export function GitActionsMenu({ projectPath, onOpenBranchSelector }: GitActions
             <Button disabled={!cloneUrl.trim() || !cloneDest || busy} onClick={() => void confirmClone()}>
               {isRunning("克隆") && <Loader2 size={13} className="mr-2 animate-spin" />}
               克隆
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 合并对话框：选择要并入当前分支的本地分支 */}
+      <Dialog open={mergeOpen} onOpenChange={setMergeOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>合并分支</DialogTitle>
+            <DialogDescription>
+              将所选分支合并到当前分支
+              {currentBranch ? `「${currentBranch}」` : ""}。
+            </DialogDescription>
+          </DialogHeader>
+          {mergeCandidates.length === 0 ? (
+            <p className="text-xs text-[var(--text-tertiary)]">没有可合并的本地分支</p>
+          ) : (
+            <div className="max-h-56 space-y-0.5 overflow-y-auto">
+              {mergeCandidates.map((name) => (
+                <button
+                  key={name}
+                  type="button"
+                  data-testid={`merge-candidate-${name}`}
+                  className={`flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm transition-colors hover:bg-[var(--overlay-hover)] ${
+                    mergeBranch === name
+                      ? "bg-[var(--overlay-active)] text-[var(--text-primary)]"
+                      : "text-[var(--text-secondary)]"
+                  }`}
+                  onClick={() => setMergeBranch(name)}
+                >
+                  <span className="inline-flex w-3 justify-center">
+                    {mergeBranch === name ? <Check size={12} /> : null}
+                  </span>
+                  <span className="truncate">{name}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMergeOpen(false)}>
+              取消
+            </Button>
+            <Button disabled={!mergeBranch.trim() || busy} onClick={() => void confirmMerge()}>
+              {isRunning("合并") && <Loader2 size={13} className="mr-2 animate-spin" />}
+              合并
             </Button>
           </DialogFooter>
         </DialogContent>

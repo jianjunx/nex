@@ -155,7 +155,7 @@ export function BranchSelector({ projectPath, open, onOpenChange }: BranchSelect
                 </div>
               ))}
               <div className="px-2 py-1 text-xs text-[var(--text-tertiary)]">
-                签出远程分支将进入分离 HEAD 状态
+                将创建本地同名分支并跟踪远程（已存在则直接签出）
               </div>
             </>
           )}

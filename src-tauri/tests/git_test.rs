@@ -365,7 +365,56 @@ fn set_ident(repo: &Repository) {
 }
 
 #[test]
-fn push_pull_round_trip_over_local_bare_remote() {
+fn checkout_remote_creates_local_tracking_branch() {
+    // Seed → bare remote → clone; create a remote-only branch, then check it
+    // out in the clone: should create local `feature` tracking `origin/feature`
+    // (not detached HEAD).
+    let seed = tempdir().unwrap();
+    init_repo(seed.path());
+    commit_file(seed.path(), "a.txt", "v1", "init");
+    let main = head_name(seed.path());
+    repository::create_branch(seed.path(), "feature").unwrap();
+    repository::checkout_branch(seed.path(), "feature").unwrap();
+    commit_file(seed.path(), "a.txt", "on-feature", "feature tip");
+    repository::checkout_branch(seed.path(), &main).unwrap();
+
+    let bare = tempdir().unwrap();
+    Repository::init_bare(bare.path()).unwrap();
+    {
+        let repo = Repository::open(seed.path()).unwrap();
+        repo.remote("origin", &file_url(bare.path())).unwrap();
+    }
+    network::push_remote(seed.path(), "origin", &main).unwrap();
+    network::push_remote(seed.path(), "origin", "feature").unwrap();
+
+    let work = tempdir().unwrap();
+    let work_path = work.path().join("clone");
+    network::clone_repo(&file_url(bare.path()), &work_path).unwrap();
+    // Clone may only have default branch locally; fetch remotes then check out
+    // the remote-tracking name.
+    network::fetch_remote(&work_path, "origin").unwrap();
+    repository::checkout_branch(&work_path, "origin/feature").unwrap();
+    assert_eq!(head_name(&work_path), "feature");
+    let repo = Repository::open(&work_path).unwrap();
+    assert!(!repo.head_detached().unwrap());
+    let local = repo.find_branch("feature", git2::BranchType::Local).unwrap();
+    let upstream = local.upstream().unwrap();
+    assert_eq!(upstream.name().unwrap().unwrap(), "origin/feature");
+}
+
+#[test]
+fn merge_branch_fast_forwards_current() {
+    let dir = tempdir().unwrap();
+    init_repo(dir.path());
+    commit_file(dir.path(), "a.txt", "v1", "init");
+    let main = head_name(dir.path());
+    repository::create_branch(dir.path(), "feature").unwrap();
+    repository::checkout_branch(dir.path(), "feature").unwrap();
+    commit_file(dir.path(), "a.txt", "v2", "on feature");
+    repository::checkout_branch(dir.path(), &main).unwrap();
+    network::merge_branch(dir.path(), "feature").unwrap();
+    assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "v2");
+}
     // Seed repo with one commit and a bare "remote". 网络操作委派系统 git
     // 子进程（与生产一致），file:// 远端无需凭据。
     let seed = tempdir().unwrap();

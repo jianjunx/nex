@@ -6,6 +6,7 @@ import { DiffView } from "../../editor/DiffView";
 import { languageExtensionsForPath } from "../../editor/language";
 import { useSettingsStore } from "../../../stores/settings.store";
 import type { DiffPayload } from "../../../stores/fs.store";
+import { openPathToken } from "./pathToken";
 
 const threadDiffLayout = EditorView.theme({
   "&": {
@@ -131,9 +132,14 @@ export function ThreadDiffBlock({
   return (
     <div className="rounded bg-[var(--glass-2-surface)] overflow-hidden">
       {path ? (
-        <div className="px-2 py-1 text-[10px] font-mono text-[var(--text-tertiary)] truncate border-b border-[color:var(--border-subtle)]">
+        <button
+          type="button"
+          title="在编辑器中打开"
+          className="block w-full truncate px-2 py-1 text-left text-[10px] font-mono text-[var(--accent)] underline decoration-[color:var(--accent)]/30 underline-offset-2 hover:decoration-[color:var(--accent)] border-b border-[color:var(--border-subtle)]"
+          onClick={() => void openPathToken(path)}
+        >
           {path}
-        </div>
+        </button>
       ) : null}
       <div ref={slotRef}>
         {ready ? (

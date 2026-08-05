@@ -149,9 +149,12 @@ async fn capture_project_env_windows(cwd: &Path) -> HashMap<String, String> {
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::null());
+    crate::win_process::no_window(&mut cmd);
 
     let output = match tokio::time::timeout(PROJECT_ENV_TIMEOUT, async {
-        tokio::process::Command::from(cmd).output().await
+        let mut tcmd = tokio::process::Command::from(cmd);
+        crate::win_process::no_window_tokio(&mut tcmd);
+        tcmd.output().await
     })
     .await
     {

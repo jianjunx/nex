@@ -212,16 +212,9 @@ export const useConversationStore = create<ConversationStore>()(
         const projectId = useProjectStore.getState().activeProjectId;
         if (!projectId) return;
         set((s) => {
+          // 只切换激活态，不立刻重排页签顺序；恢复会话（restoreTabs）时
+          // 再把最近活动的页签排到最前，避免点击时页签跳动。
           s.activeTabByProject[projectId] = id;
-          // 活跃页签靠前：切到哪个页签，哪个就移到最前。
-          const tabs = s.tabsByProject[projectId];
-          if (tabs) {
-            const idx = tabs.indexOf(id);
-            if (idx > 0) {
-              tabs.splice(idx, 1);
-              tabs.unshift(id);
-            }
-          }
         });
       },
 
@@ -351,12 +344,20 @@ export const useConversationStore = create<ConversationStore>()(
 
       restoreTabs: (projectId, candidateTabs, candidateActiveId, validIds) => {
         set((s) => {
-          const valid = candidateTabs.filter((id) => validIds.has(id));
-          s.tabsByProject[projectId] = valid;
-          s.activeTabByProject[projectId] =
+          let valid = candidateTabs.filter((id) => validIds.has(id));
+          const active =
             candidateActiveId && valid.includes(candidateActiveId)
               ? candidateActiveId
               : (valid[valid.length - 1] ?? null);
+          // 恢复时把最近活动的页签排到最前（点击切换时不立刻重排）。
+          if (active) {
+            const idx = valid.indexOf(active);
+            if (idx > 0) {
+              valid = [active, ...valid.filter((id) => id !== active)];
+            }
+          }
+          s.tabsByProject[projectId] = valid;
+          s.activeTabByProject[projectId] = active;
         });
       },
 

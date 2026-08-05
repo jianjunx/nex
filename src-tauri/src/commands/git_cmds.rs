@@ -58,8 +58,19 @@ pub async fn git_list_branches(project_path: String) -> Result<Vec<BranchInfo>, 
 }
 
 #[tauri::command]
-pub fn git_checkout(project_path: String, name: String) -> Result<(), NexError> {
-    repository::checkout_branch(Path::new(&project_path), &name)
+pub async fn git_checkout(project_path: String, name: String) -> Result<(), NexError> {
+    // 远程分支签出会先 fetch，可能较慢；放 spawn_blocking + 超时，避免堵死 UI 线程。
+    let path = PathBuf::from(project_path);
+    match tokio::time::timeout(
+        GIT_NETWORK_CMD_TIMEOUT,
+        tokio::task::spawn_blocking(move || repository::checkout_branch(&path, &name)),
+    )
+    .await
+    {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => Err(NexError::Internal(format!("task join failed: {e}"))),
+        Err(_) => Err(NexError::Git("git checkout 超时".into())),
+    }
 }
 
 #[tauri::command]
@@ -184,5 +195,20 @@ pub async fn git_clone(url: String, dest: String) -> Result<(), NexError> {
         Ok(Ok(r)) => r,
         Ok(Err(e)) => Err(NexError::Internal(format!("task join failed: {e}"))),
         Err(_) => Err(NexError::Git("git clone 超时".into())),
+    }
+}
+
+#[tauri::command]
+pub async fn git_merge(project_path: String, branch: String) -> Result<(), NexError> {
+    let path = PathBuf::from(project_path);
+    match tokio::time::timeout(
+        GIT_NETWORK_CMD_TIMEOUT,
+        tokio::task::spawn_blocking(move || network::merge_branch(&path, &branch)),
+    )
+    .await
+    {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => Err(NexError::Internal(format!("task join failed: {e}"))),
+        Err(_) => Err(NexError::Git("git merge 超时".into())),
     }
 }

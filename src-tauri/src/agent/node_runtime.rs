@@ -946,11 +946,13 @@ pub fn resolve_npm_cli(install_root: &Path) -> Result<PathBuf, NexError> {
 /// Spawn `<node_binary> --version` and parse the output as a `semver::Version`.
 /// Tolerates the leading `v` (`v24.11.0`) and strips surrounding whitespace.
 async fn read_node_version(node_binary: &Path) -> Result<Version, NexError> {
-    let output = tokio::process::Command::new(node_binary)
-        .arg("--version")
+    let mut cmd = tokio::process::Command::new(node_binary);
+    cmd.arg("--version")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    crate::win_process::no_window_tokio(&mut cmd);
+    let output = cmd
         .output()
         .await
         .map_err(|e| NexError::AgentNotInstalled {
@@ -1166,6 +1168,7 @@ async fn run_npm_subcommand_with(
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
+    crate::win_process::no_window_tokio(&mut cmd);
 
     let output = cmd.output().await.map_err(|e| NexError::Agent(format!(
         "failed to spawn npm (via {}): {e}",

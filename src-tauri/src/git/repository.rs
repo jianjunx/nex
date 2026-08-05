@@ -304,6 +304,78 @@ pub fn list_branches(repo_path: &Path) -> Result<Vec<BranchInfo>, NexError> {
 
 pub fn checkout_branch(repo_path: &Path, name: &str) -> Result<(), NexError> {
     let repo = Repository::open(repo_path)?;
+
+    // 远程跟踪分支（如 origin/feature）：同步为本地同名分支并签出，
+    // 而不是进入分离 HEAD（旧行为）。本地已存在则直接签出本地分支。
+    if repo.find_branch(name, git2::BranchType::Remote).is_ok() {
+        return checkout_remote_as_local(repo_path, name);
+    }
+
+    checkout_local_ref(&repo, name)
+}
+
+/// 从 `origin/foo/bar` 解析本地名 `foo/bar`（按已配置 remote 前缀剥离）。
+fn local_name_from_remote_branch(repo: &Repository, remote_branch: &str) -> Result<String, NexError> {
+    let remotes = repo.remotes().map_err(|e| NexError::Git(e.message().to_string()))?;
+    let mut names: Vec<&str> = remotes.iter().flatten().collect();
+    // 较长 remote 名优先，避免误剥前缀。
+    names.sort_by_key(|n| std::cmp::Reverse(n.len()));
+    for remote in names {
+        let prefix = format!("{remote}/");
+        if let Some(rest) = remote_branch.strip_prefix(&prefix) {
+            if !rest.is_empty() {
+                return Ok(rest.to_string());
+            }
+        }
+    }
+    remote_branch
+        .split_once('/')
+        .map(|(_, rest)| rest.to_string())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| NexError::Git(format!("无法解析远程分支名: {remote_branch}")))
+}
+
+/// 远程分支 → 本地跟踪分支并签出。先尽量 fetch 该 remote，再创建/签出。
+fn checkout_remote_as_local(repo_path: &Path, remote_branch: &str) -> Result<(), NexError> {
+    let remote_name = remote_branch
+        .split_once('/')
+        .map(|(r, _)| r)
+        .unwrap_or("origin");
+    // 尽力同步远端 tip；离线时仍可用已有 remote-tracking ref。
+    let fetch_result = super::network::fetch_remote(repo_path, remote_name);
+
+    let repo = Repository::open(repo_path)?;
+    let local_name = local_name_from_remote_branch(&repo, remote_branch)?;
+
+    if repo.find_branch(&local_name, git2::BranchType::Local).is_ok() {
+        let _ = fetch_result; // 已存在本地分支：fetch 成败都不挡签出
+        return checkout_local_ref(&repo, &local_name);
+    }
+
+    let remote = match repo.find_branch(remote_branch, git2::BranchType::Remote) {
+        Ok(b) => b,
+        Err(e) => {
+            return Err(fetch_result.err().unwrap_or_else(|| {
+                NexError::Git(format!("远程分支不存在: {remote_branch} ({e})"))
+            }));
+        }
+    };
+    let commit = remote
+        .get()
+        .peel_to_commit()
+        .map_err(|e| NexError::Git(e.message().to_string()))?;
+    let mut local = repo
+        .branch(&local_name, &commit, false)
+        .map_err(|e| NexError::Git(e.message().to_string()))?;
+    // upstream 名形如 "origin/foo"
+    local
+        .set_upstream(Some(remote_branch))
+        .map_err(|e| NexError::Git(format!("设置上游分支失败: {e}")))?;
+
+    checkout_local_ref(&repo, &local_name)
+}
+
+fn checkout_local_ref(repo: &Repository, name: &str) -> Result<(), NexError> {
     let (object, reference) = repo
         .revparse_ext(name)
         .map_err(|e| NexError::Git(format!("branch not found: {name} ({e})")))?;

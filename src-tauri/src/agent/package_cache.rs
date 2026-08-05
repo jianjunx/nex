@@ -32,18 +32,31 @@ use crate::error::NexError;
 /// 120s gives headroom for slow networks without hanging the GUI.
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// Platform null device for npm `--userconfig`/`--globalconfig`: `/dev/null`
-/// does not exist on Windows and npm errors out with ENOENT there.
-#[cfg(windows)]
-const NULL_DEVICE: &str = "NUL";
-#[cfg(not(windows))]
-const NULL_DEVICE: &str = "/dev/null";
-
 /// Keep this many recent spec versions per agent id when sweeping old
 /// caches. The newest is always the live install; older ones are kept just
 /// in case a downgrade is requested. Three strikes a balance between disk
 /// footprint and rollback flexibility.
 const KEEP_RECENT_VERSIONS: usize = 3;
+
+/// Write a pair of empty npmrc files used as `--userconfig` / `--globalconfig`.
+///
+/// Isolates the install from the host's stray `.npmrc`. The two paths **must**
+/// be distinct: modern npm (`@npmcli/config`) refuses to load the same file
+/// as both user and global ("double-loading config"). Null devices are not
+/// used — on Windows relative `NUL` resolves under cwd to
+/// `<install_dir>\NUL`, and pointing both flags at that path trips the
+/// double-load check; `/dev/null` also fails with ENOENT on Windows.
+fn write_empty_npmrc_pair(dir: &Path) -> Result<(PathBuf, PathBuf), NexError> {
+    let user_rc = dir.join(".nex-npmrc-user");
+    let global_rc = dir.join(".nex-npmrc-global");
+    std::fs::write(&user_rc, "").map_err(|e| {
+        NexError::Agent(format!("failed to write empty user npmrc: {e}"))
+    })?;
+    std::fs::write(&global_rc, "").map_err(|e| {
+        NexError::Agent(format!("failed to write empty global npmrc: {e}"))
+    })?;
+    Ok((user_rc, global_rc))
+}
 
 /// A fully-resolved `npx` distribution: the absolute node path to use as
 /// the process, and the absolute path to the package's bin script.
@@ -146,8 +159,7 @@ impl PackageCache {
         // npm install flags:
         //   --prefix <install_dir>           install target = cache
         //   --cache  <app_data_dir>/npm-cache
-        //   --userconfig /dev/null          shield from user's stray .npmrc
-        //   --globalconfig /dev/null
+        //   --userconfig / --globalconfig    empty files (see write_empty_npmrc_pair)
         //   --save-exact                    lock the version
         //   --no-audit --no-fund            skip network probes
         //   [--ignore-scripts]              gated by options
@@ -160,6 +172,8 @@ impl PackageCache {
             .ok_or_else(|| NexError::Agent("could not derive npm cache dir".into()))?
             .join("npm-cache");
 
+        let (user_rc, global_rc) = write_empty_npmrc_pair(install_dir)?;
+
         let mut npm_args: Vec<String> = vec![
             "install".to_string(),
             "--prefix".to_string(),
@@ -167,9 +181,9 @@ impl PackageCache {
             "--cache".to_string(),
             cache_dir.to_string_lossy().into_owned(),
             "--userconfig".to_string(),
-            NULL_DEVICE.to_string(),
+            user_rc.to_string_lossy().into_owned(),
             "--globalconfig".to_string(),
-            NULL_DEVICE.to_string(),
+            global_rc.to_string_lossy().into_owned(),
             "--save-exact".to_string(),
             "--no-audit".to_string(),
             "--no-fund".to_string(),
@@ -181,7 +195,6 @@ impl PackageCache {
 
         let sub_args: Vec<&str> = npm_args.iter().map(String::as_str).collect();
 
-        // `node <npm-cli.js> <sub_args...>` — no PATH lookup, no shim.
         let mut cmd = tokio::process::Command::new(node_binary);
         cmd.arg(&npm_cli).args(&sub_args);
         cmd.envs(&runtime.npm_command_env());
@@ -189,6 +202,7 @@ impl PackageCache {
         cmd.stdin(std::process::Stdio::null());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
+        crate::win_process::no_window_tokio(&mut cmd);
         // On INSTALL_TIMEOUT the output() future is dropped; without
         // kill_on_drop the npm/node process would keep running forever.
         cmd.kill_on_drop(true);
@@ -671,6 +685,22 @@ mod tests {
             package_name_from_spec("@scope/name@2.0.0-rc.3+build.42"),
             "@scope/name"
         );
+    }
+
+    // ---- write_empty_npmrc_pair --------------------------------------
+
+    #[test]
+    fn write_empty_npmrc_pair_creates_distinct_empty_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let (user_rc, global_rc) = write_empty_npmrc_pair(dir.path()).unwrap();
+        assert_ne!(user_rc, global_rc);
+        assert!(user_rc.is_file());
+        assert!(global_rc.is_file());
+        assert_eq!(std::fs::read_to_string(&user_rc).unwrap(), "");
+        assert_eq!(std::fs::read_to_string(&global_rc).unwrap(), "");
+        // Absolute-ish: parent is the install dir (not a bare "NUL" relative name).
+        assert_eq!(user_rc.parent(), Some(dir.path()));
+        assert_eq!(global_rc.parent(), Some(dir.path()));
     }
 
     // ---- read_package_executable_path --------------------------------

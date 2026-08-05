@@ -8,6 +8,16 @@ import { isEditTool } from "./toolCallUtils";
 import { ThreadDiffBlock } from "./ThreadDiffBlock";
 import { useToolCardExpansionStore } from "./toolCardExpansion";
 import { useAgentStore } from "../../../stores/agent.store";
+import { fileBasename } from "../../editor/pathUtils";
+import { looksLikeFilePath, openPathToken, pathFromToolRawInput } from "./pathToken";
+
+/** Prefer diff path, then rawInput, then a path-like title. */
+function toolEntryFilePath(entry: ToolCallEntry): string | null {
+  for (const c of entry.content) {
+    if (c.type === "diff" && c.path) return c.path;
+  }
+  return pathFromToolRawInput(entry.rawInput) ?? (looksLikeFilePath(entry.title) ? entry.title : null);
+}
 
 export function ToolCallCard({
   entry,
@@ -24,6 +34,8 @@ export function ToolCallCard({
   const respondPermission = useAgentStore((s) => s.respondPermission);
   const Icon = isEdit ? Pencil : Wrench;
   const rawInputText = formatToolRawInput(entry.rawInput);
+  const filePath = toolEntryFilePath(entry);
+  const titleIsPath = !!filePath && looksLikeFilePath(entry.title);
 
   // Permission prompts must surface even if the card started collapsed.
   useEffect(() => {
@@ -32,16 +44,28 @@ export function ToolCallCard({
 
   return (
     <div className="rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--glass-3-surface)] overflow-hidden">
-      <button
-        type="button"
-        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-sm text-left hover:bg-[var(--glass-2-surface)]"
-        onClick={() => setExpanded(entry.toolCallId, !open)}
-      >
-        <Icon size={14} className="text-[var(--text-tertiary)] shrink-0" />
-        <span className="font-mono text-xs text-[var(--text-tertiary)] shrink-0">{entry.toolKind}</span>
-        <span className="truncate flex-1">{entry.title}</span>
-        <StatusIcon status={entry.status} />
-      </button>
+      <div className="flex items-center gap-2 px-2.5 py-1.5 text-sm hover:bg-[var(--glass-2-surface)]">
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+          onClick={() => setExpanded(entry.toolCallId, !open)}
+        >
+          <Icon size={14} className="text-[var(--text-tertiary)] shrink-0" />
+          <span className="font-mono text-xs text-[var(--text-tertiary)] shrink-0">{entry.toolKind}</span>
+          {!titleIsPath && <span className="truncate flex-1">{entry.title}</span>}
+          <StatusIcon status={entry.status} />
+        </button>
+        {filePath && (
+          <button
+            type="button"
+            title="在编辑器中打开"
+            className="max-w-[60%] shrink truncate font-mono text-xs text-[var(--accent)] underline decoration-[color:var(--accent)]/30 underline-offset-2 hover:decoration-[color:var(--accent)]"
+            onClick={() => void openPathToken(filePath)}
+          >
+            {titleIsPath ? entry.title : fileBasename(filePath)}
+          </button>
+        )}
+      </div>
 
       {(open || waiting) && (
         <div

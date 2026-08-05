@@ -9,6 +9,7 @@ pub mod git;
 mod state;
 pub mod terminal;
 mod watcher;
+mod win_process;
 
 use agent::AgentSessionManager;
 use db::Database;
@@ -74,6 +75,7 @@ pub fn run() {
             commands::git_cmds::git_pull,
             commands::git_cmds::git_push,
             commands::git_cmds::git_clone,
+            commands::git_cmds::git_merge,
             commands::terminal_cmds::terminal_create,
             commands::terminal_cmds::terminal_write,
             commands::terminal_cmds::terminal_resize,

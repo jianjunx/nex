@@ -30,6 +30,8 @@ fn run_git_output(repo: Option<&Path>, args: &[&str]) -> Result<Output, NexError
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // GUI 应用里 git.exe（控制台子系统）默认会弹黑框；拉取/获取时尤其明显。
+    crate::win_process::no_window(&mut cmd);
     let mut child = cmd.spawn().map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             NexError::Git("未找到 git 命令：请安装 Git 并确保其加入 PATH".to_string())
@@ -115,11 +117,29 @@ pub fn fetch_remote(repo_path: &Path, remote: &str) -> Result<(), NexError> {
     run_git(Some(repo_path), &["fetch", remote]).map(|_| ())
 }
 
-/// `git pull <remote>`：fetch 后合并远端 HEAD 到当前分支（与旧实现
-/// FETCH_HEAD 合并语义一致）；非快进冲突由 git 自身报错上抛。
+/// `git pull <remote> <current-branch>`。
+///
+/// 只传 `git pull <remote>` 时，未配置 upstream 的仓库会报
+/// "did not specify a branch" / "no tracking information"——这是面板拉取
+/// 失败的常见原因。显式带上当前分支名后行为与 VS Code 一致。
 pub fn pull_remote(repo_path: &Path, remote: &str) -> Result<(), NexError> {
     validate_git_arg("远端名", remote)?;
-    run_git(Some(repo_path), &["pull", remote]).map(|_| ())
+    let branch = run_git(Some(repo_path), &["branch", "--show-current"])?
+        .trim()
+        .to_string();
+    if branch.is_empty() {
+        return Err(NexError::Git(
+            "当前处于分离 HEAD，无法拉取。请先签出到本地分支。".into(),
+        ));
+    }
+    validate_git_arg("分支名", &branch)?;
+    run_git(Some(repo_path), &["pull", remote, &branch]).map(|_| ())
+}
+
+/// `git merge --no-edit <branch>`：把指定分支合并进当前 HEAD。
+pub fn merge_branch(repo_path: &Path, branch: &str) -> Result<(), NexError> {
+    validate_git_arg("分支名", branch)?;
+    run_git(Some(repo_path), &["merge", "--no-edit", branch]).map(|_| ())
 }
 
 /// `git push <remote> <branch>`；非快进拒绝映射为既有中文文案

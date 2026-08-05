@@ -5,7 +5,7 @@ import {
   gitListBranches, gitCheckout, gitCreateBranch, gitDeleteBranch,
   gitDiscard, gitRevertStaged,
   gitStashSave, gitStashList, gitStashApply, gitStashPop, gitStashDrop,
-  gitFetch, gitPull, gitPush, gitClone,
+  gitFetch, gitPull, gitPush, gitClone, gitMerge,
   gitDiffContents, gitCommitPatch,
   type GitStatus, type BranchInfo, type CommitInfo, type StashEntry,
 } from "../bridge/tauri";
@@ -51,6 +51,7 @@ interface GitStore {
   pull: (projectPath: string, remote?: string) => Promise<boolean>;
   push: (projectPath: string, remote?: string) => Promise<boolean>;
   clone: (url: string, dest: string) => Promise<boolean>;
+  merge: (projectPath: string, branch: string) => Promise<boolean>;
   loadStashes: (projectPath: string) => Promise<void>;
   stashSave: (projectPath: string, message?: string) => Promise<boolean>;
   stashApply: (projectPath: string, id: string) => Promise<boolean>;
@@ -232,13 +233,24 @@ export const useGitStore = create<GitStore>()(
       },
 
       fetch: async (projectPath, remote = "origin") => {
-        await runOp("获取", () => gitFetch(projectPath, remote));
+        const ok = await runOp("同步", () => gitFetch(projectPath, remote));
         await get().refresh(projectPath);
+        if (ok) {
+          await get().loadBranches(projectPath);
+          await get().loadHistory(projectPath);
+        }
       },
 
       pull: async (projectPath, remote = "origin") => {
         const ok = await runOp("拉取", () => gitPull(projectPath, remote));
-        if (ok) await get().refresh(projectPath);
+        if (ok) {
+          await get().refresh(projectPath);
+          await get().loadBranches(projectPath);
+          await get().loadHistory(projectPath);
+        } else {
+          // 失败时自动展开操作日志，便于看到完整 stderr
+          set((s) => { s.opLogOpen = true; });
+        }
         return ok;
       },
 
@@ -250,11 +262,22 @@ export const useGitStore = create<GitStore>()(
         }
         const ok = await runOp("推送", () => gitPush(projectPath, remote, branch));
         if (ok) await get().refresh(projectPath);
+        else set((s) => { s.opLogOpen = true; });
         return ok;
       },
 
       clone: (url, dest) => runOp("克隆", () => gitClone(url, dest)),
 
+      merge: async (projectPath, branch) => {
+        const ok = await runOp("合并", () => gitMerge(projectPath, branch));
+        if (ok) {
+          await get().refresh(projectPath);
+          await get().loadHistory(projectPath);
+        } else {
+          set((s) => { s.opLogOpen = true; });
+        }
+        return ok;
+      },
       loadStashes: async (projectPath) => {
         set((s) => { s.stashesLoading = true; });
         try {

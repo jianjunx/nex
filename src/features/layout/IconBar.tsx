@@ -44,7 +44,7 @@ export function IconBar() {
             {badge > 0 && (
               <span
                 data-git-badge
-                className="absolute right-0 top-0 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-[var(--accent)] px-0.5 text-[9px] font-semibold leading-none text-white"
+                className="absolute -right-0.5 -bottom-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-[var(--accent)] px-0.5 text-[9px] font-semibold leading-none text-white"
               >
                 {badge > 99 ? "99+" : badge}
               </span>

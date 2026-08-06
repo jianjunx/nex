@@ -1,7 +1,7 @@
-use crate::agent::{CreateSessionResult, CustomServer, PromptBlock, ServerDescriptor, SessionTarget};
+use crate::agent::{CreateSessionResult, CustomServer, NativeAgentConfig, PromptBlock, ServerDescriptor, SessionTarget};
 use crate::error::NexError;
 use crate::state::AppState;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 /// The New-Conversation agent list (whitelisted registry agents only).
 #[tauri::command]
@@ -99,4 +99,22 @@ pub fn agent_custom_upsert(state: State<AppState>, server: CustomServer) -> Resu
 #[tauri::command]
 pub fn agent_custom_delete(state: State<AppState>, id: String) -> Result<(), NexError> {
     state.agent_manager.custom_delete(&id)
+}
+
+fn app_data_dir(app: &AppHandle) -> Result<std::path::PathBuf, NexError> {
+    app.path()
+        .app_data_dir()
+        .map_err(|e| NexError::Internal(format!("failed to get app data dir: {e}")))
+}
+
+/// Reads the built-in native agent config (`nex-agent.json`; defaults when absent).
+#[tauri::command]
+pub fn native_agent_get_config(app: AppHandle) -> Result<NativeAgentConfig, NexError> {
+    Ok(NativeAgentConfig::load(&app_data_dir(&app)?))
+}
+
+/// Persists the built-in native agent config (`nex-agent.json`).
+#[tauri::command]
+pub fn native_agent_set_config(app: AppHandle, config: NativeAgentConfig) -> Result<(), NexError> {
+    config.save(&app_data_dir(&app)?)
 }

@@ -366,7 +366,9 @@ export function AgentComposer() {
     const target: SessionTarget =
       descriptor?.kind === "custom"
         ? { type: "custom", id: activeConversation.agent_type }
-        : { type: "registry", id: activeConversation.agent_type };
+        : descriptor?.kind === "native"
+          ? { type: "native" }
+          : { type: "registry", id: activeConversation.agent_type };
     try {
       return await createSession(activeTabId, target, project.path);
     } catch {

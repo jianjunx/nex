@@ -17,6 +17,7 @@ export type SettingsSection =
   | "editor"
   | "terminal"
   | "agents"
+  | "nex-agent"
   | "keybindings"
   | "layout"
   | "about";

@@ -111,7 +111,7 @@ export interface ServerDescriptor {
   installedVersion?: string;
   description: string;
   icon: string | null;
-  kind: "registry" | "custom";
+  kind: "registry" | "custom" | "native";
 }
 
 /** A user-defined ACP server (persisted on the Rust side). */
@@ -125,7 +125,23 @@ export interface CustomServer {
 /** Which agent to start a session against; serialized to Rust's `SessionTarget`. */
 export type SessionTarget =
   | { type: "registry"; id: string }
-  | { type: "custom"; id: string };
+  | { type: "custom"; id: string }
+  | { type: "native" };
+
+/** Config of the built-in native agent (`nex-agent.json`), camelCase DTO. */
+export interface NativeAgentConfig {
+  provider: {
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+    reasoning: string;
+  };
+  agent: {
+    maxSteps: number;
+    contextWindow: number;
+    bashTimeoutSecs: number;
+  };
+}
 
 export async function agentListServers(): Promise<ServerDescriptor[]> {
   return invoke(COMMANDS.AGENT_LIST_SERVERS);
@@ -233,6 +249,14 @@ export async function agentCustomUpsert(server: CustomServer): Promise<void> {
 
 export async function agentCustomDelete(id: string): Promise<void> {
   return invoke(COMMANDS.AGENT_CUSTOM_DELETE, { id });
+}
+
+export async function nativeAgentGetConfig(): Promise<NativeAgentConfig> {
+  return invoke(COMMANDS.NATIVE_AGENT_GET_CONFIG);
+}
+
+export async function nativeAgentSetConfig(config: NativeAgentConfig): Promise<void> {
+  return invoke(COMMANDS.NATIVE_AGENT_SET_CONFIG, { config });
 }
 
 // --- Git ---

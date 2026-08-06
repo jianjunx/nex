@@ -5,6 +5,7 @@ import { AppearanceSection } from "./sections/AppearanceSection";
 import { EditorSection } from "./sections/EditorSection";
 import { TerminalSection } from "./sections/TerminalSection";
 import { AgentsSection } from "./sections/AgentsSection";
+import { NexAgentSection } from "./sections/NexAgentSection";
 import { KeybindingsEditor } from "./KeybindingsEditor";
 import { LayoutSection } from "./sections/LayoutSection";
 import { AboutSection } from "./sections/AboutSection";
@@ -16,6 +17,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "editor", label: "编辑器" },
   { id: "terminal", label: "终端" },
   { id: "agents", label: "智能体" },
+  { id: "nex-agent", label: "Nex 智能体" },
   { id: "keybindings", label: "快捷键" },
   { id: "layout", label: "布局" },
   { id: "about", label: "关于" },
@@ -80,6 +82,7 @@ export function SettingsDialog() {
             {tab === "editor" && <EditorSection />}
             {tab === "terminal" && <TerminalSection />}
             {tab === "agents" && <AgentsSection />}
+            {tab === "nex-agent" && <NexAgentSection />}
             {tab === "keybindings" && <KeybindingsEditor />}
             {tab === "layout" && <LayoutSection />}
             {tab === "about" && <AboutSection />}

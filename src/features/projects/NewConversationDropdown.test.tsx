@@ -38,6 +38,10 @@ const SERVER_CUSTOM: ServerDescriptor = {
   id: "my-agent", name: "My Agent", version: "",
   description: "", icon: null, kind: "custom",
 };
+const SERVER_NEX: ServerDescriptor = {
+  id: "nex", name: "Nex Agent", version: "1.1.0",
+  description: "内置原生编码 agent（DeepSeek）", icon: null, kind: "native",
+};
 const CONV: Conversation = {
   id: "conv-1", project_id: "p1", title: "新对话", agent_type: "claude-code",
   status: "active", created_at: 0, updated_at: 0,
@@ -61,7 +65,7 @@ beforeEach(() => {
     activeProjectId: "p1",
   });
   useAgentStore.setState({
-    servers: [SERVER_CLAUDE, SERVER_CUSTOM],
+    servers: [SERVER_NEX, SERVER_CLAUDE, SERVER_CUSTOM],
     serversLoading: false,
     serversLoadedAt: Date.now(),
     error: null,
@@ -114,6 +118,20 @@ describe("NewConversationDropdown", () => {
     await waitFor(() =>
       expect(createSessionMock).toHaveBeenCalledWith(
         "conv-1", { type: "custom", id: "my-agent" }, "/tmp/demo"
+      )
+    );
+  });
+
+  it("native kind shows the built-in badge and maps to a native target", async () => {
+    openDropdown();
+    // 内置徽标 + 不显示版本号
+    expect(screen.getByText("内置")).toBeTruthy();
+    const row = screen.getByText("Nex Agent").closest('[role="menuitem"]')!;
+    expect(row.textContent).not.toContain("v1.1.0");
+    fireEvent.click(screen.getByText("Nex Agent"));
+    await waitFor(() =>
+      expect(createSessionMock).toHaveBeenCalledWith(
+        "conv-1", { type: "native" }, "/tmp/demo"
       )
     );
   });

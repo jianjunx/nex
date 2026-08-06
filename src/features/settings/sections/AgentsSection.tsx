@@ -88,9 +88,11 @@ export function AgentsSection() {
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
                 <span className="font-medium text-sm">{s.name}</span>
-                {s.version && <span className="text-xs text-[var(--text-tertiary)]">v{s.version}</span>}
+                {s.version && s.kind !== "native" && (
+                  <span className="text-xs text-[var(--text-tertiary)]">v{s.version}</span>
+                )}
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--overlay-ghost)] text-[var(--text-tertiary)]">
-                  {s.kind === "custom" ? "自定义" : "注册表"}
+                  {s.kind === "custom" ? "自定义" : s.kind === "native" ? "内置" : "注册表"}
                 </span>
               </div>
               {s.description && (

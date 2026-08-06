@@ -26,6 +26,8 @@ export const COMMANDS = {
   AGENT_CLOSE_SESSION: "agent_close_session",
   AGENT_CUSTOM_UPSERT: "agent_custom_upsert",
   AGENT_CUSTOM_DELETE: "agent_custom_delete",
+  NATIVE_AGENT_GET_CONFIG: "native_agent_get_config",
+  NATIVE_AGENT_SET_CONFIG: "native_agent_set_config",
   // Git
   GIT_STATUS: "git_status",
   GIT_DIFF: "git_diff",

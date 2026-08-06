@@ -131,7 +131,9 @@ export function NewConversationDropdown({ triggerSize }: Props) {
       const target: SessionTarget =
         selected.kind === "custom"
           ? { type: "custom", id: selected.id }
-          : { type: "registry", id: selected.id };
+          : selected.kind === "native"
+            ? { type: "native" }
+            : { type: "registry", id: selected.id };
       setCreatingId(null);
       closeNewConversation();
       void createSession(conv.id, target, project.path).catch((err) => {
@@ -221,11 +223,11 @@ export function NewConversationDropdown({ triggerSize }: Props) {
             >
               <div className="flex w-full items-center gap-2">
                 <span className="font-medium text-sm">{s.name}</span>
-                {s.version && (
+                {s.version && s.kind !== "native" && (
                   <span className="text-xs text-[var(--text-tertiary)]">v{s.version}</span>
                 )}
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--overlay-ghost)] text-[var(--text-tertiary)]">
-                  {s.kind === "custom" ? "自定义" : "注册表"}
+                  {s.kind === "custom" ? "自定义" : s.kind === "native" ? "内置" : "注册表"}
                 </span>
                 {isUpdateAvailable(s) && (
                   <span

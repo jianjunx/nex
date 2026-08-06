@@ -17,6 +17,7 @@ use tokio::sync::oneshot;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 use super::launch::{spawn_agent, LaunchSpec};
+use super::native::NexNativeAgent;
 use super::types::{
     AgentNotification, AgentPermissionRequest, AgentSessionTerminated, CreateSessionResult,
     PermissionOption, PromptBlock, SessionConfigOptionDto, SessionConfigValueDto, SessionModeDto,
@@ -583,6 +584,75 @@ impl AcpSessionManager {
         })
     }
 
+    /// Starts the in-process native agent. Mirrors [`Self::create_session`] but
+    /// routes the session thread to `run_session_native` (duplex pipe + agent
+    /// side) instead of spawning an external child process.
+    pub async fn create_native_session(
+        &self,
+        app: &AppHandle,
+        conversation_id: &str,
+        cwd: &str,
+        config_path: std::path::PathBuf,
+    ) -> Result<CreateSessionResult, NexError> {
+        let session_key = uuid::Uuid::new_v4().to_string();
+        let (init_tx, init_rx) = oneshot::channel::<
+            Result<(acp::ClientSideConnection, acp::SessionId, Option<SessionModesDto>, Option<SessionModelsDto>, Option<Vec<SessionConfigOptionDto>>), NexError>,
+        >();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+
+        let thread_app = app.clone();
+        let thread_key = session_key.clone();
+        let thread_cwd = cwd.to_string();
+        let thread_sessions = Arc::clone(&self.sessions);
+        let thread_pending = Arc::clone(&self.pending_permissions);
+
+        std::thread::Builder::new()
+            .name(format!("agent-session-{session_key}"))
+            .spawn(move || {
+                let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+                    Ok(rt) => rt,
+                    Err(e) => {
+                        let _ = init_tx.send(Err(NexError::Agent(format!("failed to start session runtime: {e}"))));
+                        return;
+                    }
+                };
+                let local = tokio::task::LocalSet::new();
+                local.block_on(&runtime, async move {
+                    run_session_native(
+                        thread_app,
+                        thread_key,
+                        thread_cwd,
+                        config_path,
+                        thread_pending,
+                        thread_sessions,
+                        init_tx,
+                        shutdown_rx,
+                    )
+                    .await;
+                });
+            })
+            .map_err(|e| NexError::Agent(format!("failed to spawn session thread: {e}")))?;
+
+        let (conn, agent_session_id, modes, models, config_options) = init_rx
+            .await
+            .map_err(|_| NexError::Agent("session thread stopped during initialization".to_string()))??;
+
+        let handle = Arc::new(SessionHandle {
+            conn,
+            agent_session_id,
+            conversation_id: conversation_id.to_string(),
+            prompt_in_flight: AtomicBool::new(false),
+            _shutdown: shutdown_tx,
+        });
+        self.sessions.lock().unwrap().insert(session_key.clone(), handle);
+        Ok(CreateSessionResult {
+            session_id: session_key,
+            modes,
+            models,
+            config_options,
+        })
+    }
+
     pub async fn send_prompt(&self, session_id: &str, blocks: Vec<PromptBlock>) -> Result<(), NexError> {
         let handle = self.session(session_id)?;
         if handle
@@ -747,6 +817,18 @@ impl AcpSessionManager {
     }
 }
 
+/// Diagnostics + lifecycle context for the spawned transport behind a session.
+///
+/// External agents carry their child process here (so handshake failures can be
+/// enriched with stderr and the process can be killed). The in-process native
+/// agent has no child, so `child` is `None` and the kill helpers are no-ops.
+struct DiagCtx {
+    program: String,
+    args: Vec<String>,
+    child: Option<tokio::process::Child>,
+    stderr_tail: Arc<Mutex<VecDeque<String>>>,
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_session(
     app: AppHandle,
@@ -780,6 +862,115 @@ async fn run_session(
     let outgoing = child.stdin.take().expect("agent stdin not piped").compat_write();
     let incoming = child.stdout.take().expect("agent stdout not piped").compat();
 
+    let diag = DiagCtx {
+        program: program.clone(),
+        args: spec.args.clone(),
+        child: Some(child),
+        stderr_tail,
+    };
+
+    run_acp_session(
+        app,
+        session_key,
+        cwd,
+        outgoing,
+        incoming,
+        pending_permissions,
+        sessions,
+        init_tx,
+        shutdown_rx,
+        diag,
+    )
+    .await;
+}
+
+/// Starts the in-process native agent over an in-memory duplex pipe.
+///
+/// One end of the pipe is handed to `NexNativeAgent` (via `AgentSideConnection`),
+/// the other end flows into the shared `run_acp_session` pipeline so the client
+/// handshake / notification / permission / cancel plumbing is identical to an
+/// external agent — only the byte transport differs.
+#[allow(clippy::too_many_arguments)]
+async fn run_session_native(
+    app: AppHandle,
+    session_key: String,
+    cwd: String,
+    config_path: std::path::PathBuf,
+    pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
+    sessions: Arc<Mutex<HashMap<String, Arc<SessionHandle>>>>,
+    init_tx: oneshot::Sender<SessionInitResult>,
+    shutdown_rx: oneshot::Receiver<()>,
+) {
+    log::info!("starting in-process native Nex agent (cwd: {cwd})");
+
+    // Two bidirectional in-memory endpoints. `client_end` talks to the agent;
+    // `agent_end` is driven by the agent's connection.
+    let (client_end, agent_end) = tokio::io::duplex(64 * 1024);
+
+    let agent = NexNativeAgent::new(config_path);
+
+    // Split the agent endpoint into read/write halves and build the agent side.
+    let (agent_read, agent_write) = tokio::io::split(agent_end);
+    let (agent_conn, agent_io_task) = acp::AgentSideConnection::new(
+        agent.clone(),
+        agent_write.compat_write(),
+        agent_read.compat(),
+        |fut| {
+            tokio::task::spawn_local(fut);
+        },
+    );
+    agent.set_conn(Arc::new(agent_conn));
+    tokio::task::spawn_local(async move {
+        if let Err(e) = agent_io_task.await {
+            log::error!("native agent io failed: {e}");
+        }
+    });
+
+    // Split the client endpoint and run the shared ACP pipeline.
+    let (client_read, client_write) = tokio::io::split(client_end);
+    let diag = DiagCtx {
+        program: "nex".to_string(),
+        args: Vec::new(),
+        child: None,
+        stderr_tail: Arc::new(Mutex::new(VecDeque::new())),
+    };
+
+    run_acp_session(
+        app,
+        session_key,
+        cwd,
+        client_write.compat_write(),
+        client_read.compat(),
+        pending_permissions,
+        sessions,
+        init_tx,
+        shutdown_rx,
+        diag,
+    )
+    .await;
+}
+
+/// Transport-agnostic session pipeline: everything after the byte streams are
+/// ready. Builds the client connection, performs the ACP handshake, reports it
+/// through `init_tx`, then keeps the session alive until the IO task ends or a
+/// shutdown is requested. Used by both external (child process) and native
+/// (duplex pipe) transports.
+#[allow(clippy::too_many_arguments)]
+async fn run_acp_session<W, R>(
+    app: AppHandle,
+    session_key: String,
+    cwd: String,
+    outgoing: W,
+    incoming: R,
+    pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
+    sessions: Arc<Mutex<HashMap<String, Arc<SessionHandle>>>>,
+    init_tx: oneshot::Sender<SessionInitResult>,
+    shutdown_rx: oneshot::Receiver<()>,
+    mut diag: DiagCtx,
+) where
+    W: futures::io::AsyncWrite + Unpin + 'static,
+    R: futures::io::AsyncRead + Unpin + 'static,
+{
     let client = NexAcpClient {
         app: app.clone(),
         session_key: session_key.clone(),
@@ -865,12 +1056,16 @@ async fn run_session(
 
     let handshake: Result<SessionHandshakeInfo, NexError> = match handshake {
         Ok(Ok(v)) => Ok(v),
-        Ok(Err(e)) => Err(enrich(e, &mut child, &stderr_tail, &program, &spec.args)),
-        Err(_) => Err(NexError::Agent(format!(
-            "agent `{program}` did not complete the ACP handshake within {}s{}",
-            HANDSHAKE_TIMEOUT.as_secs(),
-            diag(&mut child, &stderr_tail, &program, &spec.args)
-        ))),
+        Ok(Err(e)) => Err(enrich(e, &mut diag)),
+        Err(_) => {
+            let details = diag_details(&mut diag);
+            Err(NexError::Agent(format!(
+                "agent `{}` did not complete the ACP handshake within {}s{}",
+                diag.program,
+                HANDSHAKE_TIMEOUT.as_secs(),
+                details
+            )))
+        }
     };
 
     match handshake {
@@ -879,13 +1074,13 @@ async fn run_session(
                 .send(Ok((conn, agent_session_id, modes, models, config_options)))
                 .is_err()
             {
-                let _ = child.kill().await;
+                kill_diag(&mut diag).await;
                 return;
             }
         }
         Err(e) => {
             let _ = init_tx.send(Err(e));
-            let _ = child.kill().await;
+            kill_diag(&mut diag).await;
             return;
         }
     }
@@ -895,7 +1090,7 @@ async fn run_session(
         _ = shutdown_rx => {},
     }
 
-    let _ = child.start_kill();
+    start_kill_diag(&mut diag);
     let mut map = pending_permissions.lock().unwrap();
     let keys: Vec<String> = map
         .iter()
@@ -924,14 +1119,15 @@ fn pick_auth_method(methods: &[acp::AuthMethod]) -> Option<&acp::AuthMethod> {
     methods.first()
 }
 
-fn diag(
-    child: &mut tokio::process::Child,
-    tail: &Mutex<VecDeque<String>>,
-    program: &str,
-    args: &[String],
-) -> String {
+/// Builds a human-readable diagnostic tail for handshake failures. External
+/// agents contribute the command line, process state and stderr; the native
+/// agent (no child) contributes nothing extra.
+fn diag_details(diag: &mut DiagCtx) -> String {
     let mut out = String::new();
-    out.push_str(&format!("\ncommand: {program} {}", args.join(" ")));
+    let Some(child) = diag.child.as_mut() else {
+        return out;
+    };
+    out.push_str(&format!("\ncommand: {} {}", diag.program, diag.args.join(" ")));
     match child.try_wait() {
         Ok(Some(status)) => out.push_str(&format!("\nagent process exited ({status})")),
         Ok(None) => out.push_str(
@@ -941,7 +1137,7 @@ fn diag(
         ),
         Err(e) => out.push_str(&format!("\nfailed to query agent process status: {e}")),
     }
-    let lines = tail.lock().unwrap();
+    let lines = diag.stderr_tail.lock().unwrap();
     if !lines.is_empty() {
         out.push_str("\nagent stderr:");
         for line in lines.iter() {
@@ -951,16 +1147,25 @@ fn diag(
     out
 }
 
-fn enrich(
-    e: NexError,
-    child: &mut tokio::process::Child,
-    tail: &Mutex<VecDeque<String>>,
-    program: &str,
-    args: &[String],
-) -> NexError {
+fn enrich(e: NexError, diag: &mut DiagCtx) -> NexError {
     match e {
-        NexError::Agent(msg) => NexError::Agent(format!("{msg}{}", diag(child, tail, program, args))),
+        NexError::Agent(msg) => NexError::Agent(format!("{msg}{}", diag_details(diag))),
         other => other,
+    }
+}
+
+/// Forcefully terminates the transport on handshake failure. A child process is
+/// killed; the native agent has nothing to stop here.
+async fn kill_diag(diag: &mut DiagCtx) {
+    if let Some(child) = diag.child.as_mut() {
+        let _ = child.kill().await;
+    }
+}
+
+/// Requests termination of the transport during normal teardown.
+fn start_kill_diag(diag: &mut DiagCtx) {
+    if let Some(child) = diag.child.as_mut() {
+        let _ = child.start_kill();
     }
 }
 

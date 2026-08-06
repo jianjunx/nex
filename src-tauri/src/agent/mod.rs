@@ -9,6 +9,7 @@
 pub mod acp_adapter;
 pub mod binary;
 pub mod launch;
+pub mod native;
 pub mod node_runtime;
 pub mod package_cache;
 pub mod project_env;
@@ -18,4 +19,5 @@ pub mod shell_env;
 pub mod types;
 
 pub use server::{AgentSessionManager, CustomServer, ServerDescriptor, ServerKind, SessionTarget};
+pub use native::config::NativeAgentConfig;
 pub use types::{CreateSessionResult, PromptBlock};

@@ -28,6 +28,7 @@ export const COMMANDS = {
   AGENT_CUSTOM_DELETE: "agent_custom_delete",
   NATIVE_AGENT_GET_CONFIG: "native_agent_get_config",
   NATIVE_AGENT_SET_CONFIG: "native_agent_set_config",
+  NATIVE_AGENT_LIST_MODELS: "native_agent_list_models",
   // Git
   GIT_STATUS: "git_status",
   GIT_DIFF: "git_diff",

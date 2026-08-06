@@ -211,12 +211,4 @@ describe("NewConversationDropdown", () => {
     fireEvent.click(refreshButtons[0]);
     expect(refreshRegistryMock).toHaveBeenCalled();
   });
-
-  it("'管理智能体…' targets the agents section and opens settings", () => {
-    openDropdown();
-    fireEvent.click(screen.getByText("管理智能体…"));
-    expect(useUiStore.getState().settingsSection).toBe("agents");
-    expect(useUiStore.getState().settingsOpen).toBe(true);
-    expect(useUiStore.getState().newConversationOpen).toBe(false);
-  });
 });

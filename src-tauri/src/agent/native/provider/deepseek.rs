@@ -8,6 +8,8 @@
 //! backoff before streaming begins.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use serde::Deserialize;
 
@@ -26,6 +28,9 @@ pub struct DeepSeekProvider {
     base_url: String,
     api_key: String,
     client: reqwest::Client,
+    /// Set when the endpoint rejected `reasoning_effort` and we stripped it.
+    /// The agent persists this as `reasoningSupport: "no"` for the model.
+    reasoning_downgraded: Arc<AtomicBool>,
 }
 
 impl DeepSeekProvider {
@@ -34,7 +39,17 @@ impl DeepSeekProvider {
             .timeout(std::time::Duration::from_secs(300))
             .build()
             .unwrap_or_default();
-        Self { base_url: base_url.into(), api_key: api_key.into(), client }
+        Self {
+            base_url: base_url.into(),
+            api_key: api_key.into(),
+            client,
+            reasoning_downgraded: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Whether `reasoning_effort` was rejected at runtime and stripped.
+    pub fn reasoning_downgraded(&self) -> bool {
+        self.reasoning_downgraded.load(Ordering::Relaxed)
     }
 
     fn url(&self) -> String {
@@ -72,6 +87,7 @@ impl DeepSeekProvider {
         &self,
         body: &serde_json::Value,
     ) -> Result<reqwest::Response, NexError> {
+        let mut body = body.clone();
         let mut attempt = 0u32;
         loop {
             let resp = self
@@ -80,7 +96,7 @@ impl DeepSeekProvider {
                 .bearer_auth(&self.api_key)
                 .header("Accept", "text/event-stream")
                 .header("Content-Type", "application/json")
-                .body(serde_json::to_vec(body).unwrap_or_default())
+                .body(serde_json::to_vec(&body).unwrap_or_default())
                 .send()
                 .await
                 .map_err(|e| NexError::Agent(format!("deepseek request failed: {e}")))?;
@@ -91,6 +107,17 @@ impl DeepSeekProvider {
             }
             // Drain a short error body for the message.
             let err_text = resp.text().await.unwrap_or_default();
+            // Runtime reasoning-support detection: some models reject the
+            // `reasoning_effort` parameter outright. Strip it, remember the
+            // downgrade, and retry once without backoff.
+            if body.get("reasoning_effort").is_some()
+                && err_text.to_ascii_lowercase().contains("reasoning_effort")
+            {
+                body.as_object_mut().map(|o| o.remove("reasoning_effort"));
+                self.reasoning_downgraded.store(true, Ordering::Relaxed);
+                log::warn!("endpoint rejected reasoning_effort; retrying without it");
+                continue;
+            }
             let retriable = status.as_u16() == 429 || status.is_server_error();
             if retriable && attempt < MAX_RETRIES {
                 let backoff = RETRY_BASE_MS * 2u64.pow(attempt);
@@ -326,9 +353,10 @@ impl From<SseUsage> for Usage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    #[test]
-    fn accumulator_merges_split_deltas() {
+    #[tokio::test]
+    async fn accumulator_merges_split_deltas() {
         let mut acc = ToolAccumulator::default();
         acc.absorb(vec![SseToolCallDelta {
             index: 0,
@@ -356,11 +384,95 @@ mod tests {
     fn reasoning_parse() {
         assert_eq!(ReasoningControl::parse("high"), ReasoningControl::High);
         assert_eq!(ReasoningControl::parse("bogus"), ReasoningControl::Off);
+        assert_eq!(ReasoningControl::High.as_str(), "high");
+        assert_eq!(ReasoningControl::Off.as_str(), "off");
     }
 
     #[test]
     fn url_strips_trailing_slash() {
         let p = DeepSeekProvider::new("https://api.deepseek.com/", "k");
         assert_eq!(p.url(), "https://api.deepseek.com/chat/completions");
+    }
+
+    /// Runtime reasoning-support detection: a 4xx whose body names
+    /// `reasoning_effort` strips the parameter, flags the downgrade, and
+    /// retries successfully without it.
+    #[tokio::test]
+    async fn reasoning_effort_rejection_downgrades_and_retries() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut s1, _) = listener.accept().await.unwrap();
+            let mut served = 0u32;
+            // The retry may reuse the same keep-alive connection; serve up to
+            // two requests on it, falling back to a fresh accept when idle.
+            while served < 2 {
+                let mut buf = [0u8; 8192];
+                let n = tokio::time::timeout(std::time::Duration::from_secs(5), s1.read(&mut buf))
+                    .await
+                    .ok()
+                    .and_then(|r| r.ok())
+                    .filter(|n| *n > 0);
+                let Some(n) = n else { break };
+                served += 1;
+                if served == 1 {
+                    // Reject `reasoning_effort` explicitly.
+                    let err_body =
+                        br#"{"error":{"message":"unknown parameter: reasoning_effort"}}"#;
+                    let header = format!(
+                        "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\n\r\n",
+                        err_body.len()
+                    );
+                    s1.write_all(header.as_bytes()).await.unwrap();
+                    s1.write_all(err_body).await.unwrap();
+                } else {
+                    s1.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+                        .await
+                        .unwrap();
+                }
+            }
+            if served < 2 {
+                let (mut s2, _) = listener.accept().await.unwrap();
+                let mut buf = [0u8; 8192];
+                let _ = s2.read(&mut buf).await;
+                s2.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+                    .await
+                    .unwrap();
+            }
+        });
+
+        let p = DeepSeekProvider::new(format!("http://{addr}"), "k");
+        let body = serde_json::json!({ "model": "m", "reasoning_effort": "medium" });
+        let resp = p.send_with_retry(&body).await.expect("retry succeeds");
+        assert_eq!(resp.status().as_u16(), 200);
+        assert!(p.reasoning_downgraded(), "downgrade must be recorded");
+        server.await.unwrap();
+    }
+
+    /// Models that never get `reasoning_effort` in the body must not trip the
+    /// downgrade path; a plain 400 stays an error.
+    #[tokio::test]
+    async fn plain_400_without_reasoning_mention_stays_error() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut s1, _) = listener.accept().await.unwrap();
+            let mut buf1 = [0u8; 4096];
+            let _ = s1.read(&mut buf1).await.unwrap();
+            let err_body = br#"{"error":{"message":"bad api key"}}"#;
+            let header = format!(
+                "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\n\r\n",
+                err_body.len()
+            );
+            s1.write_all(header.as_bytes()).await.unwrap();
+            s1.write_all(err_body).await.unwrap();
+        });
+
+        let p = DeepSeekProvider::new(format!("http://{addr}"), "k");
+        let body = serde_json::json!({ "model": "m", "reasoning_effort": "medium" });
+        let err = p.send_with_retry(&body).await.expect_err("must fail");
+        assert!(err.to_string().contains("400"));
+        assert!(!p.reasoning_downgraded());
+        server.await.unwrap();
     }
 }

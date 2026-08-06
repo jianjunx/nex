@@ -118,3 +118,46 @@ pub fn native_agent_get_config(app: AppHandle) -> Result<NativeAgentConfig, NexE
 pub fn native_agent_set_config(app: AppHandle, config: NativeAgentConfig) -> Result<(), NexError> {
     config.save(&app_data_dir(&app)?)
 }
+
+/// Fetches the model id list from an OpenAI-compatible `{base_url}/models`
+/// endpoint. Powers the settings panel's "获取模型" button.
+#[tauri::command]
+pub async fn native_agent_list_models(
+    base_url: String,
+    api_key: String,
+) -> Result<Vec<String>, NexError> {
+    let url = format!("{}/models", base_url.trim_end_matches('/'));
+    let resp = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .unwrap_or_default()
+        .get(&url)
+        .bearer_auth(api_key)
+        .send()
+        .await
+        .map_err(|e| NexError::Agent(format!("failed to fetch model list: {e}")))?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(NexError::Agent(format!(
+            "model list error {status}: {}",
+            text.chars().take(300).collect::<String>()
+        )));
+    }
+    let value: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| NexError::Agent(format!("invalid model list response: {e}")))?;
+    let ids = value
+        .get("data")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| m.get("id").and_then(|v| v.as_str()))
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if ids.is_empty() {
+        return Err(NexError::Agent("model list response has no data[].id entries".into()));
+    }
+    Ok(ids)
+}

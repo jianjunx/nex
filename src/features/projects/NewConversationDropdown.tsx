@@ -86,8 +86,6 @@ export function NewConversationDropdown({ triggerSize }: Props) {
   const open = useUiStore((s) => s.newConversationOpen);
   const openNewConversation = useUiStore((s) => s.openNewConversation);
   const closeNewConversation = useUiStore((s) => s.closeNewConversation);
-  const openSettings = useUiStore((s) => s.openSettings);
-  const setSettingsSection = useUiStore((s) => s.setSettingsSection);
   const servers = useAgentStore((s) => s.servers);
   const serversLoading = useAgentStore((s) => s.serversLoading);
   const serversLoadedAt = useAgentStore((s) => s.serversLoadedAt);
@@ -103,7 +101,7 @@ export function NewConversationDropdown({ triggerSize }: Props) {
   const [creatingId, setCreatingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // 新鲜度守卫，写法同 AgentsSection：仅当列表为空或上次成功加载超过一分钟
+  // 新鲜度守卫：仅当列表为空或上次成功加载超过一分钟
   // 才在打开时回后端；刷新按钮不受此约束。
   useEffect(() => {
     if (!open) return;
@@ -253,16 +251,6 @@ export function NewConversationDropdown({ triggerSize }: Props) {
         {error && <p className="px-3 py-1.5 text-xs text-[var(--error)]">{error}</p>}
 
         <DropdownMenuSeparator />
-        <DropdownMenuItem
-          onSelect={(e) => {
-            e.preventDefault();
-            closeNewConversation();
-            setSettingsSection("agents");
-            openSettings();
-          }}
-        >
-          管理智能体…
-        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );

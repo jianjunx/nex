@@ -128,18 +128,33 @@ export type SessionTarget =
   | { type: "custom"; id: string }
   | { type: "native" };
 
-/** Config of the built-in native agent (`nex-agent.json`), camelCase DTO. */
+/**
+ * Config of the built-in native agent (`nex-agent.json`), camelCase DTO.
+ * `reasoningSupport` records whether the model accepts `reasoning_effort`:
+ * `unknown` (not verified), `yes` (heuristic match), `no` (runtime rejection).
+ */
+export interface NativeAgentModel {
+  id: string;
+  reasoningSupport: "unknown" | "yes" | "no";
+}
+
+export interface NativeAgentProvider {
+  id: string;
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+  models: NativeAgentModel[];
+}
+
 export interface NativeAgentConfig {
-  provider: {
-    baseUrl: string;
-    apiKey: string;
-    model: string;
-    reasoning: string;
-  };
+  providers: NativeAgentProvider[];
+  /** Composite `<providerId>/<modelId>` used for fresh sessions. */
+  defaultModel?: string | null;
   agent: {
     maxSteps: number;
     contextWindow: number;
     bashTimeoutSecs: number;
+    maxSubagentConcurrency: number;
   };
 }
 
@@ -257,6 +272,11 @@ export async function nativeAgentGetConfig(): Promise<NativeAgentConfig> {
 
 export async function nativeAgentSetConfig(config: NativeAgentConfig): Promise<void> {
   return invoke(COMMANDS.NATIVE_AGENT_SET_CONFIG, { config });
+}
+
+/** Fetches model ids from an OpenAI-compatible `{baseUrl}/models` endpoint. */
+export async function nativeAgentListModels(baseUrl: string, apiKey: string): Promise<string[]> {
+  return invoke(COMMANDS.NATIVE_AGENT_LIST_MODELS, { baseUrl, apiKey });
 }
 
 // --- Git ---

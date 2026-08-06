@@ -4,7 +4,6 @@ import { useUiStore, type SettingsSection } from "../../stores/ui.store";
 import { AppearanceSection } from "./sections/AppearanceSection";
 import { EditorSection } from "./sections/EditorSection";
 import { TerminalSection } from "./sections/TerminalSection";
-import { AgentsSection } from "./sections/AgentsSection";
 import { NexAgentSection } from "./sections/NexAgentSection";
 import { KeybindingsEditor } from "./KeybindingsEditor";
 import { LayoutSection } from "./sections/LayoutSection";
@@ -16,7 +15,6 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "appearance", label: "外观" },
   { id: "editor", label: "编辑器" },
   { id: "terminal", label: "终端" },
-  { id: "agents", label: "智能体" },
   { id: "nex-agent", label: "Nex 智能体" },
   { id: "keybindings", label: "快捷键" },
   { id: "layout", label: "布局" },
@@ -30,7 +28,7 @@ export function SettingsDialog() {
   const settingsSection = useUiStore((s) => s.settingsSection);
   const prevOpen = useRef(open);
 
-  // 打开时两条路径：1) 带 settingsSection 的一次性定向（如"管理智能体…"）——
+  // 打开时两条路径：1) 带 settingsSection 的一次性定向——
   // 落到目标页签并立即清空标志；2) 普通打开（open 由 false→true 且无定向）——
   // 重置回默认页签。组件在 App.tsx 无条件常驻挂载，useState 不随关窗重建，
   // 不重置则上次定向的页签会跨开合残留（与冒烟项 6 承诺矛盾，R2）。
@@ -81,7 +79,6 @@ export function SettingsDialog() {
             {tab === "appearance" && <AppearanceSection />}
             {tab === "editor" && <EditorSection />}
             {tab === "terminal" && <TerminalSection />}
-            {tab === "agents" && <AgentsSection />}
             {tab === "nex-agent" && <NexAgentSection />}
             {tab === "keybindings" && <KeybindingsEditor />}
             {tab === "layout" && <LayoutSection />}

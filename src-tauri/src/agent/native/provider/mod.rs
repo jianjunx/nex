@@ -30,6 +30,16 @@ impl ReasoningControl {
             _ => Self::Off,
         }
     }
+
+    /// Wire id used by the Composer config option.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
 }
 
 /// A fully-accumulated tool call emitted by the provider.

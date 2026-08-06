@@ -22,8 +22,8 @@ describe("ui.store settingsSection", () => {
   it("defaults to null and round-trips via setSettingsSection", () => {
     useUiStore.setState({ settingsSection: null });
     expect(useUiStore.getState().settingsSection).toBeNull();
-    useUiStore.getState().setSettingsSection("agents");
-    expect(useUiStore.getState().settingsSection).toBe("agents");
+    useUiStore.getState().setSettingsSection("nex-agent");
+    expect(useUiStore.getState().settingsSection).toBe("nex-agent");
     useUiStore.getState().setSettingsSection(null);
     expect(useUiStore.getState().settingsSection).toBeNull();
   });

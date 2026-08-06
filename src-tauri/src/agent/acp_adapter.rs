@@ -296,7 +296,13 @@ fn prompt_blocks_to_acp(blocks: Vec<PromptBlock>) -> Vec<acp::ContentBlock> {
 }
 
 fn config_options_from_json(value: &serde_json::Value) -> Option<Vec<SessionConfigOptionDto>> {
-    let arr = value.get("configOptions").or_else(|| value.get("config_options"))?;
+    // Native agents carry config options in the `_meta` extension point (the
+    // 0.7 schema drops configOptions from NewSessionResponse), so fall back to
+    // `_meta.configOptions` when no top-level field exists.
+    let arr = value
+        .get("configOptions")
+        .or_else(|| value.get("config_options"))
+        .or_else(|| value.get("_meta").and_then(|m| m.get("configOptions")))?;
     let items = arr.as_array()?;
     let mut out = Vec::new();
     for item in items {
@@ -740,7 +746,9 @@ impl AcpSessionManager {
                 handle
                     .conn
                     .request_raw(
-                        "session/set_config_option",
+                        // 自定义扩展方法必须以 `_` 前缀路由到 Agent::ext_method，
+                        // 否则 ACP 解码层直接报 method_not_found。
+                        "_session/set_config_option",
                         serde_json::json!({
                             "sessionId": agent_session_id,
                             "configId": config_id,

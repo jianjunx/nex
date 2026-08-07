@@ -80,7 +80,8 @@ impl Default for ProviderEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AgentParams {
-    /// Max tool-call loop iterations per prompt turn.
+    /// Max tool-call loop iterations per prompt turn. `0` means no hard cap
+    /// (the no-progress lease still stops runaway failure loops).
     pub max_steps: u32,
     /// Context window in tokens; `0` disables compression (Phase 2).
     pub context_window: u32,
@@ -93,7 +94,9 @@ pub struct AgentParams {
 impl Default for AgentParams {
     fn default() -> Self {
         Self {
-            max_steps: 40,
+            // Complex coding tasks routinely exceed dozens of tool rounds;
+            // rely on the no-progress lease instead of a low hard cap.
+            max_steps: 0,
             context_window: 0,
             bash_timeout_secs: 120,
             max_subagent_concurrency: 6,
@@ -135,11 +138,12 @@ impl Default for NativeAgentConfig {
 impl NativeAgentConfig {
     /// Loads the config from `dir/nex-agent.json`. Missing or malformed files
     /// fall back to defaults (a fresh install has no config yet). Legacy
-    /// single-provider files are migrated in place on read.
+    /// single-provider files are migrated in place on read. The old hard-cap
+    /// default (`maxSteps: 40`) is lifted to unlimited (`0`) once.
     pub fn load(dir: &Path) -> Self {
         let path = dir.join(NATIVE_CONFIG_FILE);
         let Ok(bytes) = std::fs::read(&path) else { return Self::default() };
-        match serde_json::from_slice::<serde_json::Value>(&bytes) {
+        let mut cfg = match serde_json::from_slice::<serde_json::Value>(&bytes) {
             Ok(value) => {
                 if Self::is_legacy(&value) {
                     log::info!("migrating legacy single-provider native-agent config");
@@ -155,7 +159,14 @@ impl NativeAgentConfig {
                 log::warn!("ignoring unreadable native-agent config: {e}");
                 Self::default()
             }
+        };
+        // Product default used to be 40 and cut off complex turns; lift it.
+        if cfg.agent.max_steps == 40 {
+            log::info!("migrating native-agent maxSteps 40 → 0 (unlimited)");
+            cfg.agent.max_steps = 0;
+            let _ = cfg.save(dir);
         }
+        cfg
     }
 
     /// Legacy shape: a top-level `provider` object and no `providers` array.
@@ -271,10 +282,27 @@ mod tests {
         let cfg = NativeAgentConfig::default();
         assert_eq!(cfg.providers.len(), 1);
         assert_eq!(cfg.providers[0].models[0].id, "deepseek-chat");
-        assert_eq!(cfg.agent.max_steps, 40);
+        assert_eq!(cfg.agent.max_steps, 0);
         let json = serde_json::to_string(&cfg).unwrap();
         let back: NativeAgentConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(back.providers[0].base_url, cfg.providers[0].base_url);
+    }
+
+    #[test]
+    fn load_migrates_old_max_steps_default_to_unlimited() {
+        let tmp = std::env::temp_dir().join(format!("nex-cfg-maxsteps-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut cfg = NativeAgentConfig::default();
+        cfg.agent.max_steps = 40;
+        cfg.save(&tmp).unwrap();
+        let loaded = NativeAgentConfig::load(&tmp);
+        assert_eq!(loaded.agent.max_steps, 0);
+        // Persisted so the next launch does not re-migrate other intentional values.
+        let disk: NativeAgentConfig =
+            serde_json::from_slice(&std::fs::read(tmp.join(NATIVE_CONFIG_FILE)).unwrap()).unwrap();
+        assert_eq!(disk.agent.max_steps, 0);
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]

@@ -256,6 +256,25 @@ export function NexAgentSection() {
         </div>
 
         <div className="space-y-1">
+          <Label htmlFor="nex-max-steps" className="text-sm">最大步数</Label>
+          <Input
+            id="nex-max-steps"
+            type="number"
+            min={0}
+            value={config.agent.maxSteps}
+            onChange={(e) =>
+              setConfig({
+                ...config,
+                agent: { ...config.agent, maxSteps: Math.max(0, Number(e.target.value) || 0) },
+              })
+            }
+          />
+          <p className="text-xs text-[var(--text-tertiary)]">
+            单轮「模型 ↔ 工具」循环上限。0 表示不限制（推荐）；设为正整数时触顶会禁用工具并让模型总结进度与后续建议（同 OpenCode）。
+          </p>
+        </div>
+
+        <div className="space-y-1">
           <Label htmlFor="nex-context-window" className="text-sm">上下文窗口（token）</Label>
           <Input
             id="nex-context-window"

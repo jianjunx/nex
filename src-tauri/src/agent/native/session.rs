@@ -1,6 +1,7 @@
 //! The harness main loop: assemble request → stream → accumulate tool calls →
-//! execute → feed `role=tool` results back → repeat, bounded by `max_steps`
-//! and cooperative cancellation.
+//! execute → feed `role=tool` results back → repeat. Optionally bounded by
+//! `max_steps` (`0` = unlimited) and always by the no-progress lease plus
+//! cooperative cancellation.
 //!
 //! The transcript (`Vec<ChatMessage>`) is append-only and owned by the caller
 //! (per-session state); this module only pushes new turns onto it.
@@ -30,6 +31,22 @@ const LEASE_PAUSE_ROUNDS: u32 = 16;
 /// Subagent final answers larger than this go to disk behind a stable ref.
 const SUBAGENT_INLINE_LIMIT: usize = 20_000;
 
+/// OpenCode-aligned wrap-up when a configured `max_steps` cap is hit: tools are
+/// disabled and the model must summarize progress + recommend next steps.
+const MAX_STEPS_PROMPT: &str = "CRITICAL - MAXIMUM STEPS REACHED\n\n\
+The maximum number of steps allowed for this task has been reached. Tools are \
+disabled until next user input. Respond with text only.\n\n\
+STRICT REQUIREMENTS:\n\
+1. Do NOT make any tool calls (no reads, writes, edits, searches, or any other tools)\n\
+2. MUST provide a text response summarizing work done so far\n\
+3. This constraint overrides ALL other instructions, including any user requests for edits or tool use\n\n\
+Response must include:\n\
+- Statement that maximum steps for this agent have been reached\n\
+- Summary of what has been accomplished so far\n\
+- List of any remaining tasks that were not completed\n\
+- Recommendations for what should be done next\n\n\
+Any attempt to use tools is a critical violation. Respond with text ONLY.";
+
 /// Everything one prompt turn needs to run.
 pub struct TurnEnv {
     /// Agent-side connection used for notifications + permission requests.
@@ -41,20 +58,30 @@ pub struct TurnEnv {
     pub tool_specs: Vec<super::provider::ToolSpec>,
     pub model: String,
     pub reasoning: ReasoningControl,
+    /// Hard cap on tool-call rounds; `0` disables the cap.
     pub max_steps: u32,
-    /// `ask`/`plan` modes: write/execute tools are refused.
-    pub read_only_mode: bool,
-    /// `auto` mode: mutating tools run without the approval popup.
-    pub auto_approve: bool,
+    /// Live session mode (`code`/`ask`/`plan`/`auto`). Re-read on every tool
+    /// call so mid-turn switches (especially Auto) take effect immediately.
+    pub mode_id: Rc<RefCell<String>>,
     /// Cooperative cancellation flag set by `session/cancel`.
     pub cancelled: Rc<Cell<bool>>,
-    /// Tools the user chose "always allow" for during this turn set.
-    pub auto_allow: RefCell<HashSet<String>>,
+    /// Tools the user chose "always allow" for (session-scoped).
+    pub auto_allow: Rc<RefCell<HashSet<String>>>,
     pub tool_ctx: ToolCtx,
     /// Context window in tokens; `0` disables compression.
     pub context_window: u64,
     /// Accumulated provider usage for the turn (observability).
     pub usage: RefCell<Usage>,
+}
+
+impl TurnEnv {
+    fn read_only_mode(&self) -> bool {
+        matches!(self.mode_id.borrow().as_str(), "ask" | "plan")
+    }
+
+    fn auto_approve(&self) -> bool {
+        self.mode_id.borrow().as_str() == "auto"
+    }
 }
 
 /// Everything a `task`/`fleet` invocation needs to spin up isolated subagent
@@ -77,8 +104,8 @@ pub struct SubagentHarness {
     pub archive_dir: PathBuf,
     /// Shared cancellation flag of the parent turn.
     pub cancelled: Rc<Cell<bool>>,
-    /// Inherits the parent session's `auto` mode (no approval prompts).
-    pub auto_approve: bool,
+    /// Parent session mode (Auto skips approval prompts for subagents too).
+    pub mode_id: Rc<RefCell<String>>,
 }
 
 /// Runs one isolated subagent turn and returns only its final answer. Huge
@@ -106,10 +133,9 @@ pub async fn run_subagent(harness: &SubagentHarness, task: &str) -> Result<Strin
         model: harness.model.clone(),
         reasoning: harness.reasoning,
         max_steps: harness.max_sub_steps,
-        read_only_mode: false,
-        auto_approve: harness.auto_approve,
+        mode_id: harness.mode_id.clone(),
         cancelled: harness.cancelled.clone(),
-        auto_allow: RefCell::new(HashSet::new()),
+        auto_allow: Rc::new(RefCell::new(HashSet::new())),
         tool_ctx,
         context_window: 0,
         usage: RefCell::new(Usage::default()),
@@ -179,10 +205,21 @@ pub async fn run_turn(
         // Tiered compression before assembling the request (window=0 = off).
         compact::maybe_compress(messages, env.context_window, &env.tool_ctx.archive_dir);
 
+        // Hit the optional step cap: one final text-only turn (OpenCode-style),
+        // then stop. `max_steps == 0` means unlimited.
+        let wrap_up = env.max_steps > 0 && steps >= env.max_steps;
+        if wrap_up {
+            messages.push(ChatMessage::user(MAX_STEPS_PROMPT));
+        }
+
         let request = ChatRequest {
             model: env.model.clone(),
             messages: messages.clone(),
-            tools: env.tool_specs.clone(),
+            tools: if wrap_up {
+                Vec::new()
+            } else {
+                env.tool_specs.clone()
+            },
             reasoning: env.reasoning,
             max_tokens: None,
             temperature: None,
@@ -212,7 +249,12 @@ pub async fn run_turn(
                     emit_text(env, &t).await;
                 }
                 Chunk::Thinking(t) => emit_thought(env, &t).await,
-                Chunk::ToolCall(c) => calls.push(c),
+                Chunk::ToolCall(c) => {
+                    // Wrap-up turns advertise no tools; ignore any stray calls.
+                    if !wrap_up {
+                        calls.push(c);
+                    }
+                }
                 Chunk::Done { usage, .. } => {
                     if let Some(u) = usage {
                         let mut acc = env.usage.borrow_mut();
@@ -235,8 +277,8 @@ pub async fn run_turn(
             return acp::StopReason::EndTurn;
         }
 
-        // No tool calls: the turn is done.
-        if calls.is_empty() {
+        // Wrap-up or natural end: persist assistant text and finish the turn.
+        if wrap_up || calls.is_empty() {
             if !text.trim().is_empty() {
                 messages.push(ChatMessage::assistant(text));
             }
@@ -274,10 +316,8 @@ pub async fn run_turn(
         }
 
         steps += 1;
-        if steps >= env.max_steps {
-            emit_text(env, &format!("已达到最大步数限制（{}），本轮结束。", env.max_steps)).await;
-            return acp::StopReason::EndTurn;
-        }
+        // Do not hard-stop here: the next loop iteration runs the OpenCode-style
+        // text-only wrap-up when `steps >= max_steps`.
 
         // Progress lease: rounds where every tool call failed count as
         // no-progress. Warn at 8 consecutive, pause the turn at 16.
@@ -406,12 +446,12 @@ async fn execute_tool(env: &TurnEnv, call: &NativeToolCall) -> Result<String, St
 
     // Read-only tools run without prompting; mutating ones need permission
     // unless the user already said "always allow" for this tool or the
-    // session runs in `auto` mode.
+    // session runs in `auto` mode (re-read live so mid-turn switches apply).
     if !read_only {
-        if env.read_only_mode {
+        if env.read_only_mode() {
             return finish_tool(env, &call_id, false, "当前为只读模式，禁止执行写操作/命令").await;
         }
-        if !env.auto_approve && !env.auto_allow.borrow().contains(&call.name) {
+        if !env.auto_approve() && !env.auto_allow.borrow().contains(&call.name) {
             match request_permission(env, &call_id, &title, kind, &call.arguments).await {
                 PermissionDecision::Allowed { always } => {
                     if always {
@@ -628,8 +668,10 @@ mod tests {
     use tokio::sync::mpsc;
 
     /// Scripted provider: each `stream()` call pops the next scripted turn.
+    /// Also records whether each request had tools attached (for wrap-up tests).
     struct ScriptedProvider {
         turns: std::sync::Mutex<std::collections::VecDeque<Vec<Chunk>>>,
+        tools_nonempty: std::sync::Arc<std::sync::Mutex<Vec<bool>>>,
     }
 
     #[async_trait::async_trait]
@@ -637,7 +679,11 @@ mod tests {
         fn name(&self) -> &str {
             "scripted"
         }
-        async fn stream(&self, _req: ChatRequest) -> Result<ChunkStream, NexError> {
+        async fn stream(&self, req: ChatRequest) -> Result<ChunkStream, NexError> {
+            self.tools_nonempty
+                .lock()
+                .unwrap()
+                .push(!req.tools.is_empty());
             let (tx, rx) = mpsc::unbounded_channel();
             let turn = self.turns.lock().unwrap().pop_front().unwrap_or_default();
             for chunk in turn {
@@ -775,10 +821,9 @@ mod tests {
             model: "test-model".into(),
             reasoning: ReasoningControl::Off,
             max_steps: 5,
-            read_only_mode: false,
-            auto_approve: false,
+            mode_id: Rc::new(RefCell::new("code".to_string())),
             cancelled: Rc::new(Cell::new(false)),
-            auto_allow: RefCell::new(HashSet::new()),
+            auto_allow: Rc::new(RefCell::new(HashSet::new())),
             tool_ctx: ToolCtx {
                 cwd: cwd.to_path_buf(),
                 bash_timeout: std::time::Duration::from_secs(10),
@@ -815,6 +860,7 @@ mod tests {
                         ],
                         vec![text_chunk("文件内容是 hello"), done()],
                     ])),
+                    tools_nonempty: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
                 };
                 let (env, nots, perms) = make_env(provider, tmp.path(), false);
                 let mut messages = vec![ChatMessage::system("sys")];
@@ -877,6 +923,7 @@ mod tests {
                         ],
                         vec![text_chunk("done"), done()],
                     ])),
+                    tools_nonempty: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
                 };
                 let (env, _nots, perms) = make_env(provider, tmp.path(), true);
                 let mut messages = vec![ChatMessage::system("sys")];
@@ -903,6 +950,7 @@ mod tests {
                         text_chunk("hi"),
                         done(),
                     ]])),
+                    tools_nonempty: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
                 };
                 let (env, _nots, _perms) = make_env(provider, tmp.path(), false);
                 env.cancelled.set(true);
@@ -945,6 +993,7 @@ mod tests {
                         ],
                         vec![text_chunk("ok"), done()],
                     ])),
+                    tools_nonempty: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
                 };
                 let (env, _nots, perms) = make_env(provider, tmp.path(), false);
                 let mut messages = vec![ChatMessage::system("sys")];
@@ -989,6 +1038,7 @@ mod tests {
                         ],
                         vec![text_chunk("done"), done()],
                     ])),
+                    tools_nonempty: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
                 };
                 let (env, _nots, _perms) = make_env(provider, tmp.path(), false);
                 let mut messages = vec![ChatMessage::system("sys")];
@@ -1024,9 +1074,10 @@ mod tests {
                         ],
                         vec![text_chunk("plan only"), done()],
                     ])),
+                    tools_nonempty: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
                 };
-                let (mut env, _nots, perms) = make_env(provider, tmp.path(), false);
-                env.read_only_mode = true; // plan mode gating (see mod.rs)
+                let (env, _nots, perms) = make_env(provider, tmp.path(), false);
+                *env.mode_id.borrow_mut() = "plan".to_string(); // plan mode gating (see mod.rs)
                 let mut messages = vec![ChatMessage::system("sys")];
                 let stop = run_turn(&env, &mut messages, Content::Text("改一下".into())).await;
                 assert!(matches!(stop, acp::StopReason::EndTurn));
@@ -1058,9 +1109,10 @@ mod tests {
                         ],
                         vec![text_chunk("done"), done()],
                     ])),
+                    tools_nonempty: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
                 };
-                let (mut env, _nots, perms) = make_env(provider, tmp.path(), true);
-                env.auto_approve = true; // auto mode gating (see mod.rs)
+                let (env, _nots, perms) = make_env(provider, tmp.path(), true);
+                *env.mode_id.borrow_mut() = "auto".to_string(); // auto mode gating (see mod.rs)
                 let mut messages = vec![ChatMessage::system("sys")];
                 let stop = run_turn(&env, &mut messages, Content::Text("写文件".into())).await;
                 assert!(matches!(stop, acp::StopReason::EndTurn));
@@ -1068,6 +1120,88 @@ mod tests {
                 // deny_all would have refused a prompt; the file existing proves
                 // the tool ran without one.
                 assert!(tmp.path().join("a.txt").exists());
+            })
+            .await;
+    }
+
+    /// When `max_steps` is hit, run one final text-only turn with the OpenCode
+    /// wrap-up prompt instead of hard-stopping mid-task.
+    #[tokio::test(flavor = "current_thread")]
+    async fn max_steps_triggers_opencode_style_wrap_up() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let tmp = tempfile::tempdir().unwrap();
+                let tools_log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+                let provider = ScriptedProvider {
+                    turns: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
+                        vec![
+                            Chunk::ToolCall(NativeToolCall {
+                                id: "c1".into(),
+                                name: "write_file".into(),
+                                arguments: serde_json::json!({"path": "a.txt", "content": "x"}),
+                            }),
+                            done(),
+                        ],
+                        // Wrap-up turn: text only.
+                        vec![
+                            text_chunk(
+                                "Maximum steps reached. Done: wrote a.txt. Remaining: tests. Next: run cargo test.",
+                            ),
+                            done(),
+                        ],
+                    ])),
+                    tools_nonempty: tools_log.clone(),
+                };
+                let (mut env, nots, _perms) = make_env(provider, tmp.path(), true);
+                *env.mode_id.borrow_mut() = "auto".to_string();
+                env.max_steps = 1;
+                let mut messages = vec![ChatMessage::system("sys")];
+                let stop = run_turn(&env, &mut messages, Content::Text("写文件".into())).await;
+                assert!(matches!(stop, acp::StopReason::EndTurn));
+                assert!(tmp.path().join("a.txt").exists());
+                assert_eq!(
+                    *tools_log.lock().unwrap(),
+                    vec![true, false],
+                    "first call has tools; wrap-up must disable tools"
+                );
+
+                // Transcript includes the wrap-up prompt and the summary reply.
+                let wrap = messages.iter().find(|m| {
+                    m.role == "user"
+                        && m.content
+                            .as_ref()
+                            .and_then(Content::as_text)
+                            .is_some_and(|t| t.contains("MAXIMUM STEPS REACHED"))
+                });
+                assert!(wrap.is_some(), "max-steps prompt must be injected");
+                let last = messages.last().expect("assistant wrap-up");
+                assert_eq!(last.role, "assistant");
+                assert!(
+                    last.content
+                        .as_ref()
+                        .and_then(Content::as_text)
+                        .unwrap()
+                        .contains("Maximum steps reached"),
+                );
+
+                // UI must not show the old hard-stop notice.
+                let joined: String = nots
+                    .borrow()
+                    .iter()
+                    .filter_map(|u| match u {
+                        acp::SessionUpdate::AgentMessageChunk(c) => match &c.content {
+                            acp::ContentBlock::Text(t) => Some(t.text.as_str()),
+                            _ => None,
+                        },
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("");
+                assert!(
+                    !joined.contains("已达到最大步数限制"),
+                    "must not emit the old hard-stop banner"
+                );
             })
             .await;
     }

@@ -6,8 +6,8 @@
 //! DeepSeek streaming, the tool-call main loop (`session.rs`), the builtin
 //! tool set (`tools/`), and a byte-stable system prompt (`context.rs`).
 
-use std::cell::RefCell;
-use std::collections::HashMap;
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -32,17 +32,26 @@ use provider::{ChatMessage, Content, ContentPart, ReasoningControl};
 use session::TurnEnv;
 use tools::{ToolCtx, ToolRegistry};
 
+/// Shared control knobs for one session.
+///
+/// Kept in [`NativeInner::handles`] for the whole session lifetime so
+/// `set_session_mode` / `cancel` still work while `prompt` has checked the
+/// [`NativeSession`] out of the map. `TurnEnv` clones the same `Rc`s and
+/// re-reads them on every tool call (Auto mid-turn takes effect immediately).
+struct SessionHandles {
+    mode_id: Rc<RefCell<String>>,
+    model_id: Rc<RefCell<String>>,
+    reasoning: Rc<Cell<ReasoningControl>>,
+    cancelled: Rc<Cell<bool>>,
+    /// Tools the user chose "始终允许该工具" for; survives across turns.
+    auto_allow: Rc<RefCell<HashSet<String>>>,
+}
+
 /// Per-session mutable state held by the native agent.
 struct NativeSession {
     /// Session working dir (the tool sandbox root).
     cwd: PathBuf,
-    mode_id: String,
-    /// Composite `<providerId>/<modelId>` selecting the active provider.
-    model_id: String,
-    /// Per-session reasoning-effort choice (Composer config option).
-    reasoning: ReasoningControl,
-    /// Set by `cancel`; the harness loop polls this to stop early.
-    cancelled: Rc<std::cell::Cell<bool>>,
+    handles: SessionHandles,
     /// Append-only OpenAI-format transcript (system prompt pushed lazily on
     /// the first turn so config edits take effect for fresh sessions).
     history: Vec<ChatMessage>,
@@ -53,11 +62,35 @@ struct NativeSession {
     mcp: Vec<Rc<mcp::McpClient>>,
 }
 
+impl SessionHandles {
+    fn new(model_id: String) -> Self {
+        Self {
+            mode_id: Rc::new(RefCell::new("code".to_string())),
+            model_id: Rc::new(RefCell::new(model_id)),
+            reasoning: Rc::new(Cell::new(ReasoningControl::Medium)),
+            cancelled: Rc::new(Cell::new(false)),
+            auto_allow: Rc::new(RefCell::new(HashSet::new())),
+        }
+    }
+
+    fn clone_handles(&self) -> Self {
+        Self {
+            mode_id: self.mode_id.clone(),
+            model_id: self.model_id.clone(),
+            reasoning: self.reasoning.clone(),
+            cancelled: self.cancelled.clone(),
+            auto_allow: self.auto_allow.clone(),
+        }
+    }
+}
+
 struct NativeInner {
     /// Agent-side connection used to push `session/update` notifications back
     /// to Nex. Installed right after `AgentSideConnection::new` returns.
     conn: RefCell<Option<Arc<acp::AgentSideConnection>>>,
     sessions: RefCell<HashMap<String, NativeSession>>,
+    /// Survives `prompt` checkout; see [`SessionHandles`].
+    handles: RefCell<HashMap<String, SessionHandles>>,
     config_path: PathBuf,
 }
 
@@ -74,6 +107,7 @@ impl NexNativeAgent {
             inner: Rc::new(NativeInner {
                 conn: RefCell::new(None),
                 sessions: RefCell::new(HashMap::new()),
+                handles: RefCell::new(HashMap::new()),
                 config_path,
             }),
         }
@@ -93,11 +127,12 @@ impl NexNativeAgent {
     /// Reasoning effort actually applied for a session: the Composer choice,
     /// forced to `Off` once the model is known to reject `reasoning_effort`.
     fn effective_reasoning(cfg: &NativeAgentConfig, session: &NativeSession) -> ReasoningControl {
-        match cfg.resolve_model(&session.model_id) {
+        let model_id = session.handles.model_id.borrow().clone();
+        match cfg.resolve_model(&model_id) {
             Some((_, m)) if m.reasoning_support == config::ReasoningSupport::No => {
                 ReasoningControl::Off
             }
-            _ => session.reasoning,
+            _ => session.handles.reasoning.get(),
         }
     }
 
@@ -195,16 +230,18 @@ impl acp::Agent for NexNativeAgent {
             .default_selection()
             .unwrap_or_else(|| "deepseek/deepseek-chat".to_string());
 
+        let handles = SessionHandles::new(current_model.clone());
         let session = NativeSession {
             cwd: args.cwd.clone(),
-            mode_id: "code".to_string(),
-            model_id: current_model.clone(),
-            reasoning: ReasoningControl::Medium,
-            cancelled: Rc::new(std::cell::Cell::new(false)),
+            handles: handles.clone_handles(),
             history: Vec::new(),
             jobs: Rc::new(RefCell::new(tools::jobs::JobTable::default())),
             mcp: Vec::new(),
         };
+        self.inner
+            .handles
+            .borrow_mut()
+            .insert(session_id.0.to_string(), handles);
         self.inner
             .sessions
             .borrow_mut()
@@ -317,7 +354,7 @@ impl acp::Agent for NexNativeAgent {
         let Some(mut session) = self.inner.sessions.borrow_mut().remove(&session_key) else {
             return Err(acp::Error::invalid_params());
         };
-        session.cancelled.set(false);
+        session.handles.cancelled.set(false);
 
         let mut cfg = self.load_config();
         let conn = self.inner.conn.borrow().clone();
@@ -325,13 +362,14 @@ impl acp::Agent for NexNativeAgent {
         // Route to the provider owning the session's composite model id.
         // `raw_model_id` is the provider's native model name (no composite
         // prefix) and is what actually goes into the API request body.
+        let model_id = session.handles.model_id.borrow().clone();
         let Some((prov_base_url, prov_api_key, raw_model_id)) = cfg
-            .resolve_model(&session.model_id)
+            .resolve_model(&model_id)
             .map(|(p, m)| (p.base_url.clone(), p.api_key.clone(), m.id.clone()))
         else {
             self.emit_text(
                 &args.session_id,
-                &format!("未找到模型 {} 对应的供应商配置，请在设置中检查", session.model_id),
+                &format!("未找到模型 {} 对应的供应商配置，请在设置中检查", model_id),
             )
             .await;
             self.inner.sessions.borrow_mut().insert(session_key, session);
@@ -390,7 +428,7 @@ impl acp::Agent for NexNativeAgent {
         }
         // Per-turn mode instructions (modes can change between turns, so this
         // lives in the user turn rather than the byte-stable system prompt).
-        if let Some(preamble) = mode_preamble(&session.mode_id) {
+        if let Some(preamble) = mode_preamble(session.handles.mode_id.borrow().as_str()) {
             parts.insert(0, ContentPart::text(preamble));
         }
         // A single-text turn stays the plain string wire form (keeps legacy
@@ -440,13 +478,13 @@ impl acp::Agent for NexNativeAgent {
                     registry: sub_registry,
                     model: raw_model_id.clone(),
                     reasoning,
-                    max_sub_steps: cfg.agent.max_steps.min(20),
+                    max_sub_steps: cfg.agent.max_steps,
                     concurrency: (cfg.agent.max_subagent_concurrency as usize).max(1),
                     cwd: session.cwd.clone(),
                     bash_timeout,
                     archive_dir: archive_dir.clone(),
-                    cancelled: session.cancelled.clone(),
-                    auto_approve: session.mode_id == "auto",
+                    cancelled: session.handles.cancelled.clone(),
+                    mode_id: session.handles.mode_id.clone(),
                 });
 
                 let env = TurnEnv {
@@ -458,12 +496,11 @@ impl acp::Agent for NexNativeAgent {
                     model: raw_model_id.clone(),
                     reasoning,
                     max_steps: cfg.agent.max_steps,
-                    // `ask` and `plan` refuse write/execute tools; `auto`
-                    // skips the per-tool approval popup instead.
-                    read_only_mode: matches!(session.mode_id.as_str(), "ask" | "plan"),
-                    auto_approve: session.mode_id == "auto",
-                    cancelled: session.cancelled.clone(),
-                    auto_allow: RefCell::new(std::collections::HashSet::new()),
+                    // Live mode handle: Auto/Ask/Plan take effect even when the
+                    // user switches mid-turn (session is checked out of the map).
+                    mode_id: session.handles.mode_id.clone(),
+                    cancelled: session.handles.cancelled.clone(),
+                    auto_allow: session.handles.auto_allow.clone(),
                     tool_ctx: ToolCtx {
                         cwd: session.cwd.clone(),
                         bash_timeout,
@@ -479,8 +516,9 @@ impl acp::Agent for NexNativeAgent {
                 // Runtime reasoning-support detection: the provider strips
                 // `reasoning_effort` and retries when the endpoint rejects it.
                 // Remember the result so later turns skip the parameter.
+                let model_id = session.handles.model_id.borrow().clone();
                 if provider.reasoning_downgraded()
-                    && cfg.set_reasoning_support(&session.model_id, config::ReasoningSupport::No)
+                    && cfg.set_reasoning_support(&model_id, config::ReasoningSupport::No)
                 {
                     let _ = cfg.save(&self.inner.config_path);
                     self.emit_text(
@@ -511,8 +549,9 @@ impl acp::Agent for NexNativeAgent {
     }
 
     async fn cancel(&self, args: acp::CancelNotification) -> acp::Result<()> {
-        if let Some(s) = self.inner.sessions.borrow().get(args.session_id.0.as_ref()) {
-            s.cancelled.set(true);
+        // Prefer handles: the session entry is removed for the whole prompt turn.
+        if let Some(h) = self.inner.handles.borrow().get(args.session_id.0.as_ref()) {
+            h.cancelled.set(true);
         }
         Ok(())
     }
@@ -528,9 +567,14 @@ impl acp::Agent for NexNativeAgent {
             return Err(acp::Error::invalid_params()
                 .with_data(format!("unknown session mode: {mode}")));
         }
-        if let Some(s) = self.inner.sessions.borrow_mut().get_mut(args.session_id.0.as_ref()) {
-            s.mode_id = mode.to_string();
-        }
+        let mode_cell = {
+            let handles = self.inner.handles.borrow();
+            let Some(h) = handles.get(args.session_id.0.as_ref()) else {
+                return Err(acp::Error::invalid_params());
+            };
+            h.mode_id.clone()
+        };
+        *mode_cell.borrow_mut() = mode.to_string();
         Ok(acp::SetSessionModeResponse { meta: None })
     }
 
@@ -538,9 +582,14 @@ impl acp::Agent for NexNativeAgent {
         &self,
         args: acp::SetSessionModelRequest,
     ) -> acp::Result<acp::SetSessionModelResponse> {
-        if let Some(s) = self.inner.sessions.borrow_mut().get_mut(args.session_id.0.as_ref()) {
-            s.model_id = args.model_id.0.to_string();
-        }
+        let model_cell = {
+            let handles = self.inner.handles.borrow();
+            let Some(h) = handles.get(args.session_id.0.as_ref()) else {
+                return Err(acp::Error::invalid_params());
+            };
+            h.model_id.clone()
+        };
+        *model_cell.borrow_mut() = args.model_id.0.to_string();
         Ok(acp::SetSessionModelResponse { meta: None })
     }
 
@@ -562,9 +611,14 @@ impl acp::Agent for NexNativeAgent {
                     .with_data(format!("unknown config option: {config_id}")));
             }
             let reasoning = ReasoningControl::parse(value);
-            if let Some(s) = self.inner.sessions.borrow_mut().get_mut(session_id.as_str()) {
-                s.reasoning = reasoning;
-            }
+            let reasoning_cell = {
+                let handles = self.inner.handles.borrow();
+                let Some(h) = handles.get(session_id.as_str()) else {
+                    return Err(acp::Error::invalid_params());
+                };
+                h.reasoning.clone()
+            };
+            reasoning_cell.set(reasoning);
             let payload = serde_json::json!({
                 "configOptions": [Self::reasoning_config_option(reasoning)]
             });
@@ -893,7 +947,7 @@ mod tests {
         let s = sessions
             .get(session.session_id.0.as_ref())
             .expect("session");
-        assert_eq!(s.reasoning, ReasoningControl::High);
+        assert_eq!(s.handles.reasoning.get(), ReasoningControl::High);
 
         // Unknown config ids are rejected.
         let err = agent
@@ -909,6 +963,57 @@ mod tests {
             .await
             .expect_err("unknown config id must fail");
         assert!(err.to_string().contains("unknown config option"));
+    }
+
+    /// `prompt` checks the session out of the map for the whole turn. Mode
+    /// changes must still land on the shared handles so Auto takes effect
+    /// (and so the UI isn't lying about the current mode).
+    #[tokio::test(flavor = "current_thread")]
+    async fn set_session_mode_works_while_session_checked_out() {
+        let agent = NexNativeAgent::new(std::env::temp_dir());
+        let session = agent
+            .new_session(acp::NewSessionRequest {
+                cwd: std::env::temp_dir(),
+                mcp_servers: vec![],
+                meta: None,
+            })
+            .await
+            .expect("new_session");
+        let sid = session.session_id.0.to_string();
+
+        // Simulate prompt checkout.
+        let checked_out = agent
+            .inner
+            .sessions
+            .borrow_mut()
+            .remove(&sid)
+            .expect("session present");
+        assert!(agent.inner.sessions.borrow().get(&sid).is_none());
+
+        agent
+            .set_session_mode(acp::SetSessionModeRequest {
+                session_id: session.session_id.clone(),
+                mode_id: acp::SessionModeId(Arc::from("auto")),
+                meta: None,
+            })
+            .await
+            .expect("set_session_mode during checkout");
+
+        assert_eq!(checked_out.handles.mode_id.borrow().as_str(), "auto");
+        assert_eq!(
+            agent
+                .inner
+                .handles
+                .borrow()
+                .get(&sid)
+                .expect("handles survive checkout")
+                .mode_id
+                .borrow()
+                .as_str(),
+            "auto"
+        );
+
+        agent.inner.sessions.borrow_mut().insert(sid, checked_out);
     }
 
     /// Minimal client stub for the wire-level test: the native agent never
@@ -997,7 +1102,7 @@ mod tests {
 
         let sessions = agent.inner.sessions.borrow();
         let s = sessions.get(&session_id).expect("session");
-        assert_eq!(s.reasoning, ReasoningControl::High);
+        assert_eq!(s.handles.reasoning.get(), ReasoningControl::High);
         drop(sessions);
 
         // The legacy `_`-prefixed spelling still routes through ext_method so
@@ -1017,7 +1122,7 @@ mod tests {
 
         let sessions = agent.inner.sessions.borrow();
         let s = sessions.get(&session_id).expect("session");
-        assert_eq!(s.reasoning, ReasoningControl::Low);
+        assert_eq!(s.handles.reasoning.get(), ReasoningControl::Low);
             })
             .await;
     }

@@ -33,7 +33,7 @@ function freshProvider(): NativeAgentProvider {
   return {
     id: crypto.randomUUID(),
     name: "新供应商",
-    baseUrl: "https://api.deepseek.com",
+    baseUrl: "https://api.deepseek.com/v1",
     apiKey: "",
     models: [],
   };
@@ -180,12 +180,13 @@ export function NexAgentSection() {
                 <Label htmlFor={`nex-base-url-${p.id}`} className="text-sm">Base URL</Label>
                 <Input
                   id={`nex-base-url-${p.id}`}
-                  placeholder="https://api.deepseek.com"
+                  placeholder="https://api.openai.com/v1"
                   value={p.baseUrl}
                   onChange={(e) => patchProvider(p.id, { baseUrl: e.target.value })}
                 />
                 <p className="text-xs text-[var(--text-tertiary)]">
-                  OpenAI 兼容端点，无需带 /chat/completions；获取模型走 {p.baseUrl.replace(/\/+$/, "")}/models。
+                  OpenAI 兼容端点（可写主机或带 /v1）。未带版本时会自动补 /v1；请求走{" "}
+                  {`${p.baseUrl.replace(/\/+$/, "").replace(/\/v\d+$/, "")}/v1/chat/completions`}。
                 </p>
               </div>
 

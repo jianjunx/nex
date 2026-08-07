@@ -119,14 +119,14 @@ pub fn native_agent_set_config(app: AppHandle, config: NativeAgentConfig) -> Res
     config.save(&app_data_dir(&app)?)
 }
 
-/// Fetches the model id list from an OpenAI-compatible `{base_url}/models`
+/// Fetches the model id list from an OpenAI-compatible `{base_url}/v1/models`
 /// endpoint. Powers the settings panel's "获取模型" button.
 #[tauri::command]
 pub async fn native_agent_list_models(
     base_url: String,
     api_key: String,
 ) -> Result<Vec<String>, NexError> {
-    let url = format!("{}/models", base_url.trim_end_matches('/'));
+    let url = crate::agent::native::provider::openai_endpoint(&base_url, "models");
     let resp = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .build()

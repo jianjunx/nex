@@ -11,6 +11,32 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::NexError;
 
+/// Join an OpenAI-compatible API path onto a user-supplied base URL.
+///
+/// Settings often store a host-only base (`https://api.example.com`). Most
+/// OpenAI-compatible gateways expose the surface under `/v1`, so a bare host
+/// plus `/chat/completions` 404s (`default backend - 404`). DeepSeek accepts
+/// both forms; others typically require `/v1`. If the base already ends with
+/// a `/vN` segment (or already includes `path`), it is left alone.
+pub fn openai_endpoint(base_url: &str, path: &str) -> String {
+    let path = path.trim_start_matches('/');
+    let mut base = base_url.trim().trim_end_matches('/').to_string();
+    if base.is_empty() {
+        return format!("/{path}");
+    }
+    if base.ends_with(path) {
+        return base;
+    }
+    let last = base.rsplit('/').next().unwrap_or("");
+    let has_version = last.len() >= 2
+        && last.as_bytes()[0] == b'v'
+        && last[1..].bytes().all(|b| b.is_ascii_digit());
+    if !has_version {
+        base.push_str("/v1");
+    }
+    format!("{base}/{path}")
+}
+
 /// Reasoning-effort hint forwarded to the provider.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -246,6 +272,35 @@ pub trait Provider: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn openai_endpoint_injects_v1_when_missing() {
+        assert_eq!(
+            openai_endpoint("https://ai-gateway.example.com", "chat/completions"),
+            "https://ai-gateway.example.com/v1/chat/completions"
+        );
+        assert_eq!(
+            openai_endpoint("https://api.deepseek.com/", "chat/completions"),
+            "https://api.deepseek.com/v1/chat/completions"
+        );
+        assert_eq!(
+            openai_endpoint("https://api.openai.com/v1", "chat/completions"),
+            "https://api.openai.com/v1/chat/completions"
+        );
+        assert_eq!(
+            openai_endpoint("https://api.openai.com/v1/", "models"),
+            "https://api.openai.com/v1/models"
+        );
+        assert_eq!(
+            openai_endpoint("https://dashscope.aliyuncs.com/compatible-mode/v1", "models"),
+            "https://dashscope.aliyuncs.com/compatible-mode/v1/models"
+        );
+        // Already a full endpoint — do not double-append.
+        assert_eq!(
+            openai_endpoint("https://api.openai.com/v1/chat/completions", "chat/completions"),
+            "https://api.openai.com/v1/chat/completions"
+        );
+    }
 
     #[test]
     fn content_text_serializes_as_plain_string() {

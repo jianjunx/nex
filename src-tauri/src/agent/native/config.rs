@@ -55,7 +55,8 @@ pub struct ProviderEntry {
     pub id: String,
     /// Human-readable provider name shown in the UI.
     pub name: String,
-    /// OpenAI-compatible base URL (no trailing `/chat/completions`).
+    /// OpenAI-compatible base URL (host or `…/v1`; no `/chat/completions`).
+    /// Missing `/vN` is injected when building request URLs.
     pub base_url: String,
     /// API key. Stored in plaintext on disk (accepted trade-off).
     pub api_key: String,
@@ -68,7 +69,7 @@ impl Default for ProviderEntry {
         Self {
             id: String::new(),
             name: String::new(),
-            base_url: "https://api.deepseek.com".to_string(),
+            base_url: "https://api.deepseek.com/v1".to_string(),
             api_key: String::new(),
             models: Vec::new(),
         }
@@ -118,7 +119,7 @@ impl Default for NativeAgentConfig {
             providers: vec![ProviderEntry {
                 id: "deepseek".to_string(),
                 name: "DeepSeek".to_string(),
-                base_url: "https://api.deepseek.com".to_string(),
+                base_url: "https://api.deepseek.com/v1".to_string(),
                 api_key: String::new(),
                 models: vec![ModelEntry {
                     id: "deepseek-chat".to_string(),
@@ -175,7 +176,7 @@ impl NativeAgentConfig {
                 .get("baseUrl")
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
-                .unwrap_or("https://api.deepseek.com")
+                .unwrap_or("https://api.deepseek.com/v1")
                 .to_string(),
             api_key: provider
                 .get("apiKey")
@@ -280,7 +281,7 @@ mod tests {
     fn load_missing_returns_default() {
         let tmp = std::env::temp_dir().join(format!("nex-cfg-missing-{}", std::process::id()));
         let cfg = NativeAgentConfig::load(&tmp);
-        assert_eq!(cfg.providers[0].base_url, "https://api.deepseek.com");
+        assert_eq!(cfg.providers[0].base_url, "https://api.deepseek.com/v1");
     }
 
     #[test]

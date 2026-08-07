@@ -1,11 +1,12 @@
-//! DeepSeek (OpenAI-compatible) streaming provider.
+//! OpenAI-compatible streaming provider (DeepSeek and other `/v1` gateways).
 //!
-//! Posts to `{base_url}/chat/completions` with `stream: true` and parses the
-//! SSE by hand: bytes are drained via `Response::chunk()`, buffered, split on
-//! `\n`, and each `data:` payload is decoded. Tool-call deltas arrive split by
-//! `index`; we accumulate them here and only emit a [`Chunk::ToolCall`] once the
-//! arguments are complete. `429`/`5xx` responses retry with bounded exponential
-//! backoff before streaming begins.
+//! Posts to `{base_url}/v1/chat/completions` (injecting `/v1` when the stored
+//! base has no version segment) with `stream: true` and parses the SSE by hand:
+//! bytes are drained via `Response::chunk()`, buffered, split on `\n`, and each
+//! `data:` payload is decoded. Tool-call deltas arrive split by `index`; we
+//! accumulate them here and only emit a [`Chunk::ToolCall`] once the arguments
+//! are complete. `429`/`5xx` responses retry with bounded exponential backoff
+//! before streaming begins.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -53,8 +54,7 @@ impl DeepSeekProvider {
     }
 
     fn url(&self) -> String {
-        let trimmed = self.base_url.trim_end_matches('/');
-        format!("{trimmed}/chat/completions")
+        super::openai_endpoint(&self.base_url, "chat/completions")
     }
 
     fn build_body(&self, req: &ChatRequest) -> serde_json::Value {
@@ -99,7 +99,7 @@ impl DeepSeekProvider {
                 .body(serde_json::to_vec(&body).unwrap_or_default())
                 .send()
                 .await
-                .map_err(|e| NexError::Agent(format!("deepseek request failed: {e}")))?;
+                .map_err(|e| NexError::Agent(format!("model request failed: {e}")))?;
 
             let status = resp.status();
             if status.is_success() {
@@ -122,7 +122,7 @@ impl DeepSeekProvider {
             if retriable && attempt < MAX_RETRIES {
                 let backoff = RETRY_BASE_MS * 2u64.pow(attempt);
                 log::warn!(
-                    "deepseek returned {status}; retrying in {backoff}ms ({}/{MAX_RETRIES})",
+                    "model API returned {status}; retrying in {backoff}ms ({}/{MAX_RETRIES})",
                     attempt + 1
                 );
                 tokio::time::sleep(std::time::Duration::from_millis(backoff)).await;
@@ -130,7 +130,7 @@ impl DeepSeekProvider {
                 continue;
             }
             return Err(NexError::Agent(format!(
-                "deepseek error {status}: {}",
+                "model API error {status}: {}",
                 truncate(&err_text, 500)
             )));
         }
@@ -170,7 +170,7 @@ async fn pump_sse(mut resp: reqwest::Response, tx: tokio::sync::mpsc::UnboundedS
         let chunk = resp
             .chunk()
             .await
-            .map_err(|e| format!("deepseek stream error: {e}"))?;
+            .map_err(|e| format!("model stream error: {e}"))?;
         let Some(bytes) = chunk else { break };
         buffer.push_str(&String::from_utf8_lossy(&bytes));
 
@@ -216,7 +216,7 @@ async fn pump_sse(mut resp: reqwest::Response, tx: tokio::sync::mpsc::UnboundedS
                     }
                 }
                 Err(e) => {
-                    log::warn!("deepseek: skipping malformed SSE payload: {e}");
+                    log::warn!("model stream: skipping malformed SSE payload: {e}");
                 }
             }
         }
@@ -389,9 +389,11 @@ mod tests {
     }
 
     #[test]
-    fn url_strips_trailing_slash() {
+    fn url_strips_trailing_slash_and_injects_v1() {
         let p = DeepSeekProvider::new("https://api.deepseek.com/", "k");
-        assert_eq!(p.url(), "https://api.deepseek.com/chat/completions");
+        assert_eq!(p.url(), "https://api.deepseek.com/v1/chat/completions");
+        let p2 = DeepSeekProvider::new("https://api.openai.com/v1", "k");
+        assert_eq!(p2.url(), "https://api.openai.com/v1/chat/completions");
     }
 
     /// Runtime reasoning-support detection: a 4xx whose body names

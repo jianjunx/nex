@@ -928,11 +928,12 @@ mod tests {
         }
     }
 
-    /// Wire-level round trip through the duplex pipe: the decode layer only
-    /// routes `_`-prefixed methods to `ext_method`, everything else answers
-    /// method_not_found. Guards the exact bug where the unprefixed
-    /// `session/set_config_option` was rejected over the wire while direct
-    /// `ext_method` unit calls passed.
+    /// Wire-level round trip through the duplex pipe: the decode layer routes
+    /// both `session/set_config_option` (standard ACP name, what external
+    /// agents like Claude Code register) and the legacy `_`-prefixed spelling
+    /// into `ext_method`. Guards the regression where the unprefixed form was
+    /// rejected over the wire with `Method not found` while direct
+    /// `ext_method` unit calls still passed.
     #[tokio::test(flavor = "current_thread")]
     async fn set_config_option_round_trips_through_rpc_pipe() {
         // The in-process pipe spawns its IO tasks via `spawn_local`, so the
@@ -978,10 +979,12 @@ mod tests {
             .expect("session/new over pipe");
         let session_id = new_resp["sessionId"].as_str().expect("sessionId").to_string();
 
-        // `_`-prefixed extension method reaches ext_method and updates the session.
+        // Unprefixed `session/set_config_option` (the standard ACP name external
+        // agents like Claude Code register) reaches ext_method and updates the
+        // session.
         let raw = client_conn
             .request_raw(
-                "_session/set_config_option",
+                "session/set_config_option",
                 serde_json::json!({
                     "sessionId": session_id,
                     "configId": "reasoning",
@@ -997,22 +1000,24 @@ mod tests {
         assert_eq!(s.reasoning, ReasoningControl::High);
         drop(sessions);
 
-        // Without the `_` prefix the decode layer must reject the method.
-        let err = client_conn
+        // The legacy `_`-prefixed spelling still routes through ext_method so
+        // older clients (and the historic `_session/...` wire form) keep working.
+        let raw = client_conn
             .request_raw(
-                "session/set_config_option",
+                "_session/set_config_option",
                 serde_json::json!({
                     "sessionId": session_id,
                     "configId": "reasoning",
-                    "value": "high"
+                    "value": "low"
                 }),
             )
             .await
-            .expect_err("unprefixed ext method must fail");
-        assert!(
-            err.to_string().to_ascii_lowercase().contains("method not found"),
-            "unexpected error: {err}"
-        );
+            .expect("prefixed set_config_option over pipe");
+        assert_eq!(raw["configOptions"][0]["currentValueId"], "low");
+
+        let sessions = agent.inner.sessions.borrow();
+        let s = sessions.get(&session_id).expect("session");
+        assert_eq!(s.reasoning, ReasoningControl::Low);
             })
             .await;
     }

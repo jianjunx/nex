@@ -746,9 +746,13 @@ impl AcpSessionManager {
                 handle
                     .conn
                     .request_raw(
-                        // 自定义扩展方法必须以 `_` 前缀路由到 Agent::ext_method，
-                        // 否则 ACP 解码层直接报 method_not_found。
-                        "_session/set_config_option",
+                        // ACP `session/set_config_option` is the standard method
+                        // name external agents (Claude Code / Codex / Cursor)
+                        // register. Our in-process native agent's decode layer
+                        // (patched in `agent-client-protocol/src/lib.rs`) routes
+                        // this same unprefixed name into `Agent::ext_method`,
+                        // so the same call works for both transports.
+                        "session/set_config_option",
                         serde_json::json!({
                             "sessionId": agent_session_id,
                             "configId": config_id,

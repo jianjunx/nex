@@ -1,0 +1,19 @@
+src-tauri/src/commands/update_cmds.rs
+  s_6d886689e43004::t_c4323bd69a208e 99-101,103-105,593-604
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "183633a6ed6ae34619e5e639aff8f290f6ea0ad0",
+  "prompts": {},
+  "sessions": {
+    "s_6d886689e43004": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_6d886689e43004",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

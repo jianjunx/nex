@@ -270,6 +270,7 @@ mod tests {
                     bash_timeout: std::time::Duration::from_secs(5),
                     archive_dir: tmp.path().join(".nex-archive"),
                     cancelled: Rc::new(std::cell::Cell::new(false)),
+                    auto_approve: false,
                 };
                 let mut ctx = ctx_without_harness(tmp.path());
                 ctx.harness = Some(Rc::new(harness));

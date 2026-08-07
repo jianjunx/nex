@@ -10,6 +10,7 @@ pub mod fs;
 pub mod history;
 pub mod jobs;
 pub mod search;
+pub mod skill;
 pub mod subagent;
 pub mod todo;
 
@@ -82,6 +83,7 @@ impl ToolRegistry {
                 Box::new(jobs::WaitJob),
                 Box::new(checkpoint::Checkpoint),
                 Box::new(checkpoint::Rewind),
+                Box::new(skill::LoadSkill),
                 Box::new(subagent::Task),
                 Box::new(subagent::Fleet),
                 Box::new(subagent::ReadSubagentResult),
@@ -211,8 +213,9 @@ mod tests {
         assert!(names.contains(&"history".to_string()));
         assert!(names.contains(&"run_in_background".to_string()));
         assert!(names.contains(&"checkpoint".to_string()));
+        assert!(names.contains(&"load_skill".to_string()));
         assert!(names.contains(&"task".to_string()));
-        assert_eq!(names.len(), 19);
+        assert_eq!(names.len(), 20);
 
         // Subagents see everything except the orchestration tools.
         let sub: Vec<_> = ToolRegistry::subagents()
@@ -220,7 +223,8 @@ mod tests {
             .iter()
             .map(|s| s.function.name.clone())
             .collect();
-        assert_eq!(sub.len(), 16);
+        assert_eq!(sub.len(), 17);
+        assert!(sub.contains(&"load_skill".to_string()));
         assert!(!sub.contains(&"task".to_string()));
         assert!(!sub.contains(&"fleet".to_string()));
         assert!(!sub.contains(&"read_subagent_result".to_string()));
@@ -239,7 +243,7 @@ mod tests {
         eprintln!("canonical schema sha256: {hash}");
         assert_eq!(
             hash,
-            "67f0ecb91cd92040bbc546850e7f7b337384d15a6e13d148536d2dc44cf530e4",
+            "b3d4046c150f65482c5c0910daada3db578050a99efed89eacf0f139f941a9e3",
             "tool schema drift detected; update the snapshot intentionally"
         );
     }

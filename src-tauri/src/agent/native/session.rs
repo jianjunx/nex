@@ -42,8 +42,10 @@ pub struct TurnEnv {
     pub model: String,
     pub reasoning: ReasoningControl,
     pub max_steps: u32,
-    /// `ask` mode: write/execute tools are refused.
+    /// `ask`/`plan` modes: write/execute tools are refused.
     pub read_only_mode: bool,
+    /// `auto` mode: mutating tools run without the approval popup.
+    pub auto_approve: bool,
     /// Cooperative cancellation flag set by `session/cancel`.
     pub cancelled: Rc<Cell<bool>>,
     /// Tools the user chose "always allow" for during this turn set.
@@ -75,6 +77,8 @@ pub struct SubagentHarness {
     pub archive_dir: PathBuf,
     /// Shared cancellation flag of the parent turn.
     pub cancelled: Rc<Cell<bool>>,
+    /// Inherits the parent session's `auto` mode (no approval prompts).
+    pub auto_approve: bool,
 }
 
 /// Runs one isolated subagent turn and returns only its final answer. Huge
@@ -103,6 +107,7 @@ pub async fn run_subagent(harness: &SubagentHarness, task: &str) -> Result<Strin
         reasoning: harness.reasoning,
         max_steps: harness.max_sub_steps,
         read_only_mode: false,
+        auto_approve: harness.auto_approve,
         cancelled: harness.cancelled.clone(),
         auto_allow: RefCell::new(HashSet::new()),
         tool_ctx,
@@ -396,12 +401,13 @@ async fn execute_tool(env: &TurnEnv, call: &NativeToolCall) -> Result<String, St
     };
 
     // Read-only tools run without prompting; mutating ones need permission
-    // unless the user already said "always allow" for this tool.
+    // unless the user already said "always allow" for this tool or the
+    // session runs in `auto` mode.
     if !read_only {
         if env.read_only_mode {
             return finish_tool(env, &call_id, false, "当前为只读模式，禁止执行写操作/命令").await;
         }
-        if !env.auto_allow.borrow().contains(&call.name) {
+        if !env.auto_approve && !env.auto_allow.borrow().contains(&call.name) {
             match request_permission(env, &call_id, &title, kind, &call.arguments).await {
                 PermissionDecision::Allowed { always } => {
                     if always {
@@ -766,6 +772,7 @@ mod tests {
             reasoning: ReasoningControl::Off,
             max_steps: 5,
             read_only_mode: false,
+            auto_approve: false,
             cancelled: Rc::new(Cell::new(false)),
             auto_allow: RefCell::new(HashSet::new()),
             tool_ctx: ToolCtx {
@@ -989,6 +996,74 @@ mod tests {
                 assert_eq!(log.len(), 2);
                 assert!(log[0].starts_with("write_file"));
                 assert!(log[1].contains("n2.txt"));
+            })
+            .await;
+    }
+
+    /// `plan` mode behaves like `ask`: mutating tools are refused without any
+    /// permission prompt, and the refusal reaches the model as a tool error.
+    #[tokio::test(flavor = "current_thread")]
+    async fn plan_mode_refuses_writes() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let tmp = tempfile::tempdir().unwrap();
+                let provider = ScriptedProvider {
+                    turns: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
+                        vec![
+                            Chunk::ToolCall(NativeToolCall {
+                                id: "c_w".into(),
+                                name: "write_file".into(),
+                                arguments: serde_json::json!({"path": "p.txt", "content": "x"}),
+                            }),
+                            done(),
+                        ],
+                        vec![text_chunk("plan only"), done()],
+                    ])),
+                };
+                let (mut env, _nots, perms) = make_env(provider, tmp.path(), false);
+                env.read_only_mode = true; // plan mode gating (see mod.rs)
+                let mut messages = vec![ChatMessage::system("sys")];
+                let stop = run_turn(&env, &mut messages, "改一下").await;
+                assert!(matches!(stop, acp::StopReason::EndTurn));
+                assert_eq!(*perms.borrow(), 0, "read-only refusal must not prompt");
+                let tool_msg = messages.iter().find(|m| m.role == "tool").unwrap();
+                assert!(tool_msg.content.as_deref().unwrap().contains("只读模式"));
+                assert!(!tmp.path().join("p.txt").exists());
+            })
+            .await;
+    }
+
+    /// `auto` mode: mutating tools execute without hitting the permission
+    /// popup at all.
+    #[tokio::test(flavor = "current_thread")]
+    async fn auto_mode_skips_permission_prompts() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let tmp = tempfile::tempdir().unwrap();
+                let provider = ScriptedProvider {
+                    turns: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
+                        vec![
+                            Chunk::ToolCall(NativeToolCall {
+                                id: "c_w".into(),
+                                name: "write_file".into(),
+                                arguments: serde_json::json!({"path": "a.txt", "content": "x"}),
+                            }),
+                            done(),
+                        ],
+                        vec![text_chunk("done"), done()],
+                    ])),
+                };
+                let (mut env, _nots, perms) = make_env(provider, tmp.path(), true);
+                env.auto_approve = true; // auto mode gating (see mod.rs)
+                let mut messages = vec![ChatMessage::system("sys")];
+                let stop = run_turn(&env, &mut messages, "写文件").await;
+                assert!(matches!(stop, acp::StopReason::EndTurn));
+                assert_eq!(*perms.borrow(), 0, "auto mode must never prompt");
+                // deny_all would have refused a prompt; the file existing proves
+                // the tool ran without one.
+                assert!(tmp.path().join("a.txt").exists());
             })
             .await;
     }

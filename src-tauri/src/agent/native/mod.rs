@@ -17,8 +17,11 @@ use agent_client_protocol::{self as acp};
 pub mod compact;
 pub mod config;
 pub mod context;
+pub mod home;
+pub mod instructions;
 pub mod provider;
 pub mod session;
+pub mod skills;
 pub mod tools;
 
 pub use config::NativeAgentConfig;
@@ -218,6 +221,18 @@ impl acp::Agent for NexNativeAgent {
                         description: Some("Read-only questions and analysis".to_string()),
                         meta: None,
                     },
+                    acp::SessionMode {
+                        id: acp::SessionModeId(Arc::from("plan")),
+                        name: "Plan".to_string(),
+                        description: Some("Read-only research, then a step-by-step plan".to_string()),
+                        meta: None,
+                    },
+                    acp::SessionMode {
+                        id: acp::SessionModeId(Arc::from("auto")),
+                        name: "Auto".to_string(),
+                        description: Some("Run without per-tool approval prompts".to_string()),
+                        meta: None,
+                    },
                 ],
                 meta: None,
             }),
@@ -266,12 +281,25 @@ impl acp::Agent for NexNativeAgent {
             return Ok(acp::PromptResponse { stop_reason: acp::StopReason::EndTurn, meta: None });
         };
 
-        // Seed the transcript with the byte-stable system prompt once.
+        // Seed the transcript with the byte-stable system prompt once, plus
+        // the session's extension blocks: skills catalog (progressive
+        // disclosure), user rules and the project AGENTS.md.
         if session.history.is_empty() {
-            session.history.push(ChatMessage::system(context::system_prompt(
-                &session.cwd,
-                &raw_model_id,
-            )));
+            let mut sys = context::system_prompt(&session.cwd, &raw_model_id);
+            let discovered = home::skills_dir()
+                .map(|root| skills::discover(&root))
+                .unwrap_or_default();
+            for block in [
+                skills::catalog_block(&discovered),
+                instructions::rules_block(&session.cwd),
+                instructions::agents_md_block(&session.cwd),
+            ] {
+                if !block.is_empty() {
+                    sys.push_str("\n\n");
+                    sys.push_str(block.trim_end());
+                }
+            }
+            session.history.push(ChatMessage::system(sys));
         }
 
         // Flatten the incoming prompt blocks into user text.
@@ -284,6 +312,9 @@ impl acp::Agent for NexNativeAgent {
             })
             .collect::<Vec<_>>()
             .join("\n");
+        // Per-turn mode instructions (modes can change between turns, so this
+        // lives in the user turn rather than the byte-stable system prompt).
+        let user_text = mode_preamble(&session.mode_id, user_text);
 
         let stop_reason = match conn {
             Some(conn) => {
@@ -312,6 +343,7 @@ impl acp::Agent for NexNativeAgent {
                     bash_timeout,
                     archive_dir: archive_dir.clone(),
                     cancelled: session.cancelled.clone(),
+                    auto_approve: session.mode_id == "auto",
                 });
 
                 let env = TurnEnv {
@@ -323,7 +355,10 @@ impl acp::Agent for NexNativeAgent {
                     model: raw_model_id.clone(),
                     reasoning,
                     max_steps: cfg.agent.max_steps,
-                    read_only_mode: session.mode_id == "ask",
+                    // `ask` and `plan` refuse write/execute tools; `auto`
+                    // skips the per-tool approval popup instead.
+                    read_only_mode: matches!(session.mode_id.as_str(), "ask" | "plan"),
+                    auto_approve: session.mode_id == "auto",
                     cancelled: session.cancelled.clone(),
                     auto_allow: RefCell::new(std::collections::HashSet::new()),
                     tool_ctx: ToolCtx {
@@ -383,8 +418,15 @@ impl acp::Agent for NexNativeAgent {
         &self,
         args: acp::SetSessionModeRequest,
     ) -> acp::Result<acp::SetSessionModeResponse> {
+        // Only the four advertised modes are accepted; anything else is a
+        // client bug and must not silently change session behavior.
+        let mode = args.mode_id.0.as_ref();
+        if !matches!(mode, "code" | "ask" | "plan" | "auto") {
+            return Err(acp::Error::invalid_params()
+                .with_data(format!("unknown session mode: {mode}")));
+        }
         if let Some(s) = self.inner.sessions.borrow_mut().get_mut(args.session_id.0.as_ref()) {
-            s.mode_id = args.mode_id.0.to_string();
+            s.mode_id = mode.to_string();
         }
         Ok(acp::SetSessionModeResponse { meta: None })
     }
@@ -429,6 +471,27 @@ impl acp::Agent for NexNativeAgent {
             ));
         }
         Err(acp::Error::method_not_found())
+    }
+}
+
+/// Prepends mode-specific instructions to the user text of every turn. Empty
+/// for `code` (the default behavior) and `ask` (read-only enforcement alone
+/// is enough).
+fn mode_preamble(mode_id: &str, user_text: String) -> String {
+    match mode_id {
+        "plan" => format!(
+            "[Mode: Plan] You are in plan mode: research with read-only tools only \
+             (writes, edits and commands are refused). Produce a concrete, \
+             step-by-step implementation plan — files to change, what changes in \
+             each, how to verify — and end by asking for confirmation. Do not try \
+             to make changes yourself.\n\n{user_text}"
+        ),
+        "auto" => format!(
+            "[Mode: Auto] You are in auto mode: tools run without per-step user \
+             approval, so move efficiently, but still verify your work and stop \
+             when the task is done.\n\n{user_text}"
+        ),
+        _ => user_text,
     }
 }
 
@@ -546,7 +609,12 @@ mod tests {
                     .expect("new_session failed");
                 let modes = session.modes.expect("modes");
                 assert_eq!(modes.current_mode_id.0.as_ref(), "code");
-                assert_eq!(modes.available_modes.len(), 2);
+                let ids: Vec<&str> = modes
+                    .available_modes
+                    .iter()
+                    .map(|m| m.id.0.as_ref())
+                    .collect();
+                assert_eq!(ids, vec!["code", "ask", "plan", "auto"]);
                 assert!(session.models.is_some());
 
                 let response = conn

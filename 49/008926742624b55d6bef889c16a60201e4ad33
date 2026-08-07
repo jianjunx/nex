@@ -1,0 +1,25 @@
+src-tauri/.gitignore
+  s_6e00e11d31c460::t_de7a221de51095 4
+src-tauri/patches/agent-client-protocol/src/lib.rs
+  s_6e00e11d31c460::t_5d0a04d5824a55 3,20-39,572-580
+src-tauri/src/agent/acp_adapter.rs
+  s_6e00e11d31c460::t_84208cc6863fdf 749-755
+src-tauri/src/agent/native/mod.rs
+  s_6e00e11d31c460::t_7f7921167ad7bc 931-936,982-984,987,1003-1005,1007,1011,1015-1020
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "49008926742624b55d6bef889c16a60201e4ad33",
+  "prompts": {},
+  "sessions": {
+    "s_6e00e11d31c460": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_6e00e11d31c460",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

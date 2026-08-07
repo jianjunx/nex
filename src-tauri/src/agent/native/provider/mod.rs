@@ -87,12 +87,72 @@ pub enum Chunk {
     Error(String),
 }
 
+/// The content of a chat message: plain text (legacy archives serialize this
+/// way) or a list of multimodal parts (OpenAI wire format). `untagged` keeps
+/// old transcript jsonl readable — a bare string deserializes as [`Content::Text`]
+/// with no migration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Content {
+    Text(String),
+    Parts(Vec<ContentPart>),
+}
+
+impl Content {
+    /// Plain-text view of the content; `None` for multimodal parts.
+    pub fn as_text(&self) -> Option<&str> {
+        match self {
+            Content::Text(s) => Some(s),
+            Content::Parts(_) => None,
+        }
+    }
+
+    /// Character count of the textual portion (compression bookkeeping).
+    pub fn text_len(&self) -> usize {
+        match self {
+            Content::Text(s) => s.chars().count(),
+            Content::Parts(parts) => parts
+                .iter()
+                .filter_map(|p| p.text.as_deref())
+                .map(|t| t.chars().count())
+                .sum(),
+        }
+    }
+}
+
+/// One part of a multimodal message (`type: "text" | "image_url"`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContentPart {
+    #[serde(rename = "type")]
+    pub typ: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_url: Option<ImageUrl>,
+}
+
+impl ContentPart {
+    pub fn text(text: impl Into<String>) -> Self {
+        Self { typ: "text".into(), text: Some(text.into()), image_url: None }
+    }
+    /// `url` is a data URI (`data:{mime};base64,{data}`) or a remote URL.
+    pub fn image(url: impl Into<String>) -> Self {
+        Self { typ: "image_url".into(), text: None, image_url: Some(ImageUrl { url: url.into() }) }
+    }
+}
+
+/// An OpenAI `image_url` part payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageUrl {
+    pub url: String,
+}
+
 /// One message in the OpenAI-compatible chat transcript.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub content: Option<String>,
+    pub content: Option<Content>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ChatToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -104,20 +164,28 @@ pub struct ChatMessage {
 
 impl ChatMessage {
     pub fn system(text: impl Into<String>) -> Self {
-        Self { role: "system".into(), content: Some(text.into()), tool_calls: None, tool_call_id: None, reasoning_content: None }
+        Self { role: "system".into(), content: Some(Content::Text(text.into())), tool_calls: None, tool_call_id: None, reasoning_content: None }
     }
     pub fn user(text: impl Into<String>) -> Self {
-        Self { role: "user".into(), content: Some(text.into()), tool_calls: None, tool_call_id: None, reasoning_content: None }
+        Self { role: "user".into(), content: Some(Content::Text(text.into())), tool_calls: None, tool_call_id: None, reasoning_content: None }
     }
     pub fn assistant(text: impl Into<String>) -> Self {
-        Self { role: "assistant".into(), content: Some(text.into()), tool_calls: None, tool_call_id: None, reasoning_content: None }
+        Self { role: "assistant".into(), content: Some(Content::Text(text.into())), tool_calls: None, tool_call_id: None, reasoning_content: None }
     }
     /// Assistant turn that only carries tool calls (content may be None).
     pub fn assistant_tool_calls(calls: Vec<ChatToolCall>, text: Option<String>) -> Self {
-        Self { role: "assistant".into(), content: text, tool_calls: Some(calls), tool_call_id: None, reasoning_content: None }
+        Self { role: "assistant".into(), content: text.map(Content::Text), tool_calls: Some(calls), tool_call_id: None, reasoning_content: None }
     }
     pub fn tool_result(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
-        Self { role: "tool".into(), content: Some(content.into()), tool_calls: None, tool_call_id: Some(tool_call_id.into()), reasoning_content: None }
+        Self { role: "tool".into(), content: Some(Content::Text(content.into())), tool_calls: None, tool_call_id: Some(tool_call_id.into()), reasoning_content: None }
+    }
+    /// A user turn with multimodal parts (text + images + injected files).
+    pub fn user_parts(parts: Vec<ContentPart>) -> Self {
+        Self { role: "user".into(), content: Some(Content::Parts(parts)), tool_calls: None, tool_call_id: None, reasoning_content: None }
+    }
+    /// A user turn with arbitrary content (text or parts).
+    pub fn user_content(content: Content) -> Self {
+        Self { role: "user".into(), content: Some(content), tool_calls: None, tool_call_id: None, reasoning_content: None }
     }
 }
 
@@ -173,4 +241,56 @@ pub trait Provider: Send + Sync {
     fn name(&self) -> &str;
     /// Start streaming; chunks arrive on the returned receiver.
     async fn stream(&self, req: ChatRequest) -> Result<ChunkStream, NexError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn content_text_serializes_as_plain_string() {
+        let msg = ChatMessage::user("hi");
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains(r#""content":"hi""#), "got: {json}");
+        // And round-trips back to Text.
+        let back: ChatMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.content.as_ref().and_then(Content::as_text), Some("hi"));
+    }
+
+    #[test]
+    fn content_parts_serialize_as_array() {
+        let msg = ChatMessage::user_parts(vec![
+            ContentPart::text("看图"),
+            ContentPart::image("data:image/png;base64,AAAA"),
+        ]);
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains(r#""content":[{"type":"text","text":"看图"}"#), "got: {json}");
+        assert!(json.contains(r#"{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}"#), "got: {json}");
+
+        let back: ChatMessage = serde_json::from_str(&json).unwrap();
+        assert!(matches!(back.content, Some(Content::Parts(_))));
+        assert_eq!(back.content.as_ref().and_then(Content::as_text), None);
+    }
+
+    #[test]
+    fn legacy_string_archives_deserialize_as_text() {
+        // Old transcripts stored `content` as a bare string.
+        let legacy = r#"{"role":"user","content":"old archive"}"#;
+        let msg: ChatMessage = serde_json::from_str(legacy).unwrap();
+        assert_eq!(msg.content.as_ref().and_then(Content::as_text), Some("old archive"));
+        assert!(matches!(msg.content, Some(Content::Text(_))));
+    }
+
+    #[test]
+    fn text_len_counts_textual_portion() {
+        assert_eq!(Content::Text("abc".into()).text_len(), 3);
+        assert_eq!(
+            Content::Parts(vec![ContentPart::text("ab"), ContentPart::text("cde")]).text_len(),
+            5
+        );
+        assert_eq!(
+            Content::Parts(vec![ContentPart::image("data:x")]).text_len(),
+            0
+        );
+    }
 }

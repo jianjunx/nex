@@ -9,6 +9,7 @@ pub mod checkpoint;
 pub mod fs;
 pub mod history;
 pub mod jobs;
+pub mod mcp;
 pub mod search;
 pub mod skill;
 pub mod subagent;
@@ -44,8 +45,8 @@ pub struct ToolCtx {
 /// A builtin tool.
 #[async_trait::async_trait(?Send)]
 pub trait Tool {
-    fn name(&self) -> &'static str;
-    fn description(&self) -> &'static str;
+    fn name(&self) -> &str;
+    fn description(&self) -> &str;
     /// JSON Schema of the tool's arguments (canonical, byte-stable ordering).
     fn schema(&self) -> serde_json::Value;
     /// ACP tool kind (drives client iconography).
@@ -101,6 +102,12 @@ impl ToolRegistry {
                 .filter(|t| !matches!(t.name(), "task" | "fleet" | "read_subagent_result"))
                 .collect(),
         }
+    }
+
+    /// Appends a session-level tool (e.g. an MCP proxy). Not part of the
+    /// canonical builtin set, so the schema snapshot is unaffected.
+    pub fn add(&mut self, tool: Box<dyn Tool>) {
+        self.tools.push(tool);
     }
 
     pub fn get(&self, name: &str) -> Option<&dyn Tool> {

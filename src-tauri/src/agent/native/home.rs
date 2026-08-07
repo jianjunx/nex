@@ -21,6 +21,12 @@ pub fn rules_dir() -> Option<PathBuf> {
     nex_home().map(|h| h.join("rules"))
 }
 
+/// `~/.nex/commands` — global slash commands (`*.md`), available in every
+/// session.
+pub fn commands_dir() -> Option<PathBuf> {
+    nex_home().map(|h| h.join("commands"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -30,6 +36,7 @@ mod tests {
         let Some(home) = nex_home() else { return };
         assert_eq!(skills_dir().unwrap(), home.join("skills"));
         assert_eq!(rules_dir().unwrap(), home.join("rules"));
+        assert_eq!(commands_dir().unwrap(), home.join("commands"));
         assert!(home.ends_with(".nex"));
     }
 }

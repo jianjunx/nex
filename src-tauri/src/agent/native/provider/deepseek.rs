@@ -413,7 +413,9 @@ mod tests {
                     .ok()
                     .and_then(|r| r.ok())
                     .filter(|n| *n > 0);
-                let Some(n) = n else { break };
+                if n.is_none() {
+                    break;
+                }
                 served += 1;
                 if served == 1 {
                     // Reject `reasoning_effort` explicitly.

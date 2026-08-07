@@ -8,17 +8,19 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
 use agent_client_protocol::{self as acp};
 
+pub mod commands;
 pub mod compact;
 pub mod config;
 pub mod context;
 pub mod home;
 pub mod instructions;
+pub mod mcp;
 pub mod provider;
 pub mod session;
 pub mod skills;
@@ -26,7 +28,7 @@ pub mod tools;
 
 pub use config::NativeAgentConfig;
 
-use provider::{ChatMessage, ReasoningControl};
+use provider::{ChatMessage, Content, ContentPart, ReasoningControl};
 use session::TurnEnv;
 use tools::{ToolCtx, ToolRegistry};
 
@@ -46,6 +48,9 @@ struct NativeSession {
     history: Vec<ChatMessage>,
     /// Background shell jobs survive across turns within a session.
     jobs: Rc<RefCell<tools::jobs::JobTable>>,
+    /// Connected MCP servers (one client per `mcp.json` entry); dropping the
+    /// session kills their child processes.
+    mcp: Vec<Rc<mcp::McpClient>>,
 }
 
 struct NativeInner {
@@ -198,11 +203,63 @@ impl acp::Agent for NexNativeAgent {
             cancelled: Rc::new(std::cell::Cell::new(false)),
             history: Vec::new(),
             jobs: Rc::new(RefCell::new(tools::jobs::JobTable::default())),
+            mcp: Vec::new(),
         };
         self.inner
             .sessions
             .borrow_mut()
             .insert(session_id.0.to_string(), session);
+
+        // Connect configured MCP servers (`~/.nex/mcp.json` + project
+        // `.nex/mcp.json`). A failing server only logs — it never blocks
+        // session creation; the child processes die with the session.
+        for (name, cfg) in mcp::load_configs(&args.cwd) {
+            match mcp::McpClient::connect(&name, &cfg).await {
+                Ok(client) => {
+                    log::info!(
+                        "MCP server `{name}` connected with {} tool(s)",
+                        client.tools.len()
+                    );
+                    self.inner
+                        .sessions
+                        .borrow_mut()
+                        .get_mut(session_id.0.as_ref())
+                        .map(|s| s.mcp.push(Rc::new(client)));
+                }
+                Err(e) => log::warn!("{e}"),
+            }
+        }
+
+        // Publish the slash-command catalog so the Composer popover can render
+        // it (`AvailableCommandsUpdate`; the frontend matches `name` and adds
+        // the `/` itself).
+        if let Some(conn) = self.inner.conn.borrow().clone() {
+            let commands = commands::discover(&args.cwd);
+            if !commands.is_empty() {
+                let notification = acp::SessionNotification {
+                    session_id: session_id.clone(),
+                    update: acp::SessionUpdate::AvailableCommandsUpdate(
+                        acp::AvailableCommandsUpdate {
+                            available_commands: commands
+                                .iter()
+                                .map(|c| acp::AvailableCommand {
+                                    name: c.name.clone(),
+                                    description: c.description.clone(),
+                                    input: c.argument_hint.clone().map(|hint| {
+                                        acp::AvailableCommandInput::Unstructured { hint }
+                                    }),
+                                    meta: None,
+                                })
+                                .collect(),
+                            meta: None,
+                        },
+                    ),
+                    meta: None,
+                };
+                use acp::Client as _;
+                let _ = conn.session_notification(notification).await;
+            }
+        }
 
         Ok(acp::NewSessionResponse {
             session_id,
@@ -302,19 +359,49 @@ impl acp::Agent for NexNativeAgent {
             session.history.push(ChatMessage::system(sys));
         }
 
-        // Flatten the incoming prompt blocks into user text.
-        let user_text = args
-            .prompt
-            .iter()
-            .filter_map(|b| match b {
-                acp::ContentBlock::Text(t) => Some(t.text.as_str()),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        // Build the multimodal user turn from the incoming prompt blocks
+        // (text + images + embedded/mentioned files).
+        let mut parts = prompt_parts(&session.cwd, &args.prompt);
+        // Slash-command expansion: when the text portion starts with a known
+        // `/name`, replace the text parts with the command's template body.
+        if !parts.is_empty() {
+            let joined: String = parts
+                .iter()
+                .filter_map(|p| p.text.clone())
+                .collect::<Vec<_>>()
+                .join(" ");
+            let commands = commands::discover(&session.cwd);
+            if let Some(expanded) = commands::expand(&joined, &commands) {
+                let mut next: Vec<ContentPart> = Vec::new();
+                let mut replaced = false;
+                for p in parts {
+                    if p.typ == "text" && !replaced {
+                        next.push(ContentPart::text(expanded.clone()));
+                        replaced = true;
+                    } else if p.typ != "text" {
+                        next.push(p);
+                    }
+                }
+                if !replaced {
+                    next.push(ContentPart::text(expanded));
+                }
+                parts = next;
+            }
+        }
         // Per-turn mode instructions (modes can change between turns, so this
         // lives in the user turn rather than the byte-stable system prompt).
-        let user_text = mode_preamble(&session.mode_id, user_text);
+        if let Some(preamble) = mode_preamble(&session.mode_id) {
+            parts.insert(0, ContentPart::text(preamble));
+        }
+        // A single-text turn stays the plain string wire form (keeps legacy
+        // archives and providers byte-identical); anything richer becomes parts.
+        let content = if parts.is_empty() {
+            Content::Text(String::new())
+        } else if parts.len() == 1 && parts[0].typ == "text" {
+            Content::Text(parts.remove(0).text.unwrap_or_default())
+        } else {
+            Content::Parts(parts)
+        };
 
         let stop_reason = match conn {
             Some(conn) => {
@@ -323,7 +410,23 @@ impl acp::Agent for NexNativeAgent {
                     prov_api_key,
                 ));
                 let reasoning = Self::effective_reasoning(&cfg, &session);
-                let registry = Rc::new(ToolRegistry::builtins());
+                // Session-level MCP tool proxies (`mcp__{server}__{tool}`), so
+                // the model can call configured MCP servers this turn. Built as
+                // a plain registry first, then shared behind `Rc`.
+                let mut registry = ToolRegistry::builtins();
+                for client in &session.mcp {
+                    for info in &client.tools {
+                        registry.add(Box::new(tools::mcp::McpProxy {
+                            name: format!("mcp__{}__{}", client.name, info.name),
+                            server: client.name.clone(),
+                            tool_name: info.name.clone(),
+                            description: info.description.clone(),
+                            schema: info.schema.clone(),
+                            client: client.clone(),
+                        }));
+                    }
+                }
+                let registry = Rc::new(registry);
                 let archive_dir = session.cwd.join(".nex-archive");
                 let bash_timeout = std::time::Duration::from_secs(cfg.agent.bash_timeout_secs);
 
@@ -372,7 +475,7 @@ impl acp::Agent for NexNativeAgent {
                     context_window: cfg.agent.context_window as u64,
                     usage: RefCell::new(provider::Usage::default()),
                 };
-                let stop = session::run_turn(&env, &mut session.history, &user_text).await;
+                let stop = session::run_turn(&env, &mut session.history, content).await;
                 // Runtime reasoning-support detection: the provider strips
                 // `reasoning_effort` and retries when the endpoint rejects it.
                 // Remember the result so later turns skip the parameter.
@@ -474,24 +577,105 @@ impl acp::Agent for NexNativeAgent {
     }
 }
 
-/// Prepends mode-specific instructions to the user text of every turn. Empty
-/// for `code` (the default behavior) and `ask` (read-only enforcement alone
-/// is enough).
-fn mode_preamble(mode_id: &str, user_text: String) -> String {
+/// Mode-specific instructions prepended to every user turn; `None` for `code`
+/// (the default) and `ask` (read-only enforcement alone is enough).
+fn mode_preamble(mode_id: &str) -> Option<String> {
     match mode_id {
-        "plan" => format!(
+        "plan" => Some(format!(
             "[Mode: Plan] You are in plan mode: research with read-only tools only \
              (writes, edits and commands are refused). Produce a concrete, \
              step-by-step implementation plan — files to change, what changes in \
              each, how to verify — and end by asking for confirmation. Do not try \
-             to make changes yourself.\n\n{user_text}"
-        ),
-        "auto" => format!(
+             to make changes yourself."
+        )),
+        "auto" => Some(format!(
             "[Mode: Auto] You are in auto mode: tools run without per-step user \
              approval, so move efficiently, but still verify your work and stop \
-             when the task is done.\n\n{user_text}"
-        ),
-        _ => user_text,
+             when the task is done."
+        )),
+        _ => None,
+    }
+}
+
+/// Maximum size of a `file://` resource link injected into the prompt.
+const RESOURCE_INJECT_LIMIT: u64 = 256 * 1024;
+
+/// Converts incoming ACP prompt blocks into OpenAI content parts:
+/// - `Text` → text part
+/// - `Image` → `image_url` data-URI part (the client sends bare base64)
+/// - `Resource` (text) → `[文件: uri]` + content
+/// - `ResourceLink` → file read within the workspace (size-capped, text-only)
+/// - anything else degrades to an explanatory text part
+fn prompt_parts(cwd: &Path, blocks: &[acp::ContentBlock]) -> Vec<ContentPart> {
+    let mut parts = Vec::new();
+    for block in blocks {
+        match block {
+            acp::ContentBlock::Text(t) => parts.push(ContentPart::text(t.text.clone())),
+            acp::ContentBlock::Image(img) => {
+                let url = if img.data.starts_with("data:") {
+                    img.data.clone()
+                } else {
+                    format!("data:{};base64,{}", img.mime_type, img.data)
+                };
+                parts.push(ContentPart::image(url));
+            }
+            acp::ContentBlock::Resource(res) => match &res.resource {
+                acp::EmbeddedResourceResource::TextResourceContents(t) => {
+                    parts.push(ContentPart::text(format!("[文件: {}]\n{}", t.uri, t.text)));
+                }
+                acp::EmbeddedResourceResource::BlobResourceContents(b) => parts.push(
+                    ContentPart::text(format!(
+                        "[文件: {}] 二进制资源（{}），内容未注入",
+                        b.uri,
+                        b.mime_type.as_deref().unwrap_or("未知类型")
+                    )),
+                ),
+            },
+            acp::ContentBlock::ResourceLink(link) => parts.push(resource_link_part(cwd, link)),
+            acp::ContentBlock::Audio(_) => {
+                parts.push(ContentPart::text("[音频块：当前模型不支持音频输入]".to_string()));
+            }
+        }
+    }
+    parts
+}
+
+/// Resolves a `file://` resource link inside the workspace and injects the
+/// file text (256 KiB cap, text only). Every failure mode degrades to an
+/// explanatory text part rather than failing the whole turn.
+fn resource_link_part(cwd: &Path, link: &acp::ResourceLink) -> ContentPart {
+    let name = if link.name.is_empty() {
+        link.uri.clone()
+    } else {
+        link.name.clone()
+    };
+    let Some(path_str) = link.uri.strip_prefix("file://") else {
+        return ContentPart::text(format!("[文件 {name} 无法注入: 非 file:// URI]"));
+    };
+    let Ok(path) = tools::resolve_within(cwd, path_str) else {
+        return ContentPart::text(format!("[文件 {name} 无法注入: 超出工作区范围]"));
+    };
+    let Ok(meta) = std::fs::metadata(&path) else {
+        return ContentPart::text(format!("[文件 {name} 无法注入: 读取失败]"));
+    };
+    if meta.len() > RESOURCE_INJECT_LIMIT {
+        return ContentPart::text(format!(
+            "[文件 {name} 无法注入: 大小 {} 字节超过上限]",
+            meta.len()
+        ));
+    }
+    let Ok(bytes) = std::fs::read(&path) else {
+        return ContentPart::text(format!("[文件 {name} 无法注入: 读取失败]"));
+    };
+    if !matches!(
+        content_inspector::inspect(&bytes),
+        content_inspector::ContentType::UTF_8 | content_inspector::ContentType::UTF_8_BOM
+    ) {
+        return ContentPart::text(format!("[文件 {name} 无法注入: 二进制内容]"));
+    }
+    match String::from_utf8(bytes) {
+        Ok(s) => ContentPart::text(format!("[文件: {}]\n{}", link.uri, s)),
+        Err(_) => ContentPart::text(format!("[文件 {name} 无法注入: 非 UTF-8 文本]")),
     }
 }
 
@@ -504,14 +688,34 @@ mod tests {
     /// Minimal client that records streamed agent message chunks.
     struct TestClient {
         chunks: Rc<RefCell<Vec<String>>>,
+        /// Summaries of every session update variant (`agent_message_chunk:…`,
+        /// `available_commands_update:name=desc`, …) for notification tests.
+        updates: Rc<RefCell<Vec<String>>>,
     }
 
     #[async_trait::async_trait(?Send)]
     impl acp::Client for TestClient {
         async fn session_notification(&self, args: acp::SessionNotification) -> acp::Result<()> {
-            if let acp::SessionUpdate::AgentMessageChunk(chunk) = &args.update {
-                if let acp::ContentBlock::Text(t) = &chunk.content {
-                    self.chunks.borrow_mut().push(t.text.clone());
+            match &args.update {
+                acp::SessionUpdate::AgentMessageChunk(chunk) => {
+                    if let acp::ContentBlock::Text(t) = &chunk.content {
+                        self.chunks.borrow_mut().push(t.text.clone());
+                    }
+                }
+                acp::SessionUpdate::AvailableCommandsUpdate(cmds) => {
+                    let summary: Vec<String> = cmds
+                        .available_commands
+                        .iter()
+                        .map(|c| format!("{}={}", c.name, c.description))
+                        .collect();
+                    self.updates
+                        .borrow_mut()
+                        .push(format!("available_commands_update:{}", summary.join(",")));
+                }
+                other => {
+                    self.updates
+                        .borrow_mut()
+                        .push(format!("update:{other:?}"));
                 }
             }
             Ok(())
@@ -576,7 +780,7 @@ mod tests {
                 let chunks: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
                 let (client_read, client_write) = tokio::io::split(client_end);
                 let (conn, client_io_task) = acp::ClientSideConnection::new(
-                    TestClient { chunks: chunks.clone() },
+                    TestClient { chunks: chunks.clone(), updates: Rc::new(RefCell::new(Vec::new())) },
                     client_write.compat_write(),
                     client_read.compat(),
                     |fut| {
@@ -898,7 +1102,7 @@ mod tests {
                 let chunks: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
                 let (client_read, client_write) = tokio::io::split(client_end);
                 let (conn, client_io) = acp::ClientSideConnection::new(
-                    TestClient { chunks: chunks.clone() },
+                    TestClient { chunks: chunks.clone(), updates: Rc::new(RefCell::new(Vec::new())) },
                     client_write.compat_write(),
                     client_read.compat(),
                     |fut| {
@@ -941,6 +1145,301 @@ mod tests {
             Some("deepseek-chat"),
             "API must receive the raw model id, not the composite provider/model id"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Wires an agent + recording client over a duplex pipe (same wiring as
+    /// `run_session_native`) and returns both sides plus the recorded chunks
+    /// and session-update summaries.
+    fn duplex_pair(
+        config_path: PathBuf,
+    ) -> (
+        NexNativeAgent,
+        acp::ClientSideConnection,
+        Rc<RefCell<Vec<String>>>,
+        Rc<RefCell<Vec<String>>>,
+    ) {
+        let (client_end, agent_end) = tokio::io::duplex(64 * 1024);
+        let agent = NexNativeAgent::new(config_path);
+        let (agent_read, agent_write) = tokio::io::split(agent_end);
+        let (agent_conn, agent_io) = acp::AgentSideConnection::new(
+            agent.clone(),
+            agent_write.compat_write(),
+            agent_read.compat(),
+            |fut| {
+                tokio::task::spawn_local(fut);
+            },
+        );
+        agent.set_conn(Arc::new(agent_conn));
+        tokio::task::spawn_local(agent_io);
+
+        let chunks: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+        let updates: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+        let (client_read, client_write) = tokio::io::split(client_end);
+        let (conn, client_io) = acp::ClientSideConnection::new(
+            TestClient { chunks: chunks.clone(), updates: updates.clone() },
+            client_write.compat_write(),
+            client_read.compat(),
+            |fut| {
+                tokio::task::spawn_local(fut);
+            },
+        );
+        tokio::task::spawn_local(client_io);
+        (agent, conn, chunks, updates)
+    }
+
+    /// Writes a config whose provider points at `addr` and returns its dir.
+    fn provider_config(addr: std::net::SocketAddr) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("nex-native-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg = serde_json::json!({
+            "providers": [{
+                "id": "deepseek",
+                "name": "DeepSeek",
+                "baseUrl": format!("http://{addr}"),
+                "apiKey": "sk-test",
+                "models": [{ "id": "deepseek-chat", "reasoningSupport": "unknown" }]
+            }],
+            "defaultModel": null,
+            "agent": { "maxSteps": 1, "contextWindow": 0, "bashTimeoutSecs": 10, "maxSubagentConcurrency": 1 }
+        });
+        std::fs::write(dir.join("nex-agent.json"), cfg.to_string()).unwrap();
+        dir
+    }
+
+    /// Spawns a TCP server that captures the first request body, answers 400
+    /// (the turn then completes with the error streamed), and returns the
+    /// address + captured body.
+    async fn capture_server() -> (
+        std::net::SocketAddr,
+        Arc<std::sync::Mutex<Option<String>>>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let captured: Arc<std::sync::Mutex<Option<String>>> =
+            Arc::new(std::sync::Mutex::new(None));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let cap = captured.clone();
+        let server = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 64 * 1024];
+            let mut acc = String::new();
+            loop {
+                let n = sock.read(&mut buf).await.unwrap();
+                if n == 0 {
+                    break;
+                }
+                acc.push_str(&String::from_utf8_lossy(&buf[..n]));
+                if let Some(pos) = acc.find("\r\n\r\n") {
+                    let cl: usize = acc[..pos]
+                        .lines()
+                        .find_map(|l| {
+                            let l = l.to_ascii_lowercase();
+                            l.strip_prefix("content-length:")
+                                .map(|v| v.trim().parse().unwrap_or(0))
+                        })
+                        .unwrap_or(0);
+                    let body_start = pos + 4;
+                    if acc.len() - body_start >= cl {
+                        *cap.lock().unwrap() =
+                            Some(acc[body_start..body_start + cl].to_string());
+                        break;
+                    }
+                }
+            }
+            let _ = sock
+                .write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 2\r\n\r\nno")
+                .await;
+        });
+        (addr, captured, server)
+    }
+
+    /// Images and embedded resources reach the provider as OpenAI multimodal
+    /// parts (`image_url` data URI + `[文件: …]` text), and the transcript
+    /// stores the user turn as `Content::Parts`.
+    #[tokio::test(flavor = "current_thread")]
+    async fn prompt_sends_multimodal_parts_to_provider() {
+        let (addr, captured, server) = capture_server().await;
+        let dir = provider_config(addr);
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let (agent, conn, _, _) = duplex_pair(dir.clone());
+                let session = conn
+                    .new_session(acp::NewSessionRequest {
+                        cwd: dir.clone(),
+                        mcp_servers: vec![],
+                        meta: None,
+                    })
+                    .await
+                    .expect("new_session");
+                let _ = conn
+                    .prompt(acp::PromptRequest {
+                        session_id: session.session_id.clone(),
+                        prompt: vec![
+                            acp::ContentBlock::Text(acp::TextContent {
+                                annotations: None,
+                                text: "看图".to_string(),
+                                meta: None,
+                            }),
+                            acp::ContentBlock::Image(acp::ImageContent {
+                                annotations: None,
+                                data: "iVBORw0KGgo".to_string(),
+                                mime_type: "image/png".to_string(),
+                                uri: None,
+                                meta: None,
+                            }),
+                            acp::ContentBlock::Resource(acp::EmbeddedResource {
+                                annotations: None,
+                                resource: acp::EmbeddedResourceResource::TextResourceContents(
+                                    acp::TextResourceContents {
+                                        mime_type: Some("text/plain".to_string()),
+                                        text: "文件内容在这里".to_string(),
+                                        uri: "file:///tmp/seed.txt".to_string(),
+                                        meta: None,
+                                    },
+                                ),
+                                meta: None,
+                            }),
+                        ],
+                        meta: None,
+                    })
+                    .await
+                    .expect("prompt");
+
+                let body = captured.lock().unwrap().clone().expect("request body");
+                assert!(body.contains("image_url"), "body: {body}");
+                assert!(
+                    body.contains("data:image/png;base64,iVBORw0KGgo"),
+                    "body: {body}"
+                );
+                assert!(
+                    body.contains("[文件: file:///tmp/seed.txt]"),
+                    "body: {body}"
+                );
+                assert!(body.contains("文件内容在这里"), "body: {body}");
+
+                let sessions = agent.inner.sessions.borrow();
+                let s = sessions.get(session.session_id.0.as_ref()).expect("session");
+                let Some(Content::Parts(parts)) = &s.history[1].content else {
+                    panic!("user turn must be stored as parts");
+                };
+                assert_eq!(parts.len(), 3);
+                assert_eq!(parts[0].text.as_deref(), Some("看图"));
+                assert!(parts[1].image_url.is_some());
+                assert!(parts[2].text.as_deref().unwrap().contains("文件内容在这里"));
+            })
+            .await;
+        tokio::time::timeout(std::time::Duration::from_secs(5), server)
+            .await
+            .expect("server timed out")
+            .unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `/name args` in the user text expands to the command template body
+    /// (`$ARGUMENTS` substituted) before it reaches the provider; unknown
+    /// commands pass through untouched.
+    #[tokio::test(flavor = "current_thread")]
+    async fn slash_command_expands_before_provider() {
+        let (addr, _, server) = capture_server().await;
+        let dir = provider_config(addr);
+        let cmds = dir.join(".nex/commands");
+        std::fs::create_dir_all(&cmds).unwrap();
+        std::fs::write(
+            cmds.join("review.md"),
+            "---\ndescription: Review code.\nargument-hint: scope\n---\nReview $ARGUMENTS carefully, focusing on correctness.\n",
+        )
+        .unwrap();
+
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let (agent, conn, _, _) = duplex_pair(dir.clone());
+                let session = conn
+                    .new_session(acp::NewSessionRequest {
+                        cwd: dir.clone(),
+                        mcp_servers: vec![],
+                        meta: None,
+                    })
+                    .await
+                    .expect("new_session");
+                let prompt_text = |text: &str| acp::PromptRequest {
+                    session_id: session.session_id.clone(),
+                    prompt: vec![acp::ContentBlock::from(text)],
+                    meta: None,
+                };
+
+                let _ = conn.prompt(prompt_text("/review src/main.rs")).await.expect("prompt");
+                let _ = conn.prompt(prompt_text("/nope hi")).await.expect("prompt");
+
+                let sessions = agent.inner.sessions.borrow();
+                let s = sessions.get(session.session_id.0.as_ref()).expect("session");
+                let users: Vec<&str> = s
+                    .history
+                    .iter()
+                    .filter(|m| m.role == "user")
+                    .map(|m| m.content.as_ref().and_then(Content::as_text).unwrap_or_default())
+                    .collect();
+                assert_eq!(users.len(), 2);
+                assert!(
+                    users[0].contains("Review src/main.rs carefully"),
+                    "expansion missing: {}",
+                    users[0]
+                );
+                assert_eq!(users[1], "/nope hi", "unknown commands pass through");
+            })
+            .await;
+        tokio::time::timeout(std::time::Duration::from_secs(5), server)
+            .await
+            .expect("server timed out")
+            .unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `new_session` publishes the slash-command catalog over the wire so the
+    /// Composer popover can render it (`AvailableCommandsUpdate`).
+    #[tokio::test(flavor = "current_thread")]
+    async fn new_session_publishes_available_commands() {
+        let dir = std::env::temp_dir().join(format!("nex-cmds-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join(".nex/commands")).unwrap();
+        std::fs::write(
+            dir.join(".nex/commands/review.md"),
+            "---\ndescription: Review code.\n---\nReview $ARGUMENTS\n",
+        )
+        .unwrap();
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let (_, conn, _, updates) = duplex_pair(std::env::temp_dir());
+                let _ = conn
+                    .new_session(acp::NewSessionRequest {
+                        cwd: dir.clone(),
+                        mcp_servers: vec![],
+                        meta: None,
+                    })
+                    .await
+                    .expect("new_session");
+
+                // Notifications travel over the duplex pipe asynchronously;
+                // poll until the catalog arrives.
+                let deadline =
+                    tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+                let found = loop {
+                    if updates
+                        .borrow()
+                        .iter()
+                        .any(|u| u.starts_with("available_commands_update:") && u.contains("review=Review code."))
+                    {
+                        break true;
+                    }
+                    if tokio::time::Instant::now() > deadline {
+                        break false;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                };
+                assert!(found, "catalog not published: {:?}", updates.borrow().clone());
+            })
+            .await;
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

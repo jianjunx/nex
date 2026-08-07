@@ -15,8 +15,8 @@ use std::time::Duration;
 use agent_client_protocol::{self as acp};
 
 use super::provider::{
-    ChatMessage, ChatRequest, ChatToolCall, ChatToolCallFunction, Chunk, NativeToolCall, Provider,
-    ReasoningControl, ToolSpec, Usage,
+    ChatMessage, ChatRequest, ChatToolCall, ChatToolCallFunction, Chunk, Content, NativeToolCall,
+    Provider, ReasoningControl, ToolSpec, Usage,
 };
 use super::tools::todo::parse_todos;
 use super::tools::{truncate_output, ToolCtx, ToolRegistry};
@@ -118,7 +118,7 @@ pub async fn run_subagent(harness: &SubagentHarness, task: &str) -> Result<Strin
         &harness.cwd,
         &harness.model,
     ))];
-    let _ = run_turn(&env, &mut messages, task).await;
+    let _ = run_turn(&env, &mut messages, Content::Text(task.to_string())).await;
     let answer = final_answer(&messages);
     if answer.chars().count() > SUBAGENT_INLINE_LIMIT {
         let _ = std::fs::create_dir_all(&harness.archive_dir);
@@ -143,10 +143,10 @@ fn final_answer(messages: &[ChatMessage]) -> String {
             continue;
         }
         if m.tool_calls.is_none() {
-            if let Some(c) = m.content.as_deref() {
+            if let Some(c) = m.content.as_ref().and_then(Content::as_text) {
                 return c.to_string();
             }
-        } else if let Some(c) = m.content.as_deref() {
+        } else if let Some(c) = m.content.as_ref().and_then(Content::as_text) {
             last_assistant = Some(c);
         }
     }
@@ -162,8 +162,12 @@ fn brief_summary(args: &serde_json::Value) -> String {
 }
 
 /// Runs one prompt turn end-to-end and returns the ACP stop reason.
-pub async fn run_turn(env: &TurnEnv, messages: &mut Vec<ChatMessage>, user_text: &str) -> acp::StopReason {
-    messages.push(ChatMessage::user(user_text));
+pub async fn run_turn(
+    env: &TurnEnv,
+    messages: &mut Vec<ChatMessage>,
+    content: Content,
+) -> acp::StopReason {
+    messages.push(ChatMessage::user_content(content));
 
     let mut steps = 0u32;
     let mut no_progress = 0u32;
@@ -280,7 +284,7 @@ pub async fn run_turn(env: &TurnEnv, messages: &mut Vec<ChatMessage>, user_text:
         let all_failed = calls
             .iter()
             .all(|c| messages.iter().rev().find(|m| m.tool_call_id.as_deref() == Some(c.id.as_str())).is_some_and(|m| {
-                m.content.as_deref().is_some_and(|s| s.starts_with("ERROR:"))
+                m.content.as_ref().and_then(Content::as_text).is_some_and(|s| s.starts_with("ERROR:"))
             }));
         if all_failed {
             no_progress += 1;
@@ -814,7 +818,7 @@ mod tests {
                 };
                 let (env, nots, perms) = make_env(provider, tmp.path(), false);
                 let mut messages = vec![ChatMessage::system("sys")];
-                let stop = run_turn(&env, &mut messages, "读一下 x.txt").await;
+                let stop = run_turn(&env, &mut messages, Content::Text("读一下 x.txt".into())).await;
                 assert!(matches!(stop, acp::StopReason::EndTurn));
 
                 // Transcript shape: system, user, assistant(tool_calls), tool, assistant.
@@ -823,8 +827,8 @@ mod tests {
                 assert!(messages[2].tool_calls.is_some());
                 assert_eq!(messages[3].role, "tool");
                 assert_eq!(messages[3].tool_call_id.as_deref(), Some("call_1"));
-                assert!(messages[3].content.as_deref().unwrap().contains("hello"));
-                assert_eq!(messages[4].content.as_deref(), Some("文件内容是 hello"));
+                assert!(messages[3].content.as_ref().and_then(Content::as_text).unwrap().contains("hello"));
+                assert_eq!(messages[4].content.as_ref().and_then(Content::as_text), Some("文件内容是 hello"));
 
                 // Read-only tool: no permission prompt, but lifecycle updates streamed.
                 assert_eq!(*perms.borrow(), 0);
@@ -876,12 +880,12 @@ mod tests {
                 };
                 let (env, _nots, perms) = make_env(provider, tmp.path(), true);
                 let mut messages = vec![ChatMessage::system("sys")];
-                let stop = run_turn(&env, &mut messages, "写文件").await;
+                let stop = run_turn(&env, &mut messages, Content::Text("写文件".into())).await;
                 assert!(matches!(stop, acp::StopReason::EndTurn));
                 // Tool result carries the denial and file wasn't created.
                 assert_eq!(*perms.borrow(), 1);
                 let tool_msg = messages.iter().find(|m| m.role == "tool").unwrap();
-                assert!(tool_msg.content.as_deref().unwrap().contains("denied"));
+                assert!(tool_msg.content.as_ref().and_then(Content::as_text).unwrap().contains("denied"));
                 assert!(!tmp.path().join("y.txt").exists());
             })
             .await;
@@ -903,7 +907,7 @@ mod tests {
                 let (env, _nots, _perms) = make_env(provider, tmp.path(), false);
                 env.cancelled.set(true);
                 let mut messages = vec![ChatMessage::system("sys")];
-                let stop = run_turn(&env, &mut messages, "你好").await;
+                let stop = run_turn(&env, &mut messages, Content::Text("你好".into())).await;
                 assert!(matches!(stop, acp::StopReason::Cancelled));
             })
             .await;
@@ -944,7 +948,7 @@ mod tests {
                 };
                 let (env, _nots, perms) = make_env(provider, tmp.path(), false);
                 let mut messages = vec![ChatMessage::system("sys")];
-                let stop = run_turn(&env, &mut messages, "读三个").await;
+                let stop = run_turn(&env, &mut messages, Content::Text("读三个".into())).await;
                 assert!(matches!(stop, acp::StopReason::EndTurn));
                 assert_eq!(*perms.borrow(), 0, "read-only batch must not prompt");
 
@@ -955,8 +959,8 @@ mod tests {
                     .map(|m| m.tool_call_id.clone().unwrap())
                     .collect();
                 assert_eq!(ids, vec!["c_a", "c_b", "c_ls"]);
-                assert!(messages[3].content.as_deref().unwrap().contains('A'));
-                assert!(messages[4].content.as_deref().unwrap().contains('B'));
+                assert!(messages[3].content.as_ref().and_then(Content::as_text).unwrap().contains('A'));
+                assert!(messages[4].content.as_ref().and_then(Content::as_text).unwrap().contains('B'));
             })
             .await;
     }
@@ -988,7 +992,7 @@ mod tests {
                 };
                 let (env, _nots, _perms) = make_env(provider, tmp.path(), false);
                 let mut messages = vec![ChatMessage::system("sys")];
-                let stop = run_turn(&env, &mut messages, "写两个").await;
+                let stop = run_turn(&env, &mut messages, Content::Text("写两个".into())).await;
                 assert!(matches!(stop, acp::StopReason::EndTurn));
                 assert!(tmp.path().join("n1.txt").exists());
                 assert!(tmp.path().join("n2.txt").exists());
@@ -1024,11 +1028,11 @@ mod tests {
                 let (mut env, _nots, perms) = make_env(provider, tmp.path(), false);
                 env.read_only_mode = true; // plan mode gating (see mod.rs)
                 let mut messages = vec![ChatMessage::system("sys")];
-                let stop = run_turn(&env, &mut messages, "改一下").await;
+                let stop = run_turn(&env, &mut messages, Content::Text("改一下".into())).await;
                 assert!(matches!(stop, acp::StopReason::EndTurn));
                 assert_eq!(*perms.borrow(), 0, "read-only refusal must not prompt");
                 let tool_msg = messages.iter().find(|m| m.role == "tool").unwrap();
-                assert!(tool_msg.content.as_deref().unwrap().contains("只读模式"));
+                assert!(tool_msg.content.as_ref().and_then(Content::as_text).unwrap().contains("只读模式"));
                 assert!(!tmp.path().join("p.txt").exists());
             })
             .await;
@@ -1058,7 +1062,7 @@ mod tests {
                 let (mut env, _nots, perms) = make_env(provider, tmp.path(), true);
                 env.auto_approve = true; // auto mode gating (see mod.rs)
                 let mut messages = vec![ChatMessage::system("sys")];
-                let stop = run_turn(&env, &mut messages, "写文件").await;
+                let stop = run_turn(&env, &mut messages, Content::Text("写文件".into())).await;
                 assert!(matches!(stop, acp::StopReason::EndTurn));
                 assert_eq!(*perms.borrow(), 0, "auto mode must never prompt");
                 // deny_all would have refused a prompt; the file existing proves

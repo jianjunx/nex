@@ -14,7 +14,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::provider::ChatMessage;
+use super::provider::{ChatMessage, Content};
 
 pub const TOOL_RESULT_SNIP_RATIO: f64 = 0.6;
 pub const COMPACT_RATIO: f64 = 0.8;
@@ -72,7 +72,7 @@ pub fn snip_tool_results(messages: &mut [ChatMessage], force: bool) -> usize {
         if msg.role != "tool" {
             continue;
         }
-        let Some(content) = msg.content.as_mut() else { continue };
+        let Some(Content::Text(content)) = msg.content.as_mut() else { continue };
         if content.starts_with(ERROR_PREFIX) || content.starts_with("[snipped") {
             continue; // KeepErrors + idempotence
         }
@@ -118,13 +118,16 @@ pub fn compact(messages: &mut Vec<ChatMessage>, force: bool) -> Vec<ChatMessage>
         if force && msg.role == "assistant" && msg.tool_calls.is_none() {
             let should_fold = msg
                 .content
-                .as_deref()
+                .as_ref()
+                .and_then(Content::as_text)
                 .map(|c| !c.starts_with("[compacted"))
                 .unwrap_or(false);
             if should_fold {
                 archived.push(msg.clone());
-                let chars = msg.content.as_deref().map(|c| c.chars().count()).unwrap_or(0);
-                msg.content = Some(format!("[compacted: {chars} chars of earlier assistant prose]"));
+                let chars = msg.content.as_ref().map(Content::text_len).unwrap_or(0);
+                msg.content = Some(Content::Text(format!(
+                    "[compacted: {chars} chars of earlier assistant prose]"
+                )));
             }
         }
     }
@@ -137,7 +140,8 @@ pub fn compact(messages: &mut Vec<ChatMessage>, force: bool) -> Vec<ChatMessage>
         }
         let needs_snip = msg
             .content
-            .as_deref()
+            .as_ref()
+            .and_then(Content::as_text)
             .map(|c| {
                 !c.starts_with(ERROR_PREFIX)
                     && !c.starts_with("[snipped")
@@ -147,12 +151,17 @@ pub fn compact(messages: &mut Vec<ChatMessage>, force: bool) -> Vec<ChatMessage>
         if !needs_snip {
             continue; // KeepErrors + idempotence
         }
-        let before = msg.content.clone().unwrap_or_default();
-        if let Some(content) = msg.content.as_mut() {
+        let before = msg
+            .content
+            .as_ref()
+            .and_then(Content::as_text)
+            .unwrap_or_default()
+            .to_string();
+        if let Some(Content::Text(content)) = msg.content.as_mut() {
             snip_string(content, keep);
         }
         let mut original = msg.clone();
-        original.content = Some(before);
+        original.content = Some(Content::Text(before));
         archived.push(original);
     }
     archived
@@ -253,8 +262,8 @@ mod tests {
             tool_msg("2", &format!("{ERROR_PREFIX} boom {}", "y".repeat(5000))),
         ];
         assert_eq!(snip_tool_results(&mut msgs, false), 1);
-        assert!(msgs[0].content.as_deref().unwrap().starts_with("[snipped"));
-        assert!(msgs[1].content.as_deref().unwrap().starts_with(ERROR_PREFIX));
+        assert!(msgs[0].content.as_ref().and_then(Content::as_text).unwrap().starts_with("[snipped"));
+        assert!(msgs[1].content.as_ref().and_then(Content::as_text).unwrap().starts_with(ERROR_PREFIX));
         // Second pass changes nothing.
         assert_eq!(snip_tool_results(&mut msgs, false), 0);
     }
@@ -282,15 +291,15 @@ mod tests {
         assert!(!archived.is_empty());
 
         // System intact.
-        assert_eq!(msgs[0].content.as_deref(), Some("sys"));
+        assert_eq!(msgs[0].content.as_ref().and_then(Content::as_text), Some("sys"));
         // Old prose folded.
-        assert!(msgs[4].content.as_deref().unwrap().starts_with("[compacted"));
+        assert!(msgs[4].content.as_ref().and_then(Content::as_text).unwrap().starts_with("[compacted"));
         // Error result kept verbatim (KeepErrors).
-        assert!(msgs[3].content.as_deref().unwrap().starts_with(ERROR_PREFIX));
+        assert!(msgs[3].content.as_ref().and_then(Content::as_text).unwrap().starts_with(ERROR_PREFIX));
         // Tail untouched: the big recent result is still big.
         let n = msgs.len();
-        assert_eq!(msgs[n - 2].content.as_deref().unwrap().len(), big.len());
-        assert_eq!(msgs[n - 1].content.as_deref(), Some("recent answer"));
+        assert_eq!(msgs[n - 2].content.as_ref().and_then(Content::as_text).unwrap().len(), big.len());
+        assert_eq!(msgs[n - 1].content.as_ref().and_then(Content::as_text), Some("recent answer"));
     }
 
     /// The pairing invariant: after any compression pass, every `tool`
@@ -339,6 +348,6 @@ mod tests {
         let mut msgs = vec![ChatMessage::system("s"), tool_msg("1", &big)];
         let tmp = tempfile::tempdir().unwrap();
         assert!(maybe_compress(&mut msgs, 0, tmp.path()).is_none());
-        assert_eq!(msgs[1].content.as_deref().unwrap().len(), big.len());
+        assert_eq!(msgs[1].content.as_ref().and_then(Content::as_text).unwrap().len(), big.len());
     }
 }

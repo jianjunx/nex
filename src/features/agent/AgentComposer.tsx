@@ -193,9 +193,19 @@ export function AgentComposer() {
   );
   const activeConversation = conversations.find((c) => c.id === activeTabId) ?? null;
   const canSend = (!!text.trim() || images.length > 0) && !!activeTabId;
-  const isCursorAgent = activeConversation?.agent_type === "cursor";
+  // External ACP agents use session/request_permission; show Authorization for
+  // all of them (not only Cursor). Native NexAgent has its own auto mode.
+  const showAuthMode =
+    !!activeConversation && activeConversation.agent_type !== "nex" && activeConversation.agent_type !== "native";
   const authMode =
     (activeTabId ? sessionPrefsByConversation[activeTabId]?.authMode : undefined) ?? "menu";
+  // NexAgent advertises vision per model; unknown (external agents) stays allowed.
+  const modelSupportsVision = (() => {
+    if (!meta?.currentModelId) return true;
+    const m = meta.models.find((x) => x.id === meta.currentModelId);
+    if (!m || m.vision === undefined) return true;
+    return m.vision;
+  })();
 
   const filteredCommands = useMemo(() => {
     if (!slashOpen) return [] as AvailableCommand[];
@@ -344,6 +354,7 @@ export function AgentComposer() {
   }, []);
 
   const addImageFiles = useCallback(async (files: File[]) => {
+    if (!modelSupportsVision) return;
     const next: PendingImage[] = [];
     for (const file of files) {
       if (!file.type.startsWith("image/")) continue;
@@ -360,7 +371,7 @@ export function AgentComposer() {
       }
     }
     if (next.length > 0) setImages((prev) => [...prev, ...next]);
-  }, []);
+  }, [modelSupportsVision]);
 
   const ensureLiveSession = async (): Promise<string | null> => {
     if (!activeTabId || !project || !activeConversation) return null;
@@ -898,14 +909,17 @@ export function AgentComposer() {
                 <div className="absolute bottom-full left-0 mb-1 min-w-[140px] rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--glass-3-surface)] shadow-lg py-1 z-30">
                   <button
                     type="button"
-                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-sm hover:bg-[var(--overlay-hover)]"
+                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-sm hover:bg-[var(--overlay-hover)] disabled:opacity-40"
+                    disabled={!modelSupportsVision}
+                    title={modelSupportsVision ? undefined : "当前模型不支持图片"}
                     onClick={() => {
+                      if (!modelSupportsVision) return;
                       setPlusOpen(false);
                       imageInputRef.current?.click();
                     }}
                   >
                     <ImagePlus size={14} />
-                    选择图片
+                    {modelSupportsVision ? "选择图片" : "选择图片（模型不支持）"}
                   </button>
                   <button
                     type="button"
@@ -940,7 +954,7 @@ export function AgentComposer() {
             )}
 
             <div className="ml-auto flex items-center gap-0.5 min-w-0">
-              {isCursorAgent && activeTabId && (
+              {showAuthMode && activeTabId && (
                 <ComposerOptionMenu
                   ariaLabel="Authorization"
                   value={authMode}

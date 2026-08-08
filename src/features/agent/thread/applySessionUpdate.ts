@@ -29,6 +29,29 @@ function mapToolStatus(raw: unknown): ToolCallStatus {
   }
 }
 
+function mapContentBlock(content: unknown): ToolCallContentBlock | null {
+  if (!content || typeof content !== "object") return null;
+  const c = content as Record<string, unknown>;
+  if (c.type === "image") {
+    const data = typeof c.data === "string" ? c.data : null;
+    if (!data) return null;
+    return {
+      type: "image",
+      data,
+      mimeType:
+        typeof c.mimeType === "string"
+          ? c.mimeType
+          : typeof c.mime_type === "string"
+            ? c.mime_type
+            : "image/png",
+      path: typeof c.uri === "string" ? c.uri : undefined,
+    };
+  }
+  const text = contentBlockText(content);
+  if (text) return { type: "text", text };
+  return null;
+}
+
 function mapToolContent(raw: unknown): ToolCallContentBlock[] {
   if (!Array.isArray(raw)) return [];
   const out: ToolCallContentBlock[] = [];
@@ -44,9 +67,33 @@ function mapToolContent(raw: unknown): ToolCallContentBlock[] {
       });
       continue;
     }
+    if (o.type === "terminal") {
+      const text =
+        typeof o.output === "string"
+          ? o.output
+          : typeof o.data === "string"
+            ? o.data
+            : contentBlockText(o) ?? "";
+      out.push({
+        type: "terminal",
+        text,
+        terminalId:
+          typeof o.terminalId === "string"
+            ? o.terminalId
+            : typeof o.terminal_id === "string"
+              ? o.terminal_id
+              : undefined,
+      });
+      continue;
+    }
     if (o.type === "content" && o.content) {
-      const text = contentBlockText(o.content);
-      if (text) out.push({ type: "text", text });
+      const mapped = mapContentBlock(o.content);
+      if (mapped) out.push(mapped);
+      continue;
+    }
+    if (o.type === "image") {
+      const mapped = mapContentBlock(o);
+      if (mapped) out.push(mapped);
       continue;
     }
     const text = contentBlockText(o);

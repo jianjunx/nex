@@ -234,6 +234,7 @@ export interface SessionModelDto {
   id: string;
   name: string;
   description?: string | null;
+  vision?: boolean | null;
 }
 
 export interface SessionModelsDto {

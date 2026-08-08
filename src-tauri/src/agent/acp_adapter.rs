@@ -226,18 +226,9 @@ impl acp::Client for NexAcpClient {
                 serde_json::json!({ "outcome": { "outcome": "accepted", "todos": todos } })
             }
             "cursor/ask_question" => self.handle_ask_question(params).await,
-            "cursor/task" => {
-                self.forward_ext("ext_method", method, &params);
-                serde_json::json!({ "outcome": { "outcome": "completed" } })
-            }
-            "cursor/generate_image" => {
-                self.forward_ext("ext_method", method, &params);
-                serde_json::json!({ "outcome": { "outcome": "accepted" } })
-            }
-            _ => {
-                self.forward_ext("ext_method", method, &params);
-                serde_json::Value::Null
-            }
+            "cursor/task" => self.handle_cursor_task(&params),
+            "cursor/generate_image" => self.handle_generate_image(&params).await,
+            _ => return Err(acp::Error::method_not_found()),
         };
         let raw = serde_json::value::RawValue::from_string(result.to_string()).map_err(|e| {
             acp::Error::internal_error().with_data(format!("ext_method encode failed: {e}"))
@@ -270,26 +261,22 @@ impl acp::Client for NexAcpClient {
             return Ok(());
         }
 
-        self.forward_ext("ext_notification", method, &params);
+        if method == "cursor/task" {
+            let _ = self.handle_cursor_task(&params);
+            return Ok(());
+        }
+
+        if method == "cursor/generate_image" {
+            let _ = self.handle_generate_image(&params).await;
+            return Ok(());
+        }
+
+        // Unknown notifications are ignored (fire-and-forget).
         Ok(())
     }
 }
 
 impl NexAcpClient {
-    fn forward_ext(&self, kind: &str, method: &str, params: &serde_json::Value) {
-        let _ = self.app.emit(
-            AGENT_NOTIFICATION_EVENT,
-            AgentNotification {
-                session_id: self.session_key.clone(),
-                update: serde_json::json!({
-                    "sessionUpdate": kind,
-                    "method": method,
-                    "params": params,
-                }),
-            },
-        );
-    }
-
     fn emit_plan_from_todos(&self, todos: &[CursorTodoDto]) {
         let entries: Vec<serde_json::Value> = todos
             .iter()
@@ -389,6 +376,152 @@ impl NexAcpClient {
         }
     }
 
+    /// Surfaces a Cursor subagent task in the thread and acknowledges completion.
+    fn handle_cursor_task(&self, params: &serde_json::Value) -> serde_json::Value {
+        let tool_call_id = params
+            .get("toolCallId")
+            .or_else(|| params.get("tool_call_id"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("cursor-task-{}", uuid::Uuid::new_v4()));
+        let description = params
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Subagent task")
+            .to_string();
+        let prompt = params
+            .get("prompt")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let agent_id = params
+            .get("agentId")
+            .or_else(|| params.get("agent_id"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let duration_ms = params
+            .get("durationMs")
+            .or_else(|| params.get("duration_ms"))
+            .and_then(|v| v.as_u64());
+        let status = if duration_ms.is_some() {
+            "completed"
+        } else {
+            "in_progress"
+        };
+        let mut content = Vec::new();
+        if !prompt.is_empty() {
+            content.push(serde_json::json!({
+                "type": "content",
+                "content": { "type": "text", "text": prompt },
+            }));
+        }
+        if let Some(ms) = duration_ms {
+            content.push(serde_json::json!({
+                "type": "content",
+                "content": { "type": "text", "text": format!("duration: {ms}ms") },
+            }));
+        }
+        let _ = self.app.emit(
+            AGENT_NOTIFICATION_EVENT,
+            AgentNotification {
+                session_id: self.session_key.clone(),
+                update: serde_json::json!({
+                    "sessionUpdate": "tool_call",
+                    "toolCallId": tool_call_id,
+                    "title": description,
+                    "kind": "other",
+                    "status": status,
+                    "content": content,
+                }),
+            },
+        );
+        let mut outcome = serde_json::json!({ "outcome": "completed" });
+        if let Some(id) = agent_id {
+            outcome["agentId"] = serde_json::Value::String(id);
+        }
+        if let Some(ms) = duration_ms {
+            outcome["durationMs"] = serde_json::Value::Number(ms.into());
+        }
+        serde_json::json!({ "outcome": outcome })
+    }
+
+    /// Surfaces a Cursor-generated image in the thread.
+    async fn handle_generate_image(&self, params: &serde_json::Value) -> serde_json::Value {
+        let tool_call_id = params
+            .get("toolCallId")
+            .or_else(|| params.get("tool_call_id"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("cursor-image-{}", uuid::Uuid::new_v4()));
+        let description = params
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Generated image")
+            .to_string();
+        let file_path = params
+            .get("filePath")
+            .or_else(|| params.get("file_path"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let mut image_data = params
+            .get("imageData")
+            .or_else(|| params.get("image_data"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let mut mime = "image/png".to_string();
+        if image_data.is_none() {
+            if let Some(path) = file_path.as_deref() {
+                match tokio::fs::read(path).await {
+                    Ok(bytes) => {
+                        mime = mime_from_path(path);
+                        image_data = Some(base64::Engine::encode(
+                            &base64::engine::general_purpose::STANDARD,
+                            &bytes,
+                        ));
+                    }
+                    Err(e) => {
+                        log::warn!("cursor/generate_image: failed to read `{path}`: {e}");
+                    }
+                }
+            }
+        }
+        let Some(data) = image_data else {
+            return serde_json::json!({
+                "outcome": {
+                    "outcome": "rejected",
+                    "reason": "no image data or readable filePath"
+                }
+            });
+        };
+        let _ = self.app.emit(
+            AGENT_NOTIFICATION_EVENT,
+            AgentNotification {
+                session_id: self.session_key.clone(),
+                update: serde_json::json!({
+                    "sessionUpdate": "tool_call",
+                    "toolCallId": tool_call_id,
+                    "title": description,
+                    "kind": "other",
+                    "status": "completed",
+                    "content": [{
+                        "type": "content",
+                        "content": {
+                            "type": "image",
+                            "mimeType": mime,
+                            "data": data,
+                            "uri": file_path,
+                        }
+                    }],
+                }),
+            },
+        );
+        let mut outcome = serde_json::json!({ "outcome": "generated" });
+        if let Some(path) = file_path {
+            outcome["filePath"] = serde_json::Value::String(path);
+        }
+        serde_json::json!({ "outcome": outcome })
+    }
+
     async fn handle_ask_question(&self, params: serde_json::Value) -> serde_json::Value {
         let questions = parse_ask_questions(&params);
         if questions.is_empty() {
@@ -453,6 +586,52 @@ fn normalize_plan_status(status: &str) -> &str {
         "in_progress" | "completed" | "pending" | "cancelled" => status,
         _ => "pending",
     }
+}
+
+fn mime_from_path(path: &str) -> String {
+    let lower = path.to_ascii_lowercase();
+    if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+        "image/jpeg".into()
+    } else if lower.ends_with(".webp") {
+        "image/webp".into()
+    } else if lower.ends_with(".gif") {
+        "image/gif".into()
+    } else {
+        "image/png".into()
+    }
+}
+
+/// Builds ACP `mcpServers` for `session/new` from Nex's `~/.nex/mcp.json` +
+/// project `.nex/mcp.json`. External agents (Claude/Codex/Cursor) receive the
+/// same stdio/HTTP servers the built-in agent uses.
+fn acp_mcp_servers_from_nex(cwd: &std::path::Path) -> Vec<serde_json::Value> {
+    super::native::mcp::load_configs(cwd)
+        .into_iter()
+        .filter_map(|(name, cfg)| mcp_config_to_acp_value(&name, &cfg))
+        .collect()
+}
+
+fn mcp_config_to_acp_value(name: &str, cfg: &super::native::mcp::McpServerConfig) -> Option<serde_json::Value> {
+    if let Some(url) = cfg.url.as_ref().filter(|u| !u.trim().is_empty()) {
+        return Some(serde_json::json!({
+            "type": "http",
+            "name": name,
+            "url": url,
+            "headers": [],
+        }));
+    }
+    let command = cfg.command.as_ref().filter(|c| !c.trim().is_empty())?;
+    let env: Vec<serde_json::Value> = cfg
+        .env
+        .iter()
+        .map(|(k, v)| serde_json::json!({ "name": k, "value": v }))
+        .collect();
+    Some(serde_json::json!({
+        "name": name,
+        "command": command,
+        "args": cfg.args,
+        "env": env,
+    }))
 }
 
 fn parse_cursor_todo_item(item: &serde_json::Value) -> Option<CursorTodoDto> {
@@ -639,7 +818,7 @@ fn config_options_from_json(value: &serde_json::Value) -> Option<Vec<SessionConf
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let options = item
+        let options: Vec<SessionConfigValueDto> = item
             .get("options")
             .and_then(|v| v.as_array())
             .map(|opts| {
@@ -660,8 +839,25 @@ fn config_options_from_json(value: &serde_json::Value) -> Option<Vec<SessionConf
                     .collect()
             })
             .unwrap_or_default();
-        // Only surface select-style options in the composer for now.
-        if item.get("type").and_then(|v| v.as_str()) == Some("boolean") {
+        // Boolean options are projected as a two-value select so Composer can
+        // reuse the existing option menu (true/false).
+        let options = if item.get("type").and_then(|v| v.as_str()) == Some("boolean")
+            && options.is_empty()
+        {
+            vec![
+                SessionConfigValueDto {
+                    id: "true".into(),
+                    name: "On".into(),
+                },
+                SessionConfigValueDto {
+                    id: "false".into(),
+                    name: "Off".into(),
+                },
+            ]
+        } else {
+            options
+        };
+        if options.is_empty() {
             continue;
         }
         out.push(SessionConfigOptionDto {
@@ -727,6 +923,12 @@ fn models_from_json(value: &serde_json::Value) -> Option<SessionModelsDto> {
                         .or_else(|| m.get("id"))
                         .and_then(|v| v.as_str())?
                         .to_string();
+                    let vision = m
+                        .get("meta")
+                        .or_else(|| m.get("_meta"))
+                        .and_then(|meta| meta.get("vision"))
+                        .and_then(|v| v.as_bool())
+                        .or_else(|| m.get("vision").and_then(|v| v.as_bool()));
                     Some(SessionModelDto {
                         id,
                         name: m.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
@@ -734,6 +936,7 @@ fn models_from_json(value: &serde_json::Value) -> Option<SessionModelsDto> {
                             .get("description")
                             .and_then(|v| v.as_str())
                             .map(str::to_string),
+                        vision,
                     })
                 })
                 .collect()
@@ -931,6 +1134,7 @@ impl AcpSessionManager {
         let thread_app = app.clone();
         let thread_key = session_key.clone();
         let thread_cwd = cwd.to_string();
+        let thread_conversation_id = conversation_id.to_string();
         let thread_sessions = Arc::clone(&self.sessions);
         let thread_pending = Arc::clone(&self.pending_permissions);
         let thread_plans = Arc::clone(&self.pending_plan_approvals);
@@ -952,6 +1156,7 @@ impl AcpSessionManager {
                         thread_app,
                         thread_key,
                         thread_cwd,
+                        thread_conversation_id,
                         config_path,
                         thread_pending,
                         thread_plans,
@@ -1323,6 +1528,7 @@ async fn run_session(
         init_tx,
         shutdown_rx,
         diag,
+        None,
     )
     .await;
 }
@@ -1338,6 +1544,7 @@ async fn run_session_native(
     app: AppHandle,
     session_key: String,
     cwd: String,
+    conversation_id: String,
     config_path: std::path::PathBuf,
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
     pending_plan_approvals: Arc<Mutex<HashMap<String, PendingPlanApproval>>>,
@@ -1393,6 +1600,7 @@ async fn run_session_native(
         init_tx,
         shutdown_rx,
         diag,
+        Some(conversation_id),
     )
     .await;
 }
@@ -1416,6 +1624,9 @@ async fn run_acp_session<W, R>(
     init_tx: oneshot::Sender<SessionInitResult>,
     shutdown_rx: oneshot::Receiver<()>,
     mut diag: DiagCtx,
+    // When `Some`, try `session/load` first (native resume). External agents
+    // always pass `None` and go straight to `session/new`.
+    resume_conversation_id: Option<String>,
 ) where
     W: futures::io::AsyncWrite + Unpin + 'static,
     R: futures::io::AsyncRead + Unpin + 'static,
@@ -1479,26 +1690,69 @@ async fn run_acp_session<W, R>(
             })?;
         }
 
-        let response = conn
-            .request_raw(
-                "session/new",
-                serde_json::json!({
-                    "cwd": cwd,
-                    "mcpServers": [],
-                }),
-            )
-            .await
-            .map_err(NexError::from)?;
-
-        let session_id = response
-            .get("sessionId")
-            .or_else(|| response.get("session_id"))
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| NexError::Agent("session/new response missing sessionId".into()))?;
-        let session_id = acp::SessionId(Arc::from(session_id));
+        let mcp_servers = acp_mcp_servers_from_nex(std::path::Path::new(&cwd));
+        let (session_id, response) = if let Some(id) = resume_conversation_id.as_deref() {
+            // Native resume: try archived history first; on miss fall back to a
+            // fresh session with a stable conversation-scoped id.
+            match conn
+                .request_raw(
+                    "session/load",
+                    serde_json::json!({
+                        "sessionId": id,
+                        "cwd": cwd,
+                        "mcpServers": [],
+                    }),
+                )
+                .await
+            {
+                Ok(response) => {
+                    log::info!("resumed native ACP session via session/load ({id})");
+                    (acp::SessionId(Arc::from(id)), response)
+                }
+                Err(e) => {
+                    log::info!(
+                        "session/load failed for `{id}` ({e}); falling back to session/new"
+                    );
+                    let response = conn
+                        .request_raw(
+                            "session/new",
+                            serde_json::json!({
+                                "cwd": cwd,
+                                "mcpServers": mcp_servers,
+                                "_meta": { "nexConversationId": id },
+                            }),
+                        )
+                        .await
+                        .map_err(NexError::from)?;
+                    let session_id = response
+                        .get("sessionId")
+                        .or_else(|| response.get("session_id"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(id);
+                    (acp::SessionId(Arc::from(session_id)), response)
+                }
+            }
+        } else {
+            let response = conn
+                .request_raw(
+                    "session/new",
+                    serde_json::json!({
+                        "cwd": cwd,
+                        "mcpServers": mcp_servers,
+                    }),
+                )
+                .await
+                .map_err(NexError::from)?;
+            let session_id = response
+                .get("sessionId")
+                .or_else(|| response.get("session_id"))
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| NexError::Agent("session/new response missing sessionId".into()))?;
+            (acp::SessionId(Arc::from(session_id)), response)
+        };
 
         // Prefer typed fields when present; also keep configOptions which the
-        // 0.7 schema drops from NewSessionResponse.
+        // 0.7 schema drops from NewSessionResponse / LoadSessionResponse.
         let modes = modes_from_json(&response);
         let models = models_from_json(&response);
         let config_options = config_options_from_json(&response);

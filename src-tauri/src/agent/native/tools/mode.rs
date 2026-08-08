@@ -4,9 +4,6 @@
 //! never leave those modes). The harness emits ACP `CurrentModeUpdate` after a
 //! successful call so the Composer stays in sync.
 
-use std::cell::RefCell;
-use std::rc::Rc;
-
 use super::{Tool, ToolCtx};
 use agent_client_protocol as acp;
 
@@ -93,14 +90,16 @@ impl Tool for SwitchMode {
 
 /// Test helper: a ToolCtx mode cell preloaded with `initial`.
 #[cfg(test)]
-pub fn test_mode_cell(initial: &str) -> Rc<RefCell<String>> {
-    Rc::new(RefCell::new(initial.to_string()))
+pub fn test_mode_cell(initial: &str) -> std::rc::Rc<std::cell::RefCell<String>> {
+    std::rc::Rc::new(std::cell::RefCell::new(initial.to_string()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
     use std::path::PathBuf;
+    use std::rc::Rc;
     use std::time::Duration;
 
     fn ctx(mode: &str) -> ToolCtx {

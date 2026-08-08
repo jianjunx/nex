@@ -193,6 +193,9 @@ pub struct SessionModelDto {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// When known (NexAgent), whether the model accepts image inputs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vision: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]

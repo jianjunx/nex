@@ -2447,6 +2447,7 @@ version = "1.1.0"
 dependencies = [
  "agent-client-protocol",
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "content_inspector",
  "dirs 5.0.1",

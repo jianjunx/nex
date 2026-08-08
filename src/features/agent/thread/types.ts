@@ -19,11 +19,16 @@ export interface ToolPermissionOption {
 }
 
 export interface ToolCallContentBlock {
-  type: "text" | "diff";
+  type: "text" | "diff" | "image" | "terminal";
   text?: string;
   path?: string;
   oldText?: string;
   newText?: string;
+  /** base64 payload for `image` blocks */
+  data?: string;
+  mimeType?: string;
+  /** terminal exit / output metadata when present */
+  terminalId?: string;
 }
 
 export interface PlanEntry {
@@ -93,6 +98,8 @@ export interface SessionModelOption {
   id: string;
   name: string;
   description?: string;
+  /** When known (NexAgent), whether the model accepts image inputs. */
+  vision?: boolean;
 }
 
 export interface SessionConfigOption {

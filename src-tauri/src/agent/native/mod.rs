@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use agent_client_protocol::{self as acp};
 
+pub mod archive;
 pub mod bundled;
 pub mod capabilities;
 pub mod commands;
@@ -194,6 +195,116 @@ impl NexNativeAgent {
         use acp::Client as _;
         let _ = conn.session_notification(notification).await;
     }
+
+    /// Model list advertised on `session/new` / `session/load`.
+    fn available_models(cfg: &NativeAgentConfig) -> Vec<acp::ModelInfo> {
+        cfg.providers
+            .iter()
+            .flat_map(|p| {
+                p.models.iter().map(move |m| acp::ModelInfo {
+                    model_id: acp::ModelId(Arc::from(format!("{}/{}", p.id, m.id).as_str())),
+                    name: m.id.clone(),
+                    description: Some(p.name.clone()),
+                    meta: Some(serde_json::json!({ "vision": m.capabilities.vision })),
+                })
+            })
+            .collect()
+    }
+
+    fn session_mode_state(current_mode_id: &str) -> acp::SessionModeState {
+        acp::SessionModeState {
+            current_mode_id: acp::SessionModeId(Arc::from(current_mode_id)),
+            available_modes: vec![
+                acp::SessionMode {
+                    id: acp::SessionModeId(Arc::from("code")),
+                    name: "Code".to_string(),
+                    description: Some("Edit files and run tools".to_string()),
+                    meta: None,
+                },
+                acp::SessionMode {
+                    id: acp::SessionModeId(Arc::from("ask")),
+                    name: "Ask".to_string(),
+                    description: Some("Read-only questions and analysis".to_string()),
+                    meta: None,
+                },
+                acp::SessionMode {
+                    id: acp::SessionModeId(Arc::from("plan")),
+                    name: "Plan".to_string(),
+                    description: Some(
+                        "Read-only research, then a step-by-step plan".to_string(),
+                    ),
+                    meta: None,
+                },
+                acp::SessionMode {
+                    id: acp::SessionModeId(Arc::from("auto")),
+                    name: "Auto".to_string(),
+                    description: Some("Run without per-tool approval prompts".to_string()),
+                    meta: None,
+                },
+            ],
+            meta: None,
+        }
+    }
+
+    /// Connect MCP servers and publish slash-command catalog (shared by new/load).
+    async fn setup_session_extras(
+        &self,
+        session_id: &acp::SessionId,
+        cwd: &Path,
+        cfg: &NativeAgentConfig,
+    ) {
+        if let Some(home) = home::nex_home() {
+            bundled::ensure_bundled(&home);
+        }
+
+        for (name, server_cfg) in mcp::load_configs(cwd) {
+            if cfg.disabled_mcp_servers.iter().any(|d| d == &name) {
+                continue;
+            }
+            match mcp::McpClient::connect(&name, &server_cfg).await {
+                Ok(client) => {
+                    log::info!(
+                        "MCP server `{name}` connected with {} tool(s)",
+                        client.tools.len()
+                    );
+                    self.inner
+                        .sessions
+                        .borrow_mut()
+                        .get_mut(session_id.0.as_ref())
+                        .map(|s| s.mcp.push(Rc::new(client)));
+                }
+                Err(e) => log::warn!("{e}"),
+            }
+        }
+
+        if let Some(conn) = self.inner.conn.borrow().clone() {
+            let commands = commands::discover(cwd);
+            if !commands.is_empty() {
+                let notification = acp::SessionNotification {
+                    session_id: session_id.clone(),
+                    update: acp::SessionUpdate::AvailableCommandsUpdate(
+                        acp::AvailableCommandsUpdate {
+                            available_commands: commands
+                                .iter()
+                                .map(|c| acp::AvailableCommand {
+                                    name: c.name.clone(),
+                                    description: c.description.clone(),
+                                    input: c.argument_hint.clone().map(|hint| {
+                                        acp::AvailableCommandInput::Unstructured { hint }
+                                    }),
+                                    meta: None,
+                                })
+                                .collect(),
+                            meta: None,
+                        },
+                    ),
+                    meta: None,
+                };
+                use acp::Client as _;
+                let _ = conn.session_notification(notification).await;
+            }
+        }
+    }
 }
 
 #[async_trait::async_trait(?Send)]
@@ -205,7 +316,7 @@ impl acp::Agent for NexNativeAgent {
         Ok(acp::InitializeResponse {
             protocol_version: args.protocol_version,
             agent_capabilities: acp::AgentCapabilities {
-                load_session: false,
+                load_session: true,
                 prompt_capabilities: acp::PromptCapabilities {
                     image: true,
                     audio: false,
@@ -238,23 +349,23 @@ impl acp::Agent for NexNativeAgent {
         args: acp::NewSessionRequest,
     ) -> acp::Result<acp::NewSessionResponse> {
         let cfg = self.load_config();
-        let session_id = acp::SessionId(Arc::from(uuid::Uuid::new_v4().to_string().as_str()));
+        // Stable id when the client passes `meta.nexConversationId` (Nex uses
+        // the conversation id so `session/load` can resume across restarts).
+        let session_id = args
+            .meta
+            .as_ref()
+            .and_then(|m| m.get("nexConversationId"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|id| acp::SessionId(Arc::from(id)))
+            .unwrap_or_else(|| {
+                acp::SessionId(Arc::from(uuid::Uuid::new_v4().to_string().as_str()))
+            });
 
         // Aggregate every configured provider's models into the session model
         // list; ids are composite `<providerId>/<modelId>`. Display name is the
         // bare model id; provider name goes in `description` for Composer grouping.
-        let available_models: Vec<acp::ModelInfo> = cfg
-            .providers
-            .iter()
-            .flat_map(|p| {
-                p.models.iter().map(move |m| acp::ModelInfo {
-                    model_id: acp::ModelId(Arc::from(format!("{}/{}", p.id, m.id).as_str())),
-                    name: m.id.clone(),
-                    description: Some(p.name.clone()),
-                    meta: None,
-                })
-            })
-            .collect();
+        let available_models = Self::available_models(&cfg);
         let current_model = cfg
             .default_selection()
             .unwrap_or_else(|| "deepseek/deepseek-chat".to_string());
@@ -278,99 +389,11 @@ impl acp::Agent for NexNativeAgent {
             .borrow_mut()
             .insert(session_id.0.to_string(), session);
 
-        // Seed built-in commands/skills into ~/.nex (never overwrites user files).
-        if let Some(home) = home::nex_home() {
-            bundled::ensure_bundled(&home);
-        }
-
-        // Connect configured MCP servers (`~/.nex/mcp.json` + project
-        // `.nex/mcp.json`). A failing server only logs — it never blocks
-        // session creation; the child processes die with the session.
-        for (name, server_cfg) in mcp::load_configs(&args.cwd) {
-            if cfg.disabled_mcp_servers.iter().any(|d| d == &name) {
-                continue;
-            }
-            match mcp::McpClient::connect(&name, &server_cfg).await {
-                Ok(client) => {
-                    log::info!(
-                        "MCP server `{name}` connected with {} tool(s)",
-                        client.tools.len()
-                    );
-                    self.inner
-                        .sessions
-                        .borrow_mut()
-                        .get_mut(session_id.0.as_ref())
-                        .map(|s| s.mcp.push(Rc::new(client)));
-                }
-                Err(e) => log::warn!("{e}"),
-            }
-        }
-
-        // Publish the slash-command catalog so the Composer popover can render
-        // it (`AvailableCommandsUpdate`; the frontend matches `name` and adds
-        // the `/` itself).
-        if let Some(conn) = self.inner.conn.borrow().clone() {
-            let commands = commands::discover(&args.cwd);
-            if !commands.is_empty() {
-                let notification = acp::SessionNotification {
-                    session_id: session_id.clone(),
-                    update: acp::SessionUpdate::AvailableCommandsUpdate(
-                        acp::AvailableCommandsUpdate {
-                            available_commands: commands
-                                .iter()
-                                .map(|c| acp::AvailableCommand {
-                                    name: c.name.clone(),
-                                    description: c.description.clone(),
-                                    input: c.argument_hint.clone().map(|hint| {
-                                        acp::AvailableCommandInput::Unstructured { hint }
-                                    }),
-                                    meta: None,
-                                })
-                                .collect(),
-                            meta: None,
-                        },
-                    ),
-                    meta: None,
-                };
-                use acp::Client as _;
-                let _ = conn.session_notification(notification).await;
-            }
-        }
+        self.setup_session_extras(&session_id, &args.cwd, &cfg).await;
 
         Ok(acp::NewSessionResponse {
             session_id,
-            modes: Some(acp::SessionModeState {
-                current_mode_id: acp::SessionModeId(Arc::from("code")),
-                available_modes: vec![
-                    acp::SessionMode {
-                        id: acp::SessionModeId(Arc::from("code")),
-                        name: "Code".to_string(),
-                        description: Some("Edit files and run tools".to_string()),
-                        meta: None,
-                    },
-                    acp::SessionMode {
-                        id: acp::SessionModeId(Arc::from("ask")),
-                        name: "Ask".to_string(),
-                        description: Some("Read-only questions and analysis".to_string()),
-                        meta: None,
-                    },
-                    acp::SessionMode {
-                        id: acp::SessionModeId(Arc::from("plan")),
-                        name: "Plan".to_string(),
-                        description: Some(
-                            "Read-only research, then a step-by-step plan".to_string(),
-                        ),
-                        meta: None,
-                    },
-                    acp::SessionMode {
-                        id: acp::SessionModeId(Arc::from("auto")),
-                        name: "Auto".to_string(),
-                        description: Some("Run without per-tool approval prompts".to_string()),
-                        meta: None,
-                    },
-                ],
-                meta: None,
-            }),
+            modes: Some(Self::session_mode_state("code")),
             models: if available_models.is_empty() {
                 None
             } else {
@@ -382,6 +405,78 @@ impl acp::Agent for NexNativeAgent {
             },
             // The Composer reads `configOptions` out of `_meta` (see
             // `config_options_from_json` in acp_adapter).
+            meta: Some(Self::config_options_meta(
+                initial_reasoning,
+                &reasoning_levels,
+            )),
+        })
+    }
+
+    async fn load_session(
+        &self,
+        args: acp::LoadSessionRequest,
+    ) -> acp::Result<acp::LoadSessionResponse> {
+        let session_key = args.session_id.0.to_string();
+        let Some(arch) = archive::load(&session_key) else {
+            return Err(acp::Error::invalid_params()
+                .with_data(format!("no archived session for `{session_key}`")));
+        };
+
+        let cfg = self.load_config();
+        let available_models = Self::available_models(&cfg);
+        let current_model = if cfg.resolve_model(&arch.model_id).is_some() {
+            arch.model_id.clone()
+        } else {
+            cfg.default_selection()
+                .unwrap_or_else(|| "deepseek/deepseek-chat".to_string())
+        };
+        let reasoning_levels = cfg.reasoning_levels_for(&current_model);
+        let initial_reasoning = ReasoningControl::Medium.clamp_to(&reasoning_levels);
+
+        let mode_id = match arch.mode_id.as_str() {
+            "code" | "ask" | "plan" | "auto" => arch.mode_id.clone(),
+            _ => "code".to_string(),
+        };
+
+        let handles = SessionHandles::new(current_model.clone(), initial_reasoning);
+        *handles.mode_id.borrow_mut() = mode_id.clone();
+        let session = NativeSession {
+            cwd: arch.cwd.clone(),
+            handles: handles.clone_handles(),
+            history: arch.history,
+            jobs: Rc::new(RefCell::new(tools::jobs::JobTable::default())),
+            mcp: Vec::new(),
+        };
+        self.inner
+            .handles
+            .borrow_mut()
+            .insert(session_key.clone(), handles);
+        self.inner
+            .sessions
+            .borrow_mut()
+            .insert(session_key, session);
+
+        // Prefer the client's current cwd for MCP / commands (project may move);
+        // transcript sandbox root stays the archived cwd above.
+        let extras_cwd = if args.cwd.as_os_str().is_empty() {
+            &arch.cwd
+        } else {
+            &args.cwd
+        };
+        self.setup_session_extras(&args.session_id, extras_cwd, &cfg)
+            .await;
+
+        Ok(acp::LoadSessionResponse {
+            modes: Some(Self::session_mode_state(&mode_id)),
+            models: if available_models.is_empty() {
+                None
+            } else {
+                Some(acp::SessionModelState {
+                    current_model_id: acp::ModelId(Arc::from(current_model.as_str())),
+                    available_models,
+                    meta: None,
+                })
+            },
             meta: Some(Self::config_options_meta(
                 initial_reasoning,
                 &reasoning_levels,
@@ -405,9 +500,16 @@ impl acp::Agent for NexNativeAgent {
         // `raw_model_id` is the provider's native model name (no composite
         // prefix) and is what actually goes into the API request body.
         let model_id = session.handles.model_id.borrow().clone();
-        let Some((prov_base_url, prov_api_key, raw_model_id)) = cfg
+        let Some((prov_base_url, prov_api_key, raw_model_id, supports_vision)) = cfg
             .resolve_model(&model_id)
-            .map(|(p, m)| (p.base_url.clone(), p.api_key.clone(), m.id.clone()))
+            .map(|(p, m)| {
+                (
+                    p.base_url.clone(),
+                    p.api_key.clone(),
+                    m.id.clone(),
+                    m.capabilities.vision,
+                )
+            })
         else {
             self.emit_text(
                 &args.session_id,
@@ -457,6 +559,16 @@ impl acp::Agent for NexNativeAgent {
         // Build the multimodal user turn from the incoming prompt blocks
         // (text + images + embedded/mentioned files).
         let mut parts = prompt_parts(&session.cwd, &args.prompt);
+        // Models without vision cannot accept image_url parts — strip them and
+        // warn so the turn still proceeds with text/context only.
+        if !supports_vision && parts.iter().any(|p| p.typ == "image_url") {
+            parts.retain(|p| p.typ != "image_url");
+            self.emit_text(
+                &args.session_id,
+                "当前模型不支持图片输入，已忽略本次消息中的图片。",
+            )
+            .await;
+        }
         // Slash-command expansion: when the text portion starts with a known
         // `/name`, replace the text parts with the command's template body.
         if !parts.is_empty() {
@@ -601,6 +713,17 @@ impl acp::Agent for NexNativeAgent {
                 acp::StopReason::EndTurn
             }
         };
+
+        // Persist history so `session/load` can resume after app restart.
+        let _ = archive::save(
+            &session_key,
+            &archive::SessionArchive {
+                cwd: session.cwd.clone(),
+                model_id: session.handles.model_id.borrow().clone(),
+                mode_id: session.handles.mode_id.borrow().clone(),
+                history: session.history.clone(),
+            },
+        );
 
         self.inner
             .sessions
@@ -1480,6 +1603,15 @@ mod tests {
     async fn prompt_sends_multimodal_parts_to_provider() {
         let (addr, captured, server) = capture_server().await;
         let dir = provider_config(addr);
+        // `deepseek-chat` has no vision; use a vision-capable id so images are
+        // forwarded (non-vision models strip image parts before the provider).
+        {
+            let path = dir.join("nex-agent.json");
+            let mut cfg: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            cfg["providers"][0]["models"][0]["id"] = serde_json::json!("gpt-4o");
+            std::fs::write(&path, cfg.to_string()).unwrap();
+        }
         tokio::task::LocalSet::new()
             .run_until(async {
                 let (agent, conn, _, _) = duplex_pair(dir.clone());

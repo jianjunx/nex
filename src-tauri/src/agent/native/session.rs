@@ -490,6 +490,7 @@ async fn execute_tool(env: &TurnEnv, call: &NativeToolCall) -> Result<String, St
     }
 
     update_status(env, &call_id, acp::ToolCallStatus::InProgress).await;
+    let mode_before = env.mode_id.borrow().clone();
     let result = tool.execute(call.arguments.clone(), &env.tool_ctx).await;
 
     // Mirror the model's todo list as an ACP plan update.
@@ -511,8 +512,26 @@ async fn execute_tool(env: &TurnEnv, call: &NativeToolCall) -> Result<String, St
         }
     }
 
-    // Keep the Composer mode selector in sync when the model switches modes.
+    // Leaving Plan for Code/Auto requires explicit user confirmation (PlanBar
+    // already shows the todos). Rejected switches revert the mode cell.
     if call.name == "switch_mode" && result.is_ok() {
+        let current = env.mode_id.borrow().clone();
+        let leaving_plan_to_exec = mode_before == "plan"
+            && (current == "code" || current == "auto");
+        if leaving_plan_to_exec {
+            match request_plan_execution_approval(env, &call_id, &current).await {
+                PermissionDecision::Allowed { .. } => {}
+                PermissionDecision::Denied => {
+                    *env.mode_id.borrow_mut() = mode_before;
+                    return finish_tool(env, &call_id, false, "用户拒绝执行计划，仍停留在 plan 模式")
+                        .await;
+                }
+                PermissionDecision::TurnCancelled => {
+                    *env.mode_id.borrow_mut() = mode_before;
+                    return Err("cancelled".to_string());
+                }
+            }
+        }
         let current = env.mode_id.borrow().clone();
         emit_notification(
             env,
@@ -585,6 +604,59 @@ enum PermissionDecision {
     Allowed { always: bool },
     Denied,
     TurnCancelled,
+}
+
+/// Confirms leaving Plan mode to start executing (code/auto).
+async fn request_plan_execution_approval(
+    env: &TurnEnv,
+    call_id: &acp::ToolCallId,
+    target_mode: &str,
+) -> PermissionDecision {
+    use acp::Client as _;
+
+    let request = acp::RequestPermissionRequest {
+        session_id: env.session_id.clone(),
+        tool_call: acp::ToolCallUpdate {
+            id: call_id.clone(),
+            fields: acp::ToolCallUpdateFields {
+                kind: Some(acp::ToolKind::SwitchMode),
+                status: Some(acp::ToolCallStatus::Pending),
+                title: Some(format!("确认执行计划（切换到 {target_mode}）")),
+                raw_input: Some(serde_json::json!({
+                    "from": "plan",
+                    "to": target_mode,
+                })),
+                ..Default::default()
+            },
+            meta: None,
+        },
+        options: vec![
+            acp::PermissionOption {
+                id: acp::PermissionOptionId(Arc::from("allow-once")),
+                name: "接受并执行".to_string(),
+                kind: acp::PermissionOptionKind::AllowOnce,
+                meta: None,
+            },
+            acp::PermissionOption {
+                id: acp::PermissionOptionId(Arc::from("reject")),
+                name: "拒绝".to_string(),
+                kind: acp::PermissionOptionKind::RejectOnce,
+                meta: None,
+            },
+        ],
+        meta: None,
+    };
+
+    match env.conn.request_permission(request).await {
+        Ok(resp) => match resp.outcome {
+            acp::RequestPermissionOutcome::Cancelled => PermissionDecision::TurnCancelled,
+            acp::RequestPermissionOutcome::Selected { option_id } => match option_id.0.as_ref() {
+                "allow-once" | "allow-always" => PermissionDecision::Allowed { always: false },
+                _ => PermissionDecision::Denied,
+            },
+        },
+        Err(_) => PermissionDecision::Denied,
+    }
 }
 
 /// Asks the client (Nex UI) for permission via the existing ACP popup.

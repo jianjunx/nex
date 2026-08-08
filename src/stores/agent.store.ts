@@ -247,6 +247,7 @@ function applyCreateMeta(result: CreateSessionResult): SessionMeta {
       id: m.id,
       name: m.name,
       description: m.description ?? undefined,
+      vision: typeof m.vision === "boolean" ? m.vision : undefined,
     }));
   }
   if (result.configOptions && result.configOptions.length > 0) {

@@ -8,6 +8,7 @@ const agentSetSessionMode = vi.fn();
 const agentSetSessionModel = vi.fn();
 const agentSetSessionConfigOption = vi.fn();
 const agentRespondPermission = vi.fn();
+const agentRespondPlan = vi.fn();
 let permissionHandler: ((payload: unknown) => void) | null = null;
 
 vi.mock("../bridge/tauri", () => ({
@@ -18,6 +19,7 @@ vi.mock("../bridge/tauri", () => ({
   agentSetSessionModel: (...args: unknown[]) => agentSetSessionModel(...args),
   agentSetSessionConfigOption: (...args: unknown[]) => agentSetSessionConfigOption(...args),
   agentRespondPermission: (...args: unknown[]) => agentRespondPermission(...args),
+  agentRespondPlan: (...args: unknown[]) => agentRespondPlan(...args),
   agentSendPrompt: vi.fn(),
   agentCancel: vi.fn(),
   agentCloseSession: vi.fn(),
@@ -30,6 +32,7 @@ vi.mock("../bridge/tauri", () => ({
     permissionHandler = cb;
     return Promise.resolve(() => {});
   },
+  onAgentPlanApprovalRequest: () => Promise.resolve(() => {}),
   onAgentSessionTerminated: () => Promise.resolve(() => {}),
 }));
 

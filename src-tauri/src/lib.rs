@@ -90,6 +90,7 @@ pub fn run() {
             commands::agent_cmds::agent_set_session_config_option,
             commands::agent_cmds::agent_cancel,
             commands::agent_cmds::agent_respond_permission,
+            commands::agent_cmds::agent_respond_plan,
             commands::agent_cmds::agent_close_session,
             commands::agent_cmds::agent_custom_upsert,
             commands::agent_cmds::agent_custom_delete,

@@ -393,6 +393,15 @@ impl AgentSessionManager {
         self.acp.respond_permission(request_id, option_id)
     }
 
+    pub fn respond_plan(
+        &self,
+        request_id: &str,
+        outcome: &str,
+        reason: Option<String>,
+    ) -> Result<(), NexError> {
+        self.acp.respond_plan(request_id, outcome, reason)
+    }
+
     pub fn remove_session(&self, session_id: &str) {
         self.acp.remove_session(session_id);
     }

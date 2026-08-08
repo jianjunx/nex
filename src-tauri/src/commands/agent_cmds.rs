@@ -88,6 +88,16 @@ pub fn agent_respond_permission(
 }
 
 #[tauri::command]
+pub fn agent_respond_plan(
+    state: State<AppState>,
+    request_id: String,
+    outcome: String,
+    reason: Option<String>,
+) -> Result<(), NexError> {
+    state.agent_manager.respond_plan(&request_id, &outcome, reason)
+}
+
+#[tauri::command]
 pub fn agent_close_session(state: State<AppState>, session_id: String) -> Result<(), NexError> {
     state.agent_manager.remove_session(&session_id);
     Ok(())

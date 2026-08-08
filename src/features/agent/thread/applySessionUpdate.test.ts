@@ -72,6 +72,29 @@ describe("applySessionUpdate", () => {
     expect(meta.plan).toBeNull();
   });
 
+  it("updates plan progress from Cursor-style synthetic plan notifications", () => {
+    const entries: ThreadEntry[] = [];
+    const meta = emptySessionMeta();
+    applySessionUpdate(entries, meta, {
+      sessionUpdate: "plan",
+      entries: [
+        { content: "Inspect", priority: "medium", status: "completed" },
+        { content: "Edit", priority: "medium", status: "in_progress" },
+        { content: "Verify", priority: "medium", status: "pending" },
+      ],
+    });
+    expect(meta.plan?.map((p) => p.status)).toEqual(["completed", "in_progress", "pending"]);
+    applySessionUpdate(entries, meta, {
+      sessionUpdate: "plan",
+      entries: [
+        { content: "Inspect", priority: "medium", status: "completed" },
+        { content: "Edit", priority: "medium", status: "completed" },
+        { content: "Verify", priority: "medium", status: "completed" },
+      ],
+    });
+    expect(meta.plan).toBeNull();
+  });
+
   it("records context usage from session_info_update", () => {
     const entries: ThreadEntry[] = [];
     const meta = emptySessionMeta();

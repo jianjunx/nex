@@ -1,6 +1,7 @@
 import { ThreadView } from "./thread/ThreadView";
 import { AgentComposer } from "./AgentComposer";
 import { PermissionModal } from "./PermissionModal";
+import { PlanApprovalModal } from "./PlanApprovalModal";
 
 export function ChatArea() {
   return (
@@ -8,6 +9,7 @@ export function ChatArea() {
       <ThreadView />
       <AgentComposer />
       <PermissionModal />
+      <PlanApprovalModal />
     </div>
   );
 }

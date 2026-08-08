@@ -20,6 +20,7 @@ vi.mock("../bridge/tauri", () => ({
   agentSendPrompt: vi.fn(),
   agentCancel: vi.fn(),
   agentRespondPermission: vi.fn(),
+  agentRespondPlan: vi.fn(),
   agentCloseSession: vi.fn(),
   agentListServers: vi.fn(),
   agentListAllServers: vi.fn(),
@@ -31,6 +32,7 @@ vi.mock("../bridge/tauri", () => ({
   agentCustomDelete: vi.fn(),
   onAgentNotification: () => Promise.resolve(() => {}),
   onAgentPermissionRequest: () => Promise.resolve(() => {}),
+  onAgentPlanApprovalRequest: () => Promise.resolve(() => {}),
   onAgentSessionTerminated: () => Promise.resolve(() => {}),
 }));
 

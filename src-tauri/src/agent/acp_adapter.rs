@@ -19,14 +19,15 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use super::launch::{spawn_agent, LaunchSpec};
 use super::native::NexNativeAgent;
 use super::types::{
-    AgentNotification, AgentPermissionRequest, AgentSessionTerminated, CreateSessionResult,
-    PermissionOption, PromptBlock, SessionConfigOptionDto, SessionConfigValueDto, SessionModeDto,
-    SessionModesDto, SessionModelDto, SessionModelsDto,
+    AgentNotification, AgentPermissionRequest, AgentPlanApprovalRequest, AgentSessionTerminated,
+    CreateSessionResult, CursorTodoDto, PermissionOption, PromptBlock, SessionConfigOptionDto,
+    SessionConfigValueDto, SessionModeDto, SessionModesDto, SessionModelDto, SessionModelsDto,
 };
 use crate::error::NexError;
 
 const AGENT_NOTIFICATION_EVENT: &str = "agent-notification";
 const AGENT_PERMISSION_REQUEST_EVENT: &str = "agent-permission-request";
+const AGENT_PLAN_APPROVAL_REQUEST_EVENT: &str = "agent-plan-approval-request";
 const AGENT_SESSION_TERMINATED_EVENT: &str = "agent-session-terminated";
 
 // 120s covers the worst case: cold-cache `npm install` of a new agent
@@ -85,6 +86,19 @@ struct PendingPermission {
     tx: oneshot::Sender<acp::RequestPermissionOutcome>,
 }
 
+/// Outcome the UI returns for a Cursor `cursor/create_plan` request.
+#[derive(Debug, Clone)]
+enum PlanApprovalOutcome {
+    Accepted,
+    Rejected { reason: Option<String> },
+    Cancelled,
+}
+
+struct PendingPlanApproval {
+    session_key: String,
+    tx: oneshot::Sender<PlanApprovalOutcome>,
+}
+
 struct SessionHandle {
     conn: acp::ClientSideConnection,
     agent_session_id: acp::SessionId,
@@ -97,12 +111,16 @@ struct SessionHandle {
 pub struct AcpSessionManager {
     sessions: Arc<Mutex<HashMap<String, Arc<SessionHandle>>>>,
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
+    pending_plan_approvals: Arc<Mutex<HashMap<String, PendingPlanApproval>>>,
 }
 
 struct NexAcpClient {
     app: AppHandle,
     session_key: String,
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
+    pending_plan_approvals: Arc<Mutex<HashMap<String, PendingPlanApproval>>>,
+    /// Latest Cursor todo list for this session (supports `update_todos` merge).
+    cursor_todos: Mutex<Vec<CursorTodoDto>>,
 }
 
 #[async_trait::async_trait(?Send)]
@@ -179,37 +197,38 @@ impl acp::Client for NexAcpClient {
 
     async fn ext_method(&self, args: acp::ExtRequest) -> acp::Result<acp::ExtResponse> {
         let method = args.method.as_ref();
-        // Forward opaque extension traffic so the UI can surface Cursor task /
-        // plan / question events when we add richer handlers later.
-        let _ = self.app.emit(
-            AGENT_NOTIFICATION_EVENT,
-            AgentNotification {
-                session_id: self.session_key.clone(),
-                update: serde_json::json!({
-                    "sessionUpdate": "ext_method",
-                    "method": method,
-                    "params": serde_json::from_str::<serde_json::Value>(args.params.get())
-                        .unwrap_or(serde_json::Value::Null),
-                }),
-            },
-        );
+        let params: serde_json::Value =
+            serde_json::from_str(args.params.get()).unwrap_or(serde_json::Value::Null);
 
-        // Cursor blocking extensions hang the turn until a well-formed outcome
-        // is returned. Auto-resolve so prompts can finish (and stream text).
         let result = match method {
-            "cursor/ask_question" => serde_json::json!({
-                "outcome": { "outcome": "skipped", "reason": "Nex has not implemented this prompt UI yet" }
-            }),
-            "cursor/create_plan" => serde_json::json!({
-                "outcome": { "outcome": "accepted" }
-            }),
-            "cursor/task" => serde_json::json!({
-                "outcome": { "outcome": "completed" }
-            }),
-            "cursor/update_todos" | "cursor/generate_image" => serde_json::json!({
-                "outcome": { "outcome": "accepted" }
-            }),
-            _ => serde_json::Value::Null,
+            "cursor/create_plan" => self.handle_create_plan(params).await,
+            "cursor/update_todos" => {
+                // Spec: notification; some agents may still send as a request.
+                let todos = self.apply_cursor_todos(&params);
+                self.emit_plan_from_todos(&todos);
+                serde_json::json!({ "outcome": { "outcome": "accepted", "todos": todos } })
+            }
+            "cursor/ask_question" => {
+                self.forward_ext("ext_method", method, &params);
+                serde_json::json!({
+                    "outcome": {
+                        "outcome": "skipped",
+                        "reason": "Nex has not implemented this prompt UI yet"
+                    }
+                })
+            }
+            "cursor/task" => {
+                self.forward_ext("ext_method", method, &params);
+                serde_json::json!({ "outcome": { "outcome": "completed" } })
+            }
+            "cursor/generate_image" => {
+                self.forward_ext("ext_method", method, &params);
+                serde_json::json!({ "outcome": { "outcome": "accepted" } })
+            }
+            _ => {
+                self.forward_ext("ext_method", method, &params);
+                serde_json::Value::Null
+            }
         };
         let raw = serde_json::value::RawValue::from_string(result.to_string()).map_err(|e| {
             acp::Error::internal_error().with_data(format!("ext_method encode failed: {e}"))
@@ -225,29 +244,205 @@ impl acp::Client for NexAcpClient {
         // Unknown session/update variants (config_option_update on older schema)
         // arrive here; forward the inner `update` so the frontend reducer sees it.
         if method == "session/update" {
-            let update = params
-                .get("update")
-                .cloned()
-                .unwrap_or(params);
+            let update = params.get("update").cloned().unwrap_or(params);
             let _ = self.app.emit(
                 AGENT_NOTIFICATION_EVENT,
-                AgentNotification { session_id: self.session_key.clone(), update },
+                AgentNotification {
+                    session_id: self.session_key.clone(),
+                    update,
+                },
             );
             return Ok(());
         }
 
+        if method == "cursor/update_todos" {
+            let todos = self.apply_cursor_todos(&params);
+            self.emit_plan_from_todos(&todos);
+            return Ok(());
+        }
+
+        self.forward_ext("ext_notification", method, &params);
+        Ok(())
+    }
+}
+
+impl NexAcpClient {
+    fn forward_ext(&self, kind: &str, method: &str, params: &serde_json::Value) {
         let _ = self.app.emit(
             AGENT_NOTIFICATION_EVENT,
             AgentNotification {
                 session_id: self.session_key.clone(),
                 update: serde_json::json!({
-                    "sessionUpdate": "ext_notification",
+                    "sessionUpdate": kind,
                     "method": method,
                     "params": params,
                 }),
             },
         );
-        Ok(())
+    }
+
+    fn emit_plan_from_todos(&self, todos: &[CursorTodoDto]) {
+        let entries: Vec<serde_json::Value> = todos
+            .iter()
+            .map(|t| {
+                serde_json::json!({
+                    "content": t.content,
+                    "priority": "medium",
+                    "status": normalize_plan_status(&t.status),
+                })
+            })
+            .collect();
+        let _ = self.app.emit(
+            AGENT_NOTIFICATION_EVENT,
+            AgentNotification {
+                session_id: self.session_key.clone(),
+                update: serde_json::json!({
+                    "sessionUpdate": "plan",
+                    "entries": entries,
+                }),
+            },
+        );
+    }
+
+    fn apply_cursor_todos(&self, params: &serde_json::Value) -> Vec<CursorTodoDto> {
+        let incoming = parse_cursor_todos(params);
+        let merge = params
+            .get("merge")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let mut guard = self.cursor_todos.lock().unwrap();
+        merge_cursor_todos(&mut guard, incoming, merge);
+        guard.clone()
+    }
+
+    async fn handle_create_plan(&self, params: serde_json::Value) -> serde_json::Value {
+        let name = params
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let overview = params
+            .get("overview")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let plan = params
+            .get("plan")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let mut todos = parse_cursor_todos(&params);
+        if todos.is_empty() {
+            todos = parse_cursor_todos_from_phases(&params);
+        }
+        {
+            let mut guard = self.cursor_todos.lock().unwrap();
+            *guard = todos.clone();
+        }
+        self.emit_plan_from_todos(&todos);
+
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let (tx, rx) = oneshot::channel();
+        self.pending_plan_approvals.lock().unwrap().insert(
+            request_id.clone(),
+            PendingPlanApproval {
+                session_key: self.session_key.clone(),
+                tx,
+            },
+        );
+
+        let _ = self.app.emit(
+            AGENT_PLAN_APPROVAL_REQUEST_EVENT,
+            AgentPlanApprovalRequest {
+                session_id: self.session_key.clone(),
+                request_id,
+                name,
+                overview,
+                plan,
+                todos,
+            },
+        );
+
+        let outcome = rx.await.unwrap_or(PlanApprovalOutcome::Cancelled);
+        match outcome {
+            PlanApprovalOutcome::Accepted => {
+                serde_json::json!({ "outcome": { "outcome": "accepted" } })
+            }
+            PlanApprovalOutcome::Rejected { reason } => {
+                let mut body = serde_json::json!({ "outcome": { "outcome": "rejected" } });
+                if let Some(reason) = reason {
+                    body["outcome"]["reason"] = serde_json::Value::String(reason);
+                }
+                body
+            }
+            PlanApprovalOutcome::Cancelled => {
+                serde_json::json!({ "outcome": { "outcome": "cancelled" } })
+            }
+        }
+    }
+}
+
+fn normalize_plan_status(status: &str) -> &str {
+    match status {
+        "in_progress" | "completed" | "pending" | "cancelled" => status,
+        _ => "pending",
+    }
+}
+
+fn parse_cursor_todo_item(item: &serde_json::Value) -> Option<CursorTodoDto> {
+    let content = item.get("content").and_then(|v| v.as_str())?.trim();
+    if content.is_empty() {
+        return None;
+    }
+    let id = item
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let status = item
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("pending")
+        .to_string();
+    Some(CursorTodoDto {
+        id,
+        content: content.to_string(),
+        status,
+    })
+}
+
+fn parse_cursor_todos(params: &serde_json::Value) -> Vec<CursorTodoDto> {
+    params
+        .get("todos")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(parse_cursor_todo_item)
+        .collect()
+}
+
+fn parse_cursor_todos_from_phases(params: &serde_json::Value) -> Vec<CursorTodoDto> {
+    params
+        .get("phases")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|phase| phase.get("todos").and_then(|v| v.as_array()))
+        .flatten()
+        .filter_map(parse_cursor_todo_item)
+        .collect()
+}
+
+fn merge_cursor_todos(existing: &mut Vec<CursorTodoDto>, incoming: Vec<CursorTodoDto>, merge: bool) {
+    if !merge {
+        *existing = incoming;
+        return;
+    }
+    for todo in incoming {
+        if let Some(slot) = existing.iter_mut().find(|e| !todo.id.is_empty() && e.id == todo.id) {
+            *slot = todo;
+        } else {
+            existing.push(todo);
+        }
     }
 }
 
@@ -524,6 +719,7 @@ impl AcpSessionManager {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             pending_permissions: Arc::new(Mutex::new(HashMap::new())),
+            pending_plan_approvals: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -543,6 +739,7 @@ impl AcpSessionManager {
         let thread_key = session_key.clone();
         let thread_sessions = Arc::clone(&self.sessions);
         let thread_pending = Arc::clone(&self.pending_permissions);
+        let thread_plans = Arc::clone(&self.pending_plan_approvals);
 
         std::thread::Builder::new()
             .name(format!("agent-session-{session_key}"))
@@ -561,6 +758,7 @@ impl AcpSessionManager {
                         thread_key,
                         spec,
                         thread_pending,
+                        thread_plans,
                         thread_sessions,
                         init_tx,
                         shutdown_rx,
@@ -611,6 +809,7 @@ impl AcpSessionManager {
         let thread_cwd = cwd.to_string();
         let thread_sessions = Arc::clone(&self.sessions);
         let thread_pending = Arc::clone(&self.pending_permissions);
+        let thread_plans = Arc::clone(&self.pending_plan_approvals);
 
         std::thread::Builder::new()
             .name(format!("agent-session-{session_key}"))
@@ -630,6 +829,7 @@ impl AcpSessionManager {
                         thread_cwd,
                         config_path,
                         thread_pending,
+                        thread_plans,
                         thread_sessions,
                         init_tx,
                         shutdown_rx,
@@ -773,6 +973,7 @@ impl AcpSessionManager {
     pub async fn cancel(&self, session_id: &str) -> Result<(), NexError> {
         let handle = self.session(session_id)?;
         self.resolve_session_permissions(session_id, Some(acp::RequestPermissionOutcome::Cancelled));
+        self.resolve_session_plan_approvals(session_id, PlanApprovalOutcome::Cancelled);
         let agent_session_id = handle.agent_session_id.clone();
         run_acp({
             let handle = Arc::clone(&handle);
@@ -805,6 +1006,35 @@ impl AcpSessionManager {
             .map_err(|_| NexError::Agent("permission request already resolved".to_string()))
     }
 
+    /// Resolves a Cursor `cursor/create_plan` approval (`accepted` / `rejected` / `cancelled`).
+    pub fn respond_plan(
+        &self,
+        request_id: &str,
+        outcome: &str,
+        reason: Option<String>,
+    ) -> Result<(), NexError> {
+        let pending = self
+            .pending_plan_approvals
+            .lock()
+            .unwrap()
+            .remove(request_id)
+            .ok_or_else(|| NexError::Agent(format!("unknown plan approval request `{request_id}`")))?;
+        let mapped = match outcome {
+            "accepted" => PlanApprovalOutcome::Accepted,
+            "rejected" => PlanApprovalOutcome::Rejected { reason },
+            "cancelled" => PlanApprovalOutcome::Cancelled,
+            other => {
+                return Err(NexError::Agent(format!(
+                    "invalid plan approval outcome `{other}` (expected accepted|rejected|cancelled)"
+                )));
+            }
+        };
+        pending
+            .tx
+            .send(mapped)
+            .map_err(|_| NexError::Agent("plan approval request already resolved".to_string()))
+    }
+
     pub fn remove_session(&self, session_id: &str) {
         self.sessions.lock().unwrap().remove(session_id);
     }
@@ -831,6 +1061,20 @@ impl AcpSessionManager {
             }
         }
     }
+
+    fn resolve_session_plan_approvals(&self, session_id: &str, outcome: PlanApprovalOutcome) {
+        let mut map = self.pending_plan_approvals.lock().unwrap();
+        let keys: Vec<String> = map
+            .iter()
+            .filter(|(_, p)| p.session_key == session_id)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for key in keys {
+            if let Some(pending) = map.remove(&key) {
+                let _ = pending.tx.send(outcome.clone());
+            }
+        }
+    }
 }
 
 /// Diagnostics + lifecycle context for the spawned transport behind a session.
@@ -851,6 +1095,7 @@ async fn run_session(
     session_key: String,
     spec: LaunchSpec,
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
+    pending_plan_approvals: Arc<Mutex<HashMap<String, PendingPlanApproval>>>,
     sessions: Arc<Mutex<HashMap<String, Arc<SessionHandle>>>>,
     init_tx: oneshot::Sender<SessionInitResult>,
     shutdown_rx: oneshot::Receiver<()>,
@@ -892,6 +1137,7 @@ async fn run_session(
         outgoing,
         incoming,
         pending_permissions,
+        pending_plan_approvals,
         sessions,
         init_tx,
         shutdown_rx,
@@ -913,6 +1159,7 @@ async fn run_session_native(
     cwd: String,
     config_path: std::path::PathBuf,
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
+    pending_plan_approvals: Arc<Mutex<HashMap<String, PendingPlanApproval>>>,
     sessions: Arc<Mutex<HashMap<String, Arc<SessionHandle>>>>,
     init_tx: oneshot::Sender<SessionInitResult>,
     shutdown_rx: oneshot::Receiver<()>,
@@ -958,6 +1205,7 @@ async fn run_session_native(
         client_write.compat_write(),
         client_read.compat(),
         pending_permissions,
+        pending_plan_approvals,
         sessions,
         init_tx,
         shutdown_rx,
@@ -979,6 +1227,7 @@ async fn run_acp_session<W, R>(
     outgoing: W,
     incoming: R,
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
+    pending_plan_approvals: Arc<Mutex<HashMap<String, PendingPlanApproval>>>,
     sessions: Arc<Mutex<HashMap<String, Arc<SessionHandle>>>>,
     init_tx: oneshot::Sender<SessionInitResult>,
     shutdown_rx: oneshot::Receiver<()>,
@@ -991,6 +1240,8 @@ async fn run_acp_session<W, R>(
         app: app.clone(),
         session_key: session_key.clone(),
         pending_permissions: Arc::clone(&pending_permissions),
+        pending_plan_approvals: Arc::clone(&pending_plan_approvals),
+        cursor_todos: Mutex::new(Vec::new()),
     };
     let (conn, io_task) = acp::ClientSideConnection::new(client, outgoing, incoming, |fut| {
         tokio::task::spawn_local(fut);
@@ -1107,16 +1358,30 @@ async fn run_acp_session<W, R>(
     }
 
     start_kill_diag(&mut diag);
-    let mut map = pending_permissions.lock().unwrap();
-    let keys: Vec<String> = map
-        .iter()
-        .filter(|(_, p)| p.session_key == session_key)
-        .map(|(k, _)| k.clone())
-        .collect();
-    for key in keys {
-        map.remove(&key);
+    {
+        let mut map = pending_permissions.lock().unwrap();
+        let keys: Vec<String> = map
+            .iter()
+            .filter(|(_, p)| p.session_key == session_key)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for key in keys {
+            map.remove(&key);
+        }
     }
-    drop(map);
+    {
+        let mut map = pending_plan_approvals.lock().unwrap();
+        let keys: Vec<String> = map
+            .iter()
+            .filter(|(_, p)| p.session_key == session_key)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for key in keys {
+            if let Some(pending) = map.remove(&key) {
+                let _ = pending.tx.send(PlanApprovalOutcome::Cancelled);
+            }
+        }
+    }
 
     sessions.lock().unwrap().remove(&session_key);
     let _ = app.emit(AGENT_SESSION_TERMINATED_EVENT, AgentSessionTerminated { session_id: session_key });
@@ -1214,4 +1479,73 @@ fn drain_stderr(stderr: tokio::process::ChildStderr, program: String, tail: Arc<
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_cursor_todos_reads_items() {
+        let params = serde_json::json!({
+            "todos": [
+                { "id": "1", "content": "A", "status": "completed" },
+                { "id": "2", "content": "  ", "status": "pending" },
+                { "content": "B", "status": "in_progress" }
+            ]
+        });
+        let todos = parse_cursor_todos(&params);
+        assert_eq!(todos.len(), 2);
+        assert_eq!(todos[0].id, "1");
+        assert_eq!(todos[0].content, "A");
+        assert_eq!(todos[1].content, "B");
+        assert!(todos[1].id.is_empty());
+    }
+
+    #[test]
+    fn parse_cursor_todos_from_phases_flattens() {
+        let params = serde_json::json!({
+            "phases": [
+                { "name": "p1", "todos": [{ "id": "a", "content": "one", "status": "pending" }] },
+                { "name": "p2", "todos": [{ "id": "b", "content": "two", "status": "completed" }] }
+            ]
+        });
+        let todos = parse_cursor_todos_from_phases(&params);
+        assert_eq!(todos.len(), 2);
+        assert_eq!(todos[0].id, "a");
+        assert_eq!(todos[1].content, "two");
+    }
+
+    #[test]
+    fn merge_cursor_todos_replace_and_merge() {
+        let mut existing = vec![CursorTodoDto {
+            id: "1".into(),
+            content: "old".into(),
+            status: "pending".into(),
+        }];
+        merge_cursor_todos(
+            &mut existing,
+            vec![CursorTodoDto {
+                id: "1".into(),
+                content: "new".into(),
+                status: "completed".into(),
+            }],
+            true,
+        );
+        assert_eq!(existing.len(), 1);
+        assert_eq!(existing[0].content, "new");
+        assert_eq!(existing[0].status, "completed");
+
+        merge_cursor_todos(
+            &mut existing,
+            vec![CursorTodoDto {
+                id: "x".into(),
+                content: "only".into(),
+                status: "pending".into(),
+            }],
+            false,
+        );
+        assert_eq!(existing.len(), 1);
+        assert_eq!(existing[0].id, "x");
+    }
 }

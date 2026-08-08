@@ -1,7 +1,18 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { COMMANDS } from "./commands";
-import { EVENTS, type AgentNotificationPayload, type AgentPermissionRequestPayload, type TerminalOutputPayload, type TerminalExitedPayload, type FsChangedPayload, type GitStatusChangedPayload, type GitCredentialRequestPayload, type UpdateDownloadProgressPayload } from "./events";
+import {
+  EVENTS,
+  type AgentNotificationPayload,
+  type AgentPermissionRequestPayload,
+  type AgentPlanApprovalRequestPayload,
+  type TerminalOutputPayload,
+  type TerminalExitedPayload,
+  type FsChangedPayload,
+  type GitStatusChangedPayload,
+  type GitCredentialRequestPayload,
+  type UpdateDownloadProgressPayload,
+} from "./events";
 
 // --- Projects ---
 export interface Project {
@@ -291,6 +302,14 @@ export async function agentCancel(sessionId: string): Promise<void> {
 
 export async function agentRespondPermission(requestId: string, optionId: string | null): Promise<void> {
   return invoke(COMMANDS.AGENT_RESPOND_PERMISSION, { requestId, optionId });
+}
+
+export async function agentRespondPlan(
+  requestId: string,
+  outcome: "accepted" | "rejected" | "cancelled",
+  reason?: string | null,
+): Promise<void> {
+  return invoke(COMMANDS.AGENT_RESPOND_PLAN, { requestId, outcome, reason: reason ?? null });
 }
 
 export async function agentCloseSession(sessionId: string): Promise<void> {
@@ -680,6 +699,12 @@ export function onAgentNotification(cb: (payload: AgentNotificationPayload) => v
 
 export function onAgentPermissionRequest(cb: (payload: AgentPermissionRequestPayload) => void): Promise<UnlistenFn> {
   return listen(EVENTS.AGENT_PERMISSION_REQUEST, (e) => cb(e.payload as AgentPermissionRequestPayload));
+}
+
+export function onAgentPlanApprovalRequest(
+  cb: (payload: AgentPlanApprovalRequestPayload) => void,
+): Promise<UnlistenFn> {
+  return listen(EVENTS.AGENT_PLAN_APPROVAL_REQUEST, (e) => cb(e.payload as AgentPlanApprovalRequestPayload));
 }
 
 export function onAgentSessionTerminated(cb: (payload: { sessionId: string }) => void): Promise<UnlistenFn> {

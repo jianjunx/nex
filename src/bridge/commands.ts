@@ -23,6 +23,7 @@ export const COMMANDS = {
   AGENT_SET_SESSION_CONFIG_OPTION: "agent_set_session_config_option",
   AGENT_CANCEL: "agent_cancel",
   AGENT_RESPOND_PERMISSION: "agent_respond_permission",
+  AGENT_RESPOND_PLAN: "agent_respond_plan",
   AGENT_CLOSE_SESSION: "agent_close_session",
   AGENT_CUSTOM_UPSERT: "agent_custom_upsert",
   AGENT_CUSTOM_DELETE: "agent_custom_delete",

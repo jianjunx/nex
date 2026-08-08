@@ -53,6 +53,32 @@ pub struct PermissionOption {
     pub kind: Option<String>,
 }
 
+/// Payload of the `agent-plan-approval-request` event (Cursor `cursor/create_plan`).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentPlanApprovalRequest {
+    pub session_id: String,
+    /// Nex-generated correlation id; the frontend passes it back to
+    /// `agent_respond_plan`.
+    pub request_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overview: Option<String>,
+    /// Markdown plan body from Cursor.
+    pub plan: String,
+    pub todos: Vec<CursorTodoDto>,
+}
+
+/// One todo item from Cursor `create_plan` / `update_todos`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CursorTodoDto {
+    pub id: String,
+    pub content: String,
+    pub status: String,
+}
+
 /// Payload of the `agent-session-terminated` event, emitted when the agent
 /// process exits or the connection drops.
 #[derive(Debug, Clone, Serialize)]

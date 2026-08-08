@@ -1,0 +1,100 @@
+src-tauri/src/agent/server.rs
+  s_1a33709ae463e6::t_e60b93b15c9b83 361-365
+src/features/agent/thread/ThreadView.tsx
+  s_1a33709ae463e6::t_913794547ecd41 64-67
+  s_1a33709ae463e6::t_49f93ff775fc69 33
+src/stores/agent.store.test.ts
+  s_1a33709ae463e6::t_de8aaeafe5fcae 24,31-34
+src/features/settings/sections/NexAgentSection.tsx
+  s_1a33709ae463e6::t_1cb21c19134632 122,641-735
+  s_1a33709ae463e6::t_8c7624c7feb933 254-259
+  s_1a33709ae463e6::t_68e91181eb2384 197
+  s_1a33709ae463e6::t_b89d74dcd7d201 538-547,549,551,553-571,580,585,593-601
+  s_1a33709ae463e6::t_3612c55ba2945c 2,6,34,47-68,83,87-121
+  s_1a33709ae463e6::t_52d0f08e73861a 441,448-451,453,460,462,472-492
+  s_1a33709ae463e6::t_9de27adf5c3168 309-326,346,360
+  s_1a33709ae463e6::t_6d5fdf06fc7aaf 497,500
+  s_1a33709ae463e6::t_5c4c38a9b485ee 123,602
+src-tauri/src/agent/native/mod.rs
+  s_1a33709ae463e6::t_a7d5f35bb0edbd 171
+  s_1a33709ae463e6::t_93ea85e376d438 692,696
+  s_1a33709ae463e6::t_bb34df143182f0 719,724,746-749
+  s_1a33709ae463e6::t_8d05e19f5f1f3f 622
+src-tauri/src/agent/native/provider/mod.rs
+  s_1a33709ae463e6::t_9aba9ad76399fe 79-84
+src/features/agent/ChatArea.tsx
+  s_1a33709ae463e6::t_d9d57756205462 10,16
+src-tauri/src/agent/native/config.rs
+  s_1a33709ae463e6::t_7f82a6a64c191a 67-70,80
+  s_1a33709ae463e6::t_bc865d35db34d9 217-218,222-224,228-232,234-243
+  s_1a33709ae463e6::t_d6a4c8fb52e188 377-390
+  s_1a33709ae463e6::t_00b2e537fdf645 121-122,128-130,142
+src/bridge/tauri.ts
+  s_1a33709ae463e6::t_2f910321907e8a 366-369
+  s_1a33709ae463e6::t_f824026fefafce 289-292
+  s_1a33709ae463e6::t_c8f51c04786a24 161-162,182-183,189-190
+  s_1a33709ae463e6::t_4e202927cf1209 191-192
+src/features/agent/thread/ThreadView.crosstalk.test.tsx
+  s_1a33709ae463e6::t_624cde0f2961c0 11,26-29
+src-tauri/src/commands/agent_cmds.rs
+  s_1a33709ae463e6::t_4fd771e0c49879 147-149,154-156,177,182-186,190,193
+  s_1a33709ae463e6::t_8b0efdfc779271 41
+src/stores/update.store.test.ts
+  s_1a33709ae463e6::t_f82c5d342b0836 20-24
+src/features/agent/thread/EntryView.tsx
+  s_1a33709ae463e6::t_7f6384c3e19b6b 6
+  s_1a33709ae463e6::t_fe944698f71ea0 87-92
+src/features/agent/thread/types.ts
+  s_1a33709ae463e6::t_e80772a12e4566 1-6
+  s_1a33709ae463e6::t_775bd03ecc92f6 84-94,99-100
+src/features/agent/thread/ThreadView.virtual.test.tsx
+  s_1a33709ae463e6::t_d9f7a9bb02481e 9,24-27
+src-tauri/src/agent/types.rs
+  s_1a33709ae463e6::t_42c82d6cb47d19 166-173
+src-tauri/src/agent/native/capabilities.rs
+  s_1a33709ae463e6::t_4e13bc51dc1055 9,11-15,25-27,41,45-46,48,55-59,78,96-166,193-224,235,243,262-290
+src-tauri/src/agent/acp_adapter.rs
+  s_1a33709ae463e6::t_998017622ffb89 1318-1322,1348-1355
+src/features/agent/thread/PlanApprovalCard.tsx
+  s_1a33709ae463e6::t_0566e4de57e89b 1-2,4-5,7-11,14-15,18,20-22,25-45,47-49,51-75,78-79,82-83
+src/stores/agent.store.ts
+  s_1a33709ae463e6::t_6eff75859ab90e 1272-1273
+  s_1a33709ae463e6::t_7a487092efebdf 909,1064-1074
+  s_1a33709ae463e6::t_3a2bbf4dd70c39 486
+  s_1a33709ae463e6::t_13e8af49f35bc8 876,879,883-890,907
+  s_1a33709ae463e6::t_06a3c79b0bf1a6 243-286
+  s_1a33709ae463e6::t_06db43ea87b1ab 163-166
+  s_1a33709ae463e6::t_2638f9de275521 676,678-712,714-733,735-763
+  s_1a33709ae463e6::t_bfccc486f48b31 22
+  s_1a33709ae463e6::t_acd361053ff55f 841,854-872,903-906,908
+  s_1a33709ae463e6::t_b85c3f1e07cb7b 155-159
+  s_1a33709ae463e6::t_ccab78d4781a74 948,950,952-955
+  s_1a33709ae463e6::t_cafa1832120281 1379-1402
+  s_1a33709ae463e6::t_0b27f642a074c8 667,669-670,677
+  s_1a33709ae463e6::t_206e2da5d82c0d 408-410,413-423
+  s_ec88e0cab613ca::t_f2ec91e988886c 875,894,897,928,937,940
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "2e5e08ee464a9b4aa3279da3fc80aa7615b95a26",
+  "prompts": {},
+  "sessions": {
+    "s_1a33709ae463e6": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "1b36f320-3725-4e75-b981-65bb3fd381dc",
+        "model": "grok-4.5"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    },
+    "s_ec88e0cab613ca": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "204cb88f-87e3-4e2c-9ce7-2557a6acaa8c",
+        "model": "grok-4.5"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

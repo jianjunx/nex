@@ -33,6 +33,14 @@ impl BgJobHandle {
 }
 
 /// Per-session table of background jobs.
+/// Cap on accumulated background-job output; once exceeded the oldest bytes
+/// are dropped (the tail stays within cap) so a long-running dev server cannot
+/// grow the buffer without bound.
+const MAX_JOB_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
+
+/// Truncation marker prepended when the output cap was hit.
+const JOB_OUTPUT_TRUNCATED: &[u8] = b"\n\xE2\x80\xA6 [background output truncated]\n";
+
 #[derive(Default)]
 pub struct JobTable {
     jobs: HashMap<String, BgJobHandle>,
@@ -40,11 +48,10 @@ pub struct JobTable {
 }
 
 impl JobTable {
-    /// Spawns `command` under `/bin/sh` in `cwd`, returning the job id.
+    /// Spawns `command` under the platform shell in `cwd`, returning the job id.
     pub async fn spawn(&mut self, command: &str, cwd: &std::path::Path) -> Result<String, String> {
-        let mut cmd = tokio::process::Command::new("/bin/sh");
-        cmd.arg("-c")
-            .arg(command)
+        let mut cmd = super::shell_command();
+        cmd.arg(command)
             .current_dir(cwd)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
@@ -80,7 +87,17 @@ impl JobTable {
                         res = reader.read_until(b'\n', &mut line) => {
                             match res {
                                 Ok(0) => break,
-                                Ok(_) => out2.borrow_mut().extend_from_slice(&line),
+                                Ok(_) => {
+                                    let mut out = out2.borrow_mut();
+                                    out.extend_from_slice(&line);
+                                    if out.len() > MAX_JOB_OUTPUT_BYTES {
+                                        let excess = out.len() - MAX_JOB_OUTPUT_BYTES;
+                                        out.drain(..excess);
+                                        if !out.starts_with(JOB_OUTPUT_TRUNCATED) {
+                                            out.splice(0..0, JOB_OUTPUT_TRUNCATED.iter().copied()).count();
+                                        }
+                                    }
+                                }
                                 Err(_) => break,
                             }
                         }
@@ -99,7 +116,17 @@ impl JobTable {
                 loop {
                     match stderr.read(&mut buf).await {
                         Ok(0) | Err(_) => break,
-                        Ok(n) => out3.borrow_mut().extend_from_slice(&buf[..n]),
+                        Ok(n) => {
+                            let mut out = out3.borrow_mut();
+                            out.extend_from_slice(&buf[..n]);
+                            if out.len() > MAX_JOB_OUTPUT_BYTES {
+                                let excess = out.len() - MAX_JOB_OUTPUT_BYTES;
+                                out.drain(..excess);
+                                if !out.starts_with(JOB_OUTPUT_TRUNCATED) {
+                                    out.splice(0..0, JOB_OUTPUT_TRUNCATED.iter().copied()).count();
+                                }
+                            }
+                        }
                     }
                 }
             });
@@ -364,6 +391,46 @@ mod tests {
                     .await
                     .unwrap();
                 assert!(tail.contains("(no new output)"));
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn output_buffer_is_capped() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let tmp = tempfile::tempdir().unwrap();
+                let c = ctx(tmp.path());
+                // Emit way more than the 8 MiB cap so the drain path triggers.
+                let chunk = "x".repeat(4096);
+                let command = format!("for i in $(seq 1 4000); do echo {chunk}; done");
+                let started = RunInBackground
+                    .execute(serde_json::json!({"command": command}), &c)
+                    .await
+                    .unwrap();
+                let job = started
+                    .split('`')
+                    .nth(1)
+                    .expect("job id in backticks")
+                    .to_string();
+                let waited = WaitJob
+                    .execute(serde_json::json!({"job_id": job, "timeout_secs": 30}), &c)
+                    .await
+                    .unwrap();
+                assert!(waited.contains("exited with code 0"));
+                let out = BashOutput
+                    .execute(serde_json::json!({"job_id": job}), &c)
+                    .await
+                    .unwrap();
+                assert!(
+                    out.contains("background output truncated"),
+                    "expected a truncation marker in output"
+                );
+                assert!(
+                    out.len() < MAX_JOB_OUTPUT_BYTES * 2,
+                    "output exceeded the buffer cap"
+                );
             })
             .await;
     }

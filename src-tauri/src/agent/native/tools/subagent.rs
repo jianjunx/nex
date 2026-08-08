@@ -14,6 +14,9 @@ use agent_client_protocol as acp;
 
 /// Max characters per `read_subagent_result` page.
 const PAGE_CHARS: usize = 16_000;
+/// Cap on a subagent result file. Larger spills are rejected outright so a
+/// single giant output can never be slurped into memory by one tool call.
+const MAX_RESULT_FILE_BYTES: u64 = 32 * 1024 * 1024;
 
 pub struct Task;
 
@@ -160,14 +163,31 @@ impl Tool for ReadSubagentResult {
         }
         let offset = arg_usize(&args, "offset", 0);
         let path = ctx.archive_dir.join(&name);
-        let bytes = std::fs::read(&path).map_err(|_| format!("ref `{name}` not found"))?;
-        let start = offset.min(bytes.len());
-        let text = String::from_utf8_lossy(&bytes[start..]).to_string();
+        let mut f = std::fs::File::open(&path).map_err(|_| format!("ref `{name}` not found"))?;
+        let meta = f
+            .metadata()
+            .map_err(|_| format!("ref `{name}` not found"))?;
+        if meta.len() > MAX_RESULT_FILE_BYTES {
+            return Err(format!(
+                "ref `{name}` exceeds the {} MiB result limit",
+                MAX_RESULT_FILE_BYTES / (1024 * 1024)
+            ));
+        }
+        // Read from `offset` onward instead of slurping the whole file, so a
+        // page never allocates more than the remaining (capped) bytes.
+        use std::io::{Read, Seek, SeekFrom};
+        let start = offset.min(meta.len() as usize);
+        f.seek(SeekFrom::Start(start as u64))
+            .map_err(|e| format!("seek failed: {e}"))?;
+        let mut bytes = Vec::with_capacity((meta.len() as usize).saturating_sub(start));
+        f.read_to_end(&mut bytes)
+            .map_err(|e| format!("read failed: {e}"))?;
+        let text = String::from_utf8_lossy(&bytes).to_string();
         let chars: Vec<char> = text.chars().collect();
         let page: String = chars.iter().take(PAGE_CHARS).collect();
         let consumed_bytes = page.len();
         let next_offset = start + consumed_bytes;
-        let more = next_offset < bytes.len();
+        let more = next_offset < meta.len() as usize;
         Ok(format!(
             "ref `{name}`; next offset: {next_offset}; more: {more}\n{page}"
         ))
@@ -207,6 +227,26 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err2.contains("disabled"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn read_subagent_result_rejects_oversized_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join(".nex-archive");
+        std::fs::create_dir_all(&archive).unwrap();
+        // A sparse file larger than the cap — no real disk usage.
+        let big = archive.join("subagent-huge.txt");
+        let f = std::fs::File::create(&big).unwrap();
+        f.set_len(MAX_RESULT_FILE_BYTES + 1).unwrap();
+        drop(f);
+
+        let mut ctx = ctx_without_harness(tmp.path());
+        ctx.archive_dir = archive;
+        let err = ReadSubagentResult
+            .execute(serde_json::json!({"ref": "subagent-huge.txt"}), &ctx)
+            .await
+            .unwrap_err();
+        assert!(err.contains("result limit"), "got: {err}");
     }
 
     #[tokio::test(flavor = "current_thread")]

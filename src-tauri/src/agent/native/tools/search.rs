@@ -10,6 +10,9 @@ use agent_client_protocol as acp;
 const MAX_RESULTS: usize = 200;
 /// Cap on total output characters.
 const MAX_OUTPUT_CHARS: usize = 20_000;
+/// Files larger than this are skipped by `grep` (with a notice) instead of
+/// being slurped into memory whole.
+const MAX_GREP_FILE_BYTES: u64 = 16 * 1024 * 1024;
 
 pub struct Grep;
 
@@ -60,6 +63,21 @@ impl Tool for Grep {
                 continue;
             }
             let path = entry.path();
+            // Skip oversized files instead of reading them whole (ReDoS /
+            // memory blast radius on huge logs).
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            if meta.len() > MAX_GREP_FILE_BYTES {
+                let rel = path.strip_prefix(&ctx.cwd).unwrap_or(path);
+                out.push_str(&format!(
+                    "… [skipped {} ({:.1} MiB, over the {} MiB limit)]\n",
+                    rel.display(),
+                    meta.len() as f64 / (1024.0 * 1024.0),
+                    MAX_GREP_FILE_BYTES / (1024 * 1024)
+                ));
+                continue;
+            }
             let Ok(content) = std::fs::read_to_string(path) else {
                 continue;
             }; // skip binary
@@ -236,6 +254,23 @@ mod tests {
             .await
             .unwrap();
         assert!(none.contains("no matches"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn grep_skips_oversized_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        // A sparse file over the cap: cheap to create, would be expensive to read.
+        let big = tmp.path().join("huge.log");
+        let f = std::fs::File::create(&big).unwrap();
+        f.set_len(MAX_GREP_FILE_BYTES + 1).unwrap();
+        drop(f);
+        std::fs::write(tmp.path().join("small.txt"), "needle here").unwrap();
+        let out = Grep
+            .execute(serde_json::json!({"pattern": "needle"}), &ctx(tmp.path()))
+            .await
+            .unwrap();
+        assert!(out.contains("small.txt"));
+        assert!(out.contains("skipped"), "oversized file must be reported: {out}");
     }
 
     #[tokio::test(flavor = "current_thread")]

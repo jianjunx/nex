@@ -186,7 +186,10 @@ pub fn archive(archive_dir: &Path, removed: &[ChatMessage]) -> Option<PathBuf> {
         return None;
     }
     let ts = chrono::Local::now().format("%Y%m%d-%H%M%S-%3f");
-    let path = archive_dir.join(format!("{ts}.jsonl"));
+    // Unique nonce: two compactions within the same millisecond must not
+    // overwrite each other's archive (which would corrupt history search).
+    let nonce = uuid::Uuid::new_v4().simple().to_string();
+    let path = archive_dir.join(format!("{ts}-{nonce}.jsonl"));
     let mut buf = String::new();
     for msg in removed {
         if let Ok(line) = serde_json::to_string(msg) {

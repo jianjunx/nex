@@ -32,6 +32,9 @@ dist-ssr
 # Git worktrees
 .worktrees/
 
+# Legacy in-workspace agent compaction archives (pre app-data move)
+.nex-archive/
+
 # Local-only perl shim for openssl vendored builds (do not commit)
 perl-stub/
 

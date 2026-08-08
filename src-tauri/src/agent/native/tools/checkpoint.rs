@@ -76,6 +76,13 @@ fn create_checkpoint(cwd: &std::path::Path, message: &str) -> Result<String, Str
     index
         .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
         .map_err(|e| format!("failed to stage files: {e}"))?;
+    // Never snapshot Nex's own metadata dirs (agent archives, rules, …) —
+    // checkpoints are a user-visible view of their workspace.
+    for prefix in [".nex", ".nex-archive"] {
+        let p = std::path::Path::new(prefix);
+        index.remove_path(p).ok(); // exact file entry, if any
+        index.remove_dir(p, 0).ok(); // recursive subtree removal
+    }
     index
         .write()
         .map_err(|e| format!("failed to write index: {e}"))?;
@@ -117,21 +124,39 @@ fn rewind_to(cwd: &std::path::Path, id: &str) -> Result<String, String> {
         .find_branch(CHECKPOINT_BRANCH, git2::BranchType::Local)
         .map_err(|_| "no checkpoints exist yet".to_string())?;
 
-    // Walk the checkpoint branch history for a matching (short) id.
+    // Short ids need enough bits to be unambiguous; a model truncating to
+    // one or two hex chars must be rejected instead of guessing.
+    if id.len() < 8 {
+        return Err(format!(
+            "checkpoint id too short: `{id}` — use at least 8 hex characters"
+        ));
+    }
+
+    // Walk the checkpoint branch history for matching (short) ids.
     let head_oid = branch.get().target().ok_or("empty checkpoint branch")?;
     let mut walk = repo.revwalk().map_err(|e| format!("revwalk error: {e}"))?;
     walk.push(head_oid)
         .map_err(|e| format!("revwalk error: {e}"))?;
-    let mut found: Option<git2::Commit> = None;
+    let mut matches: Vec<git2::Commit> = Vec::new();
     for oid in walk.flatten() {
         if let Ok(commit) = repo.find_commit(oid) {
             if commit.id().to_string().starts_with(id) {
-                found = Some(commit);
-                break;
+                matches.push(commit);
+                if matches.len() > 1 {
+                    break;
+                }
             }
         }
     }
-    let commit = found.ok_or_else(|| format!("checkpoint `{id}` not found"))?;
+    let commit = match matches.len() {
+        0 => return Err(format!("checkpoint `{id}` not found")),
+        1 => matches.pop().unwrap(),
+        _ => {
+            return Err(format!(
+                "checkpoint id `{id}` is ambiguous; use a longer prefix"
+            ))
+        }
+    };
 
     repo.reset(commit.as_object(), git2::ResetType::Hard, None)
         .map_err(|e| format!("rewind failed: {e}"))?;
@@ -195,6 +220,78 @@ mod tests {
             std::fs::read_to_string(tmp.path().join("a.txt")).unwrap(),
             "v1"
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn checkpoint_excludes_nex_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(tmp.path()).unwrap();
+        {
+            let sig = git2::Signature::now("t", "t@t").unwrap();
+            let tree = {
+                let mut idx = repo.index().unwrap();
+                let id = idx.write_tree().unwrap();
+                repo.find_tree(id).unwrap()
+            };
+            repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+                .unwrap();
+        }
+        drop(repo);
+
+        std::fs::write(tmp.path().join("a.txt"), "v1").unwrap();
+        std::fs::create_dir_all(tmp.path().join(".nex/rules")).unwrap();
+        std::fs::write(tmp.path().join(".nex/rules/r.md"), "rule").unwrap();
+        std::fs::create_dir_all(tmp.path().join(".nex-archive")).unwrap();
+        std::fs::write(tmp.path().join(".nex-archive/x.jsonl"), "{}").unwrap();
+        let c = ctx(tmp.path());
+        let cp = Checkpoint
+            .execute(serde_json::json!({"message": "cp"}), &c)
+            .await
+            .unwrap();
+        // id unused here — we read the branch tree directly.
+        let _id = cp.split(": ").nth(1).unwrap().to_string();
+
+        // The checkpoint tree must not contain .nex / .nex-archive entries.
+        let repo = git2::Repository::discover(tmp.path()).unwrap();
+        let branch = repo.find_branch(CHECKPOINT_BRANCH, git2::BranchType::Local).unwrap();
+        let head = branch.get().target().unwrap();
+        let commit = repo.find_commit(head).unwrap();
+        let tree = commit.tree().unwrap();
+        let mut names: Vec<String> = tree
+            .iter()
+            .map(|e| e.name().unwrap_or("").to_string())
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["a.txt"], "checkpoint tree: {names:?}");
+        assert!(!names.iter().any(|n| n.starts_with(".nex")));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn rewind_rejects_short_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(tmp.path()).unwrap();
+        {
+            let sig = git2::Signature::now("t", "t@t").unwrap();
+            let tree = {
+                let mut idx = repo.index().unwrap();
+                let id = idx.write_tree().unwrap();
+                repo.find_tree(id).unwrap()
+            };
+            repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+                .unwrap();
+        }
+        drop(repo);
+        std::fs::write(tmp.path().join("a.txt"), "v1").unwrap();
+        let c = ctx(tmp.path());
+        Checkpoint
+            .execute(serde_json::json!({"message": "cp"}), &c)
+            .await
+            .unwrap();
+        let err = Rewind
+            .execute(serde_json::json!({"checkpoint": "a1"}), &c)
+            .await
+            .unwrap_err();
+        assert!(err.contains("too short"), "got: {err}");
     }
 
     #[tokio::test(flavor = "current_thread")]

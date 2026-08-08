@@ -16,7 +16,8 @@ impl Tool for Bash {
     }
     fn description(&self) -> &'static str {
         "Run a shell command in the workspace directory and return its exit code, \
-         stdout and stderr. The command is killed after the configured timeout."
+         stdout and stderr. The command is killed after the configured timeout. \
+         Runs under `cmd.exe /C` on Windows and `/bin/sh -c` on macOS/Linux."
     }
     fn schema(&self) -> serde_json::Value {
         serde_json::json!({
@@ -40,8 +41,8 @@ impl Tool for Bash {
             ctx.bash_timeout.as_secs() as usize,
         ) as u64);
 
-        let mut cmd = tokio::process::Command::new("/bin/sh");
-        cmd.arg("-c").arg(&command).current_dir(&ctx.cwd);
+        let mut cmd = super::shell_command();
+        cmd.arg(&command).current_dir(&ctx.cwd);
         // `output()` kills the child when its future is dropped (timeout).
         let output = match tokio::time::timeout(timeout, cmd.output()).await {
             Ok(res) => res.map_err(|e| format!("failed to run command: {e}"))?,

@@ -224,6 +224,48 @@ impl std::fmt::Debug for McpClient {
     }
 }
 
+/// Validates an MCP HTTP endpoint for SSRF safety:
+/// - only `http`/`https` schemes are accepted (no `file:`, `ftp:`, …);
+/// - literal link-local (169.254.0.0/16 — the cloud-metadata namespace),
+///   unspecified (0.0.0.0/::) and multicast addresses are refused;
+/// - loopback and RFC1918 ranges stay allowed — local MCP servers commonly
+///   run on `localhost` or an intranet host.
+///
+/// Note: hostnames that *resolve* to link-local (e.g. `metadata.internal`)
+/// are not caught here; that would require a DNS hook on the client.
+fn validate_mcp_url(raw: &str) -> Result<(), String> {
+    let parsed =
+        reqwest::Url::parse(raw).map_err(|e| format!("invalid MCP url `{raw}`: {e}"))?;
+    match parsed.scheme() {
+        "http" | "https" => {}
+        other => {
+            return Err(format!(
+                "MCP url scheme `{other}` not allowed (http/https only)"
+            ))
+        }
+    }
+    let Some(host) = parsed.host_str() else {
+        return Err("MCP url has no host".to_string());
+    };
+    if host.is_empty() {
+        return Err("MCP url has no host".to_string());
+    }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        let blocked = match ip {
+            std::net::IpAddr::V4(v4) => {
+                v4.is_link_local() || v4.is_unspecified() || v4.is_multicast()
+            }
+            std::net::IpAddr::V6(v6) => {
+                v6.is_unicast_link_local() || v6.is_unspecified() || v6.is_multicast()
+            }
+        };
+        if blocked {
+            return Err(format!("MCP url host `{host}` is not allowed"));
+        }
+    }
+    Ok(())
+}
+
 impl McpClient {
     /// Connects `config` and performs the handshake. Prefer Streamable HTTP
     /// when `url` is set; otherwise spawn the stdio `command`. On error nothing
@@ -243,6 +285,7 @@ impl McpClient {
         url: &str,
         headers: &HashMap<String, String>,
     ) -> Result<Self, String> {
+        validate_mcp_url(url)?;
         // No automatic redirects: MCP session headers / auth must not follow
         // off-origin Location targets silently.
         let client = reqwest::Client::builder()
@@ -943,5 +986,30 @@ data: \"result\":{\"ok\":true}}\n\
         .await
         .expect_err("must fail");
         assert!(err.contains("no `command`"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_mcp_url_allows_safe_endpoints() {
+        assert!(validate_mcp_url("https://api.example.com/mcp").is_ok());
+        assert!(validate_mcp_url("http://127.0.0.1:3000/mcp").is_ok());
+        assert!(validate_mcp_url("http://localhost:8080/sse").is_ok());
+        assert!(validate_mcp_url("http://192.168.1.10/mcp").is_ok());
+        assert!(validate_mcp_url("http://10.0.0.5/mcp").is_ok());
+    }
+
+    #[test]
+    fn validate_mcp_url_rejects_unsafe_endpoints() {
+        // Cloud metadata namespace.
+        assert!(validate_mcp_url("http://169.254.169.254/latest/meta-data").is_err());
+        assert!(validate_mcp_url("http://169.254.170.2/credentials").is_err());
+        // Unspecified / multicast.
+        assert!(validate_mcp_url("http://0.0.0.0:80/").is_err());
+        assert!(validate_mcp_url("http://224.0.0.1:80/").is_err());
+        // Non-http schemes.
+        assert!(validate_mcp_url("file:///etc/passwd").is_err());
+        assert!(validate_mcp_url("ftp://example.com/x").is_err());
+        // Missing host.
+        assert!(validate_mcp_url("http:///nohost").is_ok(), "parser normalizes to host=nohost");
+        assert!(validate_mcp_url("http://:8080/x").is_err());
     }
 }

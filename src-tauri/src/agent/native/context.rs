@@ -1,6 +1,11 @@
 //! Context assembly for the native agent: the system prompt + a startup
 //! environment summary. Kept byte-stable across turns so the provider's prefix
 //! cache stays warm (only dynamic content belongs in user turns).
+//!
+//! Stability guarantee: the session harness calls [`system_prompt`] exactly
+//! once per session (when the transcript is first seeded — see `mod.rs`
+//! `prompt`), so the embedded `Date:` line is fixed for the session's life;
+//! subagent prompts are one-shot per `task`/`fleet` call and never reused.
 
 use std::path::Path;
 

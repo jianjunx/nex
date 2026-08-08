@@ -160,7 +160,7 @@ export function ThreadView() {
     >
       {entries.length === 0 ? (
         <div className="flex items-center justify-center h-full text-[var(--text-tertiary)] text-sm">
-          工作台已就绪，请开始您的表演
+          工作台已就绪，请开始吧牛马！
         </div>
       ) : (
         <div style={{ height: totalSize, position: "relative" }}>

@@ -19,7 +19,8 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use super::launch::{spawn_agent, LaunchSpec};
 use super::native::NexNativeAgent;
 use super::types::{
-    AgentNotification, AgentPermissionRequest, AgentPlanApprovalRequest, AgentSessionTerminated,
+    AgentAskQuestionRequest, AgentNotification, AgentPermissionRequest, AgentPlanApprovalRequest,
+    AgentSessionTerminated, AskQuestionAnswerDto, AskQuestionItemDto, AskQuestionOptionDto,
     CreateSessionResult, CursorTodoDto, PermissionOption, PromptBlock, SessionConfigOptionDto,
     SessionConfigValueDto, SessionModeDto, SessionModesDto, SessionModelDto, SessionModelsDto,
 };
@@ -28,6 +29,7 @@ use crate::error::NexError;
 const AGENT_NOTIFICATION_EVENT: &str = "agent-notification";
 const AGENT_PERMISSION_REQUEST_EVENT: &str = "agent-permission-request";
 const AGENT_PLAN_APPROVAL_REQUEST_EVENT: &str = "agent-plan-approval-request";
+const AGENT_ASK_QUESTION_REQUEST_EVENT: &str = "agent-ask-question-request";
 const AGENT_SESSION_TERMINATED_EVENT: &str = "agent-session-terminated";
 
 // 120s covers the worst case: cold-cache `npm install` of a new agent
@@ -99,6 +101,19 @@ struct PendingPlanApproval {
     tx: oneshot::Sender<PlanApprovalOutcome>,
 }
 
+/// Outcome the UI returns for a Cursor `cursor/ask_question` request.
+#[derive(Debug, Clone)]
+enum AskQuestionOutcome {
+    Answered { answers: Vec<AskQuestionAnswerDto> },
+    Skipped { reason: Option<String> },
+    Cancelled,
+}
+
+struct PendingAskQuestion {
+    session_key: String,
+    tx: oneshot::Sender<AskQuestionOutcome>,
+}
+
 struct SessionHandle {
     conn: acp::ClientSideConnection,
     agent_session_id: acp::SessionId,
@@ -112,6 +127,7 @@ pub struct AcpSessionManager {
     sessions: Arc<Mutex<HashMap<String, Arc<SessionHandle>>>>,
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
     pending_plan_approvals: Arc<Mutex<HashMap<String, PendingPlanApproval>>>,
+    pending_ask_questions: Arc<Mutex<HashMap<String, PendingAskQuestion>>>,
 }
 
 struct NexAcpClient {
@@ -119,6 +135,7 @@ struct NexAcpClient {
     session_key: String,
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
     pending_plan_approvals: Arc<Mutex<HashMap<String, PendingPlanApproval>>>,
+    pending_ask_questions: Arc<Mutex<HashMap<String, PendingAskQuestion>>>,
     /// Latest Cursor todo list for this session (supports `update_todos` merge).
     cursor_todos: Mutex<Vec<CursorTodoDto>>,
 }
@@ -208,15 +225,7 @@ impl acp::Client for NexAcpClient {
                 self.emit_plan_from_todos(&todos);
                 serde_json::json!({ "outcome": { "outcome": "accepted", "todos": todos } })
             }
-            "cursor/ask_question" => {
-                self.forward_ext("ext_method", method, &params);
-                serde_json::json!({
-                    "outcome": {
-                        "outcome": "skipped",
-                        "reason": "Nex has not implemented this prompt UI yet"
-                    }
-                })
-            }
+            "cursor/ask_question" => self.handle_ask_question(params).await,
             "cursor/task" => {
                 self.forward_ext("ext_method", method, &params);
                 serde_json::json!({ "outcome": { "outcome": "completed" } })
@@ -379,6 +388,64 @@ impl NexAcpClient {
             }
         }
     }
+
+    async fn handle_ask_question(&self, params: serde_json::Value) -> serde_json::Value {
+        let questions = parse_ask_questions(&params);
+        if questions.is_empty() {
+            return serde_json::json!({
+                "outcome": {
+                    "outcome": "skipped",
+                    "reason": "no questions provided"
+                }
+            });
+        }
+
+        let title = params
+            .get("title")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let (tx, rx) = oneshot::channel();
+        self.pending_ask_questions.lock().unwrap().insert(
+            request_id.clone(),
+            PendingAskQuestion {
+                session_key: self.session_key.clone(),
+                tx,
+            },
+        );
+
+        let _ = self.app.emit(
+            AGENT_ASK_QUESTION_REQUEST_EVENT,
+            AgentAskQuestionRequest {
+                session_id: self.session_key.clone(),
+                request_id,
+                title,
+                questions,
+            },
+        );
+
+        let outcome = rx.await.unwrap_or(AskQuestionOutcome::Cancelled);
+        match outcome {
+            AskQuestionOutcome::Answered { answers } => {
+                serde_json::json!({
+                    "outcome": {
+                        "outcome": "answered",
+                        "answers": answers,
+                    }
+                })
+            }
+            AskQuestionOutcome::Skipped { reason } => {
+                let mut body = serde_json::json!({ "outcome": { "outcome": "skipped" } });
+                if let Some(reason) = reason {
+                    body["outcome"]["reason"] = serde_json::Value::String(reason);
+                }
+                body
+            }
+            AskQuestionOutcome::Cancelled => {
+                serde_json::json!({ "outcome": { "outcome": "cancelled" } })
+            }
+        }
+    }
 }
 
 fn normalize_plan_status(status: &str) -> &str {
@@ -444,6 +511,60 @@ fn merge_cursor_todos(existing: &mut Vec<CursorTodoDto>, incoming: Vec<CursorTod
             existing.push(todo);
         }
     }
+}
+
+fn parse_ask_questions(params: &serde_json::Value) -> Vec<AskQuestionItemDto> {
+    params
+        .get("questions")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|q| {
+            let id = q.get("id").and_then(|v| v.as_str())?.to_string();
+            let prompt = q
+                .get("prompt")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if prompt.is_empty() {
+                return None;
+            }
+            let options = q
+                .get("options")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|o| {
+                    let oid = o.get("id").and_then(|v| v.as_str())?.to_string();
+                    let label = o
+                        .get("label")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    if label.is_empty() {
+                        return None;
+                    }
+                    Some(AskQuestionOptionDto { id: oid, label })
+                })
+                .collect::<Vec<_>>();
+            if options.is_empty() {
+                return None;
+            }
+            let allow_multiple = q
+                .get("allowMultiple")
+                .or_else(|| q.get("allow_multiple"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            Some(AskQuestionItemDto {
+                id,
+                prompt,
+                options,
+                allow_multiple,
+            })
+        })
+        .collect()
 }
 
 fn prompt_blocks_to_acp(blocks: Vec<PromptBlock>) -> Vec<acp::ContentBlock> {
@@ -720,6 +841,7 @@ impl AcpSessionManager {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             pending_permissions: Arc::new(Mutex::new(HashMap::new())),
             pending_plan_approvals: Arc::new(Mutex::new(HashMap::new())),
+            pending_ask_questions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -740,6 +862,7 @@ impl AcpSessionManager {
         let thread_sessions = Arc::clone(&self.sessions);
         let thread_pending = Arc::clone(&self.pending_permissions);
         let thread_plans = Arc::clone(&self.pending_plan_approvals);
+        let thread_questions = Arc::clone(&self.pending_ask_questions);
 
         std::thread::Builder::new()
             .name(format!("agent-session-{session_key}"))
@@ -759,6 +882,7 @@ impl AcpSessionManager {
                         spec,
                         thread_pending,
                         thread_plans,
+                        thread_questions,
                         thread_sessions,
                         init_tx,
                         shutdown_rx,
@@ -810,6 +934,7 @@ impl AcpSessionManager {
         let thread_sessions = Arc::clone(&self.sessions);
         let thread_pending = Arc::clone(&self.pending_permissions);
         let thread_plans = Arc::clone(&self.pending_plan_approvals);
+        let thread_questions = Arc::clone(&self.pending_ask_questions);
 
         std::thread::Builder::new()
             .name(format!("agent-session-{session_key}"))
@@ -830,6 +955,7 @@ impl AcpSessionManager {
                         config_path,
                         thread_pending,
                         thread_plans,
+                        thread_questions,
                         thread_sessions,
                         init_tx,
                         shutdown_rx,
@@ -974,6 +1100,7 @@ impl AcpSessionManager {
         let handle = self.session(session_id)?;
         self.resolve_session_permissions(session_id, Some(acp::RequestPermissionOutcome::Cancelled));
         self.resolve_session_plan_approvals(session_id, PlanApprovalOutcome::Cancelled);
+        self.resolve_session_ask_questions(session_id, AskQuestionOutcome::Cancelled);
         let agent_session_id = handle.agent_session_id.clone();
         run_acp({
             let handle = Arc::clone(&handle);
@@ -1035,6 +1162,44 @@ impl AcpSessionManager {
             .map_err(|_| NexError::Agent("plan approval request already resolved".to_string()))
     }
 
+    /// Resolves a Cursor `cursor/ask_question` prompt (`answered` / `skipped` / `cancelled`).
+    pub fn respond_ask_question(
+        &self,
+        request_id: &str,
+        outcome: &str,
+        answers: Option<Vec<AskQuestionAnswerDto>>,
+        reason: Option<String>,
+    ) -> Result<(), NexError> {
+        let pending = self
+            .pending_ask_questions
+            .lock()
+            .unwrap()
+            .remove(request_id)
+            .ok_or_else(|| NexError::Agent(format!("unknown ask-question request `{request_id}`")))?;
+        let mapped = match outcome {
+            "answered" => {
+                let answers = answers.unwrap_or_default();
+                if answers.is_empty() {
+                    return Err(NexError::Agent(
+                        "ask-question answered outcome requires at least one answer".into(),
+                    ));
+                }
+                AskQuestionOutcome::Answered { answers }
+            }
+            "skipped" => AskQuestionOutcome::Skipped { reason },
+            "cancelled" => AskQuestionOutcome::Cancelled,
+            other => {
+                return Err(NexError::Agent(format!(
+                    "invalid ask-question outcome `{other}` (expected answered|skipped|cancelled)"
+                )));
+            }
+        };
+        pending
+            .tx
+            .send(mapped)
+            .map_err(|_| NexError::Agent("ask-question request already resolved".to_string()))
+    }
+
     pub fn remove_session(&self, session_id: &str) {
         self.sessions.lock().unwrap().remove(session_id);
     }
@@ -1075,6 +1240,20 @@ impl AcpSessionManager {
             }
         }
     }
+
+    fn resolve_session_ask_questions(&self, session_id: &str, outcome: AskQuestionOutcome) {
+        let mut map = self.pending_ask_questions.lock().unwrap();
+        let keys: Vec<String> = map
+            .iter()
+            .filter(|(_, p)| p.session_key == session_id)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for key in keys {
+            if let Some(pending) = map.remove(&key) {
+                let _ = pending.tx.send(outcome.clone());
+            }
+        }
+    }
 }
 
 /// Diagnostics + lifecycle context for the spawned transport behind a session.
@@ -1096,6 +1275,7 @@ async fn run_session(
     spec: LaunchSpec,
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
     pending_plan_approvals: Arc<Mutex<HashMap<String, PendingPlanApproval>>>,
+    pending_ask_questions: Arc<Mutex<HashMap<String, PendingAskQuestion>>>,
     sessions: Arc<Mutex<HashMap<String, Arc<SessionHandle>>>>,
     init_tx: oneshot::Sender<SessionInitResult>,
     shutdown_rx: oneshot::Receiver<()>,
@@ -1138,6 +1318,7 @@ async fn run_session(
         incoming,
         pending_permissions,
         pending_plan_approvals,
+        pending_ask_questions,
         sessions,
         init_tx,
         shutdown_rx,
@@ -1160,6 +1341,7 @@ async fn run_session_native(
     config_path: std::path::PathBuf,
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
     pending_plan_approvals: Arc<Mutex<HashMap<String, PendingPlanApproval>>>,
+    pending_ask_questions: Arc<Mutex<HashMap<String, PendingAskQuestion>>>,
     sessions: Arc<Mutex<HashMap<String, Arc<SessionHandle>>>>,
     init_tx: oneshot::Sender<SessionInitResult>,
     shutdown_rx: oneshot::Receiver<()>,
@@ -1206,6 +1388,7 @@ async fn run_session_native(
         client_read.compat(),
         pending_permissions,
         pending_plan_approvals,
+        pending_ask_questions,
         sessions,
         init_tx,
         shutdown_rx,
@@ -1228,6 +1411,7 @@ async fn run_acp_session<W, R>(
     incoming: R,
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
     pending_plan_approvals: Arc<Mutex<HashMap<String, PendingPlanApproval>>>,
+    pending_ask_questions: Arc<Mutex<HashMap<String, PendingAskQuestion>>>,
     sessions: Arc<Mutex<HashMap<String, Arc<SessionHandle>>>>,
     init_tx: oneshot::Sender<SessionInitResult>,
     shutdown_rx: oneshot::Receiver<()>,
@@ -1241,6 +1425,7 @@ async fn run_acp_session<W, R>(
         session_key: session_key.clone(),
         pending_permissions: Arc::clone(&pending_permissions),
         pending_plan_approvals: Arc::clone(&pending_plan_approvals),
+        pending_ask_questions: Arc::clone(&pending_ask_questions),
         cursor_todos: Mutex::new(Vec::new()),
     };
     let (conn, io_task) = acp::ClientSideConnection::new(client, outgoing, incoming, |fut| {
@@ -1379,6 +1564,19 @@ async fn run_acp_session<W, R>(
         for key in keys {
             if let Some(pending) = map.remove(&key) {
                 let _ = pending.tx.send(PlanApprovalOutcome::Cancelled);
+            }
+        }
+    }
+    {
+        let mut map = pending_ask_questions.lock().unwrap();
+        let keys: Vec<String> = map
+            .iter()
+            .filter(|(_, p)| p.session_key == session_key)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for key in keys {
+            if let Some(pending) = map.remove(&key) {
+                let _ = pending.tx.send(AskQuestionOutcome::Cancelled);
             }
         }
     }
@@ -1547,5 +1745,29 @@ mod tests {
         );
         assert_eq!(existing.len(), 1);
         assert_eq!(existing[0].id, "x");
+    }
+
+    #[test]
+    fn parse_ask_questions_filters_invalid() {
+        let params = serde_json::json!({
+            "questions": [
+                {
+                    "id": "q1",
+                    "prompt": "Which mode?",
+                    "options": [
+                        { "id": "agent", "label": "Agent" },
+                        { "id": "plan", "label": "Plan" }
+                    ],
+                    "allowMultiple": false
+                },
+                { "id": "q2", "prompt": "No options", "options": [] },
+                { "id": "q3", "prompt": "  ", "options": [{ "id": "x", "label": "X" }] }
+            ]
+        });
+        let qs = parse_ask_questions(&params);
+        assert_eq!(qs.len(), 1);
+        assert_eq!(qs[0].id, "q1");
+        assert_eq!(qs[0].options.len(), 2);
+        assert!(!qs[0].allow_multiple);
     }
 }

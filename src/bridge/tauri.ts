@@ -3,9 +3,11 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { COMMANDS } from "./commands";
 import {
   EVENTS,
+  type AgentAskQuestionRequestPayload,
   type AgentNotificationPayload,
   type AgentPermissionRequestPayload,
   type AgentPlanApprovalRequestPayload,
+  type AskQuestionAnswerPayload,
   type TerminalOutputPayload,
   type TerminalExitedPayload,
   type FsChangedPayload,
@@ -310,6 +312,20 @@ export async function agentRespondPlan(
   reason?: string | null,
 ): Promise<void> {
   return invoke(COMMANDS.AGENT_RESPOND_PLAN, { requestId, outcome, reason: reason ?? null });
+}
+
+export async function agentRespondAskQuestion(
+  requestId: string,
+  outcome: "answered" | "skipped" | "cancelled",
+  answers?: AskQuestionAnswerPayload[] | null,
+  reason?: string | null,
+): Promise<void> {
+  return invoke(COMMANDS.AGENT_RESPOND_ASK_QUESTION, {
+    requestId,
+    outcome,
+    answers: answers ?? null,
+    reason: reason ?? null,
+  });
 }
 
 export async function agentCloseSession(sessionId: string): Promise<void> {
@@ -705,6 +721,12 @@ export function onAgentPlanApprovalRequest(
   cb: (payload: AgentPlanApprovalRequestPayload) => void,
 ): Promise<UnlistenFn> {
   return listen(EVENTS.AGENT_PLAN_APPROVAL_REQUEST, (e) => cb(e.payload as AgentPlanApprovalRequestPayload));
+}
+
+export function onAgentAskQuestionRequest(
+  cb: (payload: AgentAskQuestionRequestPayload) => void,
+): Promise<UnlistenFn> {
+  return listen(EVENTS.AGENT_ASK_QUESTION_REQUEST, (e) => cb(e.payload as AgentAskQuestionRequestPayload));
 }
 
 export function onAgentSessionTerminated(cb: (payload: { sessionId: string }) => void): Promise<UnlistenFn> {

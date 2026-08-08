@@ -8,6 +8,7 @@ import {
   agentCancel,
   agentRespondPermission,
   agentRespondPlan,
+  agentRespondAskQuestion,
   agentCloseSession,
   agentListServers,
   agentListAllServers,
@@ -21,6 +22,7 @@ import {
   onAgentNotification,
   onAgentPermissionRequest,
   onAgentPlanApprovalRequest,
+  onAgentAskQuestionRequest,
   onAgentSessionTerminated,
   type PromptBlock,
   type ServerDescriptor,
@@ -29,8 +31,10 @@ import {
   type CreateSessionResult,
 } from "../bridge/tauri";
 import type {
+  AgentAskQuestionRequestPayload,
   AgentPermissionRequestPayload,
   AgentPlanApprovalRequestPayload,
+  AskQuestionAnswerPayload,
 } from "../bridge/events";
 import { pickAllowOptionId } from "../features/agent/pickAllowOptionId";
 import {
@@ -109,6 +113,8 @@ interface AgentStore {
   inlinePermissionIds: Record<string, true>;
   planApprovalQueues: Record<string, AgentPlanApprovalRequestPayload[]>;
   pendingPlanApproval: AgentPlanApprovalRequestPayload | null;
+  askQuestionQueues: Record<string, AgentAskQuestionRequestPayload[]>;
+  pendingAskQuestion: AgentAskQuestionRequestPayload | null;
   /** Pending user messages waiting for session to become available (starting → idle) or current task to finish. */
   pendingMessagesByConversation: Record<string, PendingMessage[]>;
   servers: ServerDescriptor[];
@@ -137,6 +143,12 @@ interface AgentStore {
   respondPlan: (
     requestId: string,
     outcome: "accepted" | "rejected" | "cancelled",
+    reason?: string | null,
+  ) => Promise<void>;
+  respondAskQuestion: (
+    requestId: string,
+    outcome: "answered" | "skipped" | "cancelled",
+    answers?: AskQuestionAnswerPayload[] | null,
     reason?: string | null,
   ) => Promise<void>;
   setMode: (sessionId: string, modeId: string) => Promise<void>;
@@ -193,6 +205,30 @@ function nextPendingPlanApproval(
     if (queue.length > 0) return queue[0];
   }
   return null;
+}
+
+function nextPendingAskQuestion(
+  queues: Record<string, AgentAskQuestionRequestPayload[]>,
+): AgentAskQuestionRequestPayload | null {
+  for (const queue of Object.values(queues)) {
+    if (queue.length > 0) return queue[0];
+  }
+  return null;
+}
+
+function sessionStillWaiting(
+  s: {
+    permissionQueues: Record<string, AgentPermissionRequestPayload[]>;
+    planApprovalQueues: Record<string, AgentPlanApprovalRequestPayload[]>;
+    askQuestionQueues: Record<string, AgentAskQuestionRequestPayload[]>;
+  },
+  sessionId: string,
+): boolean {
+  return (
+    (s.permissionQueues[sessionId] ?? []).length > 0 ||
+    (s.planApprovalQueues[sessionId] ?? []).length > 0 ||
+    (s.askQuestionQueues[sessionId] ?? []).length > 0
+  );
 }
 
 function applyCreateMeta(result: CreateSessionResult): SessionMeta {
@@ -373,6 +409,8 @@ export const useAgentStore = create<AgentStore>()(
     inlinePermissionIds: {},
     planApprovalQueues: {},
     pendingPlanApproval: null,
+    askQuestionQueues: {},
+    pendingAskQuestion: null,
     pendingMessagesByConversation: {},
     servers: [],
     loading: false,
@@ -447,11 +485,15 @@ export const useAgentStore = create<AgentStore>()(
             }
             delete s.permissionQueues[liveSessionId];
             delete s.planApprovalQueues[liveSessionId];
+            delete s.askQuestionQueues[liveSessionId];
             if (s.pendingPermission?.sessionId === liveSessionId) {
               s.pendingPermission = nextPendingPermission(s.permissionQueues, s.inlinePermissionIds);
             }
             if (s.pendingPlanApproval?.sessionId === liveSessionId) {
               s.pendingPlanApproval = nextPendingPlanApproval(s.planApprovalQueues);
+            }
+            if (s.pendingAskQuestion?.sessionId === liveSessionId) {
+              s.pendingAskQuestion = nextPendingAskQuestion(s.askQuestionQueues);
             }
           }
         });
@@ -643,11 +685,15 @@ export const useAgentStore = create<AgentStore>()(
           if (session) session.status = "idle";
           delete s.permissionQueues[sessionId];
           delete s.planApprovalQueues[sessionId];
+          delete s.askQuestionQueues[sessionId];
           if (s.pendingPermission?.sessionId === sessionId) {
             s.pendingPermission = nextPendingPermission(s.permissionQueues, s.inlinePermissionIds);
           }
           if (s.pendingPlanApproval?.sessionId === sessionId) {
             s.pendingPlanApproval = nextPendingPlanApproval(s.planApprovalQueues);
+          }
+          if (s.pendingAskQuestion?.sessionId === sessionId) {
+            s.pendingAskQuestion = nextPendingAskQuestion(s.askQuestionQueues);
           }
         });
       }
@@ -685,10 +731,9 @@ export const useAgentStore = create<AgentStore>()(
             if (session) {
               // 已处理（同意/拒绝）：撤掉该会话的「等待确认」通知，避免误导。
               useNotificationStore.getState().dismissForConversation(session.conversationId);
-              const stillWaiting =
-                (s.permissionQueues[sessionIdForStatus] ?? []).length > 0 ||
-                (s.planApprovalQueues[sessionIdForStatus] ?? []).length > 0;
-              if (session.status === "waiting" && !stillWaiting) session.status = "running";
+              if (session.status === "waiting" && !sessionStillWaiting(s, sessionIdForStatus)) {
+                session.status = "running";
+              }
             }
           }
         });
@@ -722,10 +767,45 @@ export const useAgentStore = create<AgentStore>()(
             const session = Object.values(s.sessions).find((ss) => ss.sessionId === sessionIdForStatus);
             if (session) {
               useNotificationStore.getState().dismissForConversation(session.conversationId);
-              const stillWaiting =
-                (s.permissionQueues[sessionIdForStatus] ?? []).length > 0 ||
-                (s.planApprovalQueues[sessionIdForStatus] ?? []).length > 0;
-              if (session.status === "waiting" && !stillWaiting) session.status = "running";
+              if (session.status === "waiting" && !sessionStillWaiting(s, sessionIdForStatus)) {
+                session.status = "running";
+              }
+            }
+          }
+        });
+      }
+    },
+
+    respondAskQuestion: async (requestId, outcome, answers, reason) => {
+      set((s) => {
+        s.error = null;
+      });
+      try {
+        await agentRespondAskQuestion(requestId, outcome, answers, reason);
+      } catch (err) {
+        set((s) => {
+          s.error = errorMessage(err);
+        });
+      } finally {
+        set((s) => {
+          let sessionIdForStatus: string | null = null;
+          for (const [sessionId, queue] of Object.entries(s.askQuestionQueues)) {
+            const idx = queue.findIndex((q) => q.requestId === requestId);
+            if (idx !== -1) {
+              queue.splice(idx, 1);
+              if (queue.length === 0) delete s.askQuestionQueues[sessionId];
+              sessionIdForStatus = sessionId;
+              break;
+            }
+          }
+          s.pendingAskQuestion = nextPendingAskQuestion(s.askQuestionQueues);
+          if (sessionIdForStatus) {
+            const session = Object.values(s.sessions).find((ss) => ss.sessionId === sessionIdForStatus);
+            if (session) {
+              useNotificationStore.getState().dismissForConversation(session.conversationId);
+              if (session.status === "waiting" && !sessionStillWaiting(s, sessionIdForStatus)) {
+                session.status = "running";
+              }
             }
           }
         });
@@ -1032,6 +1112,7 @@ export const useAgentStore = create<AgentStore>()(
       let unlistenNotification: UnlistenFn | null = null;
       let unlistenPermission: UnlistenFn | null = null;
       let unlistenPlanApproval: UnlistenFn | null = null;
+      let unlistenAskQuestion: UnlistenFn | null = null;
       let unlistenTerminated: UnlistenFn | null = null;
 
       onAgentNotification(({ sessionId, update }) => {
@@ -1165,17 +1246,56 @@ export const useAgentStore = create<AgentStore>()(
         else unlistenPlanApproval = fn;
       });
 
+      onAgentAskQuestionRequest((payload) => {
+        const session = Object.values(get().sessions).find((ss) => ss.sessionId === payload.sessionId);
+        set((s) => {
+          if (!s.askQuestionQueues[payload.sessionId]) s.askQuestionQueues[payload.sessionId] = [];
+          s.askQuestionQueues[payload.sessionId].push(payload);
+          const live = Object.values(s.sessions).find((ss) => ss.sessionId === payload.sessionId);
+          if (live) live.status = "waiting";
+          if (!s.pendingAskQuestion) s.pendingAskQuestion = payload;
+        });
+
+        if (session) {
+          let projectId: string | null = null;
+          let convTitle = "";
+          const byProject = useConversationStore.getState().conversationsByProject;
+          for (const [pid, list] of Object.entries(byProject)) {
+            const c = list.find((x) => x.id === session.conversationId);
+            if (c) {
+              projectId = pid;
+              convTitle = c.title;
+              break;
+            }
+          }
+          const firstPrompt = payload.questions[0]?.prompt?.trim();
+          useNotificationStore.getState().push({
+            title: "Agent 需要选择",
+            body: `${payload.title?.trim() || firstPrompt || "选择题"}${convTitle ? ` · ${convTitle}` : ""}`,
+            projectId,
+            conversationId: session.conversationId,
+          });
+        }
+      }).then((fn) => {
+        if (disposed) fn();
+        else unlistenAskQuestion = fn;
+      });
+
       onAgentSessionTerminated(({ sessionId }) => {
         set((s) => {
           const session = Object.values(s.sessions).find((ss) => ss.sessionId === sessionId);
           if (session) delete s.sessions[session.conversationId];
           delete s.permissionQueues[sessionId];
           delete s.planApprovalQueues[sessionId];
+          delete s.askQuestionQueues[sessionId];
           if (s.pendingPermission?.sessionId === sessionId) {
             s.pendingPermission = nextPendingPermission(s.permissionQueues, s.inlinePermissionIds);
           }
           if (s.pendingPlanApproval?.sessionId === sessionId) {
             s.pendingPlanApproval = nextPendingPlanApproval(s.planApprovalQueues);
+          }
+          if (s.pendingAskQuestion?.sessionId === sessionId) {
+            s.pendingAskQuestion = nextPendingAskQuestion(s.askQuestionQueues);
           }
         });
       }).then((fn) => {
@@ -1188,6 +1308,7 @@ export const useAgentStore = create<AgentStore>()(
         unlistenNotification?.();
         unlistenPermission?.();
         unlistenPlanApproval?.();
+        unlistenAskQuestion?.();
         unlistenTerminated?.();
         listenerTeardown = null;
       };

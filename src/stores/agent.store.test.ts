@@ -20,6 +20,7 @@ vi.mock("../bridge/tauri", () => ({
   agentSetSessionConfigOption: (...args: unknown[]) => agentSetSessionConfigOption(...args),
   agentRespondPermission: (...args: unknown[]) => agentRespondPermission(...args),
   agentRespondPlan: (...args: unknown[]) => agentRespondPlan(...args),
+  agentRespondAskQuestion: vi.fn(),
   agentSendPrompt: vi.fn(),
   agentCancel: vi.fn(),
   agentCloseSession: vi.fn(),
@@ -33,6 +34,7 @@ vi.mock("../bridge/tauri", () => ({
     return Promise.resolve(() => {});
   },
   onAgentPlanApprovalRequest: () => Promise.resolve(() => {}),
+  onAgentAskQuestionRequest: () => Promise.resolve(() => {}),
   onAgentSessionTerminated: () => Promise.resolve(() => {}),
 }));
 

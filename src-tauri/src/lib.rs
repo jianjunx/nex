@@ -91,6 +91,7 @@ pub fn run() {
             commands::agent_cmds::agent_cancel,
             commands::agent_cmds::agent_respond_permission,
             commands::agent_cmds::agent_respond_plan,
+            commands::agent_cmds::agent_respond_ask_question,
             commands::agent_cmds::agent_close_session,
             commands::agent_cmds::agent_custom_upsert,
             commands::agent_cmds::agent_custom_delete,

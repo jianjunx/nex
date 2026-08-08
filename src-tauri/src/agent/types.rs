@@ -79,6 +79,44 @@ pub struct CursorTodoDto {
     pub status: String,
 }
 
+/// Payload of the `agent-ask-question-request` event (Cursor `cursor/ask_question`).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentAskQuestionRequest {
+    pub session_id: String,
+    /// Nex-generated correlation id; the frontend passes it back to
+    /// `agent_respond_ask_question`.
+    pub request_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub questions: Vec<AskQuestionItemDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AskQuestionItemDto {
+    pub id: String,
+    pub prompt: String,
+    pub options: Vec<AskQuestionOptionDto>,
+    #[serde(default)]
+    pub allow_multiple: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AskQuestionOptionDto {
+    pub id: String,
+    pub label: String,
+}
+
+/// One answered question returned by the UI for `cursor/ask_question`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AskQuestionAnswerDto {
+    pub question_id: String,
+    pub selected_option_ids: Vec<String>,
+}
+
 /// Payload of the `agent-session-terminated` event, emitted when the agent
 /// process exits or the connection drops.
 #[derive(Debug, Clone, Serialize)]

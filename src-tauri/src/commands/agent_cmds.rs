@@ -98,6 +98,19 @@ pub fn agent_respond_plan(
 }
 
 #[tauri::command]
+pub fn agent_respond_ask_question(
+    state: State<AppState>,
+    request_id: String,
+    outcome: String,
+    answers: Option<Vec<crate::agent::types::AskQuestionAnswerDto>>,
+    reason: Option<String>,
+) -> Result<(), NexError> {
+    state
+        .agent_manager
+        .respond_ask_question(&request_id, &outcome, answers, reason)
+}
+
+#[tauri::command]
 pub fn agent_close_session(state: State<AppState>, session_id: String) -> Result<(), NexError> {
     state.agent_manager.remove_session(&session_id);
     Ok(())

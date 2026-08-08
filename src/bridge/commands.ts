@@ -24,6 +24,7 @@ export const COMMANDS = {
   AGENT_CANCEL: "agent_cancel",
   AGENT_RESPOND_PERMISSION: "agent_respond_permission",
   AGENT_RESPOND_PLAN: "agent_respond_plan",
+  AGENT_RESPOND_ASK_QUESTION: "agent_respond_ask_question",
   AGENT_CLOSE_SESSION: "agent_close_session",
   AGENT_CUSTOM_UPSERT: "agent_custom_upsert",
   AGENT_CUSTOM_DELETE: "agent_custom_delete",

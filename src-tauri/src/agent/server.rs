@@ -402,6 +402,17 @@ impl AgentSessionManager {
         self.acp.respond_plan(request_id, outcome, reason)
     }
 
+    pub fn respond_ask_question(
+        &self,
+        request_id: &str,
+        outcome: &str,
+        answers: Option<Vec<crate::agent::types::AskQuestionAnswerDto>>,
+        reason: Option<String>,
+    ) -> Result<(), NexError> {
+        self.acp
+            .respond_ask_question(request_id, outcome, answers, reason)
+    }
+
     pub fn remove_session(&self, session_id: &str) {
         self.acp.remove_session(session_id);
     }

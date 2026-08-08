@@ -12,6 +12,7 @@ vi.mock("../../../bridge/tauri", () => ({
   agentCancel: vi.fn(),
   agentRespondPermission: vi.fn(),
   agentRespondPlan: vi.fn(),
+  agentRespondAskQuestion: vi.fn(),
   agentCloseSession: vi.fn(),
   agentListServers: vi.fn().mockResolvedValue([]),
   agentListAllServers: vi.fn().mockResolvedValue([]),
@@ -25,6 +26,7 @@ vi.mock("../../../bridge/tauri", () => ({
   onAgentNotification: () => Promise.resolve(() => {}),
   onAgentPermissionRequest: () => Promise.resolve(() => {}),
   onAgentPlanApprovalRequest: () => Promise.resolve(() => {}),
+  onAgentAskQuestionRequest: () => Promise.resolve(() => {}),
   onAgentSessionTerminated: () => Promise.resolve(() => {}),
   // conversation.store 所需
   conversationCreate: vi.fn(),

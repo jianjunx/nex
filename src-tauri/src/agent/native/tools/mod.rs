@@ -13,6 +13,7 @@ pub mod mcp;
 pub mod mode;
 pub mod search;
 pub mod skill;
+pub mod spreadsheet;
 pub mod subagent;
 pub mod todo;
 
@@ -95,6 +96,7 @@ impl ToolRegistry {
                 Box::new(search::Grep),
                 Box::new(search::Glob),
                 Box::new(search::Ls),
+                Box::new(spreadsheet::ReadSpreadsheet),
                 Box::new(bash::Bash),
                 Box::new(todo::TodoWrite),
                 Box::new(history::History),
@@ -393,11 +395,12 @@ mod tests {
         assert!(names.contains(&"bash".to_string()));
         assert!(names.contains(&"history".to_string()));
         assert!(names.contains(&"run_in_background".to_string()));
+        assert!(names.contains(&"read_spreadsheet".to_string()));
         assert!(names.contains(&"checkpoint".to_string()));
         assert!(names.contains(&"load_skill".to_string()));
         assert!(names.contains(&"switch_mode".to_string()));
         assert!(names.contains(&"task".to_string()));
-        assert_eq!(names.len(), 21);
+        assert_eq!(names.len(), 22);
 
         // Subagents see everything except orchestration + mode tools.
         let sub: Vec<_> = ToolRegistry::subagents()
@@ -405,7 +408,7 @@ mod tests {
             .iter()
             .map(|s| s.function.name.clone())
             .collect();
-        assert_eq!(sub.len(), 17);
+        assert_eq!(sub.len(), 18);
         assert!(sub.contains(&"load_skill".to_string()));
         assert!(!sub.contains(&"task".to_string()));
         assert!(!sub.contains(&"fleet".to_string()));
@@ -428,7 +431,7 @@ mod tests {
         let hash = hex(Sha256::digest(&bytes));
         eprintln!("canonical schema sha256: {hash}");
         assert_eq!(
-            hash, "0a8d1604c2a158944d8f79abf860a0f578897b00cd386c2158e162676812ee82",
+            hash, "28ea480705f8e46a5e8339f570c777b86a20705d62caaeb5101a6e58f86964e3",
             "tool schema drift detected; update the snapshot intentionally"
         );
     }

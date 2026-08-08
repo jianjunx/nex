@@ -40,6 +40,10 @@ impl TodoStatus {
 }
 
 /// Parses and validates the raw `todos` argument.
+///
+/// Tolerant on `status`: missing/unknown values default to `pending` so a
+/// model that emits sloppy statuses still gets its plan mirrored to the UI
+/// (strictness here silently kills plan updates — see session.rs).
 pub fn parse_todos(args: &serde_json::Value) -> Result<Vec<TodoEntry>, String> {
     let todos = args
         .get("todos")
@@ -55,15 +59,13 @@ pub fn parse_todos(args: &serde_json::Value) -> Result<Vec<TodoEntry>, String> {
             .and_then(|v| v.as_str())
             .filter(|s| !s.trim().is_empty())
             .ok_or_else(|| format!("todos[{i}]: missing `content`"))?;
+        // Lenient status: default to pending. A model that writes
+        // `in-progress` / `todo` / nothing must not lose its whole plan.
         let status = item
             .get("status")
             .and_then(|v| v.as_str())
             .and_then(TodoStatus::parse)
-            .ok_or_else(|| {
-                format!(
-                    "todos[{i}]: `status` must be one of pending/in_progress/completed/cancelled"
-                )
-            })?;
+            .unwrap_or(TodoStatus::Pending);
         out.push(TodoEntry {
             content: content.trim().to_string(),
             status,
@@ -146,9 +148,23 @@ mod tests {
 
     #[test]
     fn rejects_bad_status() {
+        // Unknown statuses default to pending instead of failing — a sloppy
+        // model must not lose its whole plan (plan updates mirror to the UI).
         let args = serde_json::json!({"todos": [{"content": "a", "status": "bogus"}]});
-        assert!(parse_todos(&args).is_err());
+        let entries = parse_todos(&args).unwrap();
+        assert_eq!(entries[0].status, TodoStatus::Pending);
+        // Missing status is also tolerated.
+        let args = serde_json::json!({"todos": [{"content": "a"}]});
+        let entries = parse_todos(&args).unwrap();
+        assert_eq!(entries[0].status, TodoStatus::Pending);
+        // Hyphenated statuses model sometimes emits.
+        let args = serde_json::json!({"todos": [{"content": "a", "status": "in-progress"}]});
+        let entries = parse_todos(&args).unwrap();
+        assert_eq!(entries[0].status, TodoStatus::Pending);
+        // Still strict on the essentials: empty list and missing content fail.
         let args = serde_json::json!({"todos": []});
+        assert!(parse_todos(&args).is_err());
+        let args = serde_json::json!({"todos": [{"status": "pending"}]});
         assert!(parse_todos(&args).is_err());
     }
 }

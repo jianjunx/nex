@@ -498,20 +498,26 @@ async fn execute_tool(env: &TurnEnv, call: &NativeToolCall) -> Result<String, St
 
     // Mirror the model's todo list as an ACP plan update.
     if call.name == "todo_write" {
-        if let Ok(entries) = parse_todos(&call.arguments) {
-            let plan = acp::Plan {
-                entries: entries
-                    .iter()
-                    .map(|e| acp::PlanEntry {
-                        content: e.content.clone(),
-                        priority: acp::PlanEntryPriority::Medium,
-                        status: e.status.to_acp(),
-                        meta: None,
-                    })
-                    .collect(),
-                meta: None,
-            };
-            emit_notification(env, acp::SessionUpdate::Plan(plan)).await;
+        match parse_todos(&call.arguments) {
+            Ok(entries) => {
+                let plan = acp::Plan {
+                    entries: entries
+                        .iter()
+                        .map(|e| acp::PlanEntry {
+                            content: e.content.clone(),
+                            priority: acp::PlanEntryPriority::Medium,
+                            status: e.status.to_acp(),
+                            meta: None,
+                        })
+                        .collect(),
+                    meta: None,
+                };
+                emit_notification(env, acp::SessionUpdate::Plan(plan)).await;
+            }
+            Err(e) => log::warn!(
+                "todo_write arguments not parseable, plan update skipped: {e}; args: {}",
+                call.arguments
+            ),
         }
     }
 

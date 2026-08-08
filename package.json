@@ -11,7 +11,8 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "test": "vitest run",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "tag": "node scripts/tag-release.mjs"
   },
   "dependencies": {
     "@codemirror/lang-css": "^6.3.1",

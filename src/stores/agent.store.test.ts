@@ -212,7 +212,7 @@ describe("agent.store session prefs", () => {
         { name: "compact", description: "Compact context" },
       ],
     });
-    await useAgentStore.getState().createSession("conv-1", { type: "native", id: "nex" }, "/tmp");
+    await useAgentStore.getState().createSession("conv-1", { type: "native" }, "/tmp");
     const cmds = useAgentStore.getState().metaByConversation["conv-1"]?.availableCommands;
     expect(cmds).toEqual([
       { name: "review", description: "Review code", inputHint: "files" },
@@ -235,7 +235,7 @@ describe("agent.store session prefs", () => {
 
     const createPromise = useAgentStore
       .getState()
-      .createSession("conv-1", { type: "native", id: "nex" }, "/tmp");
+      .createSession("conv-1", { type: "native" }, "/tmp");
 
     notificationHandler!({
       sessionId: "sid-race",
@@ -270,7 +270,7 @@ describe("agent.store session prefs", () => {
 
     const failPromise = useAgentStore
       .getState()
-      .createSession("conv-1", { type: "native", id: "nex" }, "/tmp");
+      .createSession("conv-1", { type: "native" }, "/tmp");
 
     notificationHandler!({
       sessionId: "sid-orphan",
@@ -292,7 +292,7 @@ describe("agent.store session prefs", () => {
     await expect(failPromise).rejects.toThrow("spawn failed");
 
     agentCreateSession.mockResolvedValue({ sessionId: "sid-orphan" });
-    await useAgentStore.getState().createSession("conv-2", { type: "native", id: "nex" }, "/tmp");
+    await useAgentStore.getState().createSession("conv-2", { type: "native" }, "/tmp");
 
     expect(useAgentStore.getState().metaByConversation["conv-2"]?.availableCommands ?? []).toEqual(
       [],

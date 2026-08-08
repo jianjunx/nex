@@ -169,6 +169,8 @@ function TreeNode({
 
   const handleClick = () => {
     setSelectedPath(node.path);
+    // Keep keyboard focus on the row so explorer shortcuts (F2 / Enter rename) stay armed.
+    rowRef.current?.focus();
     if (isRoot || node.is_dir) {
       if (isExpanded) collapseDir(node.path);
       else expandDir(node.path);
@@ -264,6 +266,17 @@ function TreeNode({
         collapseDir(node.path);
       }
     } else if (e.key === 'Enter') {
+      // macOS: Enter renames (Finder-style). KeybindingHost usually handles it in
+      // capture phase; local path is a fallback if the global binding is unbound.
+      const isMac =
+        typeof navigator !== "undefined" &&
+        (navigator.platform.startsWith("Mac") || /Macintosh/.test(navigator.userAgent));
+      if (isMac) {
+        if (isRoot) return;
+        e.preventDefault();
+        onRenameStart(node.path);
+        return;
+      }
       e.preventDefault();
       if (!node.is_dir) {
         openFile(node.path);
@@ -272,6 +285,11 @@ function TreeNode({
       } else {
         expandDir(node.path);
       }
+    } else if (e.key === 'F2') {
+      // Local fallback when the row is focused (covers hosts that miss the global binding).
+      if (isRoot) return;
+      e.preventDefault();
+      onRenameStart(node.path);
     }
   };
 
@@ -532,6 +550,7 @@ export function FileTree() {
     <>
       <div
         ref={treeContainerRef}
+        data-file-tree
         className="py-0.5 overflow-y-auto h-full pr-1"
         onDragOver={handleTreeDragOver}
         onDrop={handleTreeDrop}

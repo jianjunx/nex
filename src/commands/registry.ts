@@ -12,6 +12,9 @@ import { isComposerSuggestOpen } from "../features/agent/composerPanelState";
 /** Keep in sync with KeybindingHost.INPUT_SELECTOR (avoid circular import). */
 const INPUT_SELECTOR = "input, textarea, select, [contenteditable=''], [contenteditable='true']";
 
+/** Keep in sync with FileTree root `data-file-tree` marker. */
+const FILE_TREE_SELECTOR = "[data-file-tree]";
+
 function isTypingInInput(): boolean {
   const el = document.activeElement;
   return el instanceof HTMLElement ? !!el.closest(INPUT_SELECTOR) : false;
@@ -19,6 +22,21 @@ function isTypingInInput(): boolean {
 
 function isInCodeMirror(): boolean {
   return !!document.activeElement?.closest(".cm-editor, .cm-content");
+}
+
+function isFileTreeFocused(): boolean {
+  const el = document.activeElement;
+  return el instanceof HTMLElement ? !!el.closest(FILE_TREE_SELECTOR) : false;
+}
+
+/** Selected path is a renameable tree entry (not the project root). */
+function renameableSelectedPath(): string | null {
+  const sel = useFsStore.getState().selectedPath;
+  if (!sel) return null;
+  const projectId = useProjectStore.getState().activeProjectId;
+  const project = useProjectStore.getState().projects.find((p) => p.id === projectId);
+  if (project && sel === project.path) return null;
+  return sel;
 }
 
 /** File-tree clipboard shortcuts must not steal from text inputs, the editor,
@@ -218,15 +236,21 @@ const COMMANDS: Command[] = [
     id: "files.rename",
     title: "重命名文件/目录",
     category: "文件树",
+    // Registry seed is F2; macOS remaps to Enter in keybindings.store.resolve
+    // (Finder-style). Enter is gated by file-tree focus so it never steals
+    // editor newlines.
     defaultKey: k("f2"),
     when: () => {
-      if (!useFsStore.getState().selectedPath) return false;
-      if (isInCodeMirror()) return false;
+      if (!renameableSelectedPath()) return false;
+      if (isInFileTreeEditInput()) return false;
       if (isTypingInInput()) return false;
+      if (isInCodeMirror()) return false;
+      // Require tree focus so Mac Enter / Win F2 only fire in the explorer.
+      if (!isFileTreeFocused()) return false;
       return true;
     },
     run: () => {
-      const sel = useFsStore.getState().selectedPath;
+      const sel = renameableSelectedPath();
       if (sel) useFsStore.getState().setPendingRename(sel);
     },
   },

@@ -28,6 +28,7 @@ describe("command registry", () => {
     expect(byId("view.openSettings")).toBe("primary+,");
     expect(byId("workbench.newConversation")).toBe("primary+shift+keyn");
     expect(byId("scm.commit")).toBe("primary+enter");
+    expect(byId("files.rename")).toBe("f2");
   });
 
   it("single-combo defaults are unique across commands (no accidental clash)", () => {

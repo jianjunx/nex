@@ -10,7 +10,7 @@ vi.mock("@tauri-apps/plugin-store", () => ({
   },
 }));
 
-import { comboToCanonical } from "../commands/types";
+import { comboToCanonical, detectPlatform } from "../commands/types";
 import { useKeybindingsStore } from "./keybindings.store";
 
 beforeEach(() => {
@@ -72,5 +72,10 @@ describe("keybindings store", () => {
     useKeybindingsStore.setState({ overrides: { "editor.save": "primary+alt+keys" } });
     useKeybindingsStore.getState().setOverride("editor.save", { primary: true, key: "keys" });
     expect("editor.save" in useKeybindingsStore.getState().overrides).toBe(false);
+  });
+
+  it("files.rename resolves to Enter on macOS and F2 elsewhere", () => {
+    const combo = useKeybindingsStore.getState().resolve("files.rename");
+    expect(comboToCanonical(combo)).toBe(detectPlatform() === "mac" ? "enter" : "f2");
   });
 });

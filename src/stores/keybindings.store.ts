@@ -1,13 +1,26 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { LazyStore } from "@tauri-apps/plugin-store";
-import { canonicalToCombo, comboToCanonical, type KeyCombo } from "../commands/types";
+import {
+  canonicalToCombo,
+  comboToCanonical,
+  detectPlatform,
+  type KeyCombo,
+} from "../commands/types";
 import { getCommand, listCommands } from "../commands/registry";
 
 // Same persistence pattern as settings.store: a LazyStore writes
 // keybindings.json in app-data; zustand holds the in-memory mirror.
 const store = new LazyStore("keybindings.json", { autoSave: 300 });
 const OVERRIDES_KEY = "overrides";
+
+/** Platform-aware default (registry seed, with macOS Finder-style rename). */
+function platformDefaultCombo(commandId: string): KeyCombo | null {
+  if (commandId === "files.rename" && detectPlatform() === "mac") {
+    return { key: "enter" };
+  }
+  return getCommand(commandId)?.defaultKey ?? null;
+}
 
 export interface ConflictRef {
   commandId: string;
@@ -48,7 +61,7 @@ export const useKeybindingsStore = create<KeybindingsState>()(
     resolve: (commandId) => {
       const { overrides } = get();
       if (commandId in overrides) return canonicalToCombo(overrides[commandId]);
-      return getCommand(commandId)?.defaultKey ?? null;
+      return platformDefaultCombo(commandId);
     },
 
     conflictsFor: (canonical, excludeId) => {
@@ -66,7 +79,7 @@ export const useKeybindingsStore = create<KeybindingsState>()(
       const canonical = comboToCanonical(combo);
       const conflict = get().conflictsFor(canonical, commandId)[0] ?? null;
       set((s) => {
-        const def = comboToCanonical(getCommand(commandId)?.defaultKey ?? null);
+        const def = comboToCanonical(platformDefaultCombo(commandId));
         if (canonical === def) delete s.overrides[commandId]; // back to default
         else s.overrides[commandId] = canonical; // null canonical = unbound
       });

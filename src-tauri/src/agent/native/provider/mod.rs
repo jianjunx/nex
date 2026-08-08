@@ -42,29 +42,65 @@ pub fn openai_endpoint(base_url: &str, path: &str) -> String {
 #[serde(rename_all = "lowercase")]
 pub enum ReasoningControl {
     Off,
+    Minimal,
     Low,
     Medium,
     High,
+    XHigh,
 }
 
 impl ReasoningControl {
     pub fn parse(s: &str) -> Self {
         match s.to_ascii_lowercase().as_str() {
+            "minimal" | "min" => Self::Minimal,
             "low" => Self::Low,
             "medium" | "med" => Self::Medium,
             "high" => Self::High,
+            "xhigh" | "x-high" | "extra" | "max" => Self::XHigh,
             _ => Self::Off,
         }
     }
 
-    /// Wire id used by the Composer config option.
+    /// Wire id used by the Composer config option / API body.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Off => "off",
+            Self::Minimal => "minimal",
             Self::Low => "low",
             Self::Medium => "medium",
             Self::High => "high",
+            Self::XHigh => "xhigh",
         }
+    }
+
+    /// Human label for Composer menus.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Minimal => "Minimal",
+            Self::Low => "Low",
+            Self::Medium => "Medium",
+            Self::High => "High",
+            Self::XHigh => "Extra high",
+        }
+    }
+
+    /// Pick a valid level for the given model options; prefer current, then
+    /// medium, then the first non-off entry, then off/first.
+    pub fn clamp_to(self, levels: &[String]) -> Self {
+        if levels.is_empty() {
+            return Self::Off;
+        }
+        let cur = self.as_str();
+        if levels.iter().any(|l| l.eq_ignore_ascii_case(cur)) {
+            return self;
+        }
+        for pref in ["medium", "low", "high", "minimal", "xhigh", "off"] {
+            if let Some(l) = levels.iter().find(|l| l.eq_ignore_ascii_case(pref)) {
+                return Self::parse(l);
+            }
+        }
+        Self::parse(&levels[0])
     }
 }
 

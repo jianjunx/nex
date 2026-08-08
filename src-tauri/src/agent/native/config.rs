@@ -31,6 +31,21 @@ pub enum ReasoningSupport {
     No,
 }
 
+/// Static capability flags inferred (or later refined) for a model.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ModelCapabilities {
+    pub tools: bool,
+    pub vision: bool,
+    pub reasoning: bool,
+}
+
+impl Default for ModelCapabilities {
+    fn default() -> Self {
+        Self { tools: true, vision: false, reasoning: false }
+    }
+}
+
 /// A single model entry inside a provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -39,11 +54,22 @@ pub struct ModelEntry {
     pub id: String,
     /// Runtime-learned reasoning-parameter support.
     pub reasoning_support: ReasoningSupport,
+    /// Inferred / detected capability flags.
+    pub capabilities: ModelCapabilities,
+    /// Composer-selectable reasoning effort ids (e.g. `off`, `low`, `xhigh`).
+    /// Empty when the model does not expose controllable reasoning.
+    #[serde(default)]
+    pub reasoning_levels: Vec<String>,
 }
 
 impl Default for ModelEntry {
     fn default() -> Self {
-        Self { id: String::new(), reasoning_support: ReasoningSupport::Unknown }
+        Self {
+            id: String::new(),
+            reasoning_support: ReasoningSupport::Unknown,
+            capabilities: ModelCapabilities::default(),
+            reasoning_levels: Vec::new(),
+        }
     }
 }
 
@@ -114,23 +140,29 @@ pub struct NativeAgentConfig {
     /// to the first model of the first provider when unset or dangling.
     pub default_model: Option<String>,
     pub agent: AgentParams,
+    /// Skill folder names skipped when building the session catalog.
+    #[serde(default)]
+    pub disabled_skills: Vec<String>,
+    /// MCP server names skipped when connecting for a session.
+    #[serde(default)]
+    pub disabled_mcp_servers: Vec<String>,
 }
 
 impl Default for NativeAgentConfig {
     fn default() -> Self {
+        let chat = crate::agent::native::capabilities::detect("deepseek-chat");
         Self {
             providers: vec![ProviderEntry {
                 id: "deepseek".to_string(),
                 name: "DeepSeek".to_string(),
                 base_url: "https://api.deepseek.com/v1".to_string(),
                 api_key: String::new(),
-                models: vec![ModelEntry {
-                    id: "deepseek-chat".to_string(),
-                    reasoning_support: ReasoningSupport::Unknown,
-                }],
+                models: vec![chat],
             }],
             default_model: None,
             agent: AgentParams::default(),
+            disabled_skills: Vec::new(),
+            disabled_mcp_servers: Vec::new(),
         }
     }
 }
@@ -166,6 +198,26 @@ impl NativeAgentConfig {
             cfg.agent.max_steps = 0;
             let _ = cfg.save(dir);
         }
+        // Backfill capabilities for models saved before detection existed.
+        let mut dirty = false;
+        for p in &mut cfg.providers {
+            for m in &mut p.models {
+                if !m.reasoning_levels.is_empty() {
+                    continue;
+                }
+                let refreshed = crate::agent::native::capabilities::refresh(m);
+                if refreshed.capabilities != m.capabilities
+                    || refreshed.reasoning_levels != m.reasoning_levels
+                    || refreshed.reasoning_support != m.reasoning_support
+                {
+                    *m = refreshed;
+                    dirty = true;
+                }
+            }
+        }
+        if dirty {
+            let _ = cfg.save(dir);
+        }
         cfg
     }
 
@@ -180,6 +232,12 @@ impl NativeAgentConfig {
     /// per-session choice made in the Composer.
     fn migrate_legacy(value: serde_json::Value) -> Self {
         let provider = value.get("provider").cloned().unwrap_or_default();
+        let model_id = provider
+            .get("model")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("deepseek-chat")
+            .to_string();
         let entry = ProviderEntry {
             id: "deepseek".to_string(),
             name: "DeepSeek".to_string(),
@@ -194,22 +252,20 @@ impl NativeAgentConfig {
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
                 .to_string(),
-            models: vec![ModelEntry {
-                id: provider
-                    .get("model")
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("deepseek-chat")
-                    .to_string(),
-                reasoning_support: ReasoningSupport::Unknown,
-            }],
+            models: vec![crate::agent::native::capabilities::detect(&model_id)],
         };
         let agent: AgentParams = value
             .get("agent")
             .cloned()
             .and_then(|a| serde_json::from_value(a).ok())
             .unwrap_or_default();
-        Self { providers: vec![entry], default_model: None, agent }
+        Self {
+            providers: vec![entry],
+            default_model: None,
+            agent,
+            disabled_skills: Vec::new(),
+            disabled_mcp_servers: Vec::new(),
+        }
     }
 
     /// Persists the config to `dir/nex-agent.json` (pretty-printed).
@@ -265,11 +321,29 @@ impl NativeAgentConfig {
                         return false;
                     }
                     m.reasoning_support = support;
+                    if support == ReasoningSupport::No {
+                        m.capabilities.reasoning = false;
+                        m.reasoning_levels.clear();
+                    }
                     return true;
                 }
             }
         }
         false
+    }
+
+    /// Reasoning levels exposed in the Composer for a composite model id.
+    pub fn reasoning_levels_for(&self, composite: &str) -> Vec<String> {
+        match self.resolve_model(composite) {
+            Some((_, m)) if m.reasoning_support != ReasoningSupport::No => {
+                if m.capabilities.reasoning || !m.reasoning_levels.is_empty() {
+                    m.reasoning_levels.clone()
+                } else {
+                    Vec::new()
+                }
+            }
+            _ => Vec::new(),
+        }
     }
 }
 
@@ -318,10 +392,11 @@ mod tests {
         let json = serde_json::to_value(&cfg).unwrap();
         assert!(json.get("providers").unwrap().is_array());
         assert!(json.get("agent").unwrap().get("bashTimeoutSecs").is_some());
+        assert!(json.get("disabledSkills").unwrap().is_array());
         let p0 = &json["providers"][0];
         assert!(p0.get("baseUrl").is_some());
         assert!(p0.get("apiKey").is_some());
-        assert_eq!(p0["models"][0]["reasoningSupport"], "unknown");
+        assert!(p0["models"][0].get("capabilities").is_some());
     }
 
     #[test]
@@ -353,7 +428,7 @@ mod tests {
             name: "Moonshot".to_string(),
             base_url: "https://api.moonshot.cn/v1".to_string(),
             api_key: "k".to_string(),
-            models: vec![ModelEntry { id: "kimi-k2".to_string(), reasoning_support: ReasoningSupport::No }],
+            models: vec![crate::agent::native::capabilities::detect("kimi-k2")],
         });
         assert!(cfg.resolve_model("deepseek/deepseek-chat").is_some());
         assert!(cfg.resolve_model("moonshot/kimi-k2").is_some());
@@ -372,14 +447,22 @@ mod tests {
     #[test]
     fn set_reasoning_support_updates_entry() {
         let mut cfg = NativeAgentConfig::default();
-        assert!(cfg.set_reasoning_support("deepseek/deepseek-chat", ReasoningSupport::No));
-        assert_eq!(
-            cfg.resolve_model("deepseek/deepseek-chat").unwrap().1.reasoning_support,
-            ReasoningSupport::No
-        );
-        // Same value again is a no-op.
-        assert!(!cfg.set_reasoning_support("deepseek/deepseek-chat", ReasoningSupport::No));
+        // Force a reasoning model first.
+        cfg.providers[0].models[0] = crate::agent::native::capabilities::detect("deepseek-reasoner");
+        assert!(cfg.set_reasoning_support("deepseek/deepseek-reasoner", ReasoningSupport::No));
+        let m = cfg.resolve_model("deepseek/deepseek-reasoner").unwrap().1;
+        assert_eq!(m.reasoning_support, ReasoningSupport::No);
+        assert!(m.reasoning_levels.is_empty());
+        assert!(!cfg.set_reasoning_support("deepseek/deepseek-reasoner", ReasoningSupport::No));
         assert!(!cfg.set_reasoning_support("deepseek/missing", ReasoningSupport::No));
         assert!(!cfg.set_reasoning_support("no-slash", ReasoningSupport::No));
+    }
+
+    #[test]
+    fn old_model_entry_without_capabilities_deserializes() {
+        let json = r#"{"providers":[{"id":"p","name":"P","baseUrl":"https://x/v1","apiKey":"k","models":[{"id":"m","reasoningSupport":"unknown"}]}],"agent":{}}"#;
+        let cfg: NativeAgentConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.providers[0].models[0].id, "m");
+        assert!(cfg.providers[0].models[0].capabilities.tools);
     }
 }

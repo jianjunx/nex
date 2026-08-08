@@ -1,6 +1,8 @@
+use crate::agent::native::{bundled, home, mcp, skills};
 use crate::agent::{CreateSessionResult, CustomServer, NativeAgentConfig, PromptBlock, ServerDescriptor, SessionTarget};
 use crate::error::NexError;
 use crate::state::AppState;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
 /// The New-Conversation agent list (whitelisted registry agents only).
@@ -54,7 +56,7 @@ pub async fn agent_set_session_model(
     state: State<'_, AppState>,
     session_id: String,
     model_id: String,
-) -> Result<(), NexError> {
+) -> Result<Option<Vec<crate::agent::types::SessionConfigOptionDto>>, NexError> {
     state.agent_manager.set_session_model(&session_id, &model_id).await
 }
 
@@ -160,4 +162,176 @@ pub async fn native_agent_list_models(
         return Err(NexError::Agent("model list response has no data[].id entries".into()));
     }
     Ok(ids)
+}
+
+/// Settings-panel skill row.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillInfoDto {
+    pub name: String,
+    pub description: String,
+    pub enabled: bool,
+    /// `builtin` when seeded from the app bundle, otherwise `user`.
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpUpsertRequest {
+    pub name: String,
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: std::collections::HashMap<String, String>,
+    pub url: Option<String>,
+}
+
+#[tauri::command]
+pub fn native_agent_list_mcp(app: AppHandle) -> Result<Vec<mcp::McpServerInfo>, NexError> {
+    let cfg = NativeAgentConfig::load(&app_data_dir(&app)?);
+    Ok(mcp::list_global(&cfg.disabled_mcp_servers))
+}
+
+#[tauri::command]
+pub fn native_agent_upsert_mcp(server: McpUpsertRequest) -> Result<(), NexError> {
+    mcp::upsert_global(
+        &server.name,
+        mcp::McpServerConfig {
+            command: server.command,
+            args: server.args,
+            env: server.env,
+            url: server.url,
+        },
+    )
+    .map_err(NexError::Agent)
+}
+
+#[tauri::command]
+pub fn native_agent_delete_mcp(name: String) -> Result<(), NexError> {
+    mcp::delete_global(&name).map_err(NexError::Agent)
+}
+
+#[tauri::command]
+pub fn native_agent_set_mcp_enabled(
+    app: AppHandle,
+    name: String,
+    enabled: bool,
+) -> Result<(), NexError> {
+    let dir = app_data_dir(&app)?;
+    let mut cfg = NativeAgentConfig::load(&dir);
+    cfg.disabled_mcp_servers.retain(|n| n != &name);
+    if !enabled {
+        cfg.disabled_mcp_servers.push(name);
+    }
+    cfg.save(&dir)
+}
+
+/// Short handshake probe for the settings status badge.
+#[tauri::command]
+pub async fn native_agent_probe_mcp(name: String) -> Result<String, NexError> {
+    let list = mcp::list_global(&[]);
+    let Some(info) = list.into_iter().find(|s| s.name == name) else {
+        return Err(NexError::Agent(format!("MCP server `{name}` not found")));
+    };
+    let cfg = mcp::McpServerConfig {
+        command: info.command,
+        args: info.args,
+        env: info.env,
+        url: info.url,
+    };
+    match mcp::McpClient::connect(&name, &cfg).await {
+        Ok(client) => Ok(format!("connected:{} tools", client.tools.len())),
+        Err(e) => Ok(format!("error:{e}")),
+    }
+}
+
+#[tauri::command]
+pub fn native_agent_list_skills(app: AppHandle) -> Result<Vec<SkillInfoDto>, NexError> {
+    if let Some(home_dir) = home::nex_home() {
+        bundled::ensure_bundled(&home_dir);
+    }
+    let cfg = NativeAgentConfig::load(&app_data_dir(&app)?);
+    let builtin: std::collections::HashSet<&str> =
+        bundled::bundled_skill_names().iter().copied().collect();
+    let discovered = home::skills_dir()
+        .map(|root| skills::discover(&root))
+        .unwrap_or_default();
+    Ok(discovered
+        .into_iter()
+        .map(|s| SkillInfoDto {
+            enabled: !cfg.disabled_skills.iter().any(|d| d == &s.name),
+            source: if builtin.contains(s.name.as_str()) {
+                "builtin".into()
+            } else {
+                "user".into()
+            },
+            name: s.name,
+            description: s.description,
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub fn native_agent_delete_skill(name: String) -> Result<(), NexError> {
+    let root = home::skills_dir().ok_or_else(|| NexError::Agent("home unavailable".into()))?;
+    let dir = root.join(&name);
+    if name.is_empty() || name.contains('/') || name.contains('\\') || name == "." || name == ".." {
+        return Err(NexError::Agent("invalid skill name".into()));
+    }
+    if !dir.is_dir() {
+        return Err(NexError::Agent(format!("skill `{name}` not found")));
+    }
+    std::fs::remove_dir_all(&dir)
+        .map_err(|e| NexError::Agent(format!("failed to delete skill: {e}")))
+}
+
+#[tauri::command]
+pub fn native_agent_set_skill_enabled(
+    app: AppHandle,
+    name: String,
+    enabled: bool,
+) -> Result<(), NexError> {
+    let dir = app_data_dir(&app)?;
+    let mut cfg = NativeAgentConfig::load(&dir);
+    cfg.disabled_skills.retain(|n| n != &name);
+    if !enabled {
+        cfg.disabled_skills.push(name);
+    }
+    cfg.save(&dir)
+}
+
+#[tauri::command]
+pub fn native_agent_open_skills_dir() -> Result<String, NexError> {
+    let home_dir = home::nex_home().ok_or_else(|| NexError::Agent("home unavailable".into()))?;
+    bundled::ensure_bundled(&home_dir);
+    let dir = home_dir.join("skills");
+    let _ = std::fs::create_dir_all(&dir);
+    open_path(&dir)?;
+    Ok(dir.display().to_string())
+}
+
+fn open_path(path: &std::path::Path) -> Result<(), NexError> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| NexError::Internal(format!("打开目录失败: {e}")))?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(path)
+            .spawn()
+            .map_err(|e| NexError::Internal(format!("打开目录失败: {e}")))?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| NexError::Internal(format!("打开目录失败: {e}")))?;
+    }
+    Ok(())
 }

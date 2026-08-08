@@ -73,12 +73,9 @@ impl DeepSeekProvider {
         if let Some(mt) = req.max_tokens {
             body["max_tokens"] = serde_json::json!(mt);
         }
-        // Reasoning-effort hint (DeepSeek honors `reasoning_effort` on chat).
-        match req.reasoning {
-            ReasoningControl::Off => {}
-            ReasoningControl::Low => body["reasoning_effort"] = serde_json::json!("low"),
-            ReasoningControl::Medium => body["reasoning_effort"] = serde_json::json!("medium"),
-            ReasoningControl::High => body["reasoning_effort"] = serde_json::json!("high"),
+        // Reasoning-effort hint (OpenAI-compatible / DeepSeek `reasoning_effort`).
+        if req.reasoning != ReasoningControl::Off {
+            body["reasoning_effort"] = serde_json::json!(req.reasoning.as_str());
         }
         body
     }

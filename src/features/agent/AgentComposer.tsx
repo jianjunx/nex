@@ -17,6 +17,7 @@ import {
 } from "../../stores/conversation.store";
 import { fsSearch, fsReadFile, type PromptBlock, type SearchMatch, type SessionTarget } from "../../bridge/tauri";
 import { ComposerOptionMenu } from "./ComposerOptionMenu";
+import { ComposerGroupedOptionMenu } from "./ComposerGroupedOptionMenu";
 import { ContextUsageRing } from "./ContextUsageRing";
 import { BranchSelector } from "../git/BranchSelector";
 import { useGitStore } from "../../stores/git.store";
@@ -244,7 +245,11 @@ export function AgentComposer() {
     return () => {
       const tab = draftTabRef.current;
       if (tab) {
-        saveComposerDraft(tab, { text: textRef.current, mentions: mentionsRef.current });
+        saveComposerDraft(tab, {
+          text: textRef.current,
+          mentions: mentionsRef.current,
+          images: imagesRef.current.map(toDraftImage),
+        });
       }
       for (const img of imagesRef.current) URL.revokeObjectURL(img.previewUrl);
     };
@@ -253,7 +258,11 @@ export function AgentComposer() {
   useEffect(() => {
     const prev = draftTabRef.current;
     if (prev && prev !== activeTabId) {
-      saveComposerDraft(prev, { text: textRef.current, mentions: mentionsRef.current });
+      saveComposerDraft(prev, {
+        text: textRef.current,
+        mentions: mentionsRef.current,
+        images: imagesRef.current.map(toDraftImage),
+      });
     }
     draftTabRef.current = activeTabId;
     const draft = activeTabId ? loadComposerDraft(activeTabId) : null;
@@ -267,9 +276,10 @@ export function AgentComposer() {
     setSuggestIndex(0);
     setPlusOpen(false);
     setImeComposing(false);
+    setPreviewImage(null);
     setImages((prevImgs) => {
       for (const img of prevImgs) URL.revokeObjectURL(img.previewUrl);
-      return [];
+      return (draft?.images ?? []).map(fromDraftImage);
     });
     requestAnimationFrame(() => {
       const el = textareaRef.current;
@@ -960,22 +970,46 @@ export function AgentComposer() {
                       />
                     )}
                     {!hasConfigModel && meta.models.length > 0 && (
-                      <ComposerOptionMenu
+                      <ComposerGroupedOptionMenu
                         ariaLabel="Model"
                         value={meta.currentModelId ?? ""}
-                        options={meta.models.map((m) => ({ id: m.id, name: m.name }))}
+                        options={meta.models.map((m) => ({
+                          id: m.id,
+                          name: m.name,
+                          group: m.description?.trim() || "其他",
+                        }))}
                         onSelect={(id) => void setModel(session.sessionId, id)}
                       />
                     )}
-                    {configOpts.map((opt) => (
-                      <ComposerOptionMenu
-                        key={opt.id}
-                        ariaLabel={opt.name || opt.id}
-                        value={opt.currentValueId}
-                        options={opt.options.map((o) => ({ id: o.id, name: o.name }))}
-                        onSelect={(id) => void setConfigOption(session.sessionId, opt.id, id)}
-                      />
-                    ))}
+                    {configOpts.map((opt) => {
+                      const isModelOpt = opt.id === "model" || opt.category === "model";
+                      if (isModelOpt) {
+                        return (
+                          <ComposerGroupedOptionMenu
+                            key={opt.id}
+                            ariaLabel={opt.name || opt.id}
+                            value={opt.currentValueId}
+                            options={opt.options.map((o) => ({
+                              id: o.id,
+                              name: o.name.includes("/") ? (o.name.split("/").pop() ?? o.name) : o.name,
+                              group: o.name.includes("/")
+                                ? (o.name.split("/")[0] ?? "其他")
+                                : "模型",
+                            }))}
+                            onSelect={(id) => void setConfigOption(session.sessionId, opt.id, id)}
+                          />
+                        );
+                      }
+                      return (
+                        <ComposerOptionMenu
+                          key={opt.id}
+                          ariaLabel={opt.name || opt.id}
+                          value={opt.currentValueId}
+                          options={opt.options.map((o) => ({ id: o.id, name: o.name }))}
+                          onSelect={(id) => void setConfigOption(session.sessionId, opt.id, id)}
+                        />
+                      );
+                    })}
                   </>
                 );
               })()}
@@ -1051,4 +1085,30 @@ function fileToBase64(file: File): Promise<string> {
     reader.onerror = () => reject(reader.error ?? new Error("read failed"));
     reader.readAsDataURL(file);
   });
+}
+
+function toDraftImage(img: PendingImage): { id: string; mimeType: string; data: string } {
+  return { id: img.id, mimeType: img.mimeType, data: img.data };
+}
+
+/** Rebuild a blob preview URL from the persisted base64 payload. */
+function fromDraftImage(img: { id: string; mimeType: string; data: string }): PendingImage {
+  return {
+    id: img.id,
+    mimeType: img.mimeType,
+    data: img.data,
+    previewUrl: base64ToObjectUrl(img.mimeType, img.data),
+  };
+}
+
+function base64ToObjectUrl(mimeType: string, data: string): string {
+  try {
+    const binary = atob(data);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return URL.createObjectURL(new Blob([bytes], { type: mimeType || "image/png" }));
+  } catch {
+    // Fall back so a corrupt draft still shows something in the strip.
+    return `data:${mimeType || "image/png"};base64,${data}`;
+  }
 }

@@ -133,9 +133,18 @@ export type SessionTarget =
  * `reasoningSupport` records whether the model accepts `reasoning_effort`:
  * `unknown` (not verified), `yes` (heuristic match), `no` (runtime rejection).
  */
+export interface NativeAgentModelCapabilities {
+  tools: boolean;
+  vision: boolean;
+  reasoning: boolean;
+}
+
 export interface NativeAgentModel {
   id: string;
   reasoningSupport: "unknown" | "yes" | "no";
+  capabilities: NativeAgentModelCapabilities;
+  /** Composer-selectable reasoning effort ids for this model. */
+  reasoningLevels: string[];
 }
 
 export interface NativeAgentProvider {
@@ -156,6 +165,33 @@ export interface NativeAgentConfig {
     bashTimeoutSecs: number;
     maxSubagentConcurrency: number;
   };
+  disabledSkills?: string[];
+  disabledMcpServers?: string[];
+}
+
+export interface NativeMcpServerInfo {
+  name: string;
+  command?: string | null;
+  args: string[];
+  env: Record<string, string>;
+  url?: string | null;
+  enabled: boolean;
+  source: string;
+}
+
+export interface NativeSkillInfo {
+  name: string;
+  description: string;
+  enabled: boolean;
+  source: "builtin" | "user" | string;
+}
+
+export interface NativeMcpUpsert {
+  name: string;
+  command?: string | null;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string | null;
 }
 
 export async function agentListServers(): Promise<ServerDescriptor[]> {
@@ -234,7 +270,10 @@ export async function agentSetSessionMode(sessionId: string, modeId: string): Pr
   return invoke(COMMANDS.AGENT_SET_SESSION_MODE, { sessionId, modeId });
 }
 
-export async function agentSetSessionModel(sessionId: string, modelId: string): Promise<void> {
+export async function agentSetSessionModel(
+  sessionId: string,
+  modelId: string,
+): Promise<SessionConfigOptionDto[] | null> {
   return invoke(COMMANDS.AGENT_SET_SESSION_MODEL, { sessionId, modelId });
 }
 
@@ -277,6 +316,42 @@ export async function nativeAgentSetConfig(config: NativeAgentConfig): Promise<v
 /** Fetches model ids from an OpenAI-compatible `{baseUrl}/models` endpoint. */
 export async function nativeAgentListModels(baseUrl: string, apiKey: string): Promise<string[]> {
   return invoke(COMMANDS.NATIVE_AGENT_LIST_MODELS, { baseUrl, apiKey });
+}
+
+export async function nativeAgentListMcp(): Promise<NativeMcpServerInfo[]> {
+  return invoke(COMMANDS.NATIVE_AGENT_LIST_MCP);
+}
+
+export async function nativeAgentUpsertMcp(server: NativeMcpUpsert): Promise<void> {
+  return invoke(COMMANDS.NATIVE_AGENT_UPSERT_MCP, { server });
+}
+
+export async function nativeAgentDeleteMcp(name: string): Promise<void> {
+  return invoke(COMMANDS.NATIVE_AGENT_DELETE_MCP, { name });
+}
+
+export async function nativeAgentSetMcpEnabled(name: string, enabled: boolean): Promise<void> {
+  return invoke(COMMANDS.NATIVE_AGENT_SET_MCP_ENABLED, { name, enabled });
+}
+
+export async function nativeAgentProbeMcp(name: string): Promise<string> {
+  return invoke(COMMANDS.NATIVE_AGENT_PROBE_MCP, { name });
+}
+
+export async function nativeAgentListSkills(): Promise<NativeSkillInfo[]> {
+  return invoke(COMMANDS.NATIVE_AGENT_LIST_SKILLS);
+}
+
+export async function nativeAgentDeleteSkill(name: string): Promise<void> {
+  return invoke(COMMANDS.NATIVE_AGENT_DELETE_SKILL, { name });
+}
+
+export async function nativeAgentSetSkillEnabled(name: string, enabled: boolean): Promise<void> {
+  return invoke(COMMANDS.NATIVE_AGENT_SET_SKILL_ENABLED, { name, enabled });
+}
+
+export async function nativeAgentOpenSkillsDir(): Promise<string> {
+  return invoke(COMMANDS.NATIVE_AGENT_OPEN_SKILLS_DIR);
 }
 
 // --- Git ---

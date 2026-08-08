@@ -709,11 +709,15 @@ impl AcpSessionManager {
         .map(|_| ())
     }
 
-    pub async fn set_session_model(&self, session_id: &str, model_id: &str) -> Result<(), NexError> {
+    pub async fn set_session_model(
+        &self,
+        session_id: &str,
+        model_id: &str,
+    ) -> Result<Option<Vec<SessionConfigOptionDto>>, NexError> {
         let handle = self.session(session_id)?;
         let agent_session_id = handle.agent_session_id.clone();
         let model_id = model_id.to_string();
-        run_acp({
+        let resp = run_acp({
             let handle = Arc::clone(&handle);
             move || async move {
                 handle
@@ -726,8 +730,8 @@ impl AcpSessionManager {
                     .await
             }
         })
-        .await
-        .map(|_| ())
+        .await?;
+        Ok(resp.meta.as_ref().and_then(config_options_from_json))
     }
 
     pub async fn set_session_config_option(

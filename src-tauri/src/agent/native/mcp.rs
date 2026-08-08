@@ -26,23 +26,107 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
 const CALL_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// A stdio MCP server configuration from `mcp.json`.
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpServerConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub args: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub env: HashMap<String, String>,
     /// HTTP/SSE endpoints are not supported this phase.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
 }
 
 /// The `mcp.json` file shape (Claude-compatible).
-#[derive(Debug, Default, serde::Deserialize)]
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 struct McpFile {
     #[serde(rename = "mcpServers", default)]
     mcp_servers: HashMap<String, McpServerConfig>,
+}
+
+/// Settings-panel row for one global MCP server.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerInfo {
+    pub name: String,
+    pub command: Option<String>,
+    pub args: Vec<String>,
+    pub env: HashMap<String, String>,
+    pub url: Option<String>,
+    pub enabled: bool,
+    /// `global` for `~/.nex/mcp.json` entries.
+    pub source: String,
+}
+
+/// Path to the user-global MCP config (`~/.nex/mcp.json`).
+pub fn global_mcp_path() -> Option<std::path::PathBuf> {
+    super::home::nex_home().map(|h| h.join("mcp.json"))
+}
+
+/// Lists servers from the global mcp.json (sorted by name).
+pub fn list_global(disabled: &[String]) -> Vec<McpServerInfo> {
+    let Some(path) = global_mcp_path() else {
+        return Vec::new();
+    };
+    let mut map = HashMap::new();
+    merge_file(&mut map, &path);
+    let mut out: Vec<McpServerInfo> = map
+        .into_iter()
+        .map(|(name, cfg)| {
+            let enabled = !disabled.iter().any(|d| d == &name);
+            McpServerInfo {
+                name,
+                command: cfg.command,
+                args: cfg.args,
+                env: cfg.env,
+                url: cfg.url,
+                enabled,
+                source: "global".to_string(),
+            }
+        })
+        .collect();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+/// Inserts or replaces one server in the global mcp.json.
+pub fn upsert_global(name: &str, config: McpServerConfig) -> Result<(), String> {
+    let name = name.trim();
+    if name.is_empty() || name.contains('/') || name.contains('\\') {
+        return Err("invalid MCP server name".into());
+    }
+    let path = global_mcp_path().ok_or_else(|| "home directory unavailable".to_string())?;
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let mut file = read_file(&path);
+    file.mcp_servers.insert(name.to_string(), config);
+    write_file(&path, &file)
+}
+
+/// Removes one server from the global mcp.json.
+pub fn delete_global(name: &str) -> Result<(), String> {
+    let path = global_mcp_path().ok_or_else(|| "home directory unavailable".to_string())?;
+    let mut file = read_file(&path);
+    if file.mcp_servers.remove(name).is_none() {
+        return Err(format!("MCP server `{name}` not found"));
+    }
+    write_file(&path, &file)
+}
+
+fn read_file(path: &Path) -> McpFile {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return McpFile::default();
+    };
+    serde_json::from_str(&text).unwrap_or_default()
+}
+
+fn write_file(path: &Path, file: &McpFile) -> Result<(), String> {
+    let json = serde_json::to_vec_pretty(file).map_err(|e| e.to_string())?;
+    std::fs::write(path, json).map_err(|e| format!("failed to write {}: {e}", path.display()))
 }
 
 /// Loads the merged MCP configuration for a session working dir: global

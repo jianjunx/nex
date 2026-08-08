@@ -683,11 +683,22 @@ export const useAgentStore = create<AgentStore>()(
     setModel: async (sessionId, modelId) => {
       const session = Object.values(get().sessions).find((ss) => ss.sessionId === sessionId);
       try {
-        await agentSetSessionModel(sessionId, modelId);
+        const next = await agentSetSessionModel(sessionId, modelId);
         if (session) {
           set((s) => {
             const meta = s.metaByConversation[session.conversationId];
-            if (meta) meta.currentModelId = modelId;
+            if (!meta) return;
+            meta.currentModelId = modelId;
+            // Native agent returns refreshed reasoning levels for the new model.
+            if (next) {
+              meta.configOptions = next.map((o) => ({
+                id: o.id,
+                name: o.name,
+                category: o.category ?? undefined,
+                currentValueId: o.currentValueId,
+                options: o.options.map((x) => ({ id: x.id, name: x.name })),
+              }));
+            }
           });
           patchPrefs(set, session.conversationId, { modelId });
         }

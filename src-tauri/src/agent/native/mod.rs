@@ -14,6 +14,8 @@ use std::sync::Arc;
 
 use agent_client_protocol::{self as acp};
 
+pub mod bundled;
+pub mod capabilities;
 pub mod commands;
 pub mod compact;
 pub mod config;
@@ -63,11 +65,11 @@ struct NativeSession {
 }
 
 impl SessionHandles {
-    fn new(model_id: String) -> Self {
+    fn new(model_id: String, reasoning: ReasoningControl) -> Self {
         Self {
             mode_id: Rc::new(RefCell::new("code".to_string())),
             model_id: Rc::new(RefCell::new(model_id)),
-            reasoning: Rc::new(Cell::new(ReasoningControl::Medium)),
+            reasoning: Rc::new(Cell::new(reasoning)),
             cancelled: Rc::new(Cell::new(false)),
             auto_allow: Rc::new(RefCell::new(HashSet::new())),
         }
@@ -137,20 +139,40 @@ impl NexNativeAgent {
     }
 
     /// The `reasoning` config option payload for `_meta.configOptions`,
-    /// rendered by the Composer's generic config-option menu.
-    fn reasoning_config_option(current: ReasoningControl) -> serde_json::Value {
-        serde_json::json!({
+    /// rendered by the Composer's generic config-option menu. Returns `None`
+    /// when the model has no controllable reasoning levels.
+    fn reasoning_config_option(
+        current: ReasoningControl,
+        levels: &[String],
+    ) -> Option<serde_json::Value> {
+        if levels.is_empty() {
+            return None;
+        }
+        let options: Vec<serde_json::Value> = levels
+            .iter()
+            .map(|id| {
+                let ctrl = ReasoningControl::parse(id);
+                serde_json::json!({
+                    "id": id,
+                    "name": ctrl.display_name(),
+                })
+            })
+            .collect();
+        let current = current.clamp_to(levels);
+        Some(serde_json::json!({
             "id": "reasoning",
             "name": "Reasoning",
             "category": "reasoning",
             "currentValueId": current.as_str(),
-            "options": [
-                { "id": "off", "name": "Off" },
-                { "id": "low", "name": "Low" },
-                { "id": "medium", "name": "Medium" },
-                { "id": "high", "name": "High" }
-            ]
-        })
+            "options": options
+        }))
+    }
+
+    fn config_options_meta(current: ReasoningControl, levels: &[String]) -> serde_json::Value {
+        match Self::reasoning_config_option(current, levels) {
+            Some(opt) => serde_json::json!({ "configOptions": [opt] }),
+            None => serde_json::json!({ "configOptions": [] }),
+        }
     }
 
     async fn emit_text(&self, session_id: &acp::SessionId, text: &str) {
@@ -213,15 +235,16 @@ impl acp::Agent for NexNativeAgent {
         let session_id = acp::SessionId(Arc::from(uuid::Uuid::new_v4().to_string().as_str()));
 
         // Aggregate every configured provider's models into the session model
-        // list; ids are composite `<providerId>/<modelId>`.
+        // list; ids are composite `<providerId>/<modelId>`. Display name is the
+        // bare model id; provider name goes in `description` for Composer grouping.
         let available_models: Vec<acp::ModelInfo> = cfg
             .providers
             .iter()
             .flat_map(|p| {
                 p.models.iter().map(move |m| acp::ModelInfo {
                     model_id: acp::ModelId(Arc::from(format!("{}/{}", p.id, m.id).as_str())),
-                    name: format!("{}/{}", p.name, m.id),
-                    description: None,
+                    name: m.id.clone(),
+                    description: Some(p.name.clone()),
                     meta: None,
                 })
             })
@@ -229,8 +252,11 @@ impl acp::Agent for NexNativeAgent {
         let current_model = cfg
             .default_selection()
             .unwrap_or_else(|| "deepseek/deepseek-chat".to_string());
+        let reasoning_levels = cfg.reasoning_levels_for(&current_model);
+        let initial_reasoning =
+            ReasoningControl::Medium.clamp_to(&reasoning_levels);
 
-        let handles = SessionHandles::new(current_model.clone());
+        let handles = SessionHandles::new(current_model.clone(), initial_reasoning);
         let session = NativeSession {
             cwd: args.cwd.clone(),
             handles: handles.clone_handles(),
@@ -247,11 +273,19 @@ impl acp::Agent for NexNativeAgent {
             .borrow_mut()
             .insert(session_id.0.to_string(), session);
 
+        // Seed built-in commands/skills into ~/.nex (never overwrites user files).
+        if let Some(home) = home::nex_home() {
+            bundled::ensure_bundled(&home);
+        }
+
         // Connect configured MCP servers (`~/.nex/mcp.json` + project
         // `.nex/mcp.json`). A failing server only logs — it never blocks
         // session creation; the child processes die with the session.
-        for (name, cfg) in mcp::load_configs(&args.cwd) {
-            match mcp::McpClient::connect(&name, &cfg).await {
+        for (name, server_cfg) in mcp::load_configs(&args.cwd) {
+            if cfg.disabled_mcp_servers.iter().any(|d| d == &name) {
+                continue;
+            }
+            match mcp::McpClient::connect(&name, &server_cfg).await {
                 Ok(client) => {
                     log::info!(
                         "MCP server `{name}` connected with {} tool(s)",
@@ -341,9 +375,7 @@ impl acp::Agent for NexNativeAgent {
             },
             // The Composer reads `configOptions` out of `_meta` (see
             // `config_options_from_json` in acp_adapter).
-            meta: Some(serde_json::json!({
-                "configOptions": [Self::reasoning_config_option(ReasoningControl::Medium)]
-            })),
+            meta: Some(Self::config_options_meta(initial_reasoning, &reasoning_levels)),
         })
     }
 
@@ -381,8 +413,17 @@ impl acp::Agent for NexNativeAgent {
         // disclosure), user rules and the project AGENTS.md.
         if session.history.is_empty() {
             let mut sys = context::system_prompt(&session.cwd, &raw_model_id);
+            if let Some(home) = home::nex_home() {
+                bundled::ensure_bundled(&home);
+            }
+            let disabled = &cfg.disabled_skills;
             let discovered = home::skills_dir()
-                .map(|root| skills::discover(&root))
+                .map(|root| {
+                    skills::discover(&root)
+                        .into_iter()
+                        .filter(|s| !disabled.iter().any(|d| d == &s.name))
+                        .collect::<Vec<_>>()
+                })
                 .unwrap_or_default();
             for block in [
                 skills::catalog_block(&discovered),
@@ -582,15 +623,22 @@ impl acp::Agent for NexNativeAgent {
         &self,
         args: acp::SetSessionModelRequest,
     ) -> acp::Result<acp::SetSessionModelResponse> {
-        let model_cell = {
+        let cfg = self.load_config();
+        let model_id = args.model_id.0.to_string();
+        let levels = cfg.reasoning_levels_for(&model_id);
+        let (model_cell, reasoning_cell) = {
             let handles = self.inner.handles.borrow();
             let Some(h) = handles.get(args.session_id.0.as_ref()) else {
                 return Err(acp::Error::invalid_params());
             };
-            h.model_id.clone()
+            (h.model_id.clone(), h.reasoning.clone())
         };
-        *model_cell.borrow_mut() = args.model_id.0.to_string();
-        Ok(acp::SetSessionModelResponse { meta: None })
+        *model_cell.borrow_mut() = model_id;
+        let next = reasoning_cell.get().clamp_to(&levels);
+        reasoning_cell.set(next);
+        Ok(acp::SetSessionModelResponse {
+            meta: Some(Self::config_options_meta(next, &levels)),
+        })
     }
 
     async fn ext_method(&self, args: acp::ExtRequest) -> acp::Result<acp::ExtResponse> {
@@ -610,18 +658,20 @@ impl acp::Agent for NexNativeAgent {
                 return Err(acp::Error::invalid_params()
                     .with_data(format!("unknown config option: {config_id}")));
             }
-            let reasoning = ReasoningControl::parse(value);
-            let reasoning_cell = {
+            let cfg = self.load_config();
+            let (model_id, reasoning_cell) = {
                 let handles = self.inner.handles.borrow();
                 let Some(h) = handles.get(session_id.as_str()) else {
                     return Err(acp::Error::invalid_params());
                 };
-                h.reasoning.clone()
+                let model_id = h.model_id.borrow().clone();
+                let reasoning_cell = h.reasoning.clone();
+                (model_id, reasoning_cell)
             };
+            let levels = cfg.reasoning_levels_for(&model_id);
+            let reasoning = ReasoningControl::parse(value).clamp_to(&levels);
             reasoning_cell.set(reasoning);
-            let payload = serde_json::json!({
-                "configOptions": [Self::reasoning_config_option(reasoning)]
-            });
+            let payload = Self::config_options_meta(reasoning, &levels);
             return Ok(Arc::from(
                 serde_json::value::RawValue::from_string(payload.to_string())
                     .map_err(|e| acp::Error::internal_error().with_data(format!("{e}")))?,
@@ -900,7 +950,12 @@ mod tests {
     /// updates the per-session choice and echoes the refreshed options.
     #[tokio::test(flavor = "current_thread")]
     async fn reasoning_config_option_round_trip() {
-        let agent = NexNativeAgent::new(std::env::temp_dir());
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cfg = NativeAgentConfig::default();
+        cfg.providers[0].models = vec![crate::agent::native::capabilities::detect("deepseek-reasoner")];
+        cfg.default_model = Some("deepseek/deepseek-reasoner".into());
+        cfg.save(tmp.path()).unwrap();
+        let agent = NexNativeAgent::new(tmp.path().to_path_buf());
         let session = agent
             .new_session(acp::NewSessionRequest {
                 cwd: std::env::temp_dir(),
@@ -910,17 +965,19 @@ mod tests {
             .await
             .expect("new_session failed");
 
-        // Default config yields one provider with deepseek-chat; the model id
-        // is the composite `<providerId>/<modelId>`.
         let models = session.models.expect("models");
-        assert_eq!(models.current_model_id.0.as_ref(), "deepseek/deepseek-chat");
-        assert_eq!(models.available_models[0].model_id.0.as_ref(), "deepseek/deepseek-chat");
+        assert_eq!(models.current_model_id.0.as_ref(), "deepseek/deepseek-reasoner");
+        assert_eq!(models.available_models[0].name, "deepseek-reasoner");
+        assert_eq!(
+            models.available_models[0].description.as_deref(),
+            Some("DeepSeek")
+        );
 
         let meta = session.meta.as_ref().expect("_meta");
         let options = meta.get("configOptions").expect("configOptions");
         assert_eq!(options[0]["id"], "reasoning");
         assert_eq!(options[0]["currentValueId"], "medium");
-        assert_eq!(options[0]["options"].as_array().expect("options").len(), 4);
+        assert!(options[0]["options"].as_array().expect("options").len() >= 4);
 
         let response = agent
             .ext_method(acp::ExtRequest {
@@ -1045,7 +1102,13 @@ mod tests {
         // whole wire interaction must run inside a task::LocalSet.
         tokio::task::LocalSet::new()
             .run_until(async {
-        let agent = NexNativeAgent::new(std::env::temp_dir());
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cfg = NativeAgentConfig::default();
+        cfg.providers[0].models =
+            vec![crate::agent::native::capabilities::detect("deepseek-reasoner")];
+        cfg.default_model = Some("deepseek/deepseek-reasoner".into());
+        cfg.save(tmp.path()).unwrap();
+        let agent = NexNativeAgent::new(tmp.path().to_path_buf());
 
         let (client_end, agent_end) = tokio::io::duplex(64 * 1024);
         let (agent_read, agent_write) = tokio::io::split(agent_end);

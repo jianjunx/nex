@@ -5,7 +5,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -95,8 +94,11 @@ export function BranchSelector({ projectPath, open, onOpenChange }: BranchSelect
             <ChevronDown size={12} className="shrink-0 text-[var(--text-tertiary)]" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-64">
-          <div className="p-1.5 pb-1">
+        <DropdownMenuContent
+          align="start"
+          className="flex w-64 max-h-[350px] flex-col overflow-hidden p-0"
+        >
+          <div className="shrink-0 p-1.5 pb-1">
             <Input
               autoFocus
               data-testid="branch-search"
@@ -108,63 +110,66 @@ export function BranchSelector({ projectPath, open, onOpenChange }: BranchSelect
               onKeyDown={(e) => e.stopPropagation()}
             />
           </div>
-          <div className="px-2 py-1 text-xs text-[var(--text-tertiary)]">本地</div>
-          {locals.map((b) => (
-            <div
-              key={b.name}
-              data-testid={`branch-${b.name}`}
-              className="group flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-[var(--overlay-hover)]"
-              onClick={() => void doCheckout(b.name)}
-            >
-              <GitBranch size={13} className="shrink-0 text-[var(--text-tertiary)]" />
-              <span className="flex-1 truncate text-sm">{b.name}</span>
-              {b.isHead ? (
-                <Check size={13} className="shrink-0 text-[var(--accent)]" />
-              ) : (
-                <button
-                  data-testid={`delete-${b.name}`}
-                  className="shrink-0 text-[var(--text-tertiary)] opacity-0 transition-opacity hover:text-[var(--error)] group-hover:opacity-100"
-                  title="删除分支"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setToDelete(b.name);
-                  }}
-                >
-                  <Trash2 size={13} />
-                </button>
-              )}
-            </div>
-          ))}
-          {locals.length === 0 && (
-            <div className="px-2 py-1.5 text-xs text-[var(--text-tertiary)]">无匹配分支</div>
-          )}
-          {remotes.length > 0 && (
-            <>
-              <div className="mt-1 border-t border-[var(--border-subtle)] px-2 py-1 pt-2 text-xs text-[var(--text-tertiary)]">
-                远程
+          <div className="min-h-0 flex-1 overflow-y-auto p-1 pt-0">
+            <div className="px-2 py-1 text-xs text-[var(--text-tertiary)]">本地</div>
+            {locals.map((b) => (
+              <div
+                key={b.name}
+                data-testid={`branch-${b.name}`}
+                className="group flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-[var(--overlay-hover)]"
+                onClick={() => void doCheckout(b.name)}
+              >
+                <GitBranch size={13} className="shrink-0 text-[var(--text-tertiary)]" />
+                <span className="flex-1 truncate text-sm">{b.name}</span>
+                {b.isHead ? (
+                  <Check size={13} className="shrink-0 text-[var(--accent)]" />
+                ) : (
+                  <button
+                    data-testid={`delete-${b.name}`}
+                    className="shrink-0 text-[var(--text-tertiary)] opacity-0 transition-opacity hover:text-[var(--error)] group-hover:opacity-100"
+                    title="删除分支"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setToDelete(b.name);
+                    }}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                )}
               </div>
-              {remotes.map((b) => (
-                <div
-                  key={b.name}
-                  data-testid={`branch-${b.name}`}
-                  className="group flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-[var(--overlay-hover)]"
-                  onClick={() => void doCheckout(b.name)}
-                >
-                  <GitBranch size={13} className="shrink-0 text-[var(--text-tertiary)]" />
-                  <span className="flex-1 truncate text-sm">{b.name}</span>
+            ))}
+            {locals.length === 0 && (
+              <div className="px-2 py-1.5 text-xs text-[var(--text-tertiary)]">无匹配分支</div>
+            )}
+            {remotes.length > 0 && (
+              <>
+                <div className="mt-1 border-t border-[var(--border-subtle)] px-2 py-1 pt-2 text-xs text-[var(--text-tertiary)]">
+                  远程
                 </div>
-              ))}
-              <div className="px-2 py-1 text-xs text-[var(--text-tertiary)]">
-                将创建本地同名分支并跟踪远程（已存在则直接签出）
-              </div>
-            </>
-          )}
-          {error && <p className="px-2 py-1 text-xs text-[var(--error)]">{error.split(/\r?\n/)[0]}</p>}
-          <DropdownMenuSeparator />
-          {/* 选中后菜单自动关闭，弹新建分支小窗 */}
-          <DropdownMenuItem data-testid="new-branch-item" onSelect={() => setCreateOpen(true)}>
-            <Plus size={13} /> 新建分支…
-          </DropdownMenuItem>
+                {remotes.map((b) => (
+                  <div
+                    key={b.name}
+                    data-testid={`branch-${b.name}`}
+                    className="group flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-[var(--overlay-hover)]"
+                    onClick={() => void doCheckout(b.name)}
+                  >
+                    <GitBranch size={13} className="shrink-0 text-[var(--text-tertiary)]" />
+                    <span className="flex-1 truncate text-sm">{b.name}</span>
+                  </div>
+                ))}
+                <div className="px-2 py-1 text-xs text-[var(--text-tertiary)]">
+                  将创建本地同名分支并跟踪远程（已存在则直接签出）
+                </div>
+              </>
+            )}
+            {error && <p className="px-2 py-1 text-xs text-[var(--error)]">{error.split(/\r?\n/)[0]}</p>}
+          </div>
+          <div className="shrink-0 border-t border-[var(--border-subtle)] p-1">
+            {/* 选中后菜单自动关闭，弹新建分支小窗 */}
+            <DropdownMenuItem data-testid="new-branch-item" onSelect={() => setCreateOpen(true)}>
+              <Plus size={13} /> 新建分支…
+            </DropdownMenuItem>
+          </div>
         </DropdownMenuContent>
       </DropdownMenu>
 

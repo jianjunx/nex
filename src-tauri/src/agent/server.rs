@@ -366,7 +366,11 @@ impl AgentSessionManager {
         self.acp.set_session_mode(session_id, mode_id).await
     }
 
-    pub async fn set_session_model(&self, session_id: &str, model_id: &str) -> Result<(), NexError> {
+    pub async fn set_session_model(
+        &self,
+        session_id: &str,
+        model_id: &str,
+    ) -> Result<Option<Vec<super::types::SessionConfigOptionDto>>, NexError> {
         self.acp.set_session_model(session_id, model_id).await
     }
 

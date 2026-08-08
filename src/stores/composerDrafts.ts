@@ -6,9 +6,17 @@
 
 export type ComposerMention = { path: string; name: string };
 
+/** Pending image attachment (base64 payload; preview URLs are recreated on load). */
+export type ComposerDraftImage = {
+  id: string;
+  mimeType: string;
+  data: string;
+};
+
 export type ComposerDraft = {
   text: string;
   mentions: ComposerMention[];
+  images: ComposerDraftImage[];
 };
 
 const DRAFT_MAX = 40;
@@ -25,18 +33,36 @@ function touch(id: string) {
   }
 }
 
+function isEmptyDraft(draft: ComposerDraft): boolean {
+  return !draft.text && draft.mentions.length === 0 && draft.images.length === 0;
+}
+
+function cloneDraft(draft: ComposerDraft): ComposerDraft {
+  return {
+    text: draft.text,
+    mentions: draft.mentions.map((m) => ({ path: m.path, name: m.name })),
+    images: draft.images.map((img) => ({
+      id: img.id,
+      mimeType: img.mimeType,
+      data: img.data,
+    })),
+  };
+}
+
 /** Persist (or clear) the draft for a conversation tab. Empty drafts are dropped. */
 export function saveComposerDraft(conversationId: string, draft: ComposerDraft): void {
-  if (!draft.text && draft.mentions.length === 0) {
+  const next = cloneDraft({
+    text: draft.text,
+    mentions: draft.mentions,
+    images: draft.images ?? [],
+  });
+  if (isEmptyDraft(next)) {
     drafts.delete(conversationId);
     const i = order.indexOf(conversationId);
     if (i >= 0) order.splice(i, 1);
     return;
   }
-  drafts.set(conversationId, {
-    text: draft.text,
-    mentions: draft.mentions.map((m) => ({ path: m.path, name: m.name })),
-  });
+  drafts.set(conversationId, next);
   touch(conversationId);
 }
 
@@ -44,10 +70,7 @@ export function loadComposerDraft(conversationId: string): ComposerDraft | null 
   const d = drafts.get(conversationId);
   if (!d) return null;
   touch(conversationId);
-  return {
-    text: d.text,
-    mentions: d.mentions.map((m) => ({ path: m.path, name: m.name })),
-  };
+  return cloneDraft(d);
 }
 
 export function clearComposerDraft(conversationId: string): void {

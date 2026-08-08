@@ -1,0 +1,23 @@
+scripts/tag-release.mjs
+  s_e8ed4ecb304800::t_f0bb22ed843cfb 1-78
+src/stores/agent.store.test.ts
+  s_e8ed4ecb304800::t_26fa79761dabd8 215,238,273,295
+package.json
+  s_e8ed4ecb304800::t_6941179ee0103c 14-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "2db9b8f949531eb9fe54d62cbca03ff2707c04e3",
+  "prompts": {},
+  "sessions": {
+    "s_e8ed4ecb304800": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "dcb08a91-9115-4666-b6d6-44cfb83f72e8",
+        "model": "grok-4.5"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

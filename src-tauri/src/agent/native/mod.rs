@@ -102,6 +102,10 @@ struct NativeInner {
     /// Survives `prompt` checkout; see [`SessionHandles`].
     handles: RefCell<HashMap<String, SessionHandles>>,
     config_path: PathBuf,
+    /// Parent dir of `nex-agent.json` = the app-data dir. Session archives
+    /// (compaction + subagent spills) live under `<app_data>/.nex-archive/`
+    /// so the user's workspace and git status stay clean.
+    archive_root: PathBuf,
 }
 
 /// A cloneable handle to the shared native-agent state. The instance handed to
@@ -113,14 +117,30 @@ pub struct NexNativeAgent {
 
 impl NexNativeAgent {
     pub fn new(config_path: PathBuf) -> Self {
+        let archive_root = config_path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
         Self {
             inner: Rc::new(NativeInner {
                 conn: RefCell::new(None),
                 sessions: RefCell::new(HashMap::new()),
                 handles: RefCell::new(HashMap::new()),
                 config_path,
+                archive_root,
             }),
         }
+    }
+
+    /// Per-session archive directory: `<app_data>/.nex-archive/<cwd-hash>/`.
+    /// The hash keeps projects separated (and is stable across restarts) while
+    /// keeping everything out of the user's workspace tree.
+    fn archive_dir_for(&self, cwd: &Path) -> PathBuf {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        cwd.hash(&mut h);
+        let digest = format!("{:016x}", h.finish());
+        self.inner.archive_root.join(".nex-archive").join(digest)
     }
 
     /// Installs the agent-side connection used to emit session notifications.
@@ -413,8 +433,20 @@ impl acp::Agent for NexNativeAgent {
         let initial_reasoning = ReasoningControl::Medium.clamp_to(&reasoning_levels);
 
         let handles = SessionHandles::new(current_model.clone(), initial_reasoning);
+        // Canonicalize the workspace root: the sandbox (`resolve_within`) and
+        // every file/bash tool trust this path, and a non-canonical cwd would
+        // let a symlinked project root alias the sandbox boundaries.
+        let cwd = args
+            .cwd
+            .canonicalize()
+            .map_err(|e| {
+                acp::Error::invalid_params().with_data(format!(
+                    "cwd `{}` is not a valid workspace directory: {e}",
+                    args.cwd.display()
+                ))
+            })?;
         let session = NativeSession {
-            cwd: args.cwd.clone(),
+            cwd: cwd.clone(),
             handles: handles.clone_handles(),
             history: Vec::new(),
             jobs: Rc::new(RefCell::new(tools::jobs::JobTable::default())),
@@ -430,7 +462,7 @@ impl acp::Agent for NexNativeAgent {
             .insert(session_id.0.to_string(), session);
 
         let slash_commands = self
-            .setup_session_extras(&session_id, &args.cwd, &cfg)
+            .setup_session_extras(&session_id, &cwd, &cfg)
             .await;
 
         Ok(acp::NewSessionResponse {
@@ -493,6 +525,12 @@ impl acp::Agent for NexNativeAgent {
         } else {
             args.cwd.clone()
         };
+        let cwd = cwd.canonicalize().map_err(|e| {
+            acp::Error::invalid_params().with_data(format!(
+                "cwd `{}` is not a valid workspace directory: {e}",
+                cwd.display()
+            ))
+        })?;
         let session = NativeSession {
             cwd: cwd.clone(),
             handles: handles.clone_handles(),
@@ -682,7 +720,7 @@ impl acp::Agent for NexNativeAgent {
                     }
                 }
                 let registry = Rc::new(registry);
-                let archive_dir = session.cwd.join(".nex-archive");
+                let archive_dir = self.archive_dir_for(&session.cwd);
                 let bash_timeout = std::time::Duration::from_secs(cfg.agent.bash_timeout_secs);
 
                 // Subagent orchestration support (task/fleet/read_subagent_result).

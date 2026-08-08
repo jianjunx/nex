@@ -2261,9 +2261,11 @@ mod tests {
     #[test]
     fn generate_image_path_stays_under_cwd() {
         let tmp = tempfile::tempdir().unwrap();
-        let ok = resolve_image_path_under_cwd(tmp.path(), "shots/a.png").unwrap();
-        assert!(ok.starts_with(tmp.path()));
-        let err = resolve_image_path_under_cwd(tmp.path(), "../escape.png").unwrap_err();
+        // resolve_within returns canonical paths; compare against the canonical root.
+        let canon = tmp.path().canonicalize().unwrap();
+        let ok = resolve_image_path_under_cwd(&canon, "shots/a.png").unwrap();
+        assert!(ok.starts_with(&canon));
+        let err = resolve_image_path_under_cwd(&canon, "../escape.png").unwrap_err();
         assert!(err.contains("escapes"), "{err}");
     }
 

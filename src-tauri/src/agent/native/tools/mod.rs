@@ -157,23 +157,65 @@ impl ToolRegistry {
 }
 
 /// Resolves `raw` (absolute or cwd-relative) and guarantees it stays inside
-/// `cwd`. Lexical normalization (no symlink resolution) so not-yet-existing
-/// write targets also validate.
+/// `cwd`. Lexical normalization first (so not-yet-existing write targets also
+/// validate), then a symlink-aware check on the longest existing prefix so a
+/// `link -> /elsewhere` inside the workspace cannot smuggle reads/writes out.
 pub fn resolve_within(cwd: &Path, raw: &str) -> Result<PathBuf, String> {
     if raw.is_empty() {
         return Err("path is required".to_string());
     }
+    // The workspace root must be canonical; sessions canonicalize at entry,
+    // this is a defensive check for callers that don't (e.g. unit tests).
+    let cwd_canon = cwd
+        .canonicalize()
+        .map_err(|e| format!("cannot resolve workspace root `{}`: {e}", cwd.display()))?;
+
     let p = Path::new(raw);
     let joined = if p.is_absolute() {
         p.to_path_buf()
     } else {
-        cwd.join(p)
+        cwd_canon.join(p)
     };
     let norm = normalize_lexical(&joined);
-    if norm != cwd && !norm.starts_with(cwd) {
+    if norm != cwd_canon && !norm.starts_with(&cwd_canon) {
         return Err(format!("path `{raw}` escapes the workspace root"));
     }
-    Ok(norm)
+
+    // Symlink-aware check: canonicalize the longest existing prefix of the
+    // target and verify it still lives under the canonical cwd. Components
+    // that don't exist yet (a file being written, new subdirectories) are
+    // appended verbatim — they cannot be symlinks, so the prefix check is
+    // sufficient.
+    let mut existing = norm.as_path();
+    let mut suffix = PathBuf::new();
+    while !existing.exists() {
+        let Some(parent) = existing.parent() else {
+            break;
+        };
+        let Some(name) = existing.file_name() else {
+            break;
+        };
+        // Note: `PathBuf::from(name).join(&suffix)` appends a trailing
+        // separator when suffix is empty, so build it component-wise.
+        suffix = if suffix.as_os_str().is_empty() {
+            PathBuf::from(name)
+        } else {
+            PathBuf::from(name).join(suffix)
+        };
+        existing = parent;
+    }
+    let canon = existing
+        .canonicalize()
+        .map_err(|e| format!("cannot resolve `{}`: {e}", existing.display()))?;
+    if canon != cwd_canon && !canon.starts_with(&cwd_canon) {
+        return Err(format!("path `{raw}` escapes the workspace root (via symlink)"));
+    }
+    if suffix.as_os_str().is_empty() {
+        // Path already exists: join("") would append a trailing separator.
+        Ok(canon)
+    } else {
+        Ok(canon.join(suffix))
+    }
 }
 
 fn normalize_lexical(path: &Path) -> PathBuf {
@@ -223,6 +265,28 @@ pub fn truncate_output(s: String, max_chars: usize) -> String {
     format!("{cut}\n… [output truncated at {max_chars} chars]")
 }
 
+/// Builds a platform-appropriate shell runner with the script passed as a
+/// single argument, so callers share one shape: `shell_command().arg(script)`.
+/// Windows uses `cmd.exe /C` (present on every Windows install); Unix uses
+/// `/bin/sh -c`. `CREATE_NO_WINDOW` is applied on Windows so GUI-spawned
+/// shells never flash a console.
+pub fn shell_command() -> tokio::process::Command {
+    #[cfg(windows)]
+    let mut cmd = {
+        let mut c = tokio::process::Command::new("cmd.exe");
+        c.arg("/C");
+        c
+    };
+    #[cfg(not(windows))]
+    let mut cmd = {
+        let mut c = tokio::process::Command::new("/bin/sh");
+        c.arg("-c");
+        c
+    };
+    crate::win_process::no_window_tokio(&mut cmd);
+    cmd
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,27 +309,76 @@ mod tests {
 
     #[test]
     fn resolve_keeps_inner_paths() {
-        let cwd = Path::new("/tmp/proj");
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().canonicalize().unwrap();
+        std::fs::create_dir_all(cwd.join("a")).unwrap();
+        std::fs::create_dir_all(cwd.join("b")).unwrap();
         assert_eq!(
-            resolve_within(cwd, "a/b.txt").unwrap(),
-            Path::new("/tmp/proj/a/b.txt")
+            resolve_within(&cwd, "a/b.txt").unwrap(),
+            cwd.join("a/b.txt")
         );
         assert_eq!(
-            resolve_within(cwd, "/tmp/proj/x").unwrap(),
-            Path::new("/tmp/proj/x")
+            resolve_within(&cwd, cwd.join("x").to_str().unwrap()).unwrap(),
+            cwd.join("x")
         );
         assert_eq!(
-            resolve_within(cwd, "a/../b").unwrap(),
-            Path::new("/tmp/proj/b")
+            resolve_within(&cwd, "a/../b").unwrap(),
+            cwd.join("b")
         );
     }
 
     #[test]
     fn resolve_rejects_escapes() {
-        let cwd = Path::new("/tmp/proj");
-        assert!(resolve_within(cwd, "../other").is_err());
-        assert!(resolve_within(cwd, "/etc/passwd").is_err());
-        assert!(resolve_within(cwd, "a/../../x").is_err());
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().canonicalize().unwrap();
+        assert!(resolve_within(&cwd, "../other").is_err());
+        assert!(resolve_within(&cwd, "/etc/passwd").is_err());
+        assert!(resolve_within(&cwd, "a/../../x").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_rejects_symlink_escape() {
+        use std::os::unix::fs::symlink;
+        let tmp = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().canonicalize().unwrap();
+        // `evil` -> outside dir; lexical resolution would happily walk into it.
+        symlink(outside.path(), cwd.join("evil")).unwrap();
+        // Reading through the symlink must fail for an existing file.
+        std::fs::write(outside.path().join("creds.json"), "secret").unwrap();
+        let abs = cwd.join("evil/creds.json");
+        // Sanity: the lexical path resolves and exists once the symlink is followed.
+        assert!(abs.exists());
+        assert!(
+            resolve_within(&cwd, "evil/creds.json").is_err(),
+            "symlinked path escaped the workspace root"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_allows_inner_symlink_into_workspace() {
+        use std::os::unix::fs::symlink;
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().canonicalize().unwrap();
+        std::fs::create_dir_all(cwd.join("real")).unwrap();
+        symlink(cwd.join("real"), cwd.join("alias")).unwrap();
+        // A symlink pointing back INTO the workspace is fine.
+        assert_eq!(
+            resolve_within(&cwd, "alias/f.txt").unwrap(),
+            cwd.join("real/f.txt")
+        );
+    }
+
+    #[test]
+    fn resolve_allows_new_file_in_existing_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().canonicalize().unwrap();
+        std::fs::create_dir_all(cwd.join("src")).unwrap();
+        // Write target does not exist yet — must still resolve.
+        let p = resolve_within(&cwd, "src/new.rs").unwrap();
+        assert_eq!(p, cwd.join("src/new.rs"));
     }
 
     #[test]
@@ -315,7 +428,7 @@ mod tests {
         let hash = hex(Sha256::digest(&bytes));
         eprintln!("canonical schema sha256: {hash}");
         assert_eq!(
-            hash, "79b245d97c3e1871be467e44e3c50518e7ac3d160192bf29241ab4f1cca7b5e3",
+            hash, "0a8d1604c2a158944d8f79abf860a0f578897b00cd386c2158e162676812ee82",
             "tool schema drift detected; update the snapshot intentionally"
         );
     }

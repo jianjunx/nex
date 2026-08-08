@@ -312,6 +312,13 @@ function applyCreateMeta(result: CreateSessionResult): SessionMeta {
       options: o.options.map((x) => ({ id: x.id, name: x.name })),
     }));
   }
+  if (result.availableCommands && result.availableCommands.length > 0) {
+    meta.availableCommands = result.availableCommands.map((c) => ({
+      name: c.name,
+      description: c.description,
+      inputHint: c.inputHint ?? undefined,
+    }));
+  }
   return meta;
 }
 
@@ -334,6 +341,63 @@ function patchPrefs(
     const prev = s.sessionPrefsByConversation[conversationId] ?? {};
     s.sessionPrefsByConversation[conversationId] = { ...prev, ...patch };
   });
+}
+
+/**
+ * Notifications that arrive before `createSession` finishes registering the
+ * live `sessionId` (classic race for `available_commands_update`). Flushed in
+ * [`flushPendingNotifications`].
+ */
+const pendingNotificationsBySessionId = new Map<string, unknown[]>();
+
+function applyNotificationUpdate(
+  set: (fn: (s: AgentStore) => void) => void,
+  get: () => AgentStore,
+  sessionId: string,
+  update: unknown,
+): void {
+  const session = Object.values(get().sessions).find((ss) => ss.sessionId === sessionId);
+  if (!session) return;
+  let modeFromAgent: string | null = null;
+  set((s) => {
+    if (!s.entriesByConversation[session.conversationId]) {
+      s.entriesByConversation[session.conversationId] = [];
+    }
+    if (!s.metaByConversation[session.conversationId]) {
+      s.metaByConversation[session.conversationId] = emptySessionMeta();
+    }
+    const entries = s.entriesByConversation[session.conversationId];
+    const meta = s.metaByConversation[session.conversationId];
+    const prevMode = meta.currentModeId;
+    const applied = applySessionUpdate(entries, meta, update);
+    if (applied.completedPlanSnapshot) {
+      entries.push({
+        id: crypto.randomUUID(),
+        kind: "completed_plan",
+        timestamp: Date.now(),
+        entries: applied.completedPlanSnapshot,
+      });
+    }
+    if (applied.metaChanged && meta.currentModeId && meta.currentModeId !== prevMode) {
+      modeFromAgent = meta.currentModeId;
+    }
+  });
+  if (modeFromAgent) {
+    patchPrefs(set, session.conversationId, { modeId: modeFromAgent });
+  }
+}
+
+function flushPendingNotifications(
+  set: (fn: (s: AgentStore) => void) => void,
+  get: () => AgentStore,
+  sessionId: string,
+): void {
+  const pending = pendingNotificationsBySessionId.get(sessionId);
+  if (!pending?.length) return;
+  pendingNotificationsBySessionId.delete(sessionId);
+  for (const update of pending) {
+    applyNotificationUpdate(set, get, sessionId, update);
+  }
 }
 
 function clearPrefKey(
@@ -507,6 +571,8 @@ export const useAgentStore = create<AgentStore>()(
           if (!s.entriesByConversation[conversationId]) s.entriesByConversation[conversationId] = [];
           s.metaByConversation[conversationId] = applyCreateMeta(result);
         });
+        // Drain commands/mode updates that raced ahead of the sessionId mapping.
+        flushPendingNotifications(set, get, result.sessionId);
         await restorePrefsToLiveSession(set, get, conversationId, result.sessionId);
         // Auto-process any messages queued while the session was starting
         void get().processNextPending(conversationId);
@@ -546,6 +612,7 @@ export const useAgentStore = create<AgentStore>()(
           delete s.pendingMessagesByConversation[conversationId];
           const liveSessionId = session.sessionId;
           if (liveSessionId) {
+            pendingNotificationsBySessionId.delete(liveSessionId);
             // Drop inline-permission markers belonging to this session's queue.
             for (const req of s.permissionQueues[liveSessionId] ?? []) {
               delete s.inlinePermissionIds[req.requestId];
@@ -1323,39 +1390,14 @@ export const useAgentStore = create<AgentStore>()(
 
       onAgentNotification(({ sessionId, update }) => {
         const session = Object.values(get().sessions).find((ss) => ss.sessionId === sessionId);
-        if (!session) return;
-        let modeFromAgent: string | null = null;
-        set((s) => {
-          if (!s.entriesByConversation[session.conversationId]) {
-            s.entriesByConversation[session.conversationId] = [];
-          }
-          if (!s.metaByConversation[session.conversationId]) {
-            s.metaByConversation[session.conversationId] = emptySessionMeta();
-          }
-          const entries = s.entriesByConversation[session.conversationId];
-          const meta = s.metaByConversation[session.conversationId];
-          const prevMode = meta.currentModeId;
-          const applied = applySessionUpdate(entries, meta, update);
-          if (applied.completedPlanSnapshot) {
-            entries.push({
-              id: crypto.randomUUID(),
-              kind: "completed_plan",
-              timestamp: Date.now(),
-              entries: applied.completedPlanSnapshot,
-            });
-          }
-          // Model-driven `switch_mode` arrives as current_mode_update; keep prefs in sync.
-          if (
-            applied.metaChanged &&
-            meta.currentModeId &&
-            meta.currentModeId !== prevMode
-          ) {
-            modeFromAgent = meta.currentModeId;
-          }
-        });
-        if (modeFromAgent) {
-          patchPrefs(set, session.conversationId, { modeId: modeFromAgent });
+        if (!session) {
+          // SessionId not registered yet (createSession still in flight) — buffer.
+          const q = pendingNotificationsBySessionId.get(sessionId) ?? [];
+          q.push(update);
+          pendingNotificationsBySessionId.set(sessionId, q);
+          return;
         }
+        applyNotificationUpdate(set, get, sessionId, update);
       }).then((fn) => {
         if (disposed) fn();
         else unlistenNotification = fn;

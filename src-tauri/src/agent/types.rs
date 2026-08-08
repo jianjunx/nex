@@ -161,13 +161,28 @@ pub struct CreateSessionResult {
     pub models: Option<SessionModelsDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config_options: Option<Vec<SessionConfigOptionDto>>,
+    /// Slash-command catalog from `_meta.availableCommands` (NexAgent).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub available_commands: Option<Vec<AvailableCommandDto>>,
+}
+
+/// One slash command advertised to the Composer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AvailableCommandDto {
+    pub name: String,
+    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_hint: Option<String>,
 }
 
 /// Result of `agent_send_prompt` — enough for post-turn client hooks.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptResultDto {
-    /// True when the native agent executed at least one mutating tool this turn.
+    /// True when the native agent successfully wrote/edited a workspace file
+    /// this turn (`write_file` / `edit_file` / `multi_edit`). Used to gate
+    /// auto-`/review`; bash-only turns stay false.
     pub had_mutations: bool,
 }
 

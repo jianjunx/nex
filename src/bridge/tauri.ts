@@ -272,11 +272,18 @@ export interface SessionConfigOptionDto {
   options: SessionConfigValueDto[];
 }
 
+export interface AvailableCommandDto {
+  name: string;
+  description: string;
+  inputHint?: string | null;
+}
+
 export interface CreateSessionResult {
   sessionId: string;
   modes?: SessionModesDto | null;
   models?: SessionModelsDto | null;
   configOptions?: SessionConfigOptionDto[] | null;
+  availableCommands?: AvailableCommandDto[] | null;
 }
 
 export type PromptBlock =

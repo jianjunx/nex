@@ -22,7 +22,8 @@ use super::native::NexNativeAgent;
 use super::types::{
     AgentAskQuestionRequest, AgentNotification, AgentPermissionRequest, AgentPlanApprovalRequest,
     AgentSessionTerminated, AskQuestionAnswerDto, AskQuestionItemDto, AskQuestionOptionDto,
-    CreateSessionResult, CursorTodoDto, PermissionOption, PromptBlock, SessionConfigOptionDto,
+    AvailableCommandDto, CreateSessionResult, CursorTodoDto, PermissionOption, PromptBlock,
+    SessionConfigOptionDto,
     SessionConfigValueDto, SessionModeDto, SessionModesDto, SessionModelDto, SessionModelsDto,
 };
 use crate::error::NexError;
@@ -48,6 +49,7 @@ type SessionHandshakeInfo = (
     Option<SessionModesDto>,
     Option<SessionModelsDto>,
     Option<Vec<SessionConfigOptionDto>>,
+    Option<Vec<AvailableCommandDto>>,
 );
 
 /// What run_session reports back through its oneshot channel: the live
@@ -59,6 +61,7 @@ type SessionInitResult = Result<
         Option<SessionModesDto>,
         Option<SessionModelsDto>,
         Option<Vec<SessionConfigOptionDto>>,
+        Option<Vec<AvailableCommandDto>>,
     ),
     NexError,
 >;
@@ -915,6 +918,40 @@ fn prompt_blocks_to_acp(blocks: Vec<PromptBlock>) -> Vec<acp::ContentBlock> {
         .collect()
 }
 
+fn available_commands_from_json(value: &serde_json::Value) -> Option<Vec<AvailableCommandDto>> {
+    let arr = value
+        .get("availableCommands")
+        .or_else(|| value.get("available_commands"))
+        .or_else(|| value.get("_meta").and_then(|m| m.get("availableCommands")))
+        .or_else(|| value.get("_meta").and_then(|m| m.get("available_commands")))?;
+    let items = arr.as_array()?;
+    let mut out = Vec::new();
+    for item in items {
+        let name = item.get("name").and_then(|v| v.as_str())?.to_string();
+        if name.is_empty() {
+            continue;
+        }
+        let description = item
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let input_hint = item
+            .get("input")
+            .and_then(|v| v.get("hint"))
+            .and_then(|v| v.as_str())
+            .or_else(|| item.get("inputHint").and_then(|v| v.as_str()))
+            .or_else(|| item.get("input_hint").and_then(|v| v.as_str()))
+            .map(str::to_string);
+        out.push(AvailableCommandDto {
+            name,
+            description,
+            input_hint,
+        });
+    }
+    Some(out).filter(|o| !o.is_empty())
+}
+
 fn config_options_from_json(value: &serde_json::Value) -> Option<Vec<SessionConfigOptionDto>> {
     // Native agents carry config options in the `_meta` extension point (the
     // 0.7 schema drops configOptions from NewSessionResponse), so fall back to
@@ -1180,9 +1217,7 @@ impl AcpSessionManager {
         spec: LaunchSpec,
     ) -> Result<CreateSessionResult, NexError> {
         let session_key = uuid::Uuid::new_v4().to_string();
-        let (init_tx, init_rx) = oneshot::channel::<
-            Result<(acp::ClientSideConnection, acp::SessionId, Option<SessionModesDto>, Option<SessionModelsDto>, Option<Vec<SessionConfigOptionDto>>), NexError>,
-        >();
+        let (init_tx, init_rx) = oneshot::channel::<SessionInitResult>();
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
         let thread_app = app.clone();
@@ -1220,7 +1255,7 @@ impl AcpSessionManager {
             })
             .map_err(|e| NexError::Agent(format!("failed to spawn session thread: {e}")))?;
 
-        let (conn, agent_session_id, modes, models, config_options) = init_rx
+        let (conn, agent_session_id, modes, models, config_options, available_commands) = init_rx
             .await
             .map_err(|_| NexError::Agent("session thread stopped during initialization".to_string()))??;
 
@@ -1237,6 +1272,7 @@ impl AcpSessionManager {
             modes,
             models,
             config_options,
+            available_commands,
         })
     }
 
@@ -1251,9 +1287,7 @@ impl AcpSessionManager {
         config_path: std::path::PathBuf,
     ) -> Result<CreateSessionResult, NexError> {
         let session_key = uuid::Uuid::new_v4().to_string();
-        let (init_tx, init_rx) = oneshot::channel::<
-            Result<(acp::ClientSideConnection, acp::SessionId, Option<SessionModesDto>, Option<SessionModelsDto>, Option<Vec<SessionConfigOptionDto>>), NexError>,
-        >();
+        let (init_tx, init_rx) = oneshot::channel::<SessionInitResult>();
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
         let thread_app = app.clone();
@@ -1295,7 +1329,7 @@ impl AcpSessionManager {
             })
             .map_err(|e| NexError::Agent(format!("failed to spawn session thread: {e}")))?;
 
-        let (conn, agent_session_id, modes, models, config_options) = init_rx
+        let (conn, agent_session_id, modes, models, config_options, available_commands) = init_rx
             .await
             .map_err(|_| NexError::Agent("session thread stopped during initialization".to_string()))??;
 
@@ -1312,6 +1346,7 @@ impl AcpSessionManager {
             modes,
             models,
             config_options,
+            available_commands,
         })
     }
 
@@ -1896,12 +1931,20 @@ async fn run_acp_session<W, R>(
             (acp::SessionId(Arc::from(session_id)), response)
         };
 
-        // Prefer typed fields when present; also keep configOptions which the
-        // 0.7 schema drops from NewSessionResponse / LoadSessionResponse.
+        // Prefer typed fields when present; also keep configOptions /
+        // availableCommands which the 0.7 schema drops from NewSessionResponse
+        // / LoadSessionResponse (they travel in `_meta`).
         let modes = modes_from_json(&response);
         let models = models_from_json(&response);
         let config_options = config_options_from_json(&response);
-        Ok((session_id, modes, models, config_options))
+        let available_commands = available_commands_from_json(&response);
+        Ok((
+            session_id,
+            modes,
+            models,
+            config_options,
+            available_commands,
+        ))
     })
     .await;
 
@@ -1920,9 +1963,16 @@ async fn run_acp_session<W, R>(
     };
 
     match handshake {
-        Ok((agent_session_id, modes, models, config_options)) => {
+        Ok((agent_session_id, modes, models, config_options, available_commands)) => {
             if init_tx
-                .send(Ok((conn, agent_session_id, modes, models, config_options)))
+                .send(Ok((
+                    conn,
+                    agent_session_id,
+                    modes,
+                    models,
+                    config_options,
+                    available_commands,
+                )))
                 .is_err()
             {
                 kill_diag(&mut diag).await;

@@ -40,10 +40,26 @@ pub struct ToolCtx {
     /// (recursion guard) and in read-only test setups.
     pub harness: Option<Rc<super::session::SubagentHarness>>,
     /// Append-only log of mutating tool executions (for observability).
+    /// Entries look like `write_file(…) -> ok`. Auto-`/review` only cares about
+    /// [`is_workspace_edit_tool`] names in this log.
     pub mutations: Rc<RefCell<Vec<String>>>,
     /// Live session mode (`code`/`ask`/`plan`/`auto`); shared with [`super::session::TurnEnv`].
     /// `None` inside contexts that must not change the parent mode (rare test stubs).
     pub mode_id: Option<Rc<RefCell<String>>>,
+}
+
+/// Tools that rewrite workspace files. Auto-`/review` triggers only when at
+/// least one of these succeeded in the turn (bash-only / todo / etc. do not).
+pub fn is_workspace_edit_tool(name: &str) -> bool {
+    matches!(name, "write_file" | "edit_file" | "multi_edit")
+}
+
+/// True when the mutation log contains a successful workspace file edit.
+pub fn mutations_include_workspace_edit(log: &[String]) -> bool {
+    log.iter().any(|entry| {
+        let name = entry.split('(').next().unwrap_or("");
+        is_workspace_edit_tool(name)
+    })
 }
 
 /// A builtin tool.
@@ -210,6 +226,22 @@ pub fn truncate_output(s: String, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workspace_edit_gate_ignores_bash_only_mutations() {
+        assert!(is_workspace_edit_tool("write_file"));
+        assert!(is_workspace_edit_tool("edit_file"));
+        assert!(is_workspace_edit_tool("multi_edit"));
+        assert!(!is_workspace_edit_tool("bash"));
+        assert!(!mutations_include_workspace_edit(&[
+            "bash(ls) -> ok".into(),
+            "run_in_background(npm test) -> ok".into(),
+        ]));
+        assert!(mutations_include_workspace_edit(&[
+            "bash(ls) -> ok".into(),
+            "edit_file(src/a.rs) -> ok".into(),
+        ]));
+    }
 
     #[test]
     fn resolve_keeps_inner_paths() {

@@ -183,6 +183,33 @@ impl NexNativeAgent {
         }
     }
 
+    /// Session `_meta` for `session/new` / `session/load`: config options plus
+    /// the slash-command catalog. Commands also go here (not only via
+    /// `AvailableCommandsUpdate`) so the Composer can render them even when the
+    /// notification races ahead of frontend session registration.
+    fn session_create_meta(
+        current: ReasoningControl,
+        levels: &[String],
+        commands: &[commands::Command],
+    ) -> serde_json::Value {
+        let mut meta = Self::config_options_meta(current, levels);
+        let cmds: Vec<serde_json::Value> = commands
+            .iter()
+            .map(|c| {
+                let mut obj = serde_json::json!({
+                    "name": c.name,
+                    "description": c.description,
+                });
+                if let Some(hint) = &c.argument_hint {
+                    obj["input"] = serde_json::json!({ "hint": hint });
+                }
+                obj
+            })
+            .collect();
+        meta["availableCommands"] = serde_json::Value::Array(cmds);
+        meta
+    }
+
     async fn emit_text(&self, session_id: &acp::SessionId, text: &str) {
         let conn = self.inner.conn.borrow().clone();
         let Some(conn) = conn else { return };
@@ -254,12 +281,17 @@ impl NexNativeAgent {
     }
 
     /// Connect MCP servers and publish slash-command catalog (shared by new/load).
+    ///
+    /// Returns the discovered command catalog so callers can also embed it in
+    /// the `session/new` / `session/load` `_meta` (avoids a create-session race
+    /// where `AvailableCommandsUpdate` arrives before the frontend registers
+    /// the session id).
     async fn setup_session_extras(
         &self,
         session_id: &acp::SessionId,
         cwd: &Path,
         cfg: &NativeAgentConfig,
-    ) {
+    ) -> Vec<commands::Command> {
         if let Some(home) = home::nex_home() {
             bundled::ensure_bundled(&home);
         }
@@ -284,8 +316,8 @@ impl NexNativeAgent {
             }
         }
 
+        let commands = commands::discover(cwd);
         if let Some(conn) = self.inner.conn.borrow().clone() {
-            let commands = commands::discover(cwd);
             if !commands.is_empty() {
                 let notification = acp::SessionNotification {
                     session_id: session_id.clone(),
@@ -311,6 +343,7 @@ impl NexNativeAgent {
                 let _ = conn.session_notification(notification).await;
             }
         }
+        commands
     }
 }
 
@@ -396,7 +429,9 @@ impl acp::Agent for NexNativeAgent {
             .borrow_mut()
             .insert(session_id.0.to_string(), session);
 
-        self.setup_session_extras(&session_id, &args.cwd, &cfg).await;
+        let slash_commands = self
+            .setup_session_extras(&session_id, &args.cwd, &cfg)
+            .await;
 
         Ok(acp::NewSessionResponse {
             session_id,
@@ -410,11 +445,12 @@ impl acp::Agent for NexNativeAgent {
                     meta: None,
                 })
             },
-            // The Composer reads `configOptions` out of `_meta` (see
-            // `config_options_from_json` in acp_adapter).
-            meta: Some(Self::config_options_meta(
+            // Composer reads `configOptions` + `availableCommands` from `_meta`
+            // (see `config_options_from_json` / `available_commands_from_json`).
+            meta: Some(Self::session_create_meta(
                 initial_reasoning,
                 &reasoning_levels,
+                &slash_commands,
             )),
         })
     }
@@ -473,7 +509,8 @@ impl acp::Agent for NexNativeAgent {
             .borrow_mut()
             .insert(session_key, session);
 
-        self.setup_session_extras(&args.session_id, &cwd, &cfg)
+        let slash_commands = self
+            .setup_session_extras(&args.session_id, &cwd, &cfg)
             .await;
 
         Ok(acp::LoadSessionResponse {
@@ -487,9 +524,10 @@ impl acp::Agent for NexNativeAgent {
                     meta: None,
                 })
             },
-            meta: Some(Self::config_options_meta(
+            meta: Some(Self::session_create_meta(
                 initial_reasoning,
                 &reasoning_levels,
+                &slash_commands,
             )),
         })
     }
@@ -694,7 +732,10 @@ impl acp::Agent for NexNativeAgent {
                     usage: RefCell::new(provider::Usage::default()),
                 };
                 let stop = session::run_turn(&env, &mut session.history, content).await;
-                let had_mutations = !env.tool_ctx.mutations.borrow().is_empty();
+                // Auto-review only cares about workspace file edits, not bash /
+                // background jobs / other non-readonly tools.
+                let had_mutations =
+                    tools::mutations_include_workspace_edit(&env.tool_ctx.mutations.borrow());
                 // Runtime reasoning-support detection: the provider strips
                 // `reasoning_effort` and retries when the endpoint rejects it.
                 // Remember the result so later turns skip the parameter.
@@ -1783,7 +1824,8 @@ mod tests {
     }
 
     /// `new_session` publishes the slash-command catalog over the wire so the
-    /// Composer popover can render it (`AvailableCommandsUpdate`).
+    /// Composer popover can render it (`AvailableCommandsUpdate`), and also
+    /// embeds it in `_meta.availableCommands` for create-session race safety.
     #[tokio::test(flavor = "current_thread")]
     async fn new_session_publishes_available_commands() {
         let dir = std::env::temp_dir().join(format!("nex-cmds-{}", uuid::Uuid::new_v4()));
@@ -1796,7 +1838,7 @@ mod tests {
         tokio::task::LocalSet::new()
             .run_until(async {
                 let (_, conn, _, updates) = duplex_pair(std::env::temp_dir());
-                let _ = conn
+                let resp = conn
                     .new_session(acp::NewSessionRequest {
                         cwd: dir.clone(),
                         mcp_servers: vec![],
@@ -1804,6 +1846,19 @@ mod tests {
                     })
                     .await
                     .expect("new_session");
+
+                let meta_cmds = resp
+                    .meta
+                    .as_ref()
+                    .and_then(|m| m.get("availableCommands"))
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                assert!(
+                    meta_cmds.iter().any(|c| c.get("name").and_then(|n| n.as_str()) == Some("review")),
+                    "missing availableCommands in _meta: {:?}",
+                    resp.meta
+                );
 
                 // Notifications travel over the duplex pipe asynchronously;
                 // poll until the catalog arrives.

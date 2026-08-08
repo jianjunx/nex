@@ -18,6 +18,7 @@ const nativeAgentGetConfig = vi.fn().mockResolvedValue({
   agent: { maxSteps: 0, contextWindow: 0, bashTimeoutSecs: 120, maxSubagentConcurrency: 6, autoReview: false },
 });
 let permissionHandler: ((payload: unknown) => void) | null = null;
+let notificationHandler: ((payload: { sessionId: string; update: unknown }) => void) | null = null;
 
 vi.mock("../bridge/tauri", () => ({
   agentListServers: (...args: unknown[]) => agentListServers(...args),
@@ -37,7 +38,10 @@ vi.mock("../bridge/tauri", () => ({
   agentCustomDelete: vi.fn(),
   conversationReplaceThreadEntries: (...args: unknown[]) => conversationReplaceThreadEntries(...args),
   nativeAgentGetConfig: (...args: unknown[]) => nativeAgentGetConfig(...args),
-  onAgentNotification: () => Promise.resolve(() => {}),
+  onAgentNotification: (cb: (payload: { sessionId: string; update: unknown }) => void) => {
+    notificationHandler = cb;
+    return Promise.resolve(() => {});
+  },
   onAgentPermissionRequest: (cb: (payload: unknown) => void) => {
     permissionHandler = cb;
     return Promise.resolve(() => {});
@@ -59,6 +63,7 @@ beforeEach(() => {
   listenersTeardown = null;
   vi.clearAllMocks();
   permissionHandler = null;
+  notificationHandler = null;
   // 每例前把打点相关字段重置回初始态（store 为单例）。
   useAgentStore.setState({
     servers: [],
@@ -197,6 +202,59 @@ describe("agent.store session prefs", () => {
     expect(agentSetSessionConfigOption).toHaveBeenCalledWith("sid-new", "effort", "high");
     expect(useAgentStore.getState().metaByConversation["conv-1"]?.currentModeId).toBe("agent");
     expect(useAgentStore.getState().metaByConversation["conv-1"]?.currentModelId).toBe("m2");
+  });
+
+  it("createSession 从 CreateSessionResult 写入 availableCommands", async () => {
+    agentCreateSession.mockResolvedValue({
+      sessionId: "sid-cmds",
+      availableCommands: [
+        { name: "review", description: "Review code", inputHint: "files" },
+        { name: "compact", description: "Compact context" },
+      ],
+    });
+    await useAgentStore.getState().createSession("conv-1", { type: "native", id: "nex" }, "/tmp");
+    const cmds = useAgentStore.getState().metaByConversation["conv-1"]?.availableCommands;
+    expect(cmds).toEqual([
+      { name: "review", description: "Review code", inputHint: "files" },
+      { name: "compact", description: "Compact context", inputHint: undefined },
+    ]);
+  });
+
+  it("available_commands_update 早于 sessionId 注册时会被缓冲并在 createSession 后应用", async () => {
+    listenersTeardown = useAgentStore.getState().initListeners();
+    expect(notificationHandler).toBeTruthy();
+
+    // Race: notification arrives while createSession RPC is in flight.
+    let resolveCreate!: (v: unknown) => void;
+    agentCreateSession.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+
+    const createPromise = useAgentStore
+      .getState()
+      .createSession("conv-1", { type: "native", id: "nex" }, "/tmp");
+
+    notificationHandler!({
+      sessionId: "sid-race",
+      update: {
+        sessionUpdate: "available_commands_update",
+        availableCommands: [{ name: "review", description: "Review code." }],
+      },
+    });
+    // Still starting — placeholder sessionId is "" so update must not apply yet.
+    expect(useAgentStore.getState().metaByConversation["conv-1"]?.availableCommands ?? []).toEqual(
+      [],
+    );
+
+    resolveCreate({ sessionId: "sid-race" });
+    await createPromise;
+
+    expect(useAgentStore.getState().metaByConversation["conv-1"]?.availableCommands).toEqual([
+      { name: "review", description: "Review code.", inputHint: undefined },
+    ]);
   });
 });
 
@@ -577,6 +635,37 @@ describe("native auto /review", () => {
     expect(agentSendPrompt).toHaveBeenNthCalledWith(2, "sid-1", [
       { type: "text", text: "/review" },
     ]);
+  });
+
+  it("未改代码（hadMutations=false）不触发 auto /review", async () => {
+    agentSendPrompt.mockResolvedValue({ hadMutations: false });
+    useConversationStore.setState({
+      conversationsByProject: {
+        p1: [
+          {
+            id: "conv-1",
+            project_id: "p1",
+            title: "Chat",
+            agent_type: "nex",
+            status: "active",
+            created_at: 1,
+            updated_at: 1,
+          },
+        ],
+      },
+    });
+    useAgentStore.setState({
+      nativeAutoReview: true,
+      sessions: {
+        "conv-1": { sessionId: "sid-1", conversationId: "conv-1", status: "idle" },
+      },
+      entriesByConversation: {
+        "conv-1": [{ id: "u1", kind: "user_message", text: "just ask", timestamp: 1 }],
+      },
+    });
+
+    await useAgentStore.getState().sendPrompt("sid-1", [{ type: "text", text: "just ask" }]);
+    expect(agentSendPrompt).toHaveBeenCalledTimes(1);
   });
 
   it("非 nex/native 会话不触发 auto /review", async () => {

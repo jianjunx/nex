@@ -1,0 +1,23 @@
+src-tauri/src/agent/acp_adapter.rs
+  s_b5764b643ec7bf::t_90362ea0a4eed5 2264-2268
+src-tauri/src/agent/native/mod.rs
+  s_b5764b643ec7bf::t_cd2ea89f9c2919 105-108,120-123,130,135-145,436-447,449,465,528-533,723
+src-tauri/src/agent/native/tools/mod.rs
+  s_b5764b643ec7bf::t_94b1e36440f5bf 160-162,167-172,177,180,183-218,268-289,312-315,317-318,321-322,325-326,332-381,431
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "33f65c1fe0a085834802203270e76a02a5d1ac61",
+  "prompts": {},
+  "sessions": {
+    "s_b5764b643ec7bf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_b5764b643ec7bf",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

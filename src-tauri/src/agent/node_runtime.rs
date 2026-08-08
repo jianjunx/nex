@@ -946,6 +946,18 @@ pub fn resolve_npm_cli(install_root: &Path) -> Result<PathBuf, NexError> {
 /// Spawn `<node_binary> --version` and parse the output as a `semver::Version`.
 /// Tolerates the leading `v` (`v24.11.0`) and strips surrounding whitespace.
 async fn read_node_version(node_binary: &Path) -> Result<Version, NexError> {
+    #[cfg(windows)]
+    let mut cmd = {
+        // `CreateProcess` cannot run batch files, and some Node installers /
+        // shims (chocolatey, scoop, test fixtures) are `.cmd` wrappers. Going
+        // through `cmd /C` keeps those working; a plain `node.exe` is
+        // unaffected (quoted path + `--version` pass through verbatim).
+        let node = node_binary.to_string_lossy();
+        let mut c = tokio::process::Command::new("cmd.exe");
+        c.arg("/C").arg(node.as_ref()).arg("--version");
+        c
+    };
+    #[cfg(not(windows))]
     let mut cmd = tokio::process::Command::new(node_binary);
     cmd.arg("--version")
         .stdin(Stdio::null())
@@ -1299,7 +1311,7 @@ mod tests {
     /// version string and exits 0. Returns the path to the binary.
     fn fake_node(version: &str) -> PathBuf {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(if cfg!(windows) { "node.exe" } else { "node" });
+        let path = dir.path().join(if cfg!(windows) { "node.cmd" } else { "node" });
         let body = if cfg!(windows) {
             format!("@echo off\r\necho {version}\r\n")
         } else {

@@ -16,7 +16,9 @@ use std::process::Stdio;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use super::shell_env::{parse_env_nul, ShellEnv};
+use super::shell_env::ShellEnv;
+#[cfg(not(windows))]
+use super::shell_env::parse_env_nul;
 
 const PROJECT_ENV_TIMEOUT: Duration = Duration::from_secs(8);
 
@@ -92,6 +94,7 @@ fn normalize_cwd_key(cwd: &str) -> String {
 }
 
 /// Escape a path for safe inclusion inside single-quoted shell strings.
+#[cfg(not(windows))]
 fn shell_single_quote(path: &str) -> String {
     // 'foo'bar' → 'foo'\''bar'
     format!("'{}'", path.replace('\'', "'\\''"))
@@ -169,6 +172,7 @@ async fn capture_project_env_windows(cwd: &Path) -> HashMap<String, String> {
 mod tests {
     use super::*;
 
+    #[cfg(not(windows))]
     #[test]
     fn shell_single_quote_escapes_embedded_quotes() {
         assert_eq!(shell_single_quote("/tmp/foo"), "'/tmp/foo'");

@@ -255,7 +255,7 @@ mod tests {
         let archive = tmp.path().join(".nex-archive");
         std::fs::create_dir_all(&archive).unwrap();
         // 40k chars -> needs more than two pages of 16k.
-        let big: String = std::iter::repeat('a').take(40_000).collect();
+        let big = "a".repeat(40_000);
         std::fs::write(archive.join("subagent-x.txt"), &big).unwrap();
 
         let mut ctx = ctx_without_harness(tmp.path());

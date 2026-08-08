@@ -107,7 +107,7 @@ fn snip_string(s: &mut String, keep_chars: usize) -> bool {
 /// modified message (for archiving). Pairing invariant: a `tool` message is
 /// only touched together with its owning assistant `tool_calls` turn — both
 /// stay in place, only their payloads shrink, so ids keep matching.
-pub fn compact(messages: &mut Vec<ChatMessage>, force: bool) -> Vec<ChatMessage> {
+pub fn compact(messages: &mut [ChatMessage], force: bool) -> Vec<ChatMessage> {
     let mut archived: Vec<ChatMessage> = Vec::new();
     if messages.len() <= KEEP_TAIL_MESSAGES + 1 {
         return archived; // nothing outside the protected tail
@@ -209,7 +209,7 @@ pub fn archive(archive_dir: &Path, removed: &[ChatMessage]) -> Option<PathBuf> {
 /// Applies the appropriate tier for the current transcript size. Returns the
 /// archive file written, if any. `window = 0` is a no-op.
 pub fn maybe_compress(
-    messages: &mut Vec<ChatMessage>,
+    messages: &mut [ChatMessage],
     window: u64,
     archive_dir: &Path,
 ) -> Option<PathBuf> {

@@ -31,7 +31,6 @@ thiserror = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 git2 = "0.19"
 which = "7"
-openssl = { version = "0.10", features = ["vendored"] }
 portable-pty = "0.8"
 notify = "7"
 notify-debouncer-full = "0.4"
@@ -57,3 +56,10 @@ base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"
+
+# macOS 静态链接 OpenSSL：git2/libgit2 默认动态链接系统 libssl.3.dylib，
+# 未装 Homebrew 的机器启动崩溃（Library not loaded）。vendored 从源码编译并
+# 静态链接进二进制。仅 macOS 需要——Windows 走 schannel，Linux 用系统 OpenSSL，
+# 全局声明会让所有平台都编译 OpenSSL 源码（Windows 还需要 perl）。
+[target.'cfg(target_os = "macos")'.dependencies]
+openssl = { version = "0.10", features = ["vendored"] }

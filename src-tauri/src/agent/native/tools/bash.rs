@@ -1,7 +1,7 @@
 //! The `bash` tool: runs a shell command synchronously in the session cwd with
 //! a hard timeout.
 
-use super::{arg_str, arg_usize, truncate_output, Tool, ToolCtx};
+use super::{arg_str, truncate_output, Tool, ToolCtx};
 use agent_client_protocol as acp;
 
 /// Cap on total output characters.
@@ -35,11 +35,12 @@ impl Tool for Bash {
     }
     async fn execute(&self, args: serde_json::Value, ctx: &ToolCtx) -> Result<String, String> {
         let command = arg_str(&args, "command")?;
-        let timeout = std::time::Duration::from_secs(arg_usize(
-            &args,
-            "timeout_secs",
-            ctx.bash_timeout.as_secs() as usize,
-        ) as u64);
+        // Absent `timeout_secs` uses the context timeout verbatim (keeps
+        // sub-second precision; `arg_usize` would truncate via `as_secs()`).
+        let timeout = match args.get("timeout_secs").and_then(|v| v.as_u64()).filter(|v| *v > 0) {
+            Some(secs) => std::time::Duration::from_secs(secs),
+            None => ctx.bash_timeout,
+        };
 
         let mut cmd = super::shell_command();
         cmd.arg(&command).current_dir(&ctx.cwd);
@@ -95,18 +96,30 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn bash_runs_in_cwd() {
         let tmp = tempfile::tempdir().unwrap();
+        // Platform-appropriate cwd probe: cmd has no `pwd`.
+        let command = if cfg!(windows) {
+            "echo %CD% && echo hi"
+        } else {
+            "pwd && echo hi"
+        };
         let out = Bash
-            .execute(
-                serde_json::json!({"command": "pwd && echo hi"}),
-                &ctx(tmp.path()),
-            )
+            .execute(serde_json::json!({ "command": command }), &ctx(tmp.path()))
             .await
             .unwrap();
         assert!(out.contains("exit code: 0"));
         assert!(out.contains("hi"));
-        // cwd respected
-        let canon = tmp.path().canonicalize().unwrap();
-        assert!(out.contains(&canon.to_string_lossy().to_string()));
+        // cwd respected. On Windows `canonicalize()` prefixes `\\?\` while
+        // cmd's `%CD%` does not, so compare against both forms.
+        let canon = tmp
+            .path()
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .replace(r"\\?\", "");
+        assert!(
+            out.contains(&canon) || out.contains(&tmp.path().to_string_lossy().to_string()),
+            "cwd must be reflected in output: {out}"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -124,8 +137,14 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mut c = ctx(tmp.path());
         c.bash_timeout = Duration::from_millis(300);
+        // `cmd` has no `sleep`; `ping -n 6` blocks ~5s and always exists.
+        let command = if cfg!(windows) {
+            "ping -n 6 127.0.0.1 >nul"
+        } else {
+            "sleep 5"
+        };
         let err = Bash
-            .execute(serde_json::json!({"command": "sleep 5"}), &c)
+            .execute(serde_json::json!({"command": command}), &c)
             .await
             .unwrap_err();
         assert!(err.contains("timed out"));

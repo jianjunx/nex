@@ -256,7 +256,10 @@ fn validate_mcp_url(raw: &str) -> Result<(), String> {
                 v4.is_link_local() || v4.is_unspecified() || v4.is_multicast()
             }
             std::net::IpAddr::V6(v6) => {
-                v6.is_unicast_link_local() || v6.is_unspecified() || v6.is_multicast()
+                // `is_unicast_link_local` is stable only since Rust 1.84; the
+                // project MSRV is 1.77, so test fe80::/10 by hand.
+                let link_local = v6.segments()[0] & 0xffc0 == 0xfe80;
+                link_local || v6.is_unspecified() || v6.is_multicast()
             }
         };
         if blocked {
@@ -772,13 +775,15 @@ while True:
 
     /// Writes the fake server to a temp file; `None` when python3 is missing
     /// (the stdio round-trip tests then skip, like other env-dependent tests).
+    /// Checks the probe's *exit status*, not just spawn success — the Windows
+    /// App Execution Alias stub for python3 spawns fine but exits non-zero.
     fn fake_server_script(dir: &std::path::Path) -> Option<std::path::PathBuf> {
-        if std::process::Command::new("python3")
+        let probe = std::process::Command::new("python3")
             .arg("-c")
             .arg("pass")
             .output()
-            .is_err()
-        {
+            .ok()?;
+        if !probe.status.success() {
             return None;
         }
         let path = dir.join("fake_mcp_server.py");

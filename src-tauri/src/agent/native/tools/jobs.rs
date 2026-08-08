@@ -49,7 +49,9 @@ pub struct JobTable {
 
 impl JobTable {
     /// Spawns `command` under the platform shell in `cwd`, returning the job id.
-    pub async fn spawn(&mut self, command: &str, cwd: &std::path::Path) -> Result<String, String> {
+    /// Sync on purpose: nothing here awaits (the drain/kill supervision runs on
+    /// its own task), so callers can hold a `RefMut` without crossing an await.
+    pub fn spawn(&mut self, command: &str, cwd: &std::path::Path) -> Result<String, String> {
         let mut cmd = super::shell_command();
         cmd.arg(command)
             .current_dir(cwd)
@@ -172,7 +174,7 @@ impl Tool for RunInBackground {
     }
     async fn execute(&self, args: serde_json::Value, ctx: &ToolCtx) -> Result<String, String> {
         let command = arg_str(&args, "command")?;
-        let id = ctx.jobs.borrow_mut().spawn(&command, &ctx.cwd).await?;
+        let id = ctx.jobs.borrow_mut().spawn(&command, &ctx.cwd)?;
         Ok(format!("started background job `{id}`: {command}"))
     }
 }
@@ -353,11 +355,13 @@ mod tests {
             .run_until(async {
                 let tmp = tempfile::tempdir().unwrap();
                 let c = ctx(tmp.path());
+                let command = if cfg!(windows) {
+                    "echo bg-out && echo done"
+                } else {
+                    "echo bg-out && sleep 0.1 && echo done"
+                };
                 let started = RunInBackground
-                    .execute(
-                        serde_json::json!({"command": "echo bg-out && sleep 0.1 && echo done"}),
-                        &c,
-                    )
+                    .execute(serde_json::json!({"command": command}), &c)
                     .await
                     .unwrap();
                 assert!(started.contains("job-1"));
@@ -404,7 +408,11 @@ mod tests {
                 let c = ctx(tmp.path());
                 // Emit way more than the 8 MiB cap so the drain path triggers.
                 let chunk = "x".repeat(4096);
-                let command = format!("for i in $(seq 1 4000); do echo {chunk}; done");
+                let command = if cfg!(windows) {
+                    format!("for /L %i in (1,1,4000) do echo {chunk}")
+                } else {
+                    format!("for i in $(seq 1 4000); do echo {chunk}; done")
+                };
                 let started = RunInBackground
                     .execute(serde_json::json!({"command": command}), &c)
                     .await
@@ -442,8 +450,13 @@ mod tests {
             .run_until(async {
                 let tmp = tempfile::tempdir().unwrap();
                 let c = ctx(tmp.path());
+                let command = if cfg!(windows) {
+                    "ping -n 30 127.0.0.1 >nul"
+                } else {
+                    "sleep 30"
+                };
                 RunInBackground
-                    .execute(serde_json::json!({"command": "sleep 30"}), &c)
+                    .execute(serde_json::json!({"command": command}), &c)
                     .await
                     .unwrap();
                 let killed = KillShell

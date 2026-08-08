@@ -283,8 +283,10 @@ mod tests {
             .execute(serde_json::json!({"pattern": "**/*.rs"}), &ctx(tmp.path()))
             .await
             .unwrap();
-        assert!(out.contains("src/main.rs"));
-        assert!(!out.contains("README.md"));
+        // Path separator differs by platform (`src/main.rs` vs `src\main.rs`),
+        // so assert on the file name rather than a hard-coded separator.
+        assert!(out.contains("main.rs"), "glob must list the .rs file: {out}");
+        assert!(!out.contains("README.md"), "glob must not list non-matches: {out}");
     }
 
     #[tokio::test(flavor = "current_thread")]

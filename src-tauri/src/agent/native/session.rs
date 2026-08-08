@@ -315,7 +315,7 @@ pub async fn run_turn(
         // Execute the requested tool calls: consecutive read-only calls run
         // as one parallel batch, mutating ones run serially and get logged.
         let results = execute_calls(env, &calls).await;
-        for (call, result) in calls.iter().zip(results.into_iter()) {
+        for (call, result) in calls.iter().zip(results) {
             messages.push(ChatMessage::tool_result(
                 call.id.clone(),
                 result.unwrap_or_else(|e| e),
@@ -918,15 +918,16 @@ mod tests {
     /// Wires `run_turn`'s `TurnEnv` over the exact duplex setup the real agent
     /// uses: RecClient on the client side, NullAgent on the agent side. The
     /// `AgentSideConnection` handle is what `run_turn` sends through.
+    type TurnEnvHarness = (
+        TurnEnv,
+        Rc<RefCell<Vec<acp::SessionUpdate>>>,
+        Rc<RefCell<usize>>,
+    );
     fn make_env(
         provider: ScriptedProvider,
         cwd: &std::path::Path,
         deny_all: bool,
-    ) -> (
-        TurnEnv,
-        Rc<RefCell<Vec<acp::SessionUpdate>>>,
-        Rc<RefCell<usize>>,
-    ) {
+    ) -> TurnEnvHarness {
         use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
         let (client_end, agent_end) = tokio::io::duplex(64 * 1024);

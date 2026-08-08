@@ -326,18 +326,25 @@ impl NexNativeAgent {
                         "MCP server `{name}` connected with {} tool(s)",
                         client.tools.len()
                     );
-                    self.inner
+                    if let Some(s) = self
+                        .inner
                         .sessions
                         .borrow_mut()
                         .get_mut(session_id.0.as_ref())
-                        .map(|s| s.mcp.push(Rc::new(client)));
+                    {
+                        s.mcp.push(Rc::new(client));
+                    }
                 }
                 Err(e) => log::warn!("{e}"),
             }
         }
 
         let commands = commands::discover(cwd);
-        if let Some(conn) = self.inner.conn.borrow().clone() {
+        // Take the cloned connection out first: the `Ref` from `borrow()`
+        // would otherwise live across the `await` below (if-let temporaries
+        // extend to the end of the block).
+        let conn = self.inner.conn.borrow().clone();
+        if let Some(conn) = conn {
             if !commands.is_empty() {
                 let notification = acp::SessionNotification {
                     session_id: session_id.clone(),
@@ -938,19 +945,21 @@ impl acp::Agent for NexNativeAgent {
 /// (the default) and `ask` (read-only enforcement alone is enough).
 fn mode_preamble(mode_id: &str) -> Option<String> {
     match mode_id {
-        "plan" => Some(format!(
+        "plan" => Some(
             "[Mode: Plan] You are in plan mode: research with read-only tools only \
              (writes, edits and commands are refused). Produce a concrete, \
              step-by-step implementation plan — files to change, what changes in \
              each, how to verify — and end by asking for confirmation. Do not try \
              to make changes yourself. After the user confirms the plan, call \
              `switch_mode` with `code` or `auto` before editing or running commands."
-        )),
-        "auto" => Some(format!(
+                .to_string(),
+        ),
+        "auto" => Some(
             "[Mode: Auto] You are in auto mode: tools run without per-step user \
              approval, so move efficiently, but still verify your work and stop \
              when the task is done."
-        )),
+                .to_string(),
+        ),
         _ => None,
     }
 }
@@ -1263,11 +1272,13 @@ mod tests {
             serde_json::from_str(response.get()).expect("payload json");
         assert_eq!(payload["configOptions"][0]["currentValueId"], "high");
 
-        let sessions = agent.inner.sessions.borrow();
-        let s = sessions
-            .get(session.session_id.0.as_ref())
-            .expect("session");
-        assert_eq!(s.handles.reasoning.get(), ReasoningControl::High);
+        {
+            let sessions = agent.inner.sessions.borrow();
+            let s = sessions
+                .get(session.session_id.0.as_ref())
+                .expect("session");
+            assert_eq!(s.handles.reasoning.get(), ReasoningControl::High);
+        }
 
         // Unknown config ids are rejected.
         let err = agent
@@ -1430,10 +1441,11 @@ mod tests {
                     .expect("set_config_option over pipe");
                 assert_eq!(raw["configOptions"][0]["currentValueId"], "high");
 
-                let sessions = agent.inner.sessions.borrow();
-                let s = sessions.get(&session_id).expect("session");
-                assert_eq!(s.handles.reasoning.get(), ReasoningControl::High);
-                drop(sessions);
+                {
+                    let sessions = agent.inner.sessions.borrow();
+                    let s = sessions.get(&session_id).expect("session");
+                    assert_eq!(s.handles.reasoning.get(), ReasoningControl::High);
+                }
 
                 // The legacy `_`-prefixed spelling still routes through ext_method so
                 // older clients (and the historic `_session/...` wire form) keep working.
@@ -1594,14 +1606,13 @@ mod tests {
     /// Wires an agent + recording client over a duplex pipe (same wiring as
     /// `run_session_native`) and returns both sides plus the recorded chunks
     /// and session-update summaries.
-    fn duplex_pair(
-        config_path: PathBuf,
-    ) -> (
+    type DuplexPair = (
         NexNativeAgent,
         acp::ClientSideConnection,
         Rc<RefCell<Vec<String>>>,
         Rc<RefCell<Vec<String>>>,
-    ) {
+    );
+    fn duplex_pair(config_path: PathBuf) -> DuplexPair {
         let (client_end, agent_end) = tokio::io::duplex(64 * 1024);
         let agent = NexNativeAgent::new(config_path);
         let (agent_read, agent_write) = tokio::io::split(agent_end);

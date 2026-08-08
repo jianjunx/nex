@@ -2187,4 +2187,44 @@ mod tests {
         assert_eq!(qs[0].options.len(), 2);
         assert!(!qs[0].allow_multiple);
     }
+
+    #[test]
+    fn generate_image_path_stays_under_cwd() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ok = resolve_image_path_under_cwd(tmp.path(), "shots/a.png").unwrap();
+        assert!(ok.starts_with(tmp.path()));
+        let err = resolve_image_path_under_cwd(tmp.path(), "../escape.png").unwrap_err();
+        assert!(err.contains("escapes"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn read_image_under_cwd_allows_in_workspace_rejects_escape() {
+        let tmp = tempfile::tempdir().unwrap();
+        let inside = tmp.path().join("ok.png");
+        std::fs::write(&inside, b"png-bytes").unwrap();
+        let (bytes, mime) = read_image_under_cwd(tmp.path(), "ok.png").await.unwrap();
+        assert_eq!(bytes, b"png-bytes");
+        assert_eq!(mime, "image/png");
+
+        let outside = tmp.path().parent().unwrap().join("outside.png");
+        std::fs::write(&outside, b"secret").unwrap();
+        let err = read_image_under_cwd(tmp.path(), outside.to_str().unwrap())
+            .await
+            .unwrap_err();
+        assert!(err.contains("escapes"), "{err}");
+        let _ = std::fs::remove_file(&outside);
+    }
+
+    #[tokio::test]
+    async fn persist_generated_image_writes_under_nex_generated() {
+        let tmp = tempfile::tempdir().unwrap();
+        use base64::Engine;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(b"tiny");
+        let path = persist_generated_image(tmp.path(), &b64, "image/png")
+            .await
+            .unwrap();
+        let p = PathBuf::from(&path);
+        assert!(p.starts_with(tmp.path().join(".nex").join("generated")));
+        assert_eq!(std::fs::read(&p).unwrap(), b"tiny");
+    }
 }

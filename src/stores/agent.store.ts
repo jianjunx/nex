@@ -735,9 +735,9 @@ export const useAgentStore = create<AgentStore>()(
       });
 
       // NexAgent: after a mutating turn, chain a visible `/review` once.
-      const conv = useConversationStore
-        .getState()
-        .conversations.find((c) => c.id === session.conversationId);
+      const conv = Object.values(useConversationStore.getState().conversationsByProject)
+        .flat()
+        .find((c) => c.id === session.conversationId);
       const isNative = conv?.agent_type === "nex" || conv?.agent_type === "native";
       const promptText = blocks
         .filter((b): b is Extract<PromptBlock, { type: "text" }> => b.type === "text")
@@ -777,7 +777,19 @@ export const useAgentStore = create<AgentStore>()(
       } finally {
         set((s) => {
           const session = Object.values(s.sessions).find((ss) => ss.sessionId === sessionId);
-          if (session) session.status = "idle";
+          if (session) {
+            session.status = "idle";
+            // Backend cancels waiters; mark in-thread plan cards so they don't
+            // look actionable after the oneshot is gone.
+            const list = s.entriesByConversation[session.conversationId];
+            if (list) {
+              for (const e of list) {
+                if (e.kind === "plan_approval" && e.status === "pending") {
+                  e.status = "cancelled";
+                }
+              }
+            }
+          }
           delete s.permissionQueues[sessionId];
           delete s.planApprovalQueues[sessionId];
           delete s.askQuestionQueues[sessionId];
@@ -837,13 +849,24 @@ export const useAgentStore = create<AgentStore>()(
 
     respondPlan: async (requestId, outcome, reason) => {
       // Dequeue first so double-clicks cannot resolve the same request twice.
+      // Keep a plain copy for re-queue if the RPC fails.
       let sessionIdForStatus: string | null = null;
       let conversationIdForHandoff: string | null = null;
+      let dequeued: AgentPlanApprovalRequestPayload | null = null;
       set((s) => {
         s.error = null;
         for (const [sessionId, queue] of Object.entries(s.planApprovalQueues)) {
           const idx = queue.findIndex((q) => q.requestId === requestId);
           if (idx !== -1) {
+            const item = queue[idx];
+            dequeued = {
+              sessionId: item.sessionId,
+              requestId: item.requestId,
+              name: item.name,
+              overview: item.overview,
+              plan: item.plan,
+              todos: item.todos.map((t) => ({ ...t })),
+            };
             queue.splice(idx, 1);
             if (queue.length === 0) delete s.planApprovalQueues[sessionId];
             sessionIdForStatus = sessionId;
@@ -880,7 +903,15 @@ export const useAgentStore = create<AgentStore>()(
       } catch (err) {
         set((s) => {
           s.error = errorMessage(err);
-          // Roll back optimistic card status if the backend reject failed.
+          // Re-queue + roll back card so the user can retry.
+          if (dequeued) {
+            const queue = s.planApprovalQueues[resolvedSessionId] ?? [];
+            if (!queue.some((q) => q.requestId === requestId)) {
+              queue.unshift(dequeued);
+              s.planApprovalQueues[resolvedSessionId] = queue;
+            }
+            s.pendingPlanApproval = nextPendingPlanApproval(s.planApprovalQueues);
+          }
           if (conversationIdForHandoff) {
             const list = s.entriesByConversation[conversationIdForHandoff];
             const card = list?.find(
@@ -911,11 +942,22 @@ export const useAgentStore = create<AgentStore>()(
 
     respondAskQuestion: async (requestId, outcome, answers, reason) => {
       let sessionIdForStatus: string | null = null;
+      let dequeued: AgentAskQuestionRequestPayload | null = null;
       set((s) => {
         s.error = null;
         for (const [sessionId, queue] of Object.entries(s.askQuestionQueues)) {
           const idx = queue.findIndex((q) => q.requestId === requestId);
           if (idx !== -1) {
+            const item = queue[idx];
+            dequeued = {
+              sessionId: item.sessionId,
+              requestId: item.requestId,
+              title: item.title,
+              questions: item.questions.map((q) => ({
+                ...q,
+                options: q.options.map((o) => ({ ...o })),
+              })),
+            };
             queue.splice(idx, 1);
             if (queue.length === 0) delete s.askQuestionQueues[sessionId];
             sessionIdForStatus = sessionId;
@@ -931,6 +973,14 @@ export const useAgentStore = create<AgentStore>()(
       } catch (err) {
         set((s) => {
           s.error = errorMessage(err);
+          if (dequeued) {
+            const queue = s.askQuestionQueues[resolvedSessionId] ?? [];
+            if (!queue.some((q) => q.requestId === requestId)) {
+              queue.unshift(dequeued);
+              s.askQuestionQueues[resolvedSessionId] = queue;
+            }
+            s.pendingAskQuestion = nextPendingAskQuestion(s.askQuestionQueues);
+          }
         });
       } finally {
         set((s) => {

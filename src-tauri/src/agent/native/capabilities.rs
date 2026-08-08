@@ -191,6 +191,11 @@ fn reasoning_levels_for(id: &str) -> Vec<String> {
 }
 
 /// Pull a context-length field from a `/models` list item when present.
+///
+/// Deliberately ignores `max_tokens` / `maxTokens` — many OpenAI-compatible
+/// `/models` payloads use those for max *completion* tokens (e.g. 4096), not
+/// the context window. Treating them as context would trigger premature
+/// compression.
 pub fn context_window_from_api_model(value: &serde_json::Value) -> Option<u32> {
     const KEYS: &[&str] = &[
         "context_length",
@@ -199,8 +204,6 @@ pub fn context_window_from_api_model(value: &serde_json::Value) -> Option<u32> {
         "contextWindow",
         "max_model_len",
         "maxModelLen",
-        "max_tokens",
-        "maxTokens",
     ];
     for key in KEYS {
         if let Some(n) = value.get(*key).and_then(|v| v.as_u64()) {
@@ -287,5 +290,10 @@ mod tests {
         assert_eq!(context_window_from_api_model(&v), Some(131_072));
         let v2 = serde_json::json!({"id": "x", "top_provider": {"context_length": 200000}});
         assert_eq!(context_window_from_api_model(&v2), Some(200_000));
+        // Completion-cap fields must not be treated as context windows.
+        let v3 = serde_json::json!({"id": "x", "max_tokens": 4096, "maxTokens": 8192});
+        assert_eq!(context_window_from_api_model(&v3), None);
+        let v4 = serde_json::json!({"id": "x", "max_model_len": 32768, "max_tokens": 4096});
+        assert_eq!(context_window_from_api_model(&v4), Some(32_768));
     }
 }

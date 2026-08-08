@@ -9,6 +9,14 @@ const agentSetSessionModel = vi.fn();
 const agentSetSessionConfigOption = vi.fn();
 const agentRespondPermission = vi.fn();
 const agentRespondPlan = vi.fn();
+const agentRespondAskQuestion = vi.fn();
+const agentSendPrompt = vi.fn().mockResolvedValue({ hadMutations: false });
+const agentCancel = vi.fn().mockResolvedValue(undefined);
+const conversationReplaceThreadEntries = vi.fn().mockResolvedValue(undefined);
+const nativeAgentGetConfig = vi.fn().mockResolvedValue({
+  providers: [],
+  agent: { maxSteps: 0, contextWindow: 0, bashTimeoutSecs: 120, maxSubagentConcurrency: 6, autoReview: false },
+});
 let permissionHandler: ((payload: unknown) => void) | null = null;
 
 vi.mock("../bridge/tauri", () => ({
@@ -20,18 +28,15 @@ vi.mock("../bridge/tauri", () => ({
   agentSetSessionConfigOption: (...args: unknown[]) => agentSetSessionConfigOption(...args),
   agentRespondPermission: (...args: unknown[]) => agentRespondPermission(...args),
   agentRespondPlan: (...args: unknown[]) => agentRespondPlan(...args),
-  agentRespondAskQuestion: vi.fn(),
-  agentSendPrompt: vi.fn().mockResolvedValue({ hadMutations: false }),
-  agentCancel: vi.fn(),
+  agentRespondAskQuestion: (...args: unknown[]) => agentRespondAskQuestion(...args),
+  agentSendPrompt: (...args: unknown[]) => agentSendPrompt(...args),
+  agentCancel: (...args: unknown[]) => agentCancel(...args),
   agentCloseSession: vi.fn(),
   agentRefreshRegistry: vi.fn(),
   agentCustomUpsert: vi.fn(),
   agentCustomDelete: vi.fn(),
-  conversationReplaceThreadEntries: vi.fn(),
-  nativeAgentGetConfig: vi.fn().mockResolvedValue({
-    providers: [],
-    agent: { maxSteps: 0, contextWindow: 0, bashTimeoutSecs: 120, maxSubagentConcurrency: 6, autoReview: false },
-  }),
+  conversationReplaceThreadEntries: (...args: unknown[]) => conversationReplaceThreadEntries(...args),
+  nativeAgentGetConfig: (...args: unknown[]) => nativeAgentGetConfig(...args),
   onAgentNotification: () => Promise.resolve(() => {}),
   onAgentPermissionRequest: (cb: (payload: unknown) => void) => {
     permissionHandler = cb;
@@ -43,6 +48,7 @@ vi.mock("../bridge/tauri", () => ({
 }));
 
 import { useAgentStore } from "./agent.store";
+import { useConversationStore } from "./conversation.store";
 
 const SERVER = { id: "s1", name: "测试智能体", version: "1.0", description: "", icon: null, kind: "registry" };
 
@@ -65,6 +71,24 @@ beforeEach(() => {
     permissionQueues: {},
     pendingPermission: null,
     inlinePermissionIds: {},
+    planApprovalQueues: {},
+    pendingPlanApproval: null,
+    askQuestionQueues: {},
+    pendingAskQuestion: null,
+    entriesByConversation: {},
+    pendingMessagesByConversation: {},
+    nativeAutoReview: false,
+  });
+  useConversationStore.setState({ conversationsByProject: {} });
+  agentSendPrompt.mockResolvedValue({ hadMutations: false });
+  agentCancel.mockResolvedValue(undefined);
+  agentRespondPlan.mockResolvedValue(undefined);
+  agentRespondAskQuestion.mockResolvedValue(undefined);
+  agentSetSessionMode.mockResolvedValue(undefined);
+  conversationReplaceThreadEntries.mockResolvedValue(undefined);
+  nativeAgentGetConfig.mockResolvedValue({
+    providers: [],
+    agent: { maxSteps: 0, contextWindow: 0, bashTimeoutSecs: 120, maxSubagentConcurrency: 6, autoReview: false },
   });
 });
 
@@ -338,5 +362,251 @@ describe("switch-project memory: live sessions", () => {
     const entries = useAgentStore.getState().entriesByConversation["conv-cold"];
     expect(entries).toHaveLength(1);
     expect(entries?.[0]?.id).toBe("h1");
+  });
+});
+
+const PLAN_PAYLOAD = {
+  sessionId: "sid-1",
+  requestId: "plan-1",
+  name: "Ship it",
+  overview: null,
+  plan: "1. do thing",
+  todos: [{ id: "t1", content: "do thing", status: "pending" }],
+};
+
+describe("respondPlan / respondAskQuestion re-queue", () => {
+  it("RPC 失败时把 plan 请求重新入队并回滚卡片 pending", async () => {
+    agentRespondPlan.mockRejectedValue(new Error("backend down"));
+    useAgentStore.setState({
+      sessions: {
+        "conv-1": { sessionId: "sid-1", conversationId: "conv-1", status: "waiting" },
+      },
+      planApprovalQueues: { "sid-1": [{ ...PLAN_PAYLOAD, todos: [...PLAN_PAYLOAD.todos] }] },
+      pendingPlanApproval: { ...PLAN_PAYLOAD, todos: [...PLAN_PAYLOAD.todos] },
+      entriesByConversation: {
+        "conv-1": [
+          {
+            id: "card-1",
+            kind: "plan_approval",
+            timestamp: 1,
+            requestId: "plan-1",
+            plan: "1. do thing",
+            todos: [{ id: "t1", content: "do thing", status: "pending" }],
+            status: "pending",
+          },
+        ],
+      },
+    });
+
+    await useAgentStore.getState().respondPlan("plan-1", "accepted");
+
+    const s = useAgentStore.getState();
+    expect(s.error).toBe("backend down");
+    expect(s.planApprovalQueues["sid-1"]?.[0]?.requestId).toBe("plan-1");
+    expect(s.pendingPlanApproval?.requestId).toBe("plan-1");
+    const card = s.entriesByConversation["conv-1"]?.[0];
+    expect(card?.kind).toBe("plan_approval");
+    if (card?.kind === "plan_approval") expect(card.status).toBe("pending");
+    expect(agentSetSessionMode).not.toHaveBeenCalled();
+  });
+
+  it("RPC 失败时把 ask_question 请求重新入队", async () => {
+    agentRespondAskQuestion.mockRejectedValue(new Error("ask failed"));
+    const ask = {
+      sessionId: "sid-1",
+      requestId: "ask-1",
+      title: null as string | null,
+      questions: [
+        {
+          id: "q1",
+          prompt: "Which?",
+          options: [{ id: "a", label: "A" }],
+          allowMultiple: false,
+        },
+      ],
+    };
+    useAgentStore.setState({
+      sessions: {
+        "conv-1": { sessionId: "sid-1", conversationId: "conv-1", status: "waiting" },
+      },
+      askQuestionQueues: { "sid-1": [ask] },
+      pendingAskQuestion: ask,
+    });
+
+    await useAgentStore.getState().respondAskQuestion("ask-1", "answered", [
+      { questionId: "q1", selectedOptionIds: ["a"] },
+    ]);
+
+    const s = useAgentStore.getState();
+    expect(s.error).toBe("ask failed");
+    expect(s.askQuestionQueues["sid-1"]?.[0]?.requestId).toBe("ask-1");
+    expect(s.pendingAskQuestion?.requestId).toBe("ask-1");
+  });
+
+  it("accept 成功后 handoff：切可执行模式并续跑", async () => {
+    agentRespondPlan.mockResolvedValue(undefined);
+    agentSetSessionMode.mockResolvedValue(undefined);
+    agentSendPrompt.mockResolvedValue({ hadMutations: false });
+    useAgentStore.setState({
+      sessions: {
+        "conv-1": { sessionId: "sid-1", conversationId: "conv-1", status: "idle" },
+      },
+      metaByConversation: {
+        "conv-1": {
+          modes: [
+            { id: "plan", name: "Plan" },
+            { id: "agent", name: "Agent" },
+          ],
+          currentModeId: "plan",
+          models: [],
+          currentModelId: null,
+          configOptions: [],
+          availableCommands: [],
+          plan: null,
+          contextUsage: null,
+        },
+      },
+      planApprovalQueues: { "sid-1": [{ ...PLAN_PAYLOAD, todos: [...PLAN_PAYLOAD.todos] }] },
+      pendingPlanApproval: { ...PLAN_PAYLOAD, todos: [...PLAN_PAYLOAD.todos] },
+      entriesByConversation: {
+        "conv-1": [
+          {
+            id: "card-1",
+            kind: "plan_approval",
+            timestamp: 1,
+            requestId: "plan-1",
+            plan: "1. do thing",
+            todos: [],
+            status: "pending",
+          },
+        ],
+      },
+    });
+
+    await useAgentStore.getState().respondPlan("plan-1", "accepted");
+
+    expect(agentSetSessionMode).toHaveBeenCalledWith("sid-1", "agent");
+    expect(useAgentStore.getState().metaByConversation["conv-1"]?.currentModeId).toBe("agent");
+    expect(agentSendPrompt).toHaveBeenCalledWith("sid-1", [
+      { type: "text", text: "计划已确认，请开始执行。" },
+    ]);
+    const card = useAgentStore.getState().entriesByConversation["conv-1"]?.[0];
+    if (card?.kind === "plan_approval") expect(card.status).toBe("accepted");
+  });
+});
+
+describe("cancel marks pending plan cards", () => {
+  it("cancel 将会话内 pending plan_approval 标为 cancelled", async () => {
+    useAgentStore.setState({
+      sessions: {
+        "conv-1": { sessionId: "sid-1", conversationId: "conv-1", status: "waiting" },
+      },
+      planApprovalQueues: { "sid-1": [{ ...PLAN_PAYLOAD, todos: [...PLAN_PAYLOAD.todos] }] },
+      pendingPlanApproval: { ...PLAN_PAYLOAD, todos: [...PLAN_PAYLOAD.todos] },
+      entriesByConversation: {
+        "conv-1": [
+          {
+            id: "card-1",
+            kind: "plan_approval",
+            timestamp: 1,
+            requestId: "plan-1",
+            plan: "x",
+            todos: [],
+            status: "pending",
+          },
+          {
+            id: "card-2",
+            kind: "plan_approval",
+            timestamp: 2,
+            requestId: "plan-old",
+            plan: "y",
+            todos: [],
+            status: "accepted",
+          },
+        ],
+      },
+    });
+
+    await useAgentStore.getState().cancel("sid-1");
+
+    const entries = useAgentStore.getState().entriesByConversation["conv-1"] ?? [];
+    const pending = entries.find((e) => e.kind === "plan_approval" && e.requestId === "plan-1");
+    const kept = entries.find((e) => e.kind === "plan_approval" && e.requestId === "plan-old");
+    if (pending?.kind === "plan_approval") expect(pending.status).toBe("cancelled");
+    if (kept?.kind === "plan_approval") expect(kept.status).toBe("accepted");
+    expect(useAgentStore.getState().planApprovalQueues["sid-1"]).toBeUndefined();
+  });
+});
+
+describe("native auto /review", () => {
+  it("mutating turn + autoReview 链式发送 /review（且 /review 自身不再链式）", async () => {
+    agentSendPrompt
+      .mockResolvedValueOnce({ hadMutations: true })
+      .mockResolvedValueOnce({ hadMutations: true });
+    useConversationStore.setState({
+      conversationsByProject: {
+        p1: [
+          {
+            id: "conv-1",
+            project_id: "p1",
+            title: "Chat",
+            agent_type: "nex",
+            status: "active",
+            created_at: 1,
+            updated_at: 1,
+          },
+        ],
+      },
+    });
+    useAgentStore.setState({
+      nativeAutoReview: true,
+      sessions: {
+        "conv-1": { sessionId: "sid-1", conversationId: "conv-1", status: "idle" },
+      },
+      entriesByConversation: {
+        "conv-1": [{ id: "u1", kind: "user_message", text: "edit", timestamp: 1 }],
+      },
+    });
+
+    await useAgentStore.getState().sendPrompt("sid-1", [{ type: "text", text: "edit files" }]);
+
+    expect(agentSendPrompt).toHaveBeenCalledTimes(2);
+    expect(agentSendPrompt).toHaveBeenNthCalledWith(1, "sid-1", [
+      { type: "text", text: "edit files" },
+    ]);
+    expect(agentSendPrompt).toHaveBeenNthCalledWith(2, "sid-1", [
+      { type: "text", text: "/review" },
+    ]);
+  });
+
+  it("非 nex/native 会话不触发 auto /review", async () => {
+    agentSendPrompt.mockResolvedValue({ hadMutations: true });
+    useConversationStore.setState({
+      conversationsByProject: {
+        p1: [
+          {
+            id: "conv-1",
+            project_id: "p1",
+            title: "Chat",
+            agent_type: "cursor",
+            status: "active",
+            created_at: 1,
+            updated_at: 1,
+          },
+        ],
+      },
+    });
+    useAgentStore.setState({
+      nativeAutoReview: true,
+      sessions: {
+        "conv-1": { sessionId: "sid-1", conversationId: "conv-1", status: "idle" },
+      },
+      entriesByConversation: {
+        "conv-1": [{ id: "u1", kind: "user_message", text: "edit", timestamp: 1 }],
+      },
+    });
+
+    await useAgentStore.getState().sendPrompt("sid-1", [{ type: "text", text: "edit" }]);
+    expect(agentSendPrompt).toHaveBeenCalledTimes(1);
   });
 });

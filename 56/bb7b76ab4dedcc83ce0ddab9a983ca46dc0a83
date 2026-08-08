@@ -1,0 +1,37 @@
+.gitignore
+  s_636c4dc4293c16::t_66974cd1903629 35-37
+src-tauri/src/agent/native/compact.rs
+  s_636c4dc4293c16::t_10056aa7ae4433 189-192
+src-tauri/src/agent/native/context.rs
+  s_636c4dc4293c16::t_5b7b11bc85a5c1 4-8
+src-tauri/src/agent/native/instructions.rs
+  s_636c4dc4293c16::t_e2b6f6509f7658 15-41,58-80,98,109,112-121,177-219
+src-tauri/src/agent/native/mcp.rs
+  s_636c4dc4293c16::t_4449e84f1e31d0 227-268,288,990-1014
+src-tauri/src/agent/native/tools/bash.rs
+  s_636c4dc4293c16::t_290f1d9593da3d 19-20,44-45
+src-tauri/src/agent/native/tools/checkpoint.rs
+  s_636c4dc4293c16::t_20688ed28b1361 79-85,127-135,140,144-147,151-159,225-296
+src-tauri/src/agent/native/tools/jobs.rs
+  s_636c4dc4293c16::t_da7e8a84469254 36-43,51,53-54,90-100,119-129,399-438
+src-tauri/src/agent/native/tools/search.rs
+  s_636c4dc4293c16::t_37b3f16de78880 13-15,66-80,259-275
+src-tauri/src/agent/native/tools/subagent.rs
+  s_636c4dc4293c16::t_b7de5883de0edf 17-19,166-185,190,232-251
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "56bb7b76ab4dedcc83ce0ddab9a983ca46dc0a83",
+  "prompts": {},
+  "sessions": {
+    "s_636c4dc4293c16": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_636c4dc4293c16",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

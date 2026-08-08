@@ -41,11 +41,7 @@ pub struct JobTable {
 
 impl JobTable {
     /// Spawns `command` under `/bin/sh` in `cwd`, returning the job id.
-    pub async fn spawn(
-        &mut self,
-        command: &str,
-        cwd: &std::path::Path,
-    ) -> Result<String, String> {
+    pub async fn spawn(&mut self, command: &str, cwd: &std::path::Path) -> Result<String, String> {
         let mut cmd = tokio::process::Command::new("/bin/sh");
         cmd.arg("-c")
             .arg(command)
@@ -186,10 +182,15 @@ impl Tool for BashOutput {
         let job_id = arg_str(&args, "job_id")?;
         let offset = arg_usize(&args, "offset", 0);
         let jobs = ctx.jobs.borrow();
-        let job = jobs.jobs.get(&job_id).ok_or_else(|| format!("unknown job `{job_id}`"))?;
+        let job = jobs
+            .jobs
+            .get(&job_id)
+            .ok_or_else(|| format!("unknown job `{job_id}`"))?;
         let (text, next_offset, status) = {
             let buf = job.output.borrow();
-            let status = if job.running() { "running".to_string() } else {
+            let status = if job.running() {
+                "running".to_string()
+            } else {
                 format!("exited with code {}", job.exit_code.borrow().unwrap_or(-1))
             };
             let text = String::from_utf8_lossy(&buf[offset.min(buf.len())..]).to_string();
@@ -201,7 +202,9 @@ impl Tool for BashOutput {
         } else {
             truncate_output(text, MAX_OUTPUT_CHARS)
         };
-        Ok(format!("job `{job_id}` ({status}); next offset: {next_offset}\n{body}"))
+        Ok(format!(
+            "job `{job_id}` ({status}); next offset: {next_offset}\n{body}"
+        ))
     }
 }
 
@@ -231,7 +234,10 @@ impl Tool for KillShell {
     async fn execute(&self, args: serde_json::Value, ctx: &ToolCtx) -> Result<String, String> {
         let job_id = arg_str(&args, "job_id")?;
         let mut jobs = ctx.jobs.borrow_mut();
-        let job = jobs.jobs.get_mut(&job_id).ok_or_else(|| format!("unknown job `{job_id}`"))?;
+        let job = jobs
+            .jobs
+            .get_mut(&job_id)
+            .ok_or_else(|| format!("unknown job `{job_id}`"))?;
         if !job.running() {
             return Ok(format!("job `{job_id}` already exited"));
         }
@@ -275,7 +281,10 @@ impl Tool for WaitJob {
         let timeout_secs = arg_usize(&args, "timeout_secs", 30) as u64;
         let exit_flag = {
             let jobs = ctx.jobs.borrow();
-            let job = jobs.jobs.get(&job_id).ok_or_else(|| format!("unknown job `{job_id}`"))?;
+            let job = jobs
+                .jobs
+                .get(&job_id)
+                .ok_or_else(|| format!("unknown job `{job_id}`"))?;
             job.exit_code.clone()
         };
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
@@ -284,7 +293,9 @@ impl Tool for WaitJob {
                 return Ok(format!("job `{job_id}` exited with code {code}"));
             }
             if tokio::time::Instant::now() >= deadline {
-                return Ok(format!("job `{job_id}` still running after {timeout_secs}s"));
+                return Ok(format!(
+                    "job `{job_id}` still running after {timeout_secs}s"
+                ));
             }
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
@@ -304,6 +315,7 @@ mod tests {
             jobs: Rc::new(RefCell::new(JobTable::default())),
             harness: None,
             mutations: Rc::new(RefCell::new(Vec::new())),
+            mode_id: None,
         }
     }
 
@@ -315,13 +327,19 @@ mod tests {
                 let tmp = tempfile::tempdir().unwrap();
                 let c = ctx(tmp.path());
                 let started = RunInBackground
-                    .execute(serde_json::json!({"command": "echo bg-out && sleep 0.1 && echo done"}), &c)
+                    .execute(
+                        serde_json::json!({"command": "echo bg-out && sleep 0.1 && echo done"}),
+                        &c,
+                    )
                     .await
                     .unwrap();
                 assert!(started.contains("job-1"));
 
                 let waited = WaitJob
-                    .execute(serde_json::json!({"job_id": "job-1", "timeout_secs": 5}), &c)
+                    .execute(
+                        serde_json::json!({"job_id": "job-1", "timeout_secs": 5}),
+                        &c,
+                    )
                     .await
                     .unwrap();
                 assert!(waited.contains("exited with code 0"));
@@ -367,7 +385,10 @@ mod tests {
                     .unwrap();
                 assert!(killed.contains("kill signal"));
                 let waited = WaitJob
-                    .execute(serde_json::json!({"job_id": "job-1", "timeout_secs": 5}), &c)
+                    .execute(
+                        serde_json::json!({"job_id": "job-1", "timeout_secs": 5}),
+                        &c,
+                    )
                     .await
                     .unwrap();
                 assert!(waited.contains("exited"), "{waited}");

@@ -123,6 +123,8 @@ pub async fn run_subagent(harness: &SubagentHarness, task: &str) -> Result<Strin
         // No harness on the child: subagents cannot spawn subagents.
         harness: None,
         mutations: Rc::new(RefCell::new(Vec::new())),
+        // Parent mode is not mutable from subagents (`switch_mode` is filtered out).
+        mode_id: None,
     };
     let env = TurnEnv {
         conn: harness.conn.clone(),
@@ -150,7 +152,8 @@ pub async fn run_subagent(harness: &SubagentHarness, task: &str) -> Result<Strin
         let _ = std::fs::create_dir_all(&harness.archive_dir);
         let name = format!("subagent-{}.txt", uuid::Uuid::new_v4().simple());
         let path = harness.archive_dir.join(&name);
-        std::fs::write(&path, &answer).map_err(|e| format!("failed to store subagent result: {e}"))?;
+        std::fs::write(&path, &answer)
+            .map_err(|e| format!("failed to store subagent result: {e}"))?;
         let chars = answer.chars().count();
         return Ok(format!(
             "subagent 结果过大（{chars} 字符）已保存。ref: {name}\n用 read_subagent_result 分页读取。\n开头预览：\n{}",
@@ -299,7 +302,11 @@ pub async fn run_turn(
             .collect();
         messages.push(ChatMessage::assistant_tool_calls(
             wire_calls,
-            if text.trim().is_empty() { None } else { Some(text) },
+            if text.trim().is_empty() {
+                None
+            } else {
+                Some(text)
+            },
         ));
 
         // Execute the requested tool calls: consecutive read-only calls run
@@ -321,11 +328,18 @@ pub async fn run_turn(
 
         // Progress lease: rounds where every tool call failed count as
         // no-progress. Warn at 8 consecutive, pause the turn at 16.
-        let all_failed = calls
-            .iter()
-            .all(|c| messages.iter().rev().find(|m| m.tool_call_id.as_deref() == Some(c.id.as_str())).is_some_and(|m| {
-                m.content.as_ref().and_then(Content::as_text).is_some_and(|s| s.starts_with("ERROR:"))
-            }));
+        let all_failed = calls.iter().all(|c| {
+            messages
+                .iter()
+                .rev()
+                .find(|m| m.tool_call_id.as_deref() == Some(c.id.as_str()))
+                .is_some_and(|m| {
+                    m.content
+                        .as_ref()
+                        .and_then(Content::as_text)
+                        .is_some_and(|s| s.starts_with("ERROR:"))
+                })
+        });
         if all_failed {
             no_progress += 1;
             if no_progress == LEASE_WARN_ROUNDS {
@@ -336,7 +350,11 @@ pub async fn run_turn(
                 .await;
             }
             if no_progress >= LEASE_PAUSE_ROUNDS {
-                emit_text(env, "连续无进展轮次过多，本轮已暂停。请调整策略后重新发起。").await;
+                emit_text(
+                    env,
+                    "连续无进展轮次过多，本轮已暂停。请调整策略后重新发起。",
+                )
+                .await;
                 return acp::StopReason::EndTurn;
             }
         } else {
@@ -361,12 +379,7 @@ async fn execute_calls(env: &TurnEnv, calls: &[NativeToolCall]) -> Vec<Result<St
         }
         let read_only = calls[i..]
             .iter()
-            .position(|c| {
-                !env
-                    .registry
-                    .get(&c.name)
-                    .is_some_and(|t| t.read_only())
-            })
+            .position(|c| !env.registry.get(&c.name).is_some_and(|t| t.read_only()))
             .unwrap_or(calls.len() - i);
         if read_only > 0 {
             let batch = &calls[i..i + read_only];
@@ -382,7 +395,11 @@ async fn execute_calls(env: &TurnEnv, calls: &[NativeToolCall]) -> Vec<Result<St
             let result = execute_tool(env, call).await;
             if result.is_ok() {
                 let mut log = env.tool_ctx.mutations.borrow_mut();
-                log.push(format!("{}({}) -> ok", call.name, brief_summary(&call.arguments)));
+                log.push(format!(
+                    "{}({}) -> ok",
+                    call.name,
+                    brief_summary(&call.arguments)
+                ));
                 if log.len() > 200 {
                     log.drain(..100);
                 }
@@ -441,7 +458,13 @@ async fn execute_tool(env: &TurnEnv, call: &NativeToolCall) -> Result<String, St
     .await;
 
     let Some(tool) = tool else {
-        return finish_tool(env, &call_id, false, &format!("unknown tool `{}`", call.name)).await;
+        return finish_tool(
+            env,
+            &call_id,
+            false,
+            &format!("unknown tool `{}`", call.name),
+        )
+        .await;
     };
 
     // Read-only tools run without prompting; mutating ones need permission
@@ -488,7 +511,26 @@ async fn execute_tool(env: &TurnEnv, call: &NativeToolCall) -> Result<String, St
         }
     }
 
-    finish_tool(env, &call_id, result.is_ok(), &result.clone().unwrap_or_else(|e| e)).await
+    // Keep the Composer mode selector in sync when the model switches modes.
+    if call.name == "switch_mode" && result.is_ok() {
+        let current = env.mode_id.borrow().clone();
+        emit_notification(
+            env,
+            acp::SessionUpdate::CurrentModeUpdate(acp::CurrentModeUpdate {
+                current_mode_id: acp::SessionModeId(Arc::from(current.as_str())),
+                meta: None,
+            }),
+        )
+        .await;
+    }
+
+    finish_tool(
+        env,
+        &call_id,
+        result.is_ok(),
+        &result.clone().unwrap_or_else(|e| e),
+    )
+    .await
 }
 
 /// Emits the terminal tool-call update and returns the text fed back to the
@@ -594,13 +636,11 @@ async fn request_permission(
     match env.conn.request_permission(request).await {
         Ok(resp) => match resp.outcome {
             acp::RequestPermissionOutcome::Cancelled => PermissionDecision::TurnCancelled,
-            acp::RequestPermissionOutcome::Selected { option_id } => {
-                match option_id.0.as_ref() {
-                    "allow-once" => PermissionDecision::Allowed { always: false },
-                    "allow-always" => PermissionDecision::Allowed { always: true },
-                    _ => PermissionDecision::Denied,
-                }
-            }
+            acp::RequestPermissionOutcome::Selected { option_id } => match option_id.0.as_ref() {
+                "allow-once" => PermissionDecision::Allowed { always: false },
+                "allow-always" => PermissionDecision::Allowed { always: true },
+                _ => PermissionDecision::Denied,
+            },
         },
         // Client can't answer (e.g. dropped): fail safe.
         Err(_) => PermissionDecision::Denied,
@@ -654,7 +694,11 @@ fn brief_args(args: &serde_json::Value) -> String {
     for key in keys {
         if let Some(v) = args.get(key).and_then(|v| v.as_str()) {
             let trimmed: String = v.chars().take(40).collect();
-            return if v.chars().count() > 40 { format!("{trimmed}…") } else { trimmed };
+            return if v.chars().count() > 40 {
+                format!("{trimmed}…")
+            } else {
+                trimmed
+            };
         }
     }
     String::new()
@@ -711,7 +755,11 @@ mod tests {
             _args: acp::RequestPermissionRequest,
         ) -> acp::Result<acp::RequestPermissionResponse> {
             *self.permission_requests.borrow_mut() += 1;
-            let option_id = if self.deny_all { "reject" } else { "allow-once" };
+            let option_id = if self.deny_all {
+                "reject"
+            } else {
+                "allow-once"
+            };
             Ok(acp::RequestPermissionResponse {
                 outcome: acp::RequestPermissionOutcome::Selected {
                     option_id: acp::PermissionOptionId(Arc::from(option_id)),
@@ -743,13 +791,22 @@ mod tests {
     struct NullAgent;
     #[async_trait::async_trait(?Send)]
     impl acp::Agent for NullAgent {
-        async fn initialize(&self, _a: acp::InitializeRequest) -> acp::Result<acp::InitializeResponse> {
+        async fn initialize(
+            &self,
+            _a: acp::InitializeRequest,
+        ) -> acp::Result<acp::InitializeResponse> {
             Err(acp::Error::method_not_found())
         }
-        async fn authenticate(&self, _a: acp::AuthenticateRequest) -> acp::Result<acp::AuthenticateResponse> {
+        async fn authenticate(
+            &self,
+            _a: acp::AuthenticateRequest,
+        ) -> acp::Result<acp::AuthenticateResponse> {
             Err(acp::Error::method_not_found())
         }
-        async fn new_session(&self, _a: acp::NewSessionRequest) -> acp::Result<acp::NewSessionResponse> {
+        async fn new_session(
+            &self,
+            _a: acp::NewSessionRequest,
+        ) -> acp::Result<acp::NewSessionResponse> {
             Err(acp::Error::method_not_found())
         }
         async fn prompt(&self, _a: acp::PromptRequest) -> acp::Result<acp::PromptResponse> {
@@ -764,7 +821,10 @@ mod tests {
         Chunk::Text(s.to_string())
     }
     fn done() -> Chunk {
-        Chunk::Done { stop_reason: StopReasonKind::EndTurn, usage: Some(Usage::default()) }
+        Chunk::Done {
+            stop_reason: StopReasonKind::EndTurn,
+            usage: Some(Usage::default()),
+        }
     }
 
     /// Wires `run_turn`'s `TurnEnv` over the exact duplex setup the real agent
@@ -774,7 +834,11 @@ mod tests {
         provider: ScriptedProvider,
         cwd: &std::path::Path,
         deny_all: bool,
-    ) -> (TurnEnv, Rc<RefCell<Vec<acp::SessionUpdate>>>, Rc<RefCell<usize>>) {
+    ) -> (
+        TurnEnv,
+        Rc<RefCell<Vec<acp::SessionUpdate>>>,
+        Rc<RefCell<usize>>,
+    ) {
         use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
         let (client_end, agent_end) = tokio::io::duplex(64 * 1024);
@@ -812,6 +876,7 @@ mod tests {
         });
 
         let registry = Rc::new(ToolRegistry::builtins());
+        let mode_id = Rc::new(RefCell::new("code".to_string()));
         let env = TurnEnv {
             conn: Arc::new(conn),
             session_id: acp::SessionId(Arc::from("test-session")),
@@ -821,16 +886,19 @@ mod tests {
             model: "test-model".into(),
             reasoning: ReasoningControl::Off,
             max_steps: 5,
-            mode_id: Rc::new(RefCell::new("code".to_string())),
+            mode_id: mode_id.clone(),
             cancelled: Rc::new(Cell::new(false)),
             auto_allow: Rc::new(RefCell::new(HashSet::new())),
             tool_ctx: ToolCtx {
                 cwd: cwd.to_path_buf(),
                 bash_timeout: std::time::Duration::from_secs(10),
                 archive_dir: cwd.join(".nex-archive"),
-                jobs: Rc::new(RefCell::new(crate::agent::native::tools::jobs::JobTable::default())),
+                jobs: Rc::new(RefCell::new(
+                    crate::agent::native::tools::jobs::JobTable::default(),
+                )),
                 harness: None,
                 mutations: Rc::new(RefCell::new(Vec::new())),
+                mode_id: Some(mode_id),
             },
             context_window: 0,
             usage: RefCell::new(Usage::default()),
@@ -864,7 +932,8 @@ mod tests {
                 };
                 let (env, nots, perms) = make_env(provider, tmp.path(), false);
                 let mut messages = vec![ChatMessage::system("sys")];
-                let stop = run_turn(&env, &mut messages, Content::Text("读一下 x.txt".into())).await;
+                let stop =
+                    run_turn(&env, &mut messages, Content::Text("读一下 x.txt".into())).await;
                 assert!(matches!(stop, acp::StopReason::EndTurn));
 
                 // Transcript shape: system, user, assistant(tool_calls), tool, assistant.
@@ -873,8 +942,16 @@ mod tests {
                 assert!(messages[2].tool_calls.is_some());
                 assert_eq!(messages[3].role, "tool");
                 assert_eq!(messages[3].tool_call_id.as_deref(), Some("call_1"));
-                assert!(messages[3].content.as_ref().and_then(Content::as_text).unwrap().contains("hello"));
-                assert_eq!(messages[4].content.as_ref().and_then(Content::as_text), Some("文件内容是 hello"));
+                assert!(messages[3]
+                    .content
+                    .as_ref()
+                    .and_then(Content::as_text)
+                    .unwrap()
+                    .contains("hello"));
+                assert_eq!(
+                    messages[4].content.as_ref().and_then(Content::as_text),
+                    Some("文件内容是 hello")
+                );
 
                 // Read-only tool: no permission prompt, but lifecycle updates streamed.
                 assert_eq!(*perms.borrow(), 0);
@@ -932,7 +1009,12 @@ mod tests {
                 // Tool result carries the denial and file wasn't created.
                 assert_eq!(*perms.borrow(), 1);
                 let tool_msg = messages.iter().find(|m| m.role == "tool").unwrap();
-                assert!(tool_msg.content.as_ref().and_then(Content::as_text).unwrap().contains("denied"));
+                assert!(tool_msg
+                    .content
+                    .as_ref()
+                    .and_then(Content::as_text)
+                    .unwrap()
+                    .contains("denied"));
                 assert!(!tmp.path().join("y.txt").exists());
             })
             .await;
@@ -1008,8 +1090,18 @@ mod tests {
                     .map(|m| m.tool_call_id.clone().unwrap())
                     .collect();
                 assert_eq!(ids, vec!["c_a", "c_b", "c_ls"]);
-                assert!(messages[3].content.as_ref().and_then(Content::as_text).unwrap().contains('A'));
-                assert!(messages[4].content.as_ref().and_then(Content::as_text).unwrap().contains('B'));
+                assert!(messages[3]
+                    .content
+                    .as_ref()
+                    .and_then(Content::as_text)
+                    .unwrap()
+                    .contains('A'));
+                assert!(messages[4]
+                    .content
+                    .as_ref()
+                    .and_then(Content::as_text)
+                    .unwrap()
+                    .contains('B'));
             })
             .await;
     }
@@ -1083,8 +1175,82 @@ mod tests {
                 assert!(matches!(stop, acp::StopReason::EndTurn));
                 assert_eq!(*perms.borrow(), 0, "read-only refusal must not prompt");
                 let tool_msg = messages.iter().find(|m| m.role == "tool").unwrap();
-                assert!(tool_msg.content.as_ref().and_then(Content::as_text).unwrap().contains("只读模式"));
+                assert!(tool_msg
+                    .content
+                    .as_ref()
+                    .and_then(Content::as_text)
+                    .unwrap()
+                    .contains("只读模式"));
                 assert!(!tmp.path().join("p.txt").exists());
+            })
+            .await;
+    }
+
+    /// Model can leave Plan via `switch_mode` (read-only tool); subsequent
+    /// writes then follow Code gating, and the client gets CurrentModeUpdate.
+    #[tokio::test(flavor = "current_thread")]
+    async fn switch_mode_exits_plan_and_emits_update() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let tmp = tempfile::tempdir().unwrap();
+                let provider = ScriptedProvider {
+                    turns: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
+                        vec![
+                            Chunk::ToolCall(NativeToolCall {
+                                id: "c_sw".into(),
+                                name: "switch_mode".into(),
+                                arguments: serde_json::json!({
+                                    "mode": "code",
+                                    "reason": "user confirmed plan"
+                                }),
+                            }),
+                            done(),
+                        ],
+                        vec![
+                            Chunk::ToolCall(NativeToolCall {
+                                id: "c_w".into(),
+                                name: "write_file".into(),
+                                arguments: serde_json::json!({"path": "out.txt", "content": "ok"}),
+                            }),
+                            done(),
+                        ],
+                        vec![text_chunk("done"), done()],
+                    ])),
+                    tools_nonempty: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+                };
+                let (env, nots, _perms) = make_env(provider, tmp.path(), false);
+                *env.mode_id.borrow_mut() = "plan".to_string();
+                let mut messages = vec![ChatMessage::system("sys")];
+                let stop = run_turn(&env, &mut messages, Content::Text("按方案实现".into())).await;
+                assert!(matches!(stop, acp::StopReason::EndTurn));
+                assert_eq!(env.mode_id.borrow().as_str(), "code");
+                assert!(tmp.path().join("out.txt").exists());
+
+                for _ in 0..200 {
+                    let has = nots
+                        .borrow()
+                        .iter()
+                        .any(|u| matches!(u, acp::SessionUpdate::CurrentModeUpdate(_)));
+                    if has {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+                let mode_updates: Vec<_> = nots
+                    .borrow()
+                    .iter()
+                    .filter_map(|u| match u {
+                        acp::SessionUpdate::CurrentModeUpdate(m) => {
+                            Some(m.current_mode_id.0.to_string())
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                assert!(
+                    mode_updates.iter().any(|m| m == "code"),
+                    "expected CurrentModeUpdate(code), got {mode_updates:?}"
+                );
             })
             .await;
     }

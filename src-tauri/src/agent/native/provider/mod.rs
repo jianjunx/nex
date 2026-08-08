@@ -144,7 +144,10 @@ pub enum Chunk {
     /// A complete tool call (arguments already accumulated + parsed).
     ToolCall(NativeToolCall),
     /// Stream finished.
-    Done { stop_reason: StopReasonKind, usage: Option<Usage> },
+    Done {
+        stop_reason: StopReasonKind,
+        usage: Option<Usage>,
+    },
     /// Provider-side failure; the loop surfaces it as a tool/turn error.
     Error(String),
 }
@@ -195,11 +198,19 @@ pub struct ContentPart {
 
 impl ContentPart {
     pub fn text(text: impl Into<String>) -> Self {
-        Self { typ: "text".into(), text: Some(text.into()), image_url: None }
+        Self {
+            typ: "text".into(),
+            text: Some(text.into()),
+            image_url: None,
+        }
     }
     /// `url` is a data URI (`data:{mime};base64,{data}`) or a remote URL.
     pub fn image(url: impl Into<String>) -> Self {
-        Self { typ: "image_url".into(), text: None, image_url: Some(ImageUrl { url: url.into() }) }
+        Self {
+            typ: "image_url".into(),
+            text: None,
+            image_url: Some(ImageUrl { url: url.into() }),
+        }
     }
 }
 
@@ -226,28 +237,70 @@ pub struct ChatMessage {
 
 impl ChatMessage {
     pub fn system(text: impl Into<String>) -> Self {
-        Self { role: "system".into(), content: Some(Content::Text(text.into())), tool_calls: None, tool_call_id: None, reasoning_content: None }
+        Self {
+            role: "system".into(),
+            content: Some(Content::Text(text.into())),
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning_content: None,
+        }
     }
     pub fn user(text: impl Into<String>) -> Self {
-        Self { role: "user".into(), content: Some(Content::Text(text.into())), tool_calls: None, tool_call_id: None, reasoning_content: None }
+        Self {
+            role: "user".into(),
+            content: Some(Content::Text(text.into())),
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning_content: None,
+        }
     }
     pub fn assistant(text: impl Into<String>) -> Self {
-        Self { role: "assistant".into(), content: Some(Content::Text(text.into())), tool_calls: None, tool_call_id: None, reasoning_content: None }
+        Self {
+            role: "assistant".into(),
+            content: Some(Content::Text(text.into())),
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning_content: None,
+        }
     }
     /// Assistant turn that only carries tool calls (content may be None).
     pub fn assistant_tool_calls(calls: Vec<ChatToolCall>, text: Option<String>) -> Self {
-        Self { role: "assistant".into(), content: text.map(Content::Text), tool_calls: Some(calls), tool_call_id: None, reasoning_content: None }
+        Self {
+            role: "assistant".into(),
+            content: text.map(Content::Text),
+            tool_calls: Some(calls),
+            tool_call_id: None,
+            reasoning_content: None,
+        }
     }
     pub fn tool_result(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
-        Self { role: "tool".into(), content: Some(Content::Text(content.into())), tool_calls: None, tool_call_id: Some(tool_call_id.into()), reasoning_content: None }
+        Self {
+            role: "tool".into(),
+            content: Some(Content::Text(content.into())),
+            tool_calls: None,
+            tool_call_id: Some(tool_call_id.into()),
+            reasoning_content: None,
+        }
     }
     /// A user turn with multimodal parts (text + images + injected files).
     pub fn user_parts(parts: Vec<ContentPart>) -> Self {
-        Self { role: "user".into(), content: Some(Content::Parts(parts)), tool_calls: None, tool_call_id: None, reasoning_content: None }
+        Self {
+            role: "user".into(),
+            content: Some(Content::Parts(parts)),
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning_content: None,
+        }
     }
     /// A user turn with arbitrary content (text or parts).
     pub fn user_content(content: Content) -> Self {
-        Self { role: "user".into(), content: Some(content), tool_calls: None, tool_call_id: None, reasoning_content: None }
+        Self {
+            role: "user".into(),
+            content: Some(content),
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning_content: None,
+        }
     }
 }
 
@@ -328,12 +381,18 @@ mod tests {
             "https://api.openai.com/v1/models"
         );
         assert_eq!(
-            openai_endpoint("https://dashscope.aliyuncs.com/compatible-mode/v1", "models"),
+            openai_endpoint(
+                "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "models"
+            ),
             "https://dashscope.aliyuncs.com/compatible-mode/v1/models"
         );
         // Already a full endpoint — do not double-append.
         assert_eq!(
-            openai_endpoint("https://api.openai.com/v1/chat/completions", "chat/completions"),
+            openai_endpoint(
+                "https://api.openai.com/v1/chat/completions",
+                "chat/completions"
+            ),
             "https://api.openai.com/v1/chat/completions"
         );
     }
@@ -355,8 +414,16 @@ mod tests {
             ContentPart::image("data:image/png;base64,AAAA"),
         ]);
         let json = serde_json::to_string(&msg).unwrap();
-        assert!(json.contains(r#""content":[{"type":"text","text":"看图"}"#), "got: {json}");
-        assert!(json.contains(r#"{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}"#), "got: {json}");
+        assert!(
+            json.contains(r#""content":[{"type":"text","text":"看图"}"#),
+            "got: {json}"
+        );
+        assert!(
+            json.contains(
+                r#"{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}"#
+            ),
+            "got: {json}"
+        );
 
         let back: ChatMessage = serde_json::from_str(&json).unwrap();
         assert!(matches!(back.content, Some(Content::Parts(_))));
@@ -368,7 +435,10 @@ mod tests {
         // Old transcripts stored `content` as a bare string.
         let legacy = r#"{"role":"user","content":"old archive"}"#;
         let msg: ChatMessage = serde_json::from_str(legacy).unwrap();
-        assert_eq!(msg.content.as_ref().and_then(Content::as_text), Some("old archive"));
+        assert_eq!(
+            msg.content.as_ref().and_then(Content::as_text),
+            Some("old archive")
+        );
         assert!(matches!(msg.content, Some(Content::Text(_))));
     }
 

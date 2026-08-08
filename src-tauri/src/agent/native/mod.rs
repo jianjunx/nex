@@ -198,7 +198,10 @@ impl NexNativeAgent {
 
 #[async_trait::async_trait(?Send)]
 impl acp::Agent for NexNativeAgent {
-    async fn initialize(&self, args: acp::InitializeRequest) -> acp::Result<acp::InitializeResponse> {
+    async fn initialize(
+        &self,
+        args: acp::InitializeRequest,
+    ) -> acp::Result<acp::InitializeResponse> {
         Ok(acp::InitializeResponse {
             protocol_version: args.protocol_version,
             agent_capabilities: acp::AgentCapabilities {
@@ -230,7 +233,10 @@ impl acp::Agent for NexNativeAgent {
         Ok(acp::AuthenticateResponse { meta: None })
     }
 
-    async fn new_session(&self, args: acp::NewSessionRequest) -> acp::Result<acp::NewSessionResponse> {
+    async fn new_session(
+        &self,
+        args: acp::NewSessionRequest,
+    ) -> acp::Result<acp::NewSessionResponse> {
         let cfg = self.load_config();
         let session_id = acp::SessionId(Arc::from(uuid::Uuid::new_v4().to_string().as_str()));
 
@@ -253,8 +259,7 @@ impl acp::Agent for NexNativeAgent {
             .default_selection()
             .unwrap_or_else(|| "deepseek/deepseek-chat".to_string());
         let reasoning_levels = cfg.reasoning_levels_for(&current_model);
-        let initial_reasoning =
-            ReasoningControl::Medium.clamp_to(&reasoning_levels);
+        let initial_reasoning = ReasoningControl::Medium.clamp_to(&reasoning_levels);
 
         let handles = SessionHandles::new(current_model.clone(), initial_reasoning);
         let session = NativeSession {
@@ -352,7 +357,9 @@ impl acp::Agent for NexNativeAgent {
                     acp::SessionMode {
                         id: acp::SessionModeId(Arc::from("plan")),
                         name: "Plan".to_string(),
-                        description: Some("Read-only research, then a step-by-step plan".to_string()),
+                        description: Some(
+                            "Read-only research, then a step-by-step plan".to_string(),
+                        ),
                         meta: None,
                     },
                     acp::SessionMode {
@@ -375,7 +382,10 @@ impl acp::Agent for NexNativeAgent {
             },
             // The Composer reads `configOptions` out of `_meta` (see
             // `config_options_from_json` in acp_adapter).
-            meta: Some(Self::config_options_meta(initial_reasoning, &reasoning_levels)),
+            meta: Some(Self::config_options_meta(
+                initial_reasoning,
+                &reasoning_levels,
+            )),
         })
     }
 
@@ -404,8 +414,14 @@ impl acp::Agent for NexNativeAgent {
                 &format!("未找到模型 {} 对应的供应商配置，请在设置中检查", model_id),
             )
             .await;
-            self.inner.sessions.borrow_mut().insert(session_key, session);
-            return Ok(acp::PromptResponse { stop_reason: acp::StopReason::EndTurn, meta: None });
+            self.inner
+                .sessions
+                .borrow_mut()
+                .insert(session_key, session);
+            return Ok(acp::PromptResponse {
+                stop_reason: acp::StopReason::EndTurn,
+                meta: None,
+            });
         };
 
         // Seed the transcript with the byte-stable system prompt once, plus
@@ -549,6 +565,7 @@ impl acp::Agent for NexNativeAgent {
                         jobs: session.jobs.clone(),
                         harness: Some(harness),
                         mutations: Rc::new(RefCell::new(Vec::new())),
+                        mode_id: Some(session.handles.mode_id.clone()),
                     },
                     context_window: cfg.agent.context_window as u64,
                     usage: RefCell::new(provider::Usage::default()),
@@ -585,8 +602,14 @@ impl acp::Agent for NexNativeAgent {
             }
         };
 
-        self.inner.sessions.borrow_mut().insert(session_key, session);
-        Ok(acp::PromptResponse { stop_reason, meta: None })
+        self.inner
+            .sessions
+            .borrow_mut()
+            .insert(session_key, session);
+        Ok(acp::PromptResponse {
+            stop_reason,
+            meta: None,
+        })
     }
 
     async fn cancel(&self, args: acp::CancelNotification) -> acp::Result<()> {
@@ -605,8 +628,9 @@ impl acp::Agent for NexNativeAgent {
         // client bug and must not silently change session behavior.
         let mode = args.mode_id.0.as_ref();
         if !matches!(mode, "code" | "ask" | "plan" | "auto") {
-            return Err(acp::Error::invalid_params()
-                .with_data(format!("unknown session mode: {mode}")));
+            return Err(
+                acp::Error::invalid_params().with_data(format!("unknown session mode: {mode}"))
+            );
         }
         let mode_cell = {
             let handles = self.inner.handles.borrow();
@@ -643,17 +667,21 @@ impl acp::Agent for NexNativeAgent {
 
     async fn ext_method(&self, args: acp::ExtRequest) -> acp::Result<acp::ExtResponse> {
         if args.method.as_ref() == "session/set_config_option" {
-            let params: serde_json::Value =
-                serde_json::from_str(args.params.get()).map_err(|e| {
-                    acp::Error::invalid_params().with_data(format!("bad params: {e}"))
-                })?;
+            let params: serde_json::Value = serde_json::from_str(args.params.get())
+                .map_err(|e| acp::Error::invalid_params().with_data(format!("bad params: {e}")))?;
             let session_id = params
                 .get("sessionId")
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
                 .to_string();
-            let config_id = params.get("configId").and_then(|v| v.as_str()).unwrap_or_default();
-            let value = params.get("value").and_then(|v| v.as_str()).unwrap_or_default();
+            let config_id = params
+                .get("configId")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            let value = params
+                .get("value")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
             if config_id != "reasoning" {
                 return Err(acp::Error::invalid_params()
                     .with_data(format!("unknown config option: {config_id}")));
@@ -690,7 +718,8 @@ fn mode_preamble(mode_id: &str) -> Option<String> {
              (writes, edits and commands are refused). Produce a concrete, \
              step-by-step implementation plan — files to change, what changes in \
              each, how to verify — and end by asking for confirmation. Do not try \
-             to make changes yourself."
+             to make changes yourself. After the user confirms the plan, call \
+             `switch_mode` with `code` or `auto` before editing or running commands."
         )),
         "auto" => Some(format!(
             "[Mode: Auto] You are in auto mode: tools run without per-step user \
@@ -727,17 +756,19 @@ fn prompt_parts(cwd: &Path, blocks: &[acp::ContentBlock]) -> Vec<ContentPart> {
                 acp::EmbeddedResourceResource::TextResourceContents(t) => {
                     parts.push(ContentPart::text(format!("[文件: {}]\n{}", t.uri, t.text)));
                 }
-                acp::EmbeddedResourceResource::BlobResourceContents(b) => parts.push(
-                    ContentPart::text(format!(
+                acp::EmbeddedResourceResource::BlobResourceContents(b) => {
+                    parts.push(ContentPart::text(format!(
                         "[文件: {}] 二进制资源（{}），内容未注入",
                         b.uri,
                         b.mime_type.as_deref().unwrap_or("未知类型")
-                    )),
-                ),
+                    )))
+                }
             },
             acp::ContentBlock::ResourceLink(link) => parts.push(resource_link_part(cwd, link)),
             acp::ContentBlock::Audio(_) => {
-                parts.push(ContentPart::text("[音频块：当前模型不支持音频输入]".to_string()));
+                parts.push(ContentPart::text(
+                    "[音频块：当前模型不支持音频输入]".to_string(),
+                ));
             }
         }
     }
@@ -817,9 +848,7 @@ mod tests {
                         .push(format!("available_commands_update:{}", summary.join(",")));
                 }
                 other => {
-                    self.updates
-                        .borrow_mut()
-                        .push(format!("update:{other:?}"));
+                    self.updates.borrow_mut().push(format!("update:{other:?}"));
                 }
             }
             Ok(())
@@ -884,7 +913,10 @@ mod tests {
                 let chunks: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
                 let (client_read, client_write) = tokio::io::split(client_end);
                 let (conn, client_io_task) = acp::ClientSideConnection::new(
-                    TestClient { chunks: chunks.clone(), updates: Rc::new(RefCell::new(Vec::new())) },
+                    TestClient {
+                        chunks: chunks.clone(),
+                        updates: Rc::new(RefCell::new(Vec::new())),
+                    },
                     client_write.compat_write(),
                     client_read.compat(),
                     |fut| {
@@ -952,7 +984,9 @@ mod tests {
     async fn reasoning_config_option_round_trip() {
         let tmp = tempfile::tempdir().unwrap();
         let mut cfg = NativeAgentConfig::default();
-        cfg.providers[0].models = vec![crate::agent::native::capabilities::detect("deepseek-reasoner")];
+        cfg.providers[0].models = vec![crate::agent::native::capabilities::detect(
+            "deepseek-reasoner",
+        )];
         cfg.default_model = Some("deepseek/deepseek-reasoner".into());
         cfg.save(tmp.path()).unwrap();
         let agent = NexNativeAgent::new(tmp.path().to_path_buf());
@@ -966,7 +1000,10 @@ mod tests {
             .expect("new_session failed");
 
         let models = session.models.expect("models");
-        assert_eq!(models.current_model_id.0.as_ref(), "deepseek/deepseek-reasoner");
+        assert_eq!(
+            models.current_model_id.0.as_ref(),
+            "deepseek/deepseek-reasoner"
+        );
         assert_eq!(models.available_models[0].name, "deepseek-reasoner");
         assert_eq!(
             models.available_models[0].description.as_deref(),
@@ -1102,90 +1139,94 @@ mod tests {
         // whole wire interaction must run inside a task::LocalSet.
         tokio::task::LocalSet::new()
             .run_until(async {
-        let tmp = tempfile::tempdir().unwrap();
-        let mut cfg = NativeAgentConfig::default();
-        cfg.providers[0].models =
-            vec![crate::agent::native::capabilities::detect("deepseek-reasoner")];
-        cfg.default_model = Some("deepseek/deepseek-reasoner".into());
-        cfg.save(tmp.path()).unwrap();
-        let agent = NexNativeAgent::new(tmp.path().to_path_buf());
+                let tmp = tempfile::tempdir().unwrap();
+                let mut cfg = NativeAgentConfig::default();
+                cfg.providers[0].models = vec![crate::agent::native::capabilities::detect(
+                    "deepseek-reasoner",
+                )];
+                cfg.default_model = Some("deepseek/deepseek-reasoner".into());
+                cfg.save(tmp.path()).unwrap();
+                let agent = NexNativeAgent::new(tmp.path().to_path_buf());
 
-        let (client_end, agent_end) = tokio::io::duplex(64 * 1024);
-        let (agent_read, agent_write) = tokio::io::split(agent_end);
-        let (agent_conn, agent_io) = acp::AgentSideConnection::new(
-            agent.clone(),
-            agent_write.compat_write(),
-            agent_read.compat(),
-            |fut| {
-                tokio::task::spawn_local(fut);
-            },
-        );
-        agent.set_conn(Arc::new(agent_conn));
-        tokio::task::spawn_local(agent_io);
+                let (client_end, agent_end) = tokio::io::duplex(64 * 1024);
+                let (agent_read, agent_write) = tokio::io::split(agent_end);
+                let (agent_conn, agent_io) = acp::AgentSideConnection::new(
+                    agent.clone(),
+                    agent_write.compat_write(),
+                    agent_read.compat(),
+                    |fut| {
+                        tokio::task::spawn_local(fut);
+                    },
+                );
+                agent.set_conn(Arc::new(agent_conn));
+                tokio::task::spawn_local(agent_io);
 
-        let (client_read, client_write) = tokio::io::split(client_end);
-        let (client_conn, client_io) = acp::ClientSideConnection::new(
-            PipeStubClient,
-            client_write.compat_write(),
-            client_read.compat(),
-            |fut| {
-                tokio::task::spawn_local(fut);
-            },
-        );
-        tokio::task::spawn_local(client_io);
+                let (client_read, client_write) = tokio::io::split(client_end);
+                let (client_conn, client_io) = acp::ClientSideConnection::new(
+                    PipeStubClient,
+                    client_write.compat_write(),
+                    client_read.compat(),
+                    |fut| {
+                        tokio::task::spawn_local(fut);
+                    },
+                );
+                tokio::task::spawn_local(client_io);
 
-        // `session/new` goes through the same decode layer and must still work.
-        let new_resp = client_conn
-            .request_raw(
-                "session/new",
-                serde_json::json!({
-                    "cwd": std::env::temp_dir(),
-                    "mcpServers": []
-                }),
-            )
-            .await
-            .expect("session/new over pipe");
-        let session_id = new_resp["sessionId"].as_str().expect("sessionId").to_string();
+                // `session/new` goes through the same decode layer and must still work.
+                let new_resp = client_conn
+                    .request_raw(
+                        "session/new",
+                        serde_json::json!({
+                            "cwd": std::env::temp_dir(),
+                            "mcpServers": []
+                        }),
+                    )
+                    .await
+                    .expect("session/new over pipe");
+                let session_id = new_resp["sessionId"]
+                    .as_str()
+                    .expect("sessionId")
+                    .to_string();
 
-        // Unprefixed `session/set_config_option` (the standard ACP name external
-        // agents like Claude Code register) reaches ext_method and updates the
-        // session.
-        let raw = client_conn
-            .request_raw(
-                "session/set_config_option",
-                serde_json::json!({
-                    "sessionId": session_id,
-                    "configId": "reasoning",
-                    "value": "high"
-                }),
-            )
-            .await
-            .expect("set_config_option over pipe");
-        assert_eq!(raw["configOptions"][0]["currentValueId"], "high");
+                // Unprefixed `session/set_config_option` (the standard ACP name external
+                // agents like Claude Code register) reaches ext_method and updates the
+                // session.
+                let raw = client_conn
+                    .request_raw(
+                        "session/set_config_option",
+                        serde_json::json!({
+                            "sessionId": session_id,
+                            "configId": "reasoning",
+                            "value": "high"
+                        }),
+                    )
+                    .await
+                    .expect("set_config_option over pipe");
+                assert_eq!(raw["configOptions"][0]["currentValueId"], "high");
 
-        let sessions = agent.inner.sessions.borrow();
-        let s = sessions.get(&session_id).expect("session");
-        assert_eq!(s.handles.reasoning.get(), ReasoningControl::High);
-        drop(sessions);
+                let sessions = agent.inner.sessions.borrow();
+                let s = sessions.get(&session_id).expect("session");
+                assert_eq!(s.handles.reasoning.get(), ReasoningControl::High);
+                drop(sessions);
 
-        // The legacy `_`-prefixed spelling still routes through ext_method so
-        // older clients (and the historic `_session/...` wire form) keep working.
-        let raw = client_conn
-            .request_raw(
-                "_session/set_config_option",
-                serde_json::json!({
-                    "sessionId": session_id,
-                    "configId": "reasoning",
-                    "value": "low"
-                }),
-            )
-            .await
-            .expect("prefixed set_config_option over pipe");
-        assert_eq!(raw["configOptions"][0]["currentValueId"], "low");
+                // The legacy `_`-prefixed spelling still routes through ext_method so
+                // older clients (and the historic `_session/...` wire form) keep working.
+                let raw = client_conn
+                    .request_raw(
+                        "_session/set_config_option",
+                        serde_json::json!({
+                            "sessionId": session_id,
+                            "configId": "reasoning",
+                            "value": "low"
+                        }),
+                    )
+                    .await
+                    .expect("prefixed set_config_option over pipe");
+                assert_eq!(raw["configOptions"][0]["currentValueId"], "low");
 
-        let sessions = agent.inner.sessions.borrow();
-        let s = sessions.get(&session_id).expect("session");
-        assert_eq!(s.handles.reasoning.get(), ReasoningControl::Low);
+                let sessions = agent.inner.sessions.borrow();
+                let s = sessions.get(&session_id).expect("session");
+                assert_eq!(s.handles.reasoning.get(), ReasoningControl::Low);
             })
             .await;
     }
@@ -1198,8 +1239,7 @@ mod tests {
     async fn prompt_sends_raw_model_id_not_composite() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-        let captured: Arc<std::sync::Mutex<Option<String>>> =
-            Arc::new(std::sync::Mutex::new(None));
+        let captured: Arc<std::sync::Mutex<Option<String>>> = Arc::new(std::sync::Mutex::new(None));
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -1220,7 +1260,8 @@ mod tests {
                         .lines()
                         .find_map(|l| {
                             let l = l.to_ascii_lowercase();
-                            l.strip_prefix("content-length:").map(|v| v.trim().parse().unwrap_or(0))
+                            l.strip_prefix("content-length:")
+                                .map(|v| v.trim().parse().unwrap_or(0))
                         })
                         .unwrap_or(0);
                     let body_start = pos + 4;
@@ -1275,7 +1316,10 @@ mod tests {
                 let chunks: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
                 let (client_read, client_write) = tokio::io::split(client_end);
                 let (conn, client_io) = acp::ClientSideConnection::new(
-                    TestClient { chunks: chunks.clone(), updates: Rc::new(RefCell::new(Vec::new())) },
+                    TestClient {
+                        chunks: chunks.clone(),
+                        updates: Rc::new(RefCell::new(Vec::new())),
+                    },
                     client_write.compat_write(),
                     client_read.compat(),
                     |fut| {
@@ -1350,7 +1394,10 @@ mod tests {
         let updates: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
         let (client_read, client_write) = tokio::io::split(client_end);
         let (conn, client_io) = acp::ClientSideConnection::new(
-            TestClient { chunks: chunks.clone(), updates: updates.clone() },
+            TestClient {
+                chunks: chunks.clone(),
+                updates: updates.clone(),
+            },
             client_write.compat_write(),
             client_read.compat(),
             |fut| {
@@ -1363,8 +1410,7 @@ mod tests {
 
     /// Writes a config whose provider points at `addr` and returns its dir.
     fn provider_config(addr: std::net::SocketAddr) -> PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("nex-native-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("nex-native-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let cfg = serde_json::json!({
             "providers": [{
@@ -1390,8 +1436,7 @@ mod tests {
         tokio::task::JoinHandle<()>,
     ) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let captured: Arc<std::sync::Mutex<Option<String>>> =
-            Arc::new(std::sync::Mutex::new(None));
+        let captured: Arc<std::sync::Mutex<Option<String>>> = Arc::new(std::sync::Mutex::new(None));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let cap = captured.clone();
@@ -1416,8 +1461,7 @@ mod tests {
                         .unwrap_or(0);
                     let body_start = pos + 4;
                     if acc.len() - body_start >= cl {
-                        *cap.lock().unwrap() =
-                            Some(acc[body_start..body_start + cl].to_string());
+                        *cap.lock().unwrap() = Some(acc[body_start..body_start + cl].to_string());
                         break;
                     }
                 }
@@ -1494,7 +1538,9 @@ mod tests {
                 assert!(body.contains("文件内容在这里"), "body: {body}");
 
                 let sessions = agent.inner.sessions.borrow();
-                let s = sessions.get(session.session_id.0.as_ref()).expect("session");
+                let s = sessions
+                    .get(session.session_id.0.as_ref())
+                    .expect("session");
                 let Some(Content::Parts(parts)) = &s.history[1].content else {
                     panic!("user turn must be stored as parts");
                 };
@@ -1543,16 +1589,26 @@ mod tests {
                     meta: None,
                 };
 
-                let _ = conn.prompt(prompt_text("/review src/main.rs")).await.expect("prompt");
+                let _ = conn
+                    .prompt(prompt_text("/review src/main.rs"))
+                    .await
+                    .expect("prompt");
                 let _ = conn.prompt(prompt_text("/nope hi")).await.expect("prompt");
 
                 let sessions = agent.inner.sessions.borrow();
-                let s = sessions.get(session.session_id.0.as_ref()).expect("session");
+                let s = sessions
+                    .get(session.session_id.0.as_ref())
+                    .expect("session");
                 let users: Vec<&str> = s
                     .history
                     .iter()
                     .filter(|m| m.role == "user")
-                    .map(|m| m.content.as_ref().and_then(Content::as_text).unwrap_or_default())
+                    .map(|m| {
+                        m.content
+                            .as_ref()
+                            .and_then(Content::as_text)
+                            .unwrap_or_default()
+                    })
                     .collect();
                 assert_eq!(users.len(), 2);
                 assert!(
@@ -1595,14 +1651,12 @@ mod tests {
 
                 // Notifications travel over the duplex pipe asynchronously;
                 // poll until the catalog arrives.
-                let deadline =
-                    tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+                let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
                 let found = loop {
-                    if updates
-                        .borrow()
-                        .iter()
-                        .any(|u| u.starts_with("available_commands_update:") && u.contains("review=Review code."))
-                    {
+                    if updates.borrow().iter().any(|u| {
+                        u.starts_with("available_commands_update:")
+                            && u.contains("review=Review code.")
+                    }) {
                         break true;
                     }
                     if tokio::time::Instant::now() > deadline {
@@ -1610,7 +1664,11 @@ mod tests {
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
                 };
-                assert!(found, "catalog not published: {:?}", updates.borrow().clone());
+                assert!(
+                    found,
+                    "catalog not published: {:?}",
+                    updates.borrow().clone()
+                );
             })
             .await;
         let _ = std::fs::remove_dir_all(&dir);

@@ -966,6 +966,7 @@ export const useAgentStore = create<AgentStore>()(
       onAgentNotification(({ sessionId, update }) => {
         const session = Object.values(get().sessions).find((ss) => ss.sessionId === sessionId);
         if (!session) return;
+        let modeFromAgent: string | null = null;
         set((s) => {
           if (!s.entriesByConversation[session.conversationId]) {
             s.entriesByConversation[session.conversationId] = [];
@@ -975,6 +976,7 @@ export const useAgentStore = create<AgentStore>()(
           }
           const entries = s.entriesByConversation[session.conversationId];
           const meta = s.metaByConversation[session.conversationId];
+          const prevMode = meta.currentModeId;
           const applied = applySessionUpdate(entries, meta, update);
           if (applied.completedPlanSnapshot) {
             entries.push({
@@ -984,7 +986,18 @@ export const useAgentStore = create<AgentStore>()(
               entries: applied.completedPlanSnapshot,
             });
           }
+          // Model-driven `switch_mode` arrives as current_mode_update; keep prefs in sync.
+          if (
+            applied.metaChanged &&
+            meta.currentModeId &&
+            meta.currentModeId !== prevMode
+          ) {
+            modeFromAgent = meta.currentModeId;
+          }
         });
+        if (modeFromAgent) {
+          patchPrefs(set, session.conversationId, { modeId: modeFromAgent });
+        }
       }).then((fn) => {
         if (disposed) fn();
         else unlistenNotification = fn;

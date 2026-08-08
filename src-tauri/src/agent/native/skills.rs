@@ -110,12 +110,7 @@ struct Frontmatter {
 /// Resolves a skill's directory under `root`, rejecting names that could escape
 /// it. Returns a clear error when the skill does not exist.
 fn skill_dir(root: &Path, name: &str) -> Result<PathBuf, String> {
-    if name.is_empty()
-        || name == "."
-        || name == ".."
-        || name.contains('/')
-        || name.contains('\\')
-    {
+    if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
         return Err(format!("invalid skill name `{name}`"));
     }
     let dir = root.join(name);
@@ -149,8 +144,7 @@ pub fn load_file(root: &Path, name: &str, rel: &str) -> Result<String, String> {
             return Err("path must not contain `..`".to_string());
         }
     }
-    std::fs::read_to_string(dir.join(rel_path))
-        .map_err(|e| format!("failed to read `{rel}`: {e}"))
+    std::fs::read_to_string(dir.join(rel_path)).map_err(|e| format!("failed to read `{rel}`: {e}"))
 }
 
 /// Renders the skills catalog block injected into the system prompt. Returns an
@@ -212,8 +206,16 @@ mod tests {
     fn discover_sorts_and_skips_malformed() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
-        write(root, "zeta/SKILL.md", "---\nname: zeta\ndescription: z\n---\nbody");
-        write(root, "alpha/SKILL.md", "---\nname: alpha\ndescription: a\n---\nbody");
+        write(
+            root,
+            "zeta/SKILL.md",
+            "---\nname: zeta\ndescription: z\n---\nbody",
+        );
+        write(
+            root,
+            "alpha/SKILL.md",
+            "---\nname: alpha\ndescription: a\n---\nbody",
+        );
         // Malformed: no frontmatter -> skipped.
         write(root, "broken/SKILL.md", "no frontmatter here");
         // Folder without SKILL.md -> skipped.
@@ -258,7 +260,11 @@ mod tests {
     fn load_body_and_file() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
-        write(root, "demo/SKILL.md", "---\nname: demo\ndescription: d\n---\nBODY");
+        write(
+            root,
+            "demo/SKILL.md",
+            "---\nname: demo\ndescription: d\n---\nBODY",
+        );
         write(root, "demo/assets/tpl.txt", "template-content");
 
         assert_eq!(load_body(root, "demo").unwrap(), "BODY");

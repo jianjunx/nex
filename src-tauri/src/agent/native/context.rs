@@ -22,7 +22,14 @@ pub fn system_prompt(cwd: &Path, model: &str) -> String {
 - Verify your work after changes (re-read the file or run the relevant build/test command).
 - Keep a task list with `todo_write` for multi-step work and update it as you progress.
 - Never invent file contents or command output; always ground answers in tool results.
-- When the task is done, summarize what changed and stop calling tools."#
+- When the task is done, summarize what changed and stop calling tools.
+
+# Session modes
+Use the `switch_mode` tool when the task warrants a different mode (do not flip modes unnecessarily):
+- `code` — default: edit and run tools with per-step approval.
+- `ask` — read-only Q&A / explanation; no edits or shell.
+- `plan` — read-only research, then a concrete implementation plan; after the user confirms, `switch_mode` to `code` or `auto` before making changes.
+- `auto` — edit and run without per-step approval; use for trusted, longer workflows."#
     )
 }
 
@@ -66,11 +73,16 @@ mod tests {
         assert!(p.contains("Workspace: /tmp/proj"));
         assert!(p.contains("deepseek-chat"));
         assert!(p.contains("read_file"));
+        assert!(p.contains("switch_mode"));
+        assert!(p.contains("Session modes"));
     }
 
     #[test]
     fn prompt_date_is_plausible() {
         let p = system_prompt(Path::new("/tmp/proj"), "deepseek-chat");
-        assert!(p.contains(&format!("Date: {}", chrono::Local::now().format("%Y-%m-%d"))));
+        assert!(p.contains(&format!(
+            "Date: {}",
+            chrono::Local::now().format("%Y-%m-%d")
+        )));
     }
 }

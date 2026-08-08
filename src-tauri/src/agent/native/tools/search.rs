@@ -53,12 +53,16 @@ impl Tool for Grep {
         let mut found = 0usize;
         'outer: for entry in WalkBuilder::new(&root).build() {
             let Ok(entry) = entry else { continue };
-            let Some(ft) = entry.file_type() else { continue };
+            let Some(ft) = entry.file_type() else {
+                continue;
+            };
             if !ft.is_file() {
                 continue;
             }
             let path = entry.path();
-            let Ok(content) = std::fs::read_to_string(path) else { continue }; // skip binary
+            let Ok(content) = std::fs::read_to_string(path) else {
+                continue;
+            }; // skip binary
             for (idx, line) in content.lines().enumerate() {
                 if re.is_match(line) {
                     found += 1;
@@ -213,6 +217,7 @@ mod tests {
             )),
             harness: None,
             mutations: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            mode_id: None,
         }
     }
 
@@ -253,7 +258,10 @@ mod tests {
         std::fs::create_dir(tmp.path().join("dir_b")).unwrap();
         std::fs::write(tmp.path().join("file_a.txt"), "x").unwrap();
         std::fs::write(tmp.path().join(".hidden"), "x").unwrap();
-        let out = Ls.execute(serde_json::json!({}), &ctx(tmp.path())).await.unwrap();
+        let out = Ls
+            .execute(serde_json::json!({}), &ctx(tmp.path()))
+            .await
+            .unwrap();
         assert_eq!(out, "dir_b/\nfile_a.txt");
     }
 }

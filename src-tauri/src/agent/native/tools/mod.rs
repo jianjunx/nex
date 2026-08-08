@@ -10,6 +10,7 @@ pub mod fs;
 pub mod history;
 pub mod jobs;
 pub mod mcp;
+pub mod mode;
 pub mod search;
 pub mod skill;
 pub mod subagent;
@@ -40,6 +41,9 @@ pub struct ToolCtx {
     pub harness: Option<Rc<super::session::SubagentHarness>>,
     /// Append-only log of mutating tool executions (for observability).
     pub mutations: Rc<RefCell<Vec<String>>>,
+    /// Live session mode (`code`/`ask`/`plan`/`auto`); shared with [`super::session::TurnEnv`].
+    /// `None` inside contexts that must not change the parent mode (rare test stubs).
+    pub mode_id: Option<Rc<RefCell<String>>>,
 }
 
 /// A builtin tool.
@@ -85,6 +89,7 @@ impl ToolRegistry {
                 Box::new(checkpoint::Checkpoint),
                 Box::new(checkpoint::Rewind),
                 Box::new(skill::LoadSkill),
+                Box::new(mode::SwitchMode),
                 Box::new(subagent::Task),
                 Box::new(subagent::Fleet),
                 Box::new(subagent::ReadSubagentResult),
@@ -92,14 +97,19 @@ impl ToolRegistry {
         }
     }
 
-    /// The subagent tool set: the builtins minus the orchestration tools so
-    /// subagents cannot spawn further subagents.
+    /// The subagent tool set: the builtins minus orchestration + mode tools so
+    /// subagents cannot spawn further subagents or change the parent mode.
     pub fn subagents() -> Self {
         Self {
             tools: Self::builtins()
                 .tools
                 .into_iter()
-                .filter(|t| !matches!(t.name(), "task" | "fleet" | "read_subagent_result"))
+                .filter(|t| {
+                    !matches!(
+                        t.name(),
+                        "task" | "fleet" | "read_subagent_result" | "switch_mode"
+                    )
+                })
                 .collect(),
         }
     }
@@ -138,7 +148,11 @@ pub fn resolve_within(cwd: &Path, raw: &str) -> Result<PathBuf, String> {
         return Err("path is required".to_string());
     }
     let p = Path::new(raw);
-    let joined = if p.is_absolute() { p.to_path_buf() } else { cwd.join(p) };
+    let joined = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        cwd.join(p)
+    };
     let norm = normalize_lexical(&joined);
     if norm != cwd && !norm.starts_with(cwd) {
         return Err(format!("path `{raw}` escapes the workspace root"));
@@ -170,7 +184,9 @@ pub fn arg_str(args: &serde_json::Value, key: &str) -> Result<String, String> {
 
 /// Helper to pull an optional string arg.
 pub fn arg_str_opt(args: &serde_json::Value, key: &str) -> Option<String> {
-    args.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
+    args.get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
 }
 
 /// Helper to pull an optional positive usize with a default.
@@ -198,9 +214,18 @@ mod tests {
     #[test]
     fn resolve_keeps_inner_paths() {
         let cwd = Path::new("/tmp/proj");
-        assert_eq!(resolve_within(cwd, "a/b.txt").unwrap(), Path::new("/tmp/proj/a/b.txt"));
-        assert_eq!(resolve_within(cwd, "/tmp/proj/x").unwrap(), Path::new("/tmp/proj/x"));
-        assert_eq!(resolve_within(cwd, "a/../b").unwrap(), Path::new("/tmp/proj/b"));
+        assert_eq!(
+            resolve_within(cwd, "a/b.txt").unwrap(),
+            Path::new("/tmp/proj/a/b.txt")
+        );
+        assert_eq!(
+            resolve_within(cwd, "/tmp/proj/x").unwrap(),
+            Path::new("/tmp/proj/x")
+        );
+        assert_eq!(
+            resolve_within(cwd, "a/../b").unwrap(),
+            Path::new("/tmp/proj/b")
+        );
     }
 
     #[test]
@@ -214,17 +239,22 @@ mod tests {
     #[test]
     fn registry_specs_are_ordered() {
         let reg = ToolRegistry::builtins();
-        let names: Vec<_> = reg.specs().iter().map(|s| s.function.name.clone()).collect();
+        let names: Vec<_> = reg
+            .specs()
+            .iter()
+            .map(|s| s.function.name.clone())
+            .collect();
         assert_eq!(names[0], "read_file");
         assert!(names.contains(&"bash".to_string()));
         assert!(names.contains(&"history".to_string()));
         assert!(names.contains(&"run_in_background".to_string()));
         assert!(names.contains(&"checkpoint".to_string()));
         assert!(names.contains(&"load_skill".to_string()));
+        assert!(names.contains(&"switch_mode".to_string()));
         assert!(names.contains(&"task".to_string()));
-        assert_eq!(names.len(), 20);
+        assert_eq!(names.len(), 21);
 
-        // Subagents see everything except the orchestration tools.
+        // Subagents see everything except orchestration + mode tools.
         let sub: Vec<_> = ToolRegistry::subagents()
             .specs()
             .iter()
@@ -235,6 +265,7 @@ mod tests {
         assert!(!sub.contains(&"task".to_string()));
         assert!(!sub.contains(&"fleet".to_string()));
         assert!(!sub.contains(&"read_subagent_result".to_string()));
+        assert!(!sub.contains(&"switch_mode".to_string()));
     }
 
     /// Canonical tool schemas must serialize to identical bytes on every run
@@ -245,12 +276,14 @@ mod tests {
         use sha2::{Digest, Sha256};
         let bytes = serde_json::to_vec(&ToolRegistry::builtins().specs()).unwrap();
         // Byte-stable across constructions within a run…
-        assert_eq!(bytes, serde_json::to_vec(&ToolRegistry::builtins().specs()).unwrap());
+        assert_eq!(
+            bytes,
+            serde_json::to_vec(&ToolRegistry::builtins().specs()).unwrap()
+        );
         let hash = hex(Sha256::digest(&bytes));
         eprintln!("canonical schema sha256: {hash}");
         assert_eq!(
-            hash,
-            "b3d4046c150f65482c5c0910daada3db578050a99efed89eacf0f139f941a9e3",
+            hash, "79b245d97c3e1871be467e44e3c50518e7ac3d160192bf29241ab4f1cca7b5e3",
             "tool schema drift detected; update the snapshot intentionally"
         );
     }

@@ -157,7 +157,10 @@ impl Provider for DeepSeekProvider {
 }
 
 /// Reads the SSE response to completion, emitting chunks on `tx`.
-async fn pump_sse(mut resp: reqwest::Response, tx: tokio::sync::mpsc::UnboundedSender<Chunk>) -> Result<(), String> {
+async fn pump_sse(
+    mut resp: reqwest::Response,
+    tx: tokio::sync::mpsc::UnboundedSender<Chunk>,
+) -> Result<(), String> {
     let mut buffer = String::new();
     let mut acc = ToolAccumulator::default();
     let mut finish: Option<StopReasonKind> = None;
@@ -178,7 +181,9 @@ async fn pump_sse(mut resp: reqwest::Response, tx: tokio::sync::mpsc::UnboundedS
             if line.is_empty() {
                 continue;
             }
-            let Some(data) = line.strip_prefix("data:") else { continue };
+            let Some(data) = line.strip_prefix("data:") else {
+                continue;
+            };
             let data = data.trim();
             if data == "[DONE]" {
                 continue;
@@ -286,7 +291,11 @@ impl ToolAccumulator {
                 } else {
                     serde_json::from_str(&p.arguments).unwrap_or(serde_json::json!({}))
                 };
-                Some(NativeToolCall { id: p.id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()), name, arguments: args })
+                Some(NativeToolCall {
+                    id: p.id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                    name,
+                    arguments: args,
+                })
             })
             .collect()
     }
@@ -358,17 +367,26 @@ mod tests {
         acc.absorb(vec![SseToolCallDelta {
             index: 0,
             id: Some("call_1".into()),
-            function: Some(SseFunctionDelta { name: Some("read_file".into()), arguments: "".into() }),
+            function: Some(SseFunctionDelta {
+                name: Some("read_file".into()),
+                arguments: "".into(),
+            }),
         }]);
         acc.absorb(vec![SseToolCallDelta {
             index: 0,
             id: None,
-            function: Some(SseFunctionDelta { name: None, arguments: "{\"path\":".into() }),
+            function: Some(SseFunctionDelta {
+                name: None,
+                arguments: "{\"path\":".into(),
+            }),
         }]);
         acc.absorb(vec![SseToolCallDelta {
             index: 0,
             id: None,
-            function: Some(SseFunctionDelta { name: None, arguments: "\"a.rs\"}".into() }),
+            function: Some(SseFunctionDelta {
+                name: None,
+                arguments: "\"a.rs\"}".into(),
+            }),
         }]);
         let calls = acc.drain();
         assert_eq!(calls.len(), 1);

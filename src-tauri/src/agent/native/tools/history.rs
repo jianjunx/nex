@@ -71,7 +71,9 @@ struct Doc {
 
 fn load_archive(dir: &std::path::Path) -> Vec<Doc> {
     let mut docs = Vec::new();
-    let Ok(entries) = std::fs::read_dir(dir) else { return docs };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return docs;
+    };
     let mut paths: Vec<_> = entries
         .flatten()
         .map(|e| e.path())
@@ -79,16 +81,30 @@ fn load_archive(dir: &std::path::Path) -> Vec<Doc> {
         .collect();
     paths.sort(); // chronological order by timestamped file names
     for path in paths {
-        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
         for line in text.lines() {
-            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
-            let role = v.get("role").and_then(|r| r.as_str()).unwrap_or("?").to_string();
-            let Some(content) = v.get("content").and_then(|c| c.as_str()) else { continue };
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            let role = v
+                .get("role")
+                .and_then(|r| r.as_str())
+                .unwrap_or("?")
+                .to_string();
+            let Some(content) = v.get("content").and_then(|c| c.as_str()) else {
+                continue;
+            };
             if content.trim().is_empty() {
                 continue;
             }
             let tokens = tokenize(content);
-            docs.push(Doc { role, content: content.to_string(), tokens });
+            docs.push(Doc {
+                role,
+                content: content.to_string(),
+                tokens,
+            });
         }
     }
     docs
@@ -128,7 +144,10 @@ fn bm25_search<'a>(docs: &'a [Doc], query: &str, top_k: usize) -> Vec<(f64, &'a 
     // Document frequency per query term.
     let mut df = std::collections::HashMap::<&str, f64>::new();
     for qt in &q_tokens {
-        let count = docs.iter().filter(|d| d.tokens.iter().any(|t| t == qt)).count() as f64;
+        let count = docs
+            .iter()
+            .filter(|d| d.tokens.iter().any(|t| t == qt))
+            .count() as f64;
         df.insert(qt.as_str(), count);
     }
 
@@ -137,7 +156,11 @@ fn bm25_search<'a>(docs: &'a [Doc], query: &str, top_k: usize) -> Vec<(f64, &'a 
         let mut score = 0.0f64;
         let len = doc.tokens.len() as f64;
         for qt in &q_tokens {
-            let tf = doc.tokens.iter().filter(|t| t.as_str() == qt.as_str()).count() as f64;
+            let tf = doc
+                .tokens
+                .iter()
+                .filter(|t| t.as_str() == qt.as_str())
+                .count() as f64;
             if tf == 0.0 {
                 continue;
             }
@@ -204,6 +227,7 @@ mod tests {
             )),
             harness: None,
             mutations: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            mode_id: None,
         };
 
         let out = History
@@ -213,7 +237,10 @@ mod tests {
         assert!(out.contains("payment gateway"));
         assert!(out.contains("role=assistant"));
 
-        let none = History.execute(serde_json::json!({"query": "kubernetes"}), &ctx).await.unwrap();
+        let none = History
+            .execute(serde_json::json!({"query": "kubernetes"}), &ctx)
+            .await
+            .unwrap();
         assert!(none.contains("no archived excerpts"));
     }
 

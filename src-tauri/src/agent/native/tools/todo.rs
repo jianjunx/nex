@@ -59,8 +59,15 @@ pub fn parse_todos(args: &serde_json::Value) -> Result<Vec<TodoEntry>, String> {
             .get("status")
             .and_then(|v| v.as_str())
             .and_then(TodoStatus::parse)
-            .ok_or_else(|| format!("todos[{i}]: `status` must be one of pending/in_progress/completed/cancelled"))?;
-        out.push(TodoEntry { content: content.trim().to_string(), status });
+            .ok_or_else(|| {
+                format!(
+                    "todos[{i}]: `status` must be one of pending/in_progress/completed/cancelled"
+                )
+            })?;
+        out.push(TodoEntry {
+            content: content.trim().to_string(),
+            status,
+        });
     }
     Ok(out)
 }
@@ -107,8 +114,15 @@ impl Tool for TodoWrite {
     }
     async fn execute(&self, args: serde_json::Value, _ctx: &ToolCtx) -> Result<String, String> {
         let entries = parse_todos(&args)?;
-        let done = entries.iter().filter(|e| e.status == TodoStatus::Completed).count();
-        Ok(format!("updated plan: {} task(s), {} completed", entries.len(), done))
+        let done = entries
+            .iter()
+            .filter(|e| e.status == TodoStatus::Completed)
+            .count();
+        Ok(format!(
+            "updated plan: {} task(s), {} completed",
+            entries.len(),
+            done
+        ))
     }
 }
 

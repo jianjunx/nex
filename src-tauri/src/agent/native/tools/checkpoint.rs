@@ -71,15 +71,20 @@ impl Tool for Rewind {
 }
 
 fn create_checkpoint(cwd: &std::path::Path, message: &str) -> Result<String, String> {
-    let repo = git2::Repository::discover(cwd)
-        .map_err(|e| format!("not a git repository: {e}"))?;
+    let repo = git2::Repository::discover(cwd).map_err(|e| format!("not a git repository: {e}"))?;
     let mut index = repo.index().map_err(|e| format!("index error: {e}"))?;
     index
         .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
         .map_err(|e| format!("failed to stage files: {e}"))?;
-    index.write().map_err(|e| format!("failed to write index: {e}"))?;
-    let tree_id = index.write_tree().map_err(|e| format!("failed to write tree: {e}"))?;
-    let tree = repo.find_tree(tree_id).map_err(|e| format!("tree error: {e}"))?;
+    index
+        .write()
+        .map_err(|e| format!("failed to write index: {e}"))?;
+    let tree_id = index
+        .write_tree()
+        .map_err(|e| format!("failed to write tree: {e}"))?;
+    let tree = repo
+        .find_tree(tree_id)
+        .map_err(|e| format!("tree error: {e}"))?;
 
     let sig = repo
         .signature()
@@ -107,8 +112,7 @@ fn create_checkpoint(cwd: &std::path::Path, message: &str) -> Result<String, Str
 }
 
 fn rewind_to(cwd: &std::path::Path, id: &str) -> Result<String, String> {
-    let repo = git2::Repository::discover(cwd)
-        .map_err(|e| format!("not a git repository: {e}"))?;
+    let repo = git2::Repository::discover(cwd).map_err(|e| format!("not a git repository: {e}"))?;
     let branch = repo
         .find_branch(CHECKPOINT_BRANCH, git2::BranchType::Local)
         .map_err(|_| "no checkpoints exist yet".to_string())?;
@@ -116,7 +120,8 @@ fn rewind_to(cwd: &std::path::Path, id: &str) -> Result<String, String> {
     // Walk the checkpoint branch history for a matching (short) id.
     let head_oid = branch.get().target().ok_or("empty checkpoint branch")?;
     let mut walk = repo.revwalk().map_err(|e| format!("revwalk error: {e}"))?;
-    walk.push(head_oid).map_err(|e| format!("revwalk error: {e}"))?;
+    walk.push(head_oid)
+        .map_err(|e| format!("revwalk error: {e}"))?;
     let mut found: Option<git2::Commit> = None;
     for oid in walk.flatten() {
         if let Ok(commit) = repo.find_commit(oid) {
@@ -130,7 +135,10 @@ fn rewind_to(cwd: &std::path::Path, id: &str) -> Result<String, String> {
 
     repo.reset(commit.as_object(), git2::ResetType::Hard, None)
         .map_err(|e| format!("rewind failed: {e}"))?;
-    Ok(format!("workspace rewound to checkpoint {}", &commit.id().to_string()[..10]))
+    Ok(format!(
+        "workspace rewound to checkpoint {}",
+        &commit.id().to_string()[..10]
+    ))
 }
 
 #[cfg(test)]
@@ -148,6 +156,7 @@ mod tests {
             jobs: Rc::new(RefCell::new(super::super::jobs::JobTable::default())),
             harness: None,
             mutations: Rc::new(RefCell::new(Vec::new())),
+            mode_id: None,
         }
     }
 
@@ -163,7 +172,8 @@ mod tests {
                 let id = idx.write_tree().unwrap();
                 repo.find_tree(id).unwrap()
             };
-            repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[]).unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+                .unwrap();
         }
         drop(repo);
 
@@ -181,14 +191,20 @@ mod tests {
             .await
             .unwrap();
         assert!(out.contains("rewound"));
-        assert_eq!(std::fs::read_to_string(tmp.path().join("a.txt")).unwrap(), "v1");
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("a.txt")).unwrap(),
+            "v1"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn checkpoint_outside_repo_errors() {
         let tmp = tempfile::tempdir().unwrap();
         let c = ctx(tmp.path());
-        let err = Checkpoint.execute(serde_json::json!({}), &c).await.unwrap_err();
+        let err = Checkpoint
+            .execute(serde_json::json!({}), &c)
+            .await
+            .unwrap_err();
         assert!(err.contains("not a git repository"));
     }
 }

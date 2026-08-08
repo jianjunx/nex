@@ -34,9 +34,11 @@ impl Tool for Bash {
     }
     async fn execute(&self, args: serde_json::Value, ctx: &ToolCtx) -> Result<String, String> {
         let command = arg_str(&args, "command")?;
-        let timeout = std::time::Duration::from_secs(
-            arg_usize(&args, "timeout_secs", ctx.bash_timeout.as_secs() as usize) as u64,
-        );
+        let timeout = std::time::Duration::from_secs(arg_usize(
+            &args,
+            "timeout_secs",
+            ctx.bash_timeout.as_secs() as usize,
+        ) as u64);
 
         let mut cmd = tokio::process::Command::new("/bin/sh");
         cmd.arg("-c").arg(&command).current_dir(&ctx.cwd);
@@ -85,6 +87,7 @@ mod tests {
             )),
             harness: None,
             mutations: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            mode_id: None,
         }
     }
 
@@ -92,7 +95,10 @@ mod tests {
     async fn bash_runs_in_cwd() {
         let tmp = tempfile::tempdir().unwrap();
         let out = Bash
-            .execute(serde_json::json!({"command": "pwd && echo hi"}), &ctx(tmp.path()))
+            .execute(
+                serde_json::json!({"command": "pwd && echo hi"}),
+                &ctx(tmp.path()),
+            )
             .await
             .unwrap();
         assert!(out.contains("exit code: 0"));

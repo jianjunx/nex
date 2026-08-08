@@ -76,10 +76,17 @@ impl Tool for McpProxy {
             return Err(format!("MCP tool error: {err}"));
         }
         let result = response.get("result").cloned().unwrap_or_default();
-        let is_error = result.get("isError").and_then(|v| v.as_bool()).unwrap_or(false);
+        let is_error = result
+            .get("isError")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let text = render_content(result.get("content"));
         if is_error {
-            Err(if text.is_empty() { "MCP tool failed".to_string() } else { text })
+            Err(if text.is_empty() {
+                "MCP tool failed".to_string()
+            } else {
+                text
+            })
         } else {
             Ok(text)
         }

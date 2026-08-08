@@ -54,7 +54,9 @@ impl Tool for ReadFile {
             out.push_str(&format!("{:>6}→{}\n", idx + 1, line));
         }
         if out.is_empty() {
-            return Ok(format!("(file has {total} lines; offset {start} is past the end)"));
+            return Ok(format!(
+                "(file has {total} lines; offset {start} is past the end)"
+            ));
         }
         if start + limit <= total {
             out.push_str(&format!(
@@ -100,7 +102,11 @@ impl Tool for WriteFile {
         }
         std::fs::write(&path, &content)
             .map_err(|e| format!("failed to write `{}`: {e}", path.display()))?;
-        Ok(format!("wrote {} bytes to {}", content.len(), path.display()))
+        Ok(format!(
+            "wrote {} bytes to {}",
+            content.len(),
+            path.display()
+        ))
     }
 }
 
@@ -213,7 +219,11 @@ impl Tool for MultiEditFile {
         }
         std::fs::write(&path, &working)
             .map_err(|e| format!("failed to write `{}`: {e}", path.display()))?;
-        Ok(format!("applied {} edit(s) to {}", edits.len(), path.display()))
+        Ok(format!(
+            "applied {} edit(s) to {}",
+            edits.len(),
+            path.display()
+        ))
     }
 }
 
@@ -225,7 +235,9 @@ pub(crate) fn replace_unique(content: &str, old: &str, new: &str) -> Result<Stri
         count += 1;
         search_from += rel + old.len();
         if count > 1 {
-            return Err(format!("`old_string` matches multiple places ({count}+ found)"));
+            return Err(format!(
+                "`old_string` matches multiple places ({count}+ found)"
+            ));
         }
     }
     if count == 0 {
@@ -249,10 +261,15 @@ mod tests {
             )),
             harness: None,
             mutations: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            mode_id: None,
         }
     }
 
-    async fn run(tool: &dyn Tool, args: serde_json::Value, dir: &std::path::Path) -> Result<String, String> {
+    async fn run(
+        tool: &dyn Tool,
+        args: serde_json::Value,
+        dir: &std::path::Path,
+    ) -> Result<String, String> {
         tool.execute(args, &ctx(dir)).await
     }
 
@@ -260,7 +277,9 @@ mod tests {
     async fn read_file_numbers_and_pages() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join("a.txt"), "one\ntwo\nthree\n").unwrap();
-        let out = run(&ReadFile, serde_json::json!({"path": "a.txt"}), tmp.path()).await.unwrap();
+        let out = run(&ReadFile, serde_json::json!({"path": "a.txt"}), tmp.path())
+            .await
+            .unwrap();
         assert!(out.contains("1→one"));
         assert!(out.contains("3→three"));
         let out = run(
@@ -277,9 +296,13 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn write_and_edit_round_trip() {
         let tmp = tempfile::tempdir().unwrap();
-        run(&WriteFile, serde_json::json!({"path": "sub/b.txt", "content": "hello world"}), tmp.path())
-            .await
-            .unwrap();
+        run(
+            &WriteFile,
+            serde_json::json!({"path": "sub/b.txt", "content": "hello world"}),
+            tmp.path(),
+        )
+        .await
+        .unwrap();
         run(
             &EditFile,
             serde_json::json!({"path": "sub/b.txt", "old_string": "world", "new_string": "nex"}),
@@ -287,7 +310,10 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(std::fs::read_to_string(tmp.path().join("sub/b.txt")).unwrap(), "hello nex");
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("sub/b.txt")).unwrap(),
+            "hello nex"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

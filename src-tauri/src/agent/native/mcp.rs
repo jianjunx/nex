@@ -197,7 +197,14 @@ impl std::fmt::Debug for McpClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("McpClient")
             .field("name", &self.name)
-            .field("tools", &self.tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>())
+            .field(
+                "tools",
+                &self
+                    .tools
+                    .iter()
+                    .map(|t| t.name.as_str())
+                    .collect::<Vec<_>>(),
+            )
             .finish()
     }
 }
@@ -221,11 +228,17 @@ impl McpClient {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::inherit())
             .kill_on_drop(true);
-        let mut child =
-            cmd.spawn().map_err(|e| format!("failed to spawn MCP server `{name}`: {e}"))?;
-        let stdin = child.stdin.take().ok_or_else(|| format!("MCP server `{name}` has no stdin"))?;
-        let stdout =
-            child.stdout.take().ok_or_else(|| format!("MCP server `{name}` has no stdout"))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("failed to spawn MCP server `{name}`: {e}"))?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| format!("MCP server `{name}` has no stdin"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| format!("MCP server `{name}` has no stdout"))?;
         let io = Arc::new(Mutex::new(McpIo {
             stdin: Some(stdin),
             stdout: Some(BufReader::new(stdout)),
@@ -241,16 +254,21 @@ impl McpClient {
         let handshake = async {
             let mut io = io.lock().await;
             let init = io
-                .request(1, "initialize", serde_json::json!({
-                    "protocolVersion": "2025-06-18",
-                    "capabilities": {},
-                    "clientInfo": { "name": "nex", "version": env!("CARGO_PKG_VERSION") }
-                }))
+                .request(
+                    1,
+                    "initialize",
+                    serde_json::json!({
+                        "protocolVersion": "2025-06-18",
+                        "capabilities": {},
+                        "clientInfo": { "name": "nex", "version": env!("CARGO_PKG_VERSION") }
+                    }),
+                )
                 .await?;
             if let Some(err) = init.get("error") {
                 return Err(format!("initialize failed: {err}"));
             }
-            io.notify("notifications/initialized", serde_json::json!({})).await?;
+            io.notify("notifications/initialized", serde_json::json!({}))
+                .await?;
             let listed = io.request(2, "tools/list", serde_json::json!({})).await?;
             if let Some(err) = listed.get("error") {
                 return Err(format!("tools/list failed: {err}"));
@@ -262,7 +280,11 @@ impl McpClient {
                 .unwrap_or_default();
             for t in tools {
                 client.tools.push(McpToolInfo {
-                    name: t.get("name").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+                    name: t
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
                     description: t
                         .get("description")
                         .and_then(|v| v.as_str())
@@ -295,10 +317,14 @@ impl McpClient {
             let mut io = self.io.lock().await;
             let id = io.next_id;
             io.next_id += 1;
-            io.request(id, "tools/call", serde_json::json!({
-                "name": tool,
-                "arguments": args,
-            }))
+            io.request(
+                id,
+                "tools/call",
+                serde_json::json!({
+                    "name": tool,
+                    "arguments": args,
+                }),
+            )
             .await
         })
         .await
@@ -353,19 +379,31 @@ impl McpIo {
     async fn write_frame(&mut self, payload: &serde_json::Value) -> Result<(), String> {
         let body = serde_json::to_vec(payload).map_err(|e| e.to_string())?;
         let header = format!("Content-Length: {}\r\n\r\n", body.len());
-        let stdin = self.stdin.as_mut().ok_or_else(|| "MCP stdin closed".to_string())?;
+        let stdin = self
+            .stdin
+            .as_mut()
+            .ok_or_else(|| "MCP stdin closed".to_string())?;
         stdin
             .write_all(header.as_bytes())
             .await
             .map_err(|e| format!("MCP write failed: {e}"))?;
-        stdin.write_all(&body).await.map_err(|e| format!("MCP write failed: {e}"))?;
-        stdin.flush().await.map_err(|e| format!("MCP write failed: {e}"))?;
+        stdin
+            .write_all(&body)
+            .await
+            .map_err(|e| format!("MCP write failed: {e}"))?;
+        stdin
+            .flush()
+            .await
+            .map_err(|e| format!("MCP write failed: {e}"))?;
         Ok(())
     }
 
     /// Reads one complete JSON-RPC message (Content-Length framed).
     async fn read_message(&mut self) -> Result<serde_json::Value, String> {
-        let stdout = self.stdout.as_mut().ok_or_else(|| "MCP stdout closed".to_string())?;
+        let stdout = self
+            .stdout
+            .as_mut()
+            .ok_or_else(|| "MCP stdout closed".to_string())?;
         let mut content_length: Option<usize> = None;
         loop {
             let mut line = String::new();
@@ -379,7 +417,11 @@ impl McpIo {
             if line.trim().is_empty() {
                 break;
             }
-            if let Some(v) = line.to_ascii_lowercase().trim().strip_prefix("content-length:") {
+            if let Some(v) = line
+                .to_ascii_lowercase()
+                .trim()
+                .strip_prefix("content-length:")
+            {
                 content_length = v.trim().parse::<usize>().ok();
             }
         }
@@ -462,7 +504,12 @@ while True:
     /// Writes the fake server to a temp file; `None` when python3 is missing
     /// (the stdio round-trip tests then skip, like other env-dependent tests).
     fn fake_server_script(dir: &std::path::Path) -> Option<std::path::PathBuf> {
-        if std::process::Command::new("python3").arg("-c").arg("pass").output().is_err() {
+        if std::process::Command::new("python3")
+            .arg("-c")
+            .arg("pass")
+            .output()
+            .is_err()
+        {
             return None;
         }
         let path = dir.join("fake_mcp_server.py");
@@ -494,11 +541,7 @@ while True:
         // Malformed files are skipped.
         std::fs::write(tmp.path().join("bad.json"), "not json").unwrap();
 
-        let merged = merge_files(&[
-            global,
-            project,
-            tmp.path().join("bad.json"),
-        ]);
+        let merged = merge_files(&[global, project, tmp.path().join("bad.json")]);
         let names: Vec<&str> = merged.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(names, vec!["alpha", "beta", "zeta"]);
         // Project overrides global for `alpha`.
@@ -511,7 +554,9 @@ while True:
     #[tokio::test(flavor = "current_thread")]
     async fn stdio_handshake_and_tool_call_round_trip() {
         let tmp = tempfile::tempdir().unwrap();
-        let Some(script) = fake_server_script(tmp.path()) else { return };
+        let Some(script) = fake_server_script(tmp.path()) else {
+            return;
+        };
         let cfg = McpServerConfig {
             command: Some("python3".to_string()),
             args: vec![script.to_string_lossy().to_string()],
@@ -528,12 +573,16 @@ while True:
             .await
             .expect("call");
         assert_eq!(
-            resp.pointer("/result/content/0/text").and_then(|v| v.as_str()),
+            resp.pointer("/result/content/0/text")
+                .and_then(|v| v.as_str()),
             Some("echo:hi")
         );
 
         // isError surfaces in the response for the proxy to turn into an error.
-        let resp = client.call_tool("boom", serde_json::json!({})).await.expect("call");
+        let resp = client
+            .call_tool("boom", serde_json::json!({}))
+            .await
+            .expect("call");
         assert_eq!(
             resp.pointer("/result/isError").and_then(|v| v.as_bool()),
             Some(true)
@@ -545,7 +594,9 @@ while True:
     #[tokio::test(flavor = "current_thread")]
     async fn mcp_proxy_registers_and_maps_iserror() {
         let tmp = tempfile::tempdir().unwrap();
-        let Some(script) = fake_server_script(tmp.path()) else { return };
+        let Some(script) = fake_server_script(tmp.path()) else {
+            return;
+        };
         let cfg = McpServerConfig {
             command: Some("python3".to_string()),
             args: vec![script.to_string_lossy().to_string()],
@@ -566,16 +617,22 @@ while True:
             }));
         }
         let proxy = registry.get("mcp__fake__echo").expect("registered");
-        assert!(!proxy.read_only(), "MCP tools must go through permission flow");
+        assert!(
+            !proxy.read_only(),
+            "MCP tools must go through permission flow"
+        );
         assert!(registry.get("mcp__fake__boom").is_some());
 
         let ctx = ToolCtx {
             cwd: std::env::temp_dir(),
             bash_timeout: Duration::from_secs(5),
             archive_dir: std::env::temp_dir(),
-            jobs: Rc::new(RefCell::new(crate::agent::native::tools::jobs::JobTable::default())),
+            jobs: Rc::new(RefCell::new(
+                crate::agent::native::tools::jobs::JobTable::default(),
+            )),
             harness: None,
             mutations: Rc::new(RefCell::new(Vec::new())),
+            mode_id: None,
         };
         let ok = proxy
             .execute(serde_json::json!({ "text": "yo" }), &ctx)
@@ -599,14 +656,19 @@ while True:
             env: HashMap::new(),
             url: Some("https://mcp.example.com".to_string()),
         };
-        let err = McpClient::connect("http", &cfg).await.expect_err("must fail");
+        let err = McpClient::connect("http", &cfg)
+            .await
+            .expect_err("must fail");
         assert!(err.contains("not supported"), "got: {err}");
-        let err = McpClient::connect("none", &McpServerConfig {
-            command: None,
-            args: vec![],
-            env: HashMap::new(),
-            url: None,
-        })
+        let err = McpClient::connect(
+            "none",
+            &McpServerConfig {
+                command: None,
+                args: vec![],
+                env: HashMap::new(),
+                url: None,
+            },
+        )
         .await
         .expect_err("must fail");
         assert!(err.contains("no `command`"), "got: {err}");

@@ -183,7 +183,10 @@ mod tests {
         }];
         assert_eq!(expand("/review", &cmds).as_deref(), Some("Review "));
         assert_eq!(expand("/review src", &cmds).as_deref(), Some("Review src"));
-        assert_eq!(expand("/review   src/ ", &cmds).as_deref(), Some("Review src/"));
+        assert_eq!(
+            expand("/review   src/ ", &cmds).as_deref(),
+            Some("Review src/")
+        );
         assert_eq!(expand("/nope hi", &cmds), None);
         assert_eq!(expand("not a command", &cmds), None);
     }
@@ -197,7 +200,10 @@ mod tests {
             body: "Fix the issue".into(),
         }];
         assert_eq!(expand("/fix", &cmds).as_deref(), Some("Fix the issue"));
-        assert_eq!(expand("/fix foo", &cmds).as_deref(), Some("Fix the issue\n\nfoo"));
+        assert_eq!(
+            expand("/fix foo", &cmds).as_deref(),
+            Some("Fix the issue\n\nfoo")
+        );
     }
 
     #[test]
@@ -205,15 +211,27 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let cwd = tmp.path().join("proj");
         std::fs::create_dir_all(cwd.join(".nex/commands")).unwrap();
-        write(tmp.path(), "commands/zeta.md", "---\ndescription: global zeta\n---\nGLOBAL");
-        write(tmp.path(), "commands/alpha.md", "---\ndescription: global alpha\n---\nGLOBAL");
+        write(
+            tmp.path(),
+            "commands/zeta.md",
+            "---\ndescription: global zeta\n---\nGLOBAL",
+        );
+        write(
+            tmp.path(),
+            "commands/alpha.md",
+            "---\ndescription: global alpha\n---\nGLOBAL",
+        );
         write(tmp.path(), "cwd-ignored.md", "noop");
         write(
             &cwd.join(".nex/commands"),
             "alpha.md",
             "---\ndescription: project alpha\n---\nPROJECT",
         );
-        write(&cwd.join(".nex/commands"), "beta.md", "---\ndescription: project beta\n---\nB");
+        write(
+            &cwd.join(".nex/commands"),
+            "beta.md",
+            "---\ndescription: project beta\n---\nB",
+        );
 
         let cmds = discover_in(&cwd, Some(tmp.path().join("commands")));
         let names: Vec<&str> = cmds.iter().map(|c| c.name.as_str()).collect();

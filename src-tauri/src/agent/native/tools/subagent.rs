@@ -189,6 +189,7 @@ mod tests {
             jobs: Rc::new(RefCell::new(JobTable::default())),
             harness: None,
             mutations: Rc::new(RefCell::new(Vec::new())),
+            mode_id: None,
         }
     }
 
@@ -236,7 +237,10 @@ mod tests {
         assert_eq!(next, 16_000);
 
         let p3 = ReadSubagentResult
-            .execute(serde_json::json!({"ref": "subagent-x.txt", "offset": 32_000}), &ctx)
+            .execute(
+                serde_json::json!({"ref": "subagent-x.txt", "offset": 32_000}),
+                &ctx,
+            )
             .await
             .unwrap();
         assert!(p3.contains("more: false"));
@@ -324,14 +328,10 @@ mod tests {
 
         let (_client_end, agent_end) = tokio::io::duplex(1024);
         let (r, w) = tokio::io::split(agent_end);
-        let (conn, _io) = acp::AgentSideConnection::new(
-            NullAgent,
-            w.compat_write(),
-            r.compat(),
-            |fut| {
+        let (conn, _io) =
+            acp::AgentSideConnection::new(NullAgent, w.compat_write(), r.compat(), |fut| {
                 tokio::task::spawn_local(fut);
-            },
-        );
+            });
         std::sync::Arc::new(conn)
     }
 
@@ -345,10 +345,8 @@ mod tests {
             async fn stream(
                 &self,
                 _req: crate::agent::native::provider::ChatRequest,
-            ) -> Result<
-                crate::agent::native::provider::ChunkStream,
-                crate::error::NexError,
-            > {
+            ) -> Result<crate::agent::native::provider::ChunkStream, crate::error::NexError>
+            {
                 Err(crate::error::NexError::Internal("unused".into()))
             }
         }

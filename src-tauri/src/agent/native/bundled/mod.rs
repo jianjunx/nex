@@ -36,49 +36,19 @@ fn write_if_missing(path: &Path, contents: &str) {
 }
 
 const COMMANDS: &[(&str, &str)] = &[
-    (
-        "commit",
-        include_str!("commands/commit.md"),
-    ),
-    (
-        "review",
-        include_str!("commands/review.md"),
-    ),
-    (
-        "explain",
-        include_str!("commands/explain.md"),
-    ),
-    (
-        "fix",
-        include_str!("commands/fix.md"),
-    ),
-    (
-        "test",
-        include_str!("commands/test.md"),
-    ),
-    (
-        "optimize",
-        include_str!("commands/optimize.md"),
-    ),
+    ("commit", include_str!("commands/commit.md")),
+    ("review", include_str!("commands/review.md")),
+    ("explain", include_str!("commands/explain.md")),
+    ("fix", include_str!("commands/fix.md")),
+    ("test", include_str!("commands/test.md")),
+    ("optimize", include_str!("commands/optimize.md")),
 ];
 
 const SKILLS: &[(&str, &str)] = &[
-    (
-        "git-commit",
-        include_str!("skills/git-commit/SKILL.md"),
-    ),
-    (
-        "code-review",
-        include_str!("skills/code-review/SKILL.md"),
-    ),
-    (
-        "debug",
-        include_str!("skills/debug/SKILL.md"),
-    ),
-    (
-        "refactor",
-        include_str!("skills/refactor/SKILL.md"),
-    ),
+    ("git-commit", include_str!("skills/git-commit/SKILL.md")),
+    ("code-review", include_str!("skills/code-review/SKILL.md")),
+    ("debug", include_str!("skills/debug/SKILL.md")),
+    ("refactor", include_str!("skills/refactor/SKILL.md")),
 ];
 
 #[cfg(test)]

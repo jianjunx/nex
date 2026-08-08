@@ -42,7 +42,11 @@ pub struct ModelCapabilities {
 
 impl Default for ModelCapabilities {
     fn default() -> Self {
-        Self { tools: true, vision: false, reasoning: false }
+        Self {
+            tools: true,
+            vision: false,
+            reasoning: false,
+        }
     }
 }
 
@@ -174,7 +178,9 @@ impl NativeAgentConfig {
     /// default (`maxSteps: 40`) is lifted to unlimited (`0`) once.
     pub fn load(dir: &Path) -> Self {
         let path = dir.join(NATIVE_CONFIG_FILE);
-        let Ok(bytes) = std::fs::read(&path) else { return Self::default() };
+        let Ok(bytes) = std::fs::read(&path) else {
+            return Self::default();
+        };
         let mut cfg = match serde_json::from_slice::<serde_json::Value>(&bytes) {
             Ok(value) => {
                 if Self::is_legacy(&value) {
@@ -272,8 +278,9 @@ impl NativeAgentConfig {
     pub fn save(&self, dir: &Path) -> Result<(), NexError> {
         let _ = std::fs::create_dir_all(dir);
         let path = dir.join(NATIVE_CONFIG_FILE);
-        let json = serde_json::to_vec_pretty(self)
-            .map_err(|e| NexError::Internal(format!("failed to serialize native-agent config: {e}")))?;
+        let json = serde_json::to_vec_pretty(self).map_err(|e| {
+            NexError::Internal(format!("failed to serialize native-agent config: {e}"))
+        })?;
         std::fs::write(&path, json)
             .map_err(|e| NexError::Internal(format!("failed to write native-agent config: {e}")))?;
         Ok(())
@@ -305,12 +312,10 @@ impl NativeAgentConfig {
 
     /// Records runtime-learned reasoning support for a composite model id.
     /// Returns `true` when the entry existed and was changed.
-    pub fn set_reasoning_support(
-        &mut self,
-        composite: &str,
-        support: ReasoningSupport,
-    ) -> bool {
-        let Some((pid, mid)) = composite.split_once('/') else { return false };
+    pub fn set_reasoning_support(&mut self, composite: &str, support: ReasoningSupport) -> bool {
+        let Some((pid, mid)) = composite.split_once('/') else {
+            return false;
+        };
         for p in self.providers.iter_mut() {
             if p.id != pid {
                 continue;
@@ -417,7 +422,10 @@ mod tests {
         assert_eq!(p.api_key, "sk-test");
         assert_eq!(p.models[0].id, "deepseek-chat");
         assert_eq!(cfg.agent.max_steps, 25);
-        assert_eq!(cfg.default_selection().as_deref(), Some("deepseek/deepseek-chat"));
+        assert_eq!(
+            cfg.default_selection().as_deref(),
+            Some("deepseek/deepseek-chat")
+        );
     }
 
     #[test]
@@ -436,19 +444,26 @@ mod tests {
         assert!(cfg.resolve_model("deepseek").is_none());
 
         // Default falls back to the first provider's first model.
-        assert_eq!(cfg.default_selection().as_deref(), Some("deepseek/deepseek-chat"));
+        assert_eq!(
+            cfg.default_selection().as_deref(),
+            Some("deepseek/deepseek-chat")
+        );
         cfg.default_model = Some("moonshot/kimi-k2".to_string());
         assert_eq!(cfg.default_selection().as_deref(), Some("moonshot/kimi-k2"));
         // A dangling default falls back instead of erroring.
         cfg.default_model = Some("gone/gone".to_string());
-        assert_eq!(cfg.default_selection().as_deref(), Some("deepseek/deepseek-chat"));
+        assert_eq!(
+            cfg.default_selection().as_deref(),
+            Some("deepseek/deepseek-chat")
+        );
     }
 
     #[test]
     fn set_reasoning_support_updates_entry() {
         let mut cfg = NativeAgentConfig::default();
         // Force a reasoning model first.
-        cfg.providers[0].models[0] = crate::agent::native::capabilities::detect("deepseek-reasoner");
+        cfg.providers[0].models[0] =
+            crate::agent::native::capabilities::detect("deepseek-reasoner");
         assert!(cfg.set_reasoning_support("deepseek/deepseek-reasoner", ReasoningSupport::No));
         let m = cfg.resolve_model("deepseek/deepseek-reasoner").unwrap().1;
         assert_eq!(m.reasoning_support, ReasoningSupport::No);

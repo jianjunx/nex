@@ -349,6 +349,41 @@ function patchPrefs(
  * [`flushPendingNotifications`].
  */
 const pendingNotificationsBySessionId = new Map<string, unknown[]>();
+/** Cap per sessionId so a stuck/orphan agent cannot grow the buffer unboundedly. */
+const MAX_PENDING_UPDATES_PER_SESSION = 8;
+
+/** Only meta catalogs that must survive the create-session race. Drop stream chunks. */
+function isBufferableSessionUpdate(update: unknown): boolean {
+  if (!update || typeof update !== "object") return false;
+  const kind = (update as { sessionUpdate?: unknown }).sessionUpdate;
+  return (
+    kind === "available_commands_update" ||
+    kind === "current_mode_update" ||
+    kind === "config_option_update"
+  );
+}
+
+function sessionCreateInFlight(get: () => AgentStore): boolean {
+  return Object.values(get().sessions).some(
+    (ss) => ss.status === "starting" || ss.sessionId === "",
+  );
+}
+
+/** Drop buffered updates when no create is in flight (failed create / stale ids). */
+function pruneStalePendingNotifications(get: () => AgentStore): void {
+  if (sessionCreateInFlight(get)) return;
+  pendingNotificationsBySessionId.clear();
+}
+
+function enqueuePendingNotification(sessionId: string, update: unknown, get: () => AgentStore): void {
+  pruneStalePendingNotifications(get);
+  if (!sessionCreateInFlight(get)) return;
+  if (!isBufferableSessionUpdate(update)) return;
+  const q = pendingNotificationsBySessionId.get(sessionId) ?? [];
+  if (q.length >= MAX_PENDING_UPDATES_PER_SESSION) return;
+  q.push(update);
+  pendingNotificationsBySessionId.set(sessionId, q);
+}
 
 function applyNotificationUpdate(
   set: (fn: (s: AgentStore) => void) => void,
@@ -573,6 +608,7 @@ export const useAgentStore = create<AgentStore>()(
         });
         // Drain commands/mode updates that raced ahead of the sessionId mapping.
         flushPendingNotifications(set, get, result.sessionId);
+        pruneStalePendingNotifications(get);
         await restorePrefsToLiveSession(set, get, conversationId, result.sessionId);
         // Auto-process any messages queued while the session was starting
         void get().processNextPending(conversationId);
@@ -582,6 +618,7 @@ export const useAgentStore = create<AgentStore>()(
           delete s.sessions[conversationId];
           s.error = errorMessage(err);
         });
+        pruneStalePendingNotifications(get);
         throw err;
       } finally {
         set((s) => {
@@ -1391,10 +1428,9 @@ export const useAgentStore = create<AgentStore>()(
       onAgentNotification(({ sessionId, update }) => {
         const session = Object.values(get().sessions).find((ss) => ss.sessionId === sessionId);
         if (!session) {
-          // SessionId not registered yet (createSession still in flight) — buffer.
-          const q = pendingNotificationsBySessionId.get(sessionId) ?? [];
-          q.push(update);
-          pendingNotificationsBySessionId.set(sessionId, q);
+          // SessionId not registered yet (createSession still in flight) — buffer
+          // meta catalogs only; stream chunks for unknown ids are dropped.
+          enqueuePendingNotification(sessionId, update, get);
           return;
         }
         applyNotificationUpdate(set, get, sessionId, update);

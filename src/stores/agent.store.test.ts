@@ -256,6 +256,49 @@ describe("agent.store session prefs", () => {
       { name: "review", description: "Review code.", inputHint: undefined },
     ]);
   });
+
+  it("createSession 失败时丢弃已缓冲的 notification，不污染后续会话", async () => {
+    listenersTeardown = useAgentStore.getState().initListeners();
+
+    let rejectCreate!: (err: Error) => void;
+    agentCreateSession.mockImplementation(
+      () =>
+        new Promise((_, reject) => {
+          rejectCreate = reject;
+        }),
+    );
+
+    const failPromise = useAgentStore
+      .getState()
+      .createSession("conv-1", { type: "native", id: "nex" }, "/tmp");
+
+    notificationHandler!({
+      sessionId: "sid-orphan",
+      update: {
+        sessionUpdate: "available_commands_update",
+        availableCommands: [{ name: "review", description: "should be dropped" }],
+      },
+    });
+    // Stream chunks must not be buffered either.
+    notificationHandler!({
+      sessionId: "sid-orphan",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "hi" },
+      },
+    });
+
+    rejectCreate(new Error("spawn failed"));
+    await expect(failPromise).rejects.toThrow("spawn failed");
+
+    agentCreateSession.mockResolvedValue({ sessionId: "sid-orphan" });
+    await useAgentStore.getState().createSession("conv-2", { type: "native", id: "nex" }, "/tmp");
+
+    expect(useAgentStore.getState().metaByConversation["conv-2"]?.availableCommands ?? []).toEqual(
+      [],
+    );
+    expect(useAgentStore.getState().entriesByConversation["conv-2"] ?? []).toEqual([]);
+  });
 });
 
 describe("agent.store Allow 授权模式", () => {

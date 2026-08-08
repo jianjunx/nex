@@ -927,7 +927,10 @@ fn available_commands_from_json(value: &serde_json::Value) -> Option<Vec<Availab
     let items = arr.as_array()?;
     let mut out = Vec::new();
     for item in items {
-        let name = item.get("name").and_then(|v| v.as_str())?.to_string();
+        // Skip malformed entries instead of aborting the whole catalog.
+        let Some(name) = item.get("name").and_then(|v| v.as_str()) else {
+            continue;
+        };
         if name.is_empty() {
             continue;
         }
@@ -944,7 +947,7 @@ fn available_commands_from_json(value: &serde_json::Value) -> Option<Vec<Availab
             .or_else(|| item.get("input_hint").and_then(|v| v.as_str()))
             .map(str::to_string);
         out.push(AvailableCommandDto {
-            name,
+            name: name.to_string(),
             description,
             input_hint,
         });
@@ -2131,6 +2134,23 @@ fn drain_stderr(stderr: tokio::process::ChildStderr, program: String, tail: Arc<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn available_commands_from_json_skips_bad_items() {
+        let value = serde_json::json!({
+            "_meta": {
+                "availableCommands": [
+                    { "description": "no name" },
+                    { "name": "", "description": "empty" },
+                    { "name": "review", "description": "Review code.", "input": { "hint": "files" } },
+                ]
+            }
+        });
+        let cmds = available_commands_from_json(&value).expect("catalog");
+        assert_eq!(cmds.len(), 1);
+        assert_eq!(cmds[0].name, "review");
+        assert_eq!(cmds[0].input_hint.as_deref(), Some("files"));
+    }
 
     #[test]
     fn parse_cursor_todos_reads_items() {

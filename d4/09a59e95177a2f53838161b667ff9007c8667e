@@ -1,0 +1,60 @@
+src/bridge/tauri.ts
+  s_80a861342bad6c::t_515b7518a399e8 147-148,156-157,166-169
+  s_80a861342bad6c::t_967be752f9237f 380-388
+src-tauri/src/lib.rs
+  s_80a861342bad6c::t_6d554cc1d11c24 101
+src-tauri/src/agent/native/probe.rs
+  s_80a861342bad6c::t_ba7887f6ab8c04 1-42,44-318
+  s_80a861342bad6c::t_305dc473a9e2ab 43
+src-tauri/src/agent/native/provider/mod.rs
+  s_80a861342bad6c::t_940887d663d547 50-51,61-62,76,89,103
+src-tauri/src/agent/native/config.rs
+  s_80a861342bad6c::t_57c08e817cb74e 365-367
+  s_80a861342bad6c::t_627d33899bb962 251
+  s_80a861342bad6c::t_377f51b7aaafcb 243-246,252
+  s_80a861342bad6c::t_8ef8a8e6b3f2f3 71
+  s_80a861342bad6c::t_ad01ed67d5ee96 34-50,88-94,105-106
+src/features/settings/sections/NexAgentSection.tsx
+  s_80a861342bad6c::t_598f0bae8f850d 502-506,511,559,571,583-586,613-615,634-638,641,654-659
+  s_80a861342bad6c::t_c971a4f48497bf 667-669
+  s_80a861342bad6c::t_807fa8521c67fa 507-510,515-521,529-530,532-558,568-570,578,587-612,616-633,639-640,642-653
+  s_80a861342bad6c::t_0bbb87711c58b1 753-758
+  s_80a861342bad6c::t_e530e82d4a789a 111-121,132-133,137-142
+  s_80a861342bad6c::t_6dbb2cbb7317bc 59,66,68,72-110,123-124,143
+  s_80a861342bad6c::t_297ed102795df6 717-722,724-752,759-812,814
+  s_80a861342bad6c::t_6c206e164882c2 24,34
+  s_80a861342bad6c::t_1a6070349852cc 144
+src-tauri/src/agent/native/capabilities.rs
+  s_80a861342bad6c::t_72cc077f7b839d 655-719
+  s_80a861342bad6c::t_b2e5c68c01b46d 27-28,245,247-260,285-287,351-388,390-436,439,441,443-460,462,464-478,480-495,543,548-571,573-580,583-596,649-654
+  s_80a861342bad6c::t_dfd7489ef9017d 1,3-13,15-16,47-52,56-115,117-137,143,148,152-244
+  s_80a861342bad6c::t_6c003302c070c7 246
+src-tauri/src/agent/native/provider/deepseek.rs
+  s_80a861342bad6c::t_65891715e9c132 76,80-106
+  s_80a861342bad6c::t_f455ac3a50b957 107,427-428,431,435-487
+  s_80a861342bad6c::t_be2224bb16624f 108,488
+src-tauri/src/agent/native/mod.rs
+  s_80a861342bad6c::t_4d2062e6872f6b 1162-1163
+  s_80a861342bad6c::t_1c67e4674b1190 27
+src-tauri/src/commands/agent_cmds.rs
+  s_80a861342bad6c::t_fe26d46b1ec466 155,180,188-195
+  s_80a861342bad6c::t_3d67cac1ae4f52 196-197
+src/bridge/commands.ts
+  s_80a861342bad6c::t_bf9e24408790ed 34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "d409a59e95177a2f53838161b667ff9007c8667e",
+  "prompts": {},
+  "sessions": {
+    "s_80a861342bad6c": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e16a261f-a8a1-45cf-85bf-da8e8ac0fddb",
+        "model": "grok-4.5"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

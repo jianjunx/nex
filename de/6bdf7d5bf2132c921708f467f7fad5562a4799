@@ -1,0 +1,32 @@
+src/stores/agent.store.ts
+  s_477d4656afaaae::t_2b0189da8e404e 738-740
+  s_477d4656afaaae::t_8c5184e04f4cb4 852,855,861-869,906-914,945,951-960,976-983
+  s_477d4656afaaae::t_9ae62c9aca1b0b 780-792
+src-tauri/src/agent/native/capabilities.rs
+  s_477d4656afaaae::t_f70569fec1eeae 194-198
+  s_477d4656afaaae::t_691431bd6128bb 293-297
+src-tauri/src/agent/acp_adapter.rs
+  s_477d4656afaaae::t_469a59fbc4869c 2190-2229
+src/stores/agent.store.test.ts
+  s_477d4656afaaae::t_717f782dde8362 12-14,31-33,51
+  s_477d4656afaaae::t_4f53a21dd55221 74-87
+  s_477d4656afaaae::t_2c3810a17b3e99 88-91
+  s_477d4656afaaae::t_c3cf3b4a12b972 15-19,38-39
+  s_477d4656afaaae::t_41ee829b591eeb 367-612
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "de6bdf7d5bf2132c921708f467f7fad5562a4799",
+  "prompts": {},
+  "sessions": {
+    "s_477d4656afaaae": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "44a70f91-3e35-4e2b-9976-c92784aeb3cc",
+        "model": "grok-4.5"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

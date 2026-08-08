@@ -1,0 +1,78 @@
+src-tauri/src/agent/native/session.rs
+  s_fa4418faffcef1::t_5fe0932b8ae37c 66-67
+  s_fa4418faffcef1::t_728369c734be76 623,627,641,643
+  s_fa4418faffcef1::t_3d740c5e399b8e 978
+  s_fa4418faffcef1::t_990f69e1560a29 1311,1313,1318-1322
+  s_fa4418faffcef1::t_f26be15c8382f9 518-520,523-532,534-541
+  s_fa4418faffcef1::t_49ca5f239016f5 1353-1399
+  s_fa4418faffcef1::t_c3177f1c7a5c80 141
+src-tauri/src/agent/acp_adapter.rs
+  s_fa4418faffcef1::t_3bdacbfa7a722f 727-731,736
+  s_fa4418faffcef1::t_1b1e3c2bf9cba6 36-38
+  s_fa4418faffcef1::t_ea30fc672dc1d8 11
+  s_fa4418faffcef1::t_0a7ca12f9b6135 803-812,814,816
+  s_fa4418faffcef1::t_b5fc36bb526391 140-141
+  s_fa4418faffcef1::t_cc3d9f33b3edb4 2136-2153
+  s_fa4418faffcef1::t_ff503aaf37b164 468,479-495,498-500,506-509,514,523-543,566-571
+  s_fa4418faffcef1::t_260942370f11e0 358,365-370
+  s_fa4418faffcef1::t_bc562ef80598ba 1770
+  s_fa4418faffcef1::t_58049c8b8870be 653-714
+  s_fa4418faffcef1::t_06d5b998c2c091 413-414,442-445
+  s_fa4418faffcef1::t_2863d4b31b1d4a 1534-1541
+src/features/agent/ChatArea.tsx
+  s_fa4418faffcef1::t_aa05623806d007 6,9-12,18-19
+src-tauri/src/commands/agent_cmds.rs
+  s_fa4418faffcef1::t_9867f39000fae4 230
+  s_fa4418faffcef1::t_dd0f4843cfa132 268
+  s_fa4418faffcef1::t_009d9e7a816648 211-212
+src-tauri/src/agent/native/mod.rs
+  s_fa4418faffcef1::t_fee42e9e21ee06 728,735
+  s_fa4418faffcef1::t_97ef4bdc839ca4 80,91
+  s_fa4418faffcef1::t_dfa5b30caff978 769,774,776-782
+  s_fa4418faffcef1::t_526942aa215b59 51-54
+  s_fa4418faffcef1::t_c4d6eb977ee5ee 449-458,460,475
+  s_fa4418faffcef1::t_6d18342cd8d10f 680
+src-tauri/src/agent/native/mcp.rs
+  s_fa4418faffcef1::t_612582dabe7c4b 41-43
+  s_fa4418faffcef1::t_39dfd215f82a23 542,557-559,606-614,619-621,623-624,626,628-629,632-638,640-641,643
+  s_fa4418faffcef1::t_3c336964848add 627,642,650-661
+  s_fa4418faffcef1::t_54341e3b50202f 233,241-247,250,256
+  s_fa4418faffcef1::t_5f2ff0f9cfa834 194
+  s_fa4418faffcef1::t_d358b5445feeb8 940
+  s_fa4418faffcef1::t_63557cf958ab5e 818
+  s_fa4418faffcef1::t_0f5b8ab6682589 90
+  s_fa4418faffcef1::t_38b1ac24da97dd 796-806
+  s_fa4418faffcef1::t_3aaa96bee47986 62
+  s_fa4418faffcef1::t_3f011d0b9c89d4 915
+  s_fa4418faffcef1::t_da1dff2a71a170 859
+  s_fa4418faffcef1::t_159b7d17b15e1c 662-663
+src/bridge/tauri.ts
+  s_fa4418faffcef1::t_045156ed3fecb6 209
+  s_fa4418faffcef1::t_a795caa14614f9 191
+src/features/agent/PlanApprovalModal.tsx
+  s_fa4418faffcef1::t_ed5b7aebd4925f 1,17-21,25-31,75,78
+src-tauri/src/agent/native/archive.rs
+  s_fa4418faffcef1::t_b51ffe437edc12 9,41-65,72-81,99,129-148
+src/features/agent/AskQuestionModal.tsx
+  s_fa4418faffcef1::t_5c23135f68a763 1,20,23,35-45,62,84
+src/stores/agent.store.ts
+  s_fa4418faffcef1::t_6fa2f0edaf5660 818-824
+  s_fa4418faffcef1::t_9a342ddc59e571 746-747,750-759,761,770-774,782,785-794,796,805-809
+  s_fa4418faffcef1::t_4f0d1f96d6543d 662-664
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "0e072aac0cbe0b3ba6f14beaa51888e4b115ce5d",
+  "prompts": {},
+  "sessions": {
+    "s_fa4418faffcef1": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "1b05f627-d561-4c60-97de-24bf619fce41",
+        "model": "grok-4.5"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

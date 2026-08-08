@@ -3,6 +3,7 @@ import { ListChecks } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { ToolCallCard } from "./ToolCallCard";
+import { PlanApprovalCard } from "./PlanApprovalCard";
 import { MessageContextMenu } from "./MessageContextMenu";
 import { Markdown } from "./Markdown";
 import { groupChunks } from "./groupChunks";
@@ -81,6 +82,12 @@ export const EntryView = memo(function EntryView({ entry }: { entry: ThreadEntry
               </li>
             ))}
           </ul>
+        </div>
+      );
+    case "plan_approval":
+      return (
+        <div className="max-w-[96%]">
+          <PlanApprovalCard entry={entry} />
         </div>
       );
   }

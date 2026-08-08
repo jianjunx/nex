@@ -17,9 +17,15 @@ vi.mock("../bridge/tauri", () => ({
   conversationGetThreadEntries: vi.fn(),
   conversationReplaceThreadEntries: (...args: unknown[]) => conversationReplaceThreadEntries(...args),
   agentCreateSession: vi.fn(),
-  agentSendPrompt: vi.fn(),
+  agentSendPrompt: vi.fn().mockResolvedValue({ hadMutations: false }),
+  nativeAgentGetConfig: vi.fn().mockResolvedValue({
+    providers: [],
+    agent: { maxSteps: 0, contextWindow: 0, bashTimeoutSecs: 120, maxSubagentConcurrency: 6, autoReview: false },
+  }),
   agentCancel: vi.fn(),
   agentRespondPermission: vi.fn(),
+  agentRespondPlan: vi.fn(),
+  agentRespondAskQuestion: vi.fn(),
   agentCloseSession: vi.fn(),
   agentListServers: vi.fn(),
   agentListAllServers: vi.fn(),
@@ -31,6 +37,8 @@ vi.mock("../bridge/tauri", () => ({
   agentCustomDelete: vi.fn(),
   onAgentNotification: () => Promise.resolve(() => {}),
   onAgentPermissionRequest: () => Promise.resolve(() => {}),
+  onAgentPlanApprovalRequest: () => Promise.resolve(() => {}),
+  onAgentAskQuestionRequest: () => Promise.resolve(() => {}),
   onAgentSessionTerminated: () => Promise.resolve(() => {}),
 }));
 

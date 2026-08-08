@@ -8,9 +8,11 @@ import { act, cleanup, render } from "@testing-library/react";
 vi.mock("../../../bridge/tauri", () => ({
   // agent.store 所需
   agentCreateSession: vi.fn(),
-  agentSendPrompt: vi.fn(),
+  agentSendPrompt: vi.fn().mockResolvedValue({ hadMutations: false }),
   agentCancel: vi.fn(),
   agentRespondPermission: vi.fn(),
+  agentRespondPlan: vi.fn(),
+  agentRespondAskQuestion: vi.fn(),
   agentCloseSession: vi.fn(),
   agentListServers: vi.fn().mockResolvedValue([]),
   agentListAllServers: vi.fn().mockResolvedValue([]),
@@ -21,8 +23,14 @@ vi.mock("../../../bridge/tauri", () => ({
   agentSetSessionModel: vi.fn(),
   agentSetSessionConfigOption: vi.fn(),
   conversationReplaceThreadEntries: vi.fn(),
+  nativeAgentGetConfig: vi.fn().mockResolvedValue({
+    providers: [],
+    agent: { maxSteps: 0, contextWindow: 0, bashTimeoutSecs: 120, maxSubagentConcurrency: 6, autoReview: false },
+  }),
   onAgentNotification: () => Promise.resolve(() => {}),
   onAgentPermissionRequest: () => Promise.resolve(() => {}),
+  onAgentPlanApprovalRequest: () => Promise.resolve(() => {}),
+  onAgentAskQuestionRequest: () => Promise.resolve(() => {}),
   onAgentSessionTerminated: () => Promise.resolve(() => {}),
   // conversation.store 所需
   conversationCreate: vi.fn(),

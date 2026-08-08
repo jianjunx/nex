@@ -415,6 +415,9 @@ fn merge_branch_fast_forwards_current() {
     network::merge_branch(dir.path(), "feature").unwrap();
     assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "v2");
 }
+
+#[test]
+fn clone_fetch_pull_and_push_round_trip() {
     // Seed repo with one commit and a bare "remote". 网络操作委派系统 git
     // 子进程（与生产一致），file:// 远端无需凭据。
     let seed = tempdir().unwrap();

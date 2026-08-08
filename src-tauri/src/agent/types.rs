@@ -53,6 +53,70 @@ pub struct PermissionOption {
     pub kind: Option<String>,
 }
 
+/// Payload of the `agent-plan-approval-request` event (Cursor `cursor/create_plan`).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentPlanApprovalRequest {
+    pub session_id: String,
+    /// Nex-generated correlation id; the frontend passes it back to
+    /// `agent_respond_plan`.
+    pub request_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overview: Option<String>,
+    /// Markdown plan body from Cursor.
+    pub plan: String,
+    pub todos: Vec<CursorTodoDto>,
+}
+
+/// One todo item from Cursor `create_plan` / `update_todos`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CursorTodoDto {
+    pub id: String,
+    pub content: String,
+    pub status: String,
+}
+
+/// Payload of the `agent-ask-question-request` event (Cursor `cursor/ask_question`).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentAskQuestionRequest {
+    pub session_id: String,
+    /// Nex-generated correlation id; the frontend passes it back to
+    /// `agent_respond_ask_question`.
+    pub request_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub questions: Vec<AskQuestionItemDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AskQuestionItemDto {
+    pub id: String,
+    pub prompt: String,
+    pub options: Vec<AskQuestionOptionDto>,
+    #[serde(default)]
+    pub allow_multiple: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AskQuestionOptionDto {
+    pub id: String,
+    pub label: String,
+}
+
+/// One answered question returned by the UI for `cursor/ask_question`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AskQuestionAnswerDto {
+    pub question_id: String,
+    pub selected_option_ids: Vec<String>,
+}
+
 /// Payload of the `agent-session-terminated` event, emitted when the agent
 /// process exits or the connection drops.
 #[derive(Debug, Clone, Serialize)]
@@ -97,6 +161,29 @@ pub struct CreateSessionResult {
     pub models: Option<SessionModelsDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config_options: Option<Vec<SessionConfigOptionDto>>,
+    /// Slash-command catalog from `_meta.availableCommands` (NexAgent).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub available_commands: Option<Vec<AvailableCommandDto>>,
+}
+
+/// One slash command advertised to the Composer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AvailableCommandDto {
+    pub name: String,
+    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_hint: Option<String>,
+}
+
+/// Result of `agent_send_prompt` — enough for post-turn client hooks.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptResultDto {
+    /// True when the native agent successfully wrote/edited a workspace file
+    /// this turn (`write_file` / `edit_file` / `multi_edit`). Used to gate
+    /// auto-`/review`; bash-only turns stay false.
+    pub had_mutations: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -129,6 +216,9 @@ pub struct SessionModelDto {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// When known (NexAgent), whether the model accepts image inputs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vision: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]

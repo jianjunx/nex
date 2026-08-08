@@ -17,6 +17,7 @@ import {
 } from "../../stores/conversation.store";
 import { fsSearch, fsReadFile, type PromptBlock, type SearchMatch, type SessionTarget } from "../../bridge/tauri";
 import { ComposerOptionMenu } from "./ComposerOptionMenu";
+import { ComposerGroupedOptionMenu } from "./ComposerGroupedOptionMenu";
 import { ContextUsageRing } from "./ContextUsageRing";
 import { BranchSelector } from "../git/BranchSelector";
 import { useGitStore } from "../../stores/git.store";
@@ -192,9 +193,19 @@ export function AgentComposer() {
   );
   const activeConversation = conversations.find((c) => c.id === activeTabId) ?? null;
   const canSend = (!!text.trim() || images.length > 0) && !!activeTabId;
-  const isCursorAgent = activeConversation?.agent_type === "cursor";
+  // External ACP agents use session/request_permission; show Authorization for
+  // all of them (not only Cursor). Native NexAgent has its own auto mode.
+  const showAuthMode =
+    !!activeConversation && activeConversation.agent_type !== "nex" && activeConversation.agent_type !== "native";
   const authMode =
     (activeTabId ? sessionPrefsByConversation[activeTabId]?.authMode : undefined) ?? "menu";
+  // NexAgent advertises vision per model; unknown (external agents) stays allowed.
+  const modelSupportsVision = (() => {
+    if (!meta?.currentModelId) return true;
+    const m = meta.models.find((x) => x.id === meta.currentModelId);
+    if (!m || m.vision === undefined) return true;
+    return m.vision;
+  })();
 
   const filteredCommands = useMemo(() => {
     if (!slashOpen) return [] as AvailableCommand[];
@@ -244,7 +255,11 @@ export function AgentComposer() {
     return () => {
       const tab = draftTabRef.current;
       if (tab) {
-        saveComposerDraft(tab, { text: textRef.current, mentions: mentionsRef.current });
+        saveComposerDraft(tab, {
+          text: textRef.current,
+          mentions: mentionsRef.current,
+          images: imagesRef.current.map(toDraftImage),
+        });
       }
       for (const img of imagesRef.current) URL.revokeObjectURL(img.previewUrl);
     };
@@ -253,7 +268,11 @@ export function AgentComposer() {
   useEffect(() => {
     const prev = draftTabRef.current;
     if (prev && prev !== activeTabId) {
-      saveComposerDraft(prev, { text: textRef.current, mentions: mentionsRef.current });
+      saveComposerDraft(prev, {
+        text: textRef.current,
+        mentions: mentionsRef.current,
+        images: imagesRef.current.map(toDraftImage),
+      });
     }
     draftTabRef.current = activeTabId;
     const draft = activeTabId ? loadComposerDraft(activeTabId) : null;
@@ -267,9 +286,10 @@ export function AgentComposer() {
     setSuggestIndex(0);
     setPlusOpen(false);
     setImeComposing(false);
+    setPreviewImage(null);
     setImages((prevImgs) => {
       for (const img of prevImgs) URL.revokeObjectURL(img.previewUrl);
-      return [];
+      return (draft?.images ?? []).map(fromDraftImage);
     });
     requestAnimationFrame(() => {
       const el = textareaRef.current;
@@ -334,6 +354,7 @@ export function AgentComposer() {
   }, []);
 
   const addImageFiles = useCallback(async (files: File[]) => {
+    if (!modelSupportsVision) return;
     const next: PendingImage[] = [];
     for (const file of files) {
       if (!file.type.startsWith("image/")) continue;
@@ -350,7 +371,7 @@ export function AgentComposer() {
       }
     }
     if (next.length > 0) setImages((prev) => [...prev, ...next]);
-  }, []);
+  }, [modelSupportsVision]);
 
   const ensureLiveSession = async (): Promise<string | null> => {
     if (!activeTabId || !project || !activeConversation) return null;
@@ -366,7 +387,9 @@ export function AgentComposer() {
     const target: SessionTarget =
       descriptor?.kind === "custom"
         ? { type: "custom", id: activeConversation.agent_type }
-        : { type: "registry", id: activeConversation.agent_type };
+        : descriptor?.kind === "native"
+          ? { type: "native" }
+          : { type: "registry", id: activeConversation.agent_type };
     try {
       return await createSession(activeTabId, target, project.path);
     } catch {
@@ -886,14 +909,17 @@ export function AgentComposer() {
                 <div className="absolute bottom-full left-0 mb-1 min-w-[140px] rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--glass-3-surface)] shadow-lg py-1 z-30">
                   <button
                     type="button"
-                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-sm hover:bg-[var(--overlay-hover)]"
+                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-sm hover:bg-[var(--overlay-hover)] disabled:opacity-40"
+                    disabled={!modelSupportsVision}
+                    title={modelSupportsVision ? undefined : "当前模型不支持图片"}
                     onClick={() => {
+                      if (!modelSupportsVision) return;
                       setPlusOpen(false);
                       imageInputRef.current?.click();
                     }}
                   >
                     <ImagePlus size={14} />
-                    选择图片
+                    {modelSupportsVision ? "选择图片" : "选择图片（模型不支持）"}
                   </button>
                   <button
                     type="button"
@@ -928,7 +954,7 @@ export function AgentComposer() {
             )}
 
             <div className="ml-auto flex items-center gap-0.5 min-w-0">
-              {isCursorAgent && activeTabId && (
+              {showAuthMode && activeTabId && (
                 <ComposerOptionMenu
                   ariaLabel="Authorization"
                   value={authMode}
@@ -958,22 +984,46 @@ export function AgentComposer() {
                       />
                     )}
                     {!hasConfigModel && meta.models.length > 0 && (
-                      <ComposerOptionMenu
+                      <ComposerGroupedOptionMenu
                         ariaLabel="Model"
                         value={meta.currentModelId ?? ""}
-                        options={meta.models.map((m) => ({ id: m.id, name: m.name }))}
+                        options={meta.models.map((m) => ({
+                          id: m.id,
+                          name: m.name,
+                          group: m.description?.trim() || "其他",
+                        }))}
                         onSelect={(id) => void setModel(session.sessionId, id)}
                       />
                     )}
-                    {configOpts.map((opt) => (
-                      <ComposerOptionMenu
-                        key={opt.id}
-                        ariaLabel={opt.name || opt.id}
-                        value={opt.currentValueId}
-                        options={opt.options.map((o) => ({ id: o.id, name: o.name }))}
-                        onSelect={(id) => void setConfigOption(session.sessionId, opt.id, id)}
-                      />
-                    ))}
+                    {configOpts.map((opt) => {
+                      const isModelOpt = opt.id === "model" || opt.category === "model";
+                      if (isModelOpt) {
+                        return (
+                          <ComposerGroupedOptionMenu
+                            key={opt.id}
+                            ariaLabel={opt.name || opt.id}
+                            value={opt.currentValueId}
+                            options={opt.options.map((o) => ({
+                              id: o.id,
+                              name: o.name.includes("/") ? (o.name.split("/").pop() ?? o.name) : o.name,
+                              group: o.name.includes("/")
+                                ? (o.name.split("/")[0] ?? "其他")
+                                : "模型",
+                            }))}
+                            onSelect={(id) => void setConfigOption(session.sessionId, opt.id, id)}
+                          />
+                        );
+                      }
+                      return (
+                        <ComposerOptionMenu
+                          key={opt.id}
+                          ariaLabel={opt.name || opt.id}
+                          value={opt.currentValueId}
+                          options={opt.options.map((o) => ({ id: o.id, name: o.name }))}
+                          onSelect={(id) => void setConfigOption(session.sessionId, opt.id, id)}
+                        />
+                      );
+                    })}
                   </>
                 );
               })()}
@@ -1049,4 +1099,30 @@ function fileToBase64(file: File): Promise<string> {
     reader.onerror = () => reject(reader.error ?? new Error("read failed"));
     reader.readAsDataURL(file);
   });
+}
+
+function toDraftImage(img: PendingImage): { id: string; mimeType: string; data: string } {
+  return { id: img.id, mimeType: img.mimeType, data: img.data };
+}
+
+/** Rebuild a blob preview URL from the persisted base64 payload. */
+function fromDraftImage(img: { id: string; mimeType: string; data: string }): PendingImage {
+  return {
+    id: img.id,
+    mimeType: img.mimeType,
+    data: img.data,
+    previewUrl: base64ToObjectUrl(img.mimeType, img.data),
+  };
+}
+
+function base64ToObjectUrl(mimeType: string, data: string): string {
+  try {
+    const binary = atob(data);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return URL.createObjectURL(new Blob([bytes], { type: mimeType || "image/png" }));
+  } catch {
+    // Fall back so a corrupt draft still shows something in the strip.
+    return `data:${mimeType || "image/png"};base64,${data}`;
+  }
 }

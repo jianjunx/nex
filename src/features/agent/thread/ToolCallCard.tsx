@@ -74,24 +74,57 @@ export function ToolCallCard({
             isEdit && "max-h-[350px] overflow-y-auto",
           )}
         >
-          {entry.content.map((c, i) =>
-            c.type === "diff" ? (
-              <ThreadDiffBlock
-                key={i}
-                cacheKey={`${entry.id}:${i}`}
-                path={c.path}
-                oldText={c.oldText}
-                newText={c.newText}
-              />
-            ) : (
+          {entry.content.map((c, i) => {
+            if (c.type === "diff") {
+              return (
+                <ThreadDiffBlock
+                  key={i}
+                  cacheKey={`${entry.id}:${i}`}
+                  path={c.path}
+                  oldText={c.oldText}
+                  newText={c.newText}
+                />
+              );
+            }
+            if (c.type === "image" && c.data) {
+              const src = `data:${c.mimeType || "image/png"};base64,${c.data}`;
+              return (
+                <a
+                  key={i}
+                  href={src}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block"
+                  title={c.path || "image"}
+                >
+                  <img
+                    src={src}
+                    alt={c.path || "generated"}
+                    className="max-h-64 max-w-full rounded border border-[color:var(--border-subtle)] object-contain"
+                  />
+                </a>
+              );
+            }
+            if (c.type === "terminal") {
+              return (
+                <pre
+                  key={i}
+                  className="text-xs overflow-x-auto p-2 rounded bg-black/80 text-emerald-200/90 whitespace-pre-wrap font-mono"
+                >
+                  {c.terminalId ? `$ terminal ${c.terminalId}\n` : ""}
+                  {c.text}
+                </pre>
+              );
+            }
+            return (
               <pre
                 key={i}
                 className="text-xs overflow-x-auto p-2 rounded bg-[var(--glass-2-surface)] text-[var(--text-secondary)] whitespace-pre-wrap"
               >
                 {c.text}
               </pre>
-            ),
-          )}
+            );
+          })}
 
           {entry.content.length === 0 && rawInputText && (
             <pre className="text-xs overflow-x-auto p-2 rounded bg-[var(--glass-2-surface)] text-[var(--text-secondary)] whitespace-pre-wrap">

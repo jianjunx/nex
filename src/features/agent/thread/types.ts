@@ -1,4 +1,9 @@
-export type ThreadEntryKind = "user_message" | "assistant_message" | "tool_call" | "completed_plan";
+export type ThreadEntryKind =
+  | "user_message"
+  | "assistant_message"
+  | "tool_call"
+  | "completed_plan"
+  | "plan_approval";
 
 export type AssistantChunk =
   | { type: "message"; text: string }
@@ -19,11 +24,16 @@ export interface ToolPermissionOption {
 }
 
 export interface ToolCallContentBlock {
-  type: "text" | "diff";
+  type: "text" | "diff" | "image" | "terminal";
   text?: string;
   path?: string;
   oldText?: string;
   newText?: string;
+  /** base64 payload for `image` blocks */
+  data?: string;
+  mimeType?: string;
+  /** terminal exit / output metadata when present */
+  terminalId?: string;
 }
 
 export interface PlanEntry {
@@ -71,11 +81,23 @@ export interface CompletedPlanEntry extends ThreadEntryBase {
   entries: PlanEntry[];
 }
 
+/** Cursor `cursor/create_plan` — inline approval card (replaces modal). */
+export interface PlanApprovalEntry extends ThreadEntryBase {
+  kind: "plan_approval";
+  requestId: string;
+  name?: string;
+  overview?: string;
+  plan: string;
+  todos: { id: string; content: string; status: string }[];
+  status: "pending" | "accepted" | "rejected" | "cancelled";
+}
+
 export type ThreadEntry =
   | UserMessageEntry
   | AssistantMessageEntry
   | ToolCallEntry
-  | CompletedPlanEntry;
+  | CompletedPlanEntry
+  | PlanApprovalEntry;
 
 export interface AvailableCommand {
   name: string;
@@ -93,6 +115,8 @@ export interface SessionModelOption {
   id: string;
   name: string;
   description?: string;
+  /** When known (NexAgent), whether the model accepts image inputs. */
+  vision?: boolean;
 }
 
 export interface SessionConfigOption {

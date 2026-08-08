@@ -2,6 +2,8 @@
 export const EVENTS = {
   AGENT_NOTIFICATION: "agent-notification",
   AGENT_PERMISSION_REQUEST: "agent-permission-request",
+  AGENT_PLAN_APPROVAL_REQUEST: "agent-plan-approval-request",
+  AGENT_ASK_QUESTION_REQUEST: "agent-ask-question-request",
   AGENT_SESSION_TERMINATED: "agent-session-terminated",
   GIT_STATUS_CHANGED: "git-status-changed",
   TERMINAL_OUTPUT: "terminal-output",
@@ -26,6 +28,47 @@ export interface AgentPermissionRequestPayload {
   toolContent?: unknown;
   toolRawInput?: unknown;
   options: { optionId: string; label: string; kind?: string | null }[];
+}
+
+export interface CursorTodoPayload {
+  id: string;
+  content: string;
+  status: string;
+}
+
+/** Cursor `cursor/create_plan` — blocks the agent until the user responds. */
+export interface AgentPlanApprovalRequestPayload {
+  sessionId: string;
+  requestId: string;
+  name?: string | null;
+  overview?: string | null;
+  plan: string;
+  todos: CursorTodoPayload[];
+}
+
+export interface AskQuestionOptionPayload {
+  id: string;
+  label: string;
+}
+
+export interface AskQuestionItemPayload {
+  id: string;
+  prompt: string;
+  options: AskQuestionOptionPayload[];
+  allowMultiple: boolean;
+}
+
+export interface AskQuestionAnswerPayload {
+  questionId: string;
+  selectedOptionIds: string[];
+}
+
+/** Cursor `cursor/ask_question` — blocks until the user answers or skips. */
+export interface AgentAskQuestionRequestPayload {
+  sessionId: string;
+  requestId: string;
+  title?: string | null;
+  questions: AskQuestionItemPayload[];
 }
 
 export interface GitStatusChangedPayload {

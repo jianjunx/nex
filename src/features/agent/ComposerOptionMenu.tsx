@@ -55,7 +55,7 @@ export function ComposerOptionMenu({
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
-        className="min-w-[10rem] max-w-[18rem] rounded-[var(--radius-md)] p-1.5"
+        className="min-w-[10rem] max-w-[18rem] max-h-[350px] overflow-y-auto rounded-[var(--radius-md)] p-1.5"
       >
         {options.map((o) => (
           <DropdownMenuItem

@@ -8,6 +8,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -17,16 +18,24 @@ use tokio::sync::oneshot;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 use super::launch::{spawn_agent, LaunchSpec};
+use super::native::NexNativeAgent;
 use super::types::{
-    AgentNotification, AgentPermissionRequest, AgentSessionTerminated, CreateSessionResult,
-    PermissionOption, PromptBlock, SessionConfigOptionDto, SessionConfigValueDto, SessionModeDto,
-    SessionModesDto, SessionModelDto, SessionModelsDto,
+    AgentAskQuestionRequest, AgentNotification, AgentPermissionRequest, AgentPlanApprovalRequest,
+    AgentSessionTerminated, AskQuestionAnswerDto, AskQuestionItemDto, AskQuestionOptionDto,
+    AvailableCommandDto, CreateSessionResult, CursorTodoDto, PermissionOption, PromptBlock,
+    SessionConfigOptionDto,
+    SessionConfigValueDto, SessionModeDto, SessionModesDto, SessionModelDto, SessionModelsDto,
 };
 use crate::error::NexError;
 
 const AGENT_NOTIFICATION_EVENT: &str = "agent-notification";
 const AGENT_PERMISSION_REQUEST_EVENT: &str = "agent-permission-request";
+const AGENT_PLAN_APPROVAL_REQUEST_EVENT: &str = "agent-plan-approval-request";
+const AGENT_ASK_QUESTION_REQUEST_EVENT: &str = "agent-ask-question-request";
 const AGENT_SESSION_TERMINATED_EVENT: &str = "agent-session-terminated";
+
+/// Cap for `cursor/generate_image` file reads / embedded payloads (base64 of this).
+const MAX_GENERATED_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
 
 // 120s covers the worst case: cold-cache `npm install` of a new agent
 // (downloads the package + transitive deps) plus the agent's own bootstrap.
@@ -40,6 +49,7 @@ type SessionHandshakeInfo = (
     Option<SessionModesDto>,
     Option<SessionModelsDto>,
     Option<Vec<SessionConfigOptionDto>>,
+    Option<Vec<AvailableCommandDto>>,
 );
 
 /// What run_session reports back through its oneshot channel: the live
@@ -51,6 +61,7 @@ type SessionInitResult = Result<
         Option<SessionModesDto>,
         Option<SessionModelsDto>,
         Option<Vec<SessionConfigOptionDto>>,
+        Option<Vec<AvailableCommandDto>>,
     ),
     NexError,
 >;
@@ -84,6 +95,32 @@ struct PendingPermission {
     tx: oneshot::Sender<acp::RequestPermissionOutcome>,
 }
 
+/// Outcome the UI returns for a Cursor `cursor/create_plan` request.
+#[derive(Debug, Clone)]
+enum PlanApprovalOutcome {
+    Accepted,
+    Rejected { reason: Option<String> },
+    Cancelled,
+}
+
+struct PendingPlanApproval {
+    session_key: String,
+    tx: oneshot::Sender<PlanApprovalOutcome>,
+}
+
+/// Outcome the UI returns for a Cursor `cursor/ask_question` request.
+#[derive(Debug, Clone)]
+enum AskQuestionOutcome {
+    Answered { answers: Vec<AskQuestionAnswerDto> },
+    Skipped { reason: Option<String> },
+    Cancelled,
+}
+
+struct PendingAskQuestion {
+    session_key: String,
+    tx: oneshot::Sender<AskQuestionOutcome>,
+}
+
 struct SessionHandle {
     conn: acp::ClientSideConnection,
     agent_session_id: acp::SessionId,
@@ -96,12 +133,20 @@ struct SessionHandle {
 pub struct AcpSessionManager {
     sessions: Arc<Mutex<HashMap<String, Arc<SessionHandle>>>>,
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
+    pending_plan_approvals: Arc<Mutex<HashMap<String, PendingPlanApproval>>>,
+    pending_ask_questions: Arc<Mutex<HashMap<String, PendingAskQuestion>>>,
 }
 
 struct NexAcpClient {
     app: AppHandle,
     session_key: String,
+    /// Session working directory — used to sandbox `generate_image` file reads.
+    cwd: PathBuf,
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
+    pending_plan_approvals: Arc<Mutex<HashMap<String, PendingPlanApproval>>>,
+    pending_ask_questions: Arc<Mutex<HashMap<String, PendingAskQuestion>>>,
+    /// Latest Cursor todo list for this session (supports `update_todos` merge).
+    cursor_todos: Mutex<Vec<CursorTodoDto>>,
 }
 
 #[async_trait::async_trait(?Send)]
@@ -178,37 +223,21 @@ impl acp::Client for NexAcpClient {
 
     async fn ext_method(&self, args: acp::ExtRequest) -> acp::Result<acp::ExtResponse> {
         let method = args.method.as_ref();
-        // Forward opaque extension traffic so the UI can surface Cursor task /
-        // plan / question events when we add richer handlers later.
-        let _ = self.app.emit(
-            AGENT_NOTIFICATION_EVENT,
-            AgentNotification {
-                session_id: self.session_key.clone(),
-                update: serde_json::json!({
-                    "sessionUpdate": "ext_method",
-                    "method": method,
-                    "params": serde_json::from_str::<serde_json::Value>(args.params.get())
-                        .unwrap_or(serde_json::Value::Null),
-                }),
-            },
-        );
+        let params: serde_json::Value =
+            serde_json::from_str(args.params.get()).unwrap_or(serde_json::Value::Null);
 
-        // Cursor blocking extensions hang the turn until a well-formed outcome
-        // is returned. Auto-resolve so prompts can finish (and stream text).
         let result = match method {
-            "cursor/ask_question" => serde_json::json!({
-                "outcome": { "outcome": "skipped", "reason": "Nex has not implemented this prompt UI yet" }
-            }),
-            "cursor/create_plan" => serde_json::json!({
-                "outcome": { "outcome": "accepted" }
-            }),
-            "cursor/task" => serde_json::json!({
-                "outcome": { "outcome": "completed" }
-            }),
-            "cursor/update_todos" | "cursor/generate_image" => serde_json::json!({
-                "outcome": { "outcome": "accepted" }
-            }),
-            _ => serde_json::Value::Null,
+            "cursor/create_plan" => self.handle_create_plan(params).await,
+            "cursor/update_todos" => {
+                // Spec: notification; some agents may still send as a request.
+                let todos = self.apply_cursor_todos(&params);
+                self.emit_plan_from_todos(&todos);
+                serde_json::json!({ "outcome": { "outcome": "accepted", "todos": todos } })
+            }
+            "cursor/ask_question" => self.handle_ask_question(params).await,
+            "cursor/task" => self.handle_cursor_task(&params),
+            "cursor/generate_image" => self.handle_generate_image(&params).await,
+            _ => return Err(acp::Error::method_not_found()),
         };
         let raw = serde_json::value::RawValue::from_string(result.to_string()).map_err(|e| {
             acp::Error::internal_error().with_data(format!("ext_method encode failed: {e}"))
@@ -224,30 +253,625 @@ impl acp::Client for NexAcpClient {
         // Unknown session/update variants (config_option_update on older schema)
         // arrive here; forward the inner `update` so the frontend reducer sees it.
         if method == "session/update" {
-            let update = params
-                .get("update")
-                .cloned()
-                .unwrap_or(params);
+            let update = params.get("update").cloned().unwrap_or(params);
             let _ = self.app.emit(
                 AGENT_NOTIFICATION_EVENT,
-                AgentNotification { session_id: self.session_key.clone(), update },
+                AgentNotification {
+                    session_id: self.session_key.clone(),
+                    update,
+                },
             );
             return Ok(());
         }
 
+        if method == "cursor/update_todos" {
+            let todos = self.apply_cursor_todos(&params);
+            self.emit_plan_from_todos(&todos);
+            return Ok(());
+        }
+
+        if method == "cursor/task" {
+            let _ = self.handle_cursor_task(&params);
+            return Ok(());
+        }
+
+        if method == "cursor/generate_image" {
+            let _ = self.handle_generate_image(&params).await;
+            return Ok(());
+        }
+
+        // Unknown notifications are ignored (fire-and-forget).
+        Ok(())
+    }
+}
+
+impl NexAcpClient {
+    fn emit_plan_from_todos(&self, todos: &[CursorTodoDto]) {
+        let entries: Vec<serde_json::Value> = todos
+            .iter()
+            .map(|t| {
+                serde_json::json!({
+                    "content": t.content,
+                    "priority": "medium",
+                    "status": normalize_plan_status(&t.status),
+                })
+            })
+            .collect();
         let _ = self.app.emit(
             AGENT_NOTIFICATION_EVENT,
             AgentNotification {
                 session_id: self.session_key.clone(),
                 update: serde_json::json!({
-                    "sessionUpdate": "ext_notification",
-                    "method": method,
-                    "params": params,
+                    "sessionUpdate": "plan",
+                    "entries": entries,
                 }),
             },
         );
-        Ok(())
     }
+
+    fn apply_cursor_todos(&self, params: &serde_json::Value) -> Vec<CursorTodoDto> {
+        let incoming = parse_cursor_todos(params);
+        let merge = params
+            .get("merge")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let mut guard = self.cursor_todos.lock().unwrap();
+        merge_cursor_todos(&mut guard, incoming, merge);
+        guard.clone()
+    }
+
+    async fn handle_create_plan(&self, params: serde_json::Value) -> serde_json::Value {
+        let name = params
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let overview = params
+            .get("overview")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let plan = params
+            .get("plan")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let mut todos = parse_cursor_todos(&params);
+        if todos.is_empty() {
+            todos = parse_cursor_todos_from_phases(&params);
+        }
+
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let (tx, rx) = oneshot::channel();
+        self.pending_plan_approvals.lock().unwrap().insert(
+            request_id.clone(),
+            PendingPlanApproval {
+                session_key: self.session_key.clone(),
+                tx,
+            },
+        );
+
+        let _ = self.app.emit(
+            AGENT_PLAN_APPROVAL_REQUEST_EVENT,
+            AgentPlanApprovalRequest {
+                session_id: self.session_key.clone(),
+                request_id,
+                name,
+                overview,
+                plan,
+                todos: todos.clone(),
+            },
+        );
+
+        let outcome = rx.await.unwrap_or(PlanApprovalOutcome::Cancelled);
+        match outcome {
+            PlanApprovalOutcome::Accepted => {
+                // Only publish PlanBar after the user accepts.
+                {
+                    let mut guard = self.cursor_todos.lock().unwrap();
+                    *guard = todos.clone();
+                }
+                self.emit_plan_from_todos(&todos);
+                serde_json::json!({ "outcome": { "outcome": "accepted" } })
+            }
+            PlanApprovalOutcome::Rejected { reason } => {
+                let mut body = serde_json::json!({ "outcome": { "outcome": "rejected" } });
+                if let Some(reason) = reason {
+                    body["outcome"]["reason"] = serde_json::Value::String(reason);
+                }
+                body
+            }
+            PlanApprovalOutcome::Cancelled => {
+                serde_json::json!({ "outcome": { "outcome": "cancelled" } })
+            }
+        }
+    }
+
+    /// Surfaces a Cursor subagent task in the thread and acknowledges completion.
+    fn handle_cursor_task(&self, params: &serde_json::Value) -> serde_json::Value {
+        let tool_call_id = params
+            .get("toolCallId")
+            .or_else(|| params.get("tool_call_id"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("cursor-task-{}", uuid::Uuid::new_v4()));
+        let description = params
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Subagent task")
+            .to_string();
+        let prompt = params
+            .get("prompt")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let agent_id = params
+            .get("agentId")
+            .or_else(|| params.get("agent_id"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let duration_ms = params
+            .get("durationMs")
+            .or_else(|| params.get("duration_ms"))
+            .and_then(|v| v.as_u64());
+        let completed = duration_ms.is_some();
+        let status = if completed { "completed" } else { "in_progress" };
+        let mut content = Vec::new();
+        if !prompt.is_empty() {
+            content.push(serde_json::json!({
+                "type": "content",
+                "content": { "type": "text", "text": prompt },
+            }));
+        }
+        if let Some(ms) = duration_ms {
+            content.push(serde_json::json!({
+                "type": "content",
+                "content": { "type": "text", "text": format!("duration: {ms}ms") },
+            }));
+        }
+        let _ = self.app.emit(
+            AGENT_NOTIFICATION_EVENT,
+            AgentNotification {
+                session_id: self.session_key.clone(),
+                update: serde_json::json!({
+                    "sessionUpdate": "tool_call",
+                    "toolCallId": tool_call_id,
+                    "title": description,
+                    "kind": "other",
+                    "status": status,
+                    "content": content,
+                }),
+            },
+        );
+        // Keep RPC outcome aligned with the tool card status.
+        let mut outcome = serde_json::json!({
+            "outcome": if completed { "completed" } else { "started" }
+        });
+        if let Some(id) = agent_id {
+            outcome["agentId"] = serde_json::Value::String(id);
+        }
+        if let Some(ms) = duration_ms {
+            outcome["durationMs"] = serde_json::Value::Number(ms.into());
+        }
+        serde_json::json!({ "outcome": outcome })
+    }
+
+    /// Surfaces a Cursor-generated image in the thread.
+    async fn handle_generate_image(&self, params: &serde_json::Value) -> serde_json::Value {
+        let tool_call_id = params
+            .get("toolCallId")
+            .or_else(|| params.get("tool_call_id"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("cursor-image-{}", uuid::Uuid::new_v4()));
+        let description = params
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Generated image")
+            .to_string();
+        let mut file_path = params
+            .get("filePath")
+            .or_else(|| params.get("file_path"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let mut image_data = params
+            .get("imageData")
+            .or_else(|| params.get("image_data"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let mut mime = "image/png".to_string();
+
+        if let Some(data) = image_data.as_ref() {
+            // Rough decoded-size check (base64 expands ~4/3).
+            let approx = (data.len() as u64).saturating_mul(3) / 4;
+            if approx > MAX_GENERATED_IMAGE_BYTES {
+                return serde_json::json!({
+                    "outcome": {
+                        "outcome": "rejected",
+                        "reason": format!(
+                            "imageData exceeds {} byte limit",
+                            MAX_GENERATED_IMAGE_BYTES
+                        )
+                    }
+                });
+            }
+        }
+
+        if image_data.is_none() {
+            if let Some(path) = file_path.as_deref() {
+                match read_image_under_cwd(&self.cwd, path).await {
+                    Ok((bytes, detected_mime)) => {
+                        mime = detected_mime;
+                        image_data = Some(base64::Engine::encode(
+                            &base64::engine::general_purpose::STANDARD,
+                            &bytes,
+                        ));
+                    }
+                    Err(reason) => {
+                        return serde_json::json!({
+                            "outcome": { "outcome": "rejected", "reason": reason }
+                        });
+                    }
+                }
+            }
+        }
+
+        let Some(data) = image_data else {
+            return serde_json::json!({
+                "outcome": {
+                    "outcome": "rejected",
+                    "reason": "no image data or readable filePath"
+                }
+            });
+        };
+
+        // Spec requires `filePath` on `generated`; materialize under cwd if absent.
+        if file_path.is_none() {
+            match persist_generated_image(&self.cwd, &data, &mime).await {
+                Ok(path) => file_path = Some(path),
+                Err(reason) => {
+                    return serde_json::json!({
+                        "outcome": { "outcome": "rejected", "reason": reason }
+                    });
+                }
+            }
+        } else if let Some(path) = file_path.as_deref() {
+            // Validate declared path stays in the workspace even when data was inline.
+            if let Err(reason) = resolve_image_path_under_cwd(&self.cwd, path) {
+                return serde_json::json!({
+                    "outcome": { "outcome": "rejected", "reason": reason }
+                });
+            }
+        }
+
+        let file_path = file_path.expect("file_path set above");
+        let _ = self.app.emit(
+            AGENT_NOTIFICATION_EVENT,
+            AgentNotification {
+                session_id: self.session_key.clone(),
+                update: serde_json::json!({
+                    "sessionUpdate": "tool_call",
+                    "toolCallId": tool_call_id,
+                    "title": description,
+                    "kind": "other",
+                    "status": "completed",
+                    "content": [{
+                        "type": "content",
+                        "content": {
+                            "type": "image",
+                            "mimeType": mime,
+                            "data": data,
+                            "uri": file_path,
+                        }
+                    }],
+                }),
+            },
+        );
+        serde_json::json!({
+            "outcome": {
+                "outcome": "generated",
+                "filePath": file_path,
+            }
+        })
+    }
+
+    async fn handle_ask_question(&self, params: serde_json::Value) -> serde_json::Value {
+        let questions = parse_ask_questions(&params);
+        if questions.is_empty() {
+            return serde_json::json!({
+                "outcome": {
+                    "outcome": "skipped",
+                    "reason": "no questions provided"
+                }
+            });
+        }
+
+        let title = params
+            .get("title")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let (tx, rx) = oneshot::channel();
+        self.pending_ask_questions.lock().unwrap().insert(
+            request_id.clone(),
+            PendingAskQuestion {
+                session_key: self.session_key.clone(),
+                tx,
+            },
+        );
+
+        let _ = self.app.emit(
+            AGENT_ASK_QUESTION_REQUEST_EVENT,
+            AgentAskQuestionRequest {
+                session_id: self.session_key.clone(),
+                request_id,
+                title,
+                questions,
+            },
+        );
+
+        let outcome = rx.await.unwrap_or(AskQuestionOutcome::Cancelled);
+        match outcome {
+            AskQuestionOutcome::Answered { answers } => {
+                serde_json::json!({
+                    "outcome": {
+                        "outcome": "answered",
+                        "answers": answers,
+                    }
+                })
+            }
+            AskQuestionOutcome::Skipped { reason } => {
+                let mut body = serde_json::json!({ "outcome": { "outcome": "skipped" } });
+                if let Some(reason) = reason {
+                    body["outcome"]["reason"] = serde_json::Value::String(reason);
+                }
+                body
+            }
+            AskQuestionOutcome::Cancelled => {
+                serde_json::json!({ "outcome": { "outcome": "cancelled" } })
+            }
+        }
+    }
+}
+
+fn normalize_plan_status(status: &str) -> &str {
+    match status {
+        "in_progress" | "completed" | "pending" | "cancelled" => status,
+        _ => "pending",
+    }
+}
+
+fn mime_from_path(path: &str) -> String {
+    let lower = path.to_ascii_lowercase();
+    if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+        "image/jpeg".into()
+    } else if lower.ends_with(".webp") {
+        "image/webp".into()
+    } else if lower.ends_with(".gif") {
+        "image/gif".into()
+    } else {
+        "image/png".into()
+    }
+}
+
+fn ext_for_mime(mime: &str) -> &'static str {
+    match mime {
+        "image/jpeg" => "jpg",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        _ => "png",
+    }
+}
+
+fn resolve_image_path_under_cwd(cwd: &Path, raw: &str) -> Result<PathBuf, String> {
+    super::native::tools::resolve_within(cwd, raw)
+}
+
+async fn read_image_under_cwd(cwd: &Path, raw: &str) -> Result<(Vec<u8>, String), String> {
+    let path = resolve_image_path_under_cwd(cwd, raw)?;
+    let meta = tokio::fs::metadata(&path)
+        .await
+        .map_err(|e| format!("cannot stat `{raw}`: {e}"))?;
+    if !meta.is_file() {
+        return Err(format!("`{raw}` is not a file"));
+    }
+    if meta.len() > MAX_GENERATED_IMAGE_BYTES {
+        return Err(format!(
+            "image file exceeds {} byte limit",
+            MAX_GENERATED_IMAGE_BYTES
+        ));
+    }
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| format!("failed to read `{raw}`: {e}"))?;
+    if bytes.len() as u64 > MAX_GENERATED_IMAGE_BYTES {
+        return Err(format!(
+            "image file exceeds {} byte limit",
+            MAX_GENERATED_IMAGE_BYTES
+        ));
+    }
+    Ok((bytes, mime_from_path(raw)))
+}
+
+async fn persist_generated_image(cwd: &Path, b64: &str, mime: &str) -> Result<String, String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| format!("invalid imageData base64: {e}"))?;
+    if bytes.len() as u64 > MAX_GENERATED_IMAGE_BYTES {
+        return Err(format!(
+            "imageData exceeds {} byte limit",
+            MAX_GENERATED_IMAGE_BYTES
+        ));
+    }
+    let dir = cwd.join(".nex").join("generated");
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| format!("mkdir generated: {e}"))?;
+    let name = format!("{}.{}", uuid::Uuid::new_v4(), ext_for_mime(mime));
+    let path = dir.join(name);
+    tokio::fs::write(&path, &bytes)
+        .await
+        .map_err(|e| format!("write generated image: {e}"))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// Builds ACP `mcpServers` for `session/new` from Nex's `~/.nex/mcp.json` +
+/// project `.nex/mcp.json`. External agents (Claude/Codex/Cursor) receive the
+/// same stdio/HTTP servers the built-in agent uses.
+fn acp_mcp_servers_from_nex(cwd: &std::path::Path) -> Vec<serde_json::Value> {
+    super::native::mcp::load_configs(cwd)
+        .into_iter()
+        .filter_map(|(name, cfg)| mcp_config_to_acp_value(&name, &cfg))
+        .collect()
+}
+
+fn mcp_config_to_acp_value(name: &str, cfg: &super::native::mcp::McpServerConfig) -> Option<serde_json::Value> {
+    if let Some(url) = cfg.url.as_ref().filter(|u| !u.trim().is_empty()) {
+        let headers: Vec<serde_json::Value> = cfg
+            .headers
+            .iter()
+            .map(|(k, v)| serde_json::json!({ "name": k, "value": v }))
+            .collect();
+        return Some(serde_json::json!({
+            "type": "http",
+            "name": name,
+            "url": url,
+            "headers": headers,
+        }));
+    }
+    let command = cfg.command.as_ref().filter(|c| !c.trim().is_empty())?;
+    let env: Vec<serde_json::Value> = cfg
+        .env
+        .iter()
+        .map(|(k, v)| serde_json::json!({ "name": k, "value": v }))
+        .collect();
+    Some(serde_json::json!({
+        "name": name,
+        "command": command,
+        "args": cfg.args,
+        "env": env,
+    }))
+}
+
+fn parse_cursor_todo_item(item: &serde_json::Value) -> Option<CursorTodoDto> {
+    let content = item.get("content").and_then(|v| v.as_str())?.trim();
+    if content.is_empty() {
+        return None;
+    }
+    let id = item
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let status = item
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("pending")
+        .to_string();
+    Some(CursorTodoDto {
+        id,
+        content: content.to_string(),
+        status,
+    })
+}
+
+fn parse_cursor_todos(params: &serde_json::Value) -> Vec<CursorTodoDto> {
+    params
+        .get("todos")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(parse_cursor_todo_item)
+        .collect()
+}
+
+fn parse_cursor_todos_from_phases(params: &serde_json::Value) -> Vec<CursorTodoDto> {
+    params
+        .get("phases")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|phase| phase.get("todos").and_then(|v| v.as_array()))
+        .flatten()
+        .filter_map(parse_cursor_todo_item)
+        .collect()
+}
+
+fn merge_cursor_todos(existing: &mut Vec<CursorTodoDto>, incoming: Vec<CursorTodoDto>, merge: bool) {
+    if !merge {
+        *existing = incoming;
+        return;
+    }
+    for todo in incoming {
+        if !todo.id.is_empty() {
+            if let Some(slot) = existing.iter_mut().find(|e| e.id == todo.id) {
+                *slot = todo;
+                continue;
+            }
+        } else if let Some(slot) = existing
+            .iter_mut()
+            .find(|e| e.id.is_empty() && e.content == todo.content)
+        {
+            // Empty ids: match by content so merge doesn't duplicate rows.
+            *slot = todo;
+            continue;
+        }
+        existing.push(todo);
+    }
+}
+
+fn parse_ask_questions(params: &serde_json::Value) -> Vec<AskQuestionItemDto> {
+    params
+        .get("questions")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|q| {
+            let id = q.get("id").and_then(|v| v.as_str())?.to_string();
+            let prompt = q
+                .get("prompt")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if prompt.is_empty() {
+                return None;
+            }
+            let options = q
+                .get("options")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|o| {
+                    let oid = o.get("id").and_then(|v| v.as_str())?.to_string();
+                    let label = o
+                        .get("label")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    if label.is_empty() {
+                        return None;
+                    }
+                    Some(AskQuestionOptionDto { id: oid, label })
+                })
+                .collect::<Vec<_>>();
+            if options.is_empty() {
+                return None;
+            }
+            let allow_multiple = q
+                .get("allowMultiple")
+                .or_else(|| q.get("allow_multiple"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            Some(AskQuestionItemDto {
+                id,
+                prompt,
+                options,
+                allow_multiple,
+            })
+        })
+        .collect()
 }
 
 fn prompt_blocks_to_acp(blocks: Vec<PromptBlock>) -> Vec<acp::ContentBlock> {
@@ -294,8 +918,51 @@ fn prompt_blocks_to_acp(blocks: Vec<PromptBlock>) -> Vec<acp::ContentBlock> {
         .collect()
 }
 
+fn available_commands_from_json(value: &serde_json::Value) -> Option<Vec<AvailableCommandDto>> {
+    let arr = value
+        .get("availableCommands")
+        .or_else(|| value.get("available_commands"))
+        .or_else(|| value.get("_meta").and_then(|m| m.get("availableCommands")))
+        .or_else(|| value.get("_meta").and_then(|m| m.get("available_commands")))?;
+    let items = arr.as_array()?;
+    let mut out = Vec::new();
+    for item in items {
+        // Skip malformed entries instead of aborting the whole catalog.
+        let Some(name) = item.get("name").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        if name.is_empty() {
+            continue;
+        }
+        let description = item
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let input_hint = item
+            .get("input")
+            .and_then(|v| v.get("hint"))
+            .and_then(|v| v.as_str())
+            .or_else(|| item.get("inputHint").and_then(|v| v.as_str()))
+            .or_else(|| item.get("input_hint").and_then(|v| v.as_str()))
+            .map(str::to_string);
+        out.push(AvailableCommandDto {
+            name: name.to_string(),
+            description,
+            input_hint,
+        });
+    }
+    Some(out).filter(|o| !o.is_empty())
+}
+
 fn config_options_from_json(value: &serde_json::Value) -> Option<Vec<SessionConfigOptionDto>> {
-    let arr = value.get("configOptions").or_else(|| value.get("config_options"))?;
+    // Native agents carry config options in the `_meta` extension point (the
+    // 0.7 schema drops configOptions from NewSessionResponse), so fall back to
+    // `_meta.configOptions` when no top-level field exists.
+    let arr = value
+        .get("configOptions")
+        .or_else(|| value.get("config_options"))
+        .or_else(|| value.get("_meta").and_then(|m| m.get("configOptions")))?;
     let items = arr.as_array()?;
     let mut out = Vec::new();
     for item in items {
@@ -316,7 +983,7 @@ fn config_options_from_json(value: &serde_json::Value) -> Option<Vec<SessionConf
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let options = item
+        let options: Vec<SessionConfigValueDto> = item
             .get("options")
             .and_then(|v| v.as_array())
             .map(|opts| {
@@ -337,8 +1004,25 @@ fn config_options_from_json(value: &serde_json::Value) -> Option<Vec<SessionConf
                     .collect()
             })
             .unwrap_or_default();
-        // Only surface select-style options in the composer for now.
-        if item.get("type").and_then(|v| v.as_str()) == Some("boolean") {
+        // Boolean options are projected as a two-value select so Composer can
+        // reuse the existing option menu (true/false).
+        let options = if item.get("type").and_then(|v| v.as_str()) == Some("boolean")
+            && options.is_empty()
+        {
+            vec![
+                SessionConfigValueDto {
+                    id: "true".into(),
+                    name: "On".into(),
+                },
+                SessionConfigValueDto {
+                    id: "false".into(),
+                    name: "Off".into(),
+                },
+            ]
+        } else {
+            options
+        };
+        if options.is_empty() {
             continue;
         }
         out.push(SessionConfigOptionDto {
@@ -404,6 +1088,12 @@ fn models_from_json(value: &serde_json::Value) -> Option<SessionModelsDto> {
                         .or_else(|| m.get("id"))
                         .and_then(|v| v.as_str())?
                         .to_string();
+                    let vision = m
+                        .get("meta")
+                        .or_else(|| m.get("_meta"))
+                        .and_then(|meta| meta.get("vision"))
+                        .and_then(|v| v.as_bool())
+                        .or_else(|| m.get("vision").and_then(|v| v.as_bool()));
                     Some(SessionModelDto {
                         id,
                         name: m.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
@@ -411,6 +1101,7 @@ fn models_from_json(value: &serde_json::Value) -> Option<SessionModelsDto> {
                             .get("description")
                             .and_then(|v| v.as_str())
                             .map(str::to_string),
+                        vision,
                     })
                 })
                 .collect()
@@ -517,6 +1208,8 @@ impl AcpSessionManager {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             pending_permissions: Arc::new(Mutex::new(HashMap::new())),
+            pending_plan_approvals: Arc::new(Mutex::new(HashMap::new())),
+            pending_ask_questions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -527,15 +1220,15 @@ impl AcpSessionManager {
         spec: LaunchSpec,
     ) -> Result<CreateSessionResult, NexError> {
         let session_key = uuid::Uuid::new_v4().to_string();
-        let (init_tx, init_rx) = oneshot::channel::<
-            Result<(acp::ClientSideConnection, acp::SessionId, Option<SessionModesDto>, Option<SessionModelsDto>, Option<Vec<SessionConfigOptionDto>>), NexError>,
-        >();
+        let (init_tx, init_rx) = oneshot::channel::<SessionInitResult>();
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
         let thread_app = app.clone();
         let thread_key = session_key.clone();
         let thread_sessions = Arc::clone(&self.sessions);
         let thread_pending = Arc::clone(&self.pending_permissions);
+        let thread_plans = Arc::clone(&self.pending_plan_approvals);
+        let thread_questions = Arc::clone(&self.pending_ask_questions);
 
         std::thread::Builder::new()
             .name(format!("agent-session-{session_key}"))
@@ -554,6 +1247,8 @@ impl AcpSessionManager {
                         thread_key,
                         spec,
                         thread_pending,
+                        thread_plans,
+                        thread_questions,
                         thread_sessions,
                         init_tx,
                         shutdown_rx,
@@ -563,7 +1258,7 @@ impl AcpSessionManager {
             })
             .map_err(|e| NexError::Agent(format!("failed to spawn session thread: {e}")))?;
 
-        let (conn, agent_session_id, modes, models, config_options) = init_rx
+        let (conn, agent_session_id, modes, models, config_options, available_commands) = init_rx
             .await
             .map_err(|_| NexError::Agent("session thread stopped during initialization".to_string()))??;
 
@@ -580,10 +1275,89 @@ impl AcpSessionManager {
             modes,
             models,
             config_options,
+            available_commands,
         })
     }
 
-    pub async fn send_prompt(&self, session_id: &str, blocks: Vec<PromptBlock>) -> Result<(), NexError> {
+    /// Starts the in-process native agent. Mirrors [`Self::create_session`] but
+    /// routes the session thread to `run_session_native` (duplex pipe + agent
+    /// side) instead of spawning an external child process.
+    pub async fn create_native_session(
+        &self,
+        app: &AppHandle,
+        conversation_id: &str,
+        cwd: &str,
+        config_path: std::path::PathBuf,
+    ) -> Result<CreateSessionResult, NexError> {
+        let session_key = uuid::Uuid::new_v4().to_string();
+        let (init_tx, init_rx) = oneshot::channel::<SessionInitResult>();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+
+        let thread_app = app.clone();
+        let thread_key = session_key.clone();
+        let thread_cwd = cwd.to_string();
+        let thread_conversation_id = conversation_id.to_string();
+        let thread_sessions = Arc::clone(&self.sessions);
+        let thread_pending = Arc::clone(&self.pending_permissions);
+        let thread_plans = Arc::clone(&self.pending_plan_approvals);
+        let thread_questions = Arc::clone(&self.pending_ask_questions);
+
+        std::thread::Builder::new()
+            .name(format!("agent-session-{session_key}"))
+            .spawn(move || {
+                let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+                    Ok(rt) => rt,
+                    Err(e) => {
+                        let _ = init_tx.send(Err(NexError::Agent(format!("failed to start session runtime: {e}"))));
+                        return;
+                    }
+                };
+                let local = tokio::task::LocalSet::new();
+                local.block_on(&runtime, async move {
+                    run_session_native(
+                        thread_app,
+                        thread_key,
+                        thread_cwd,
+                        thread_conversation_id,
+                        config_path,
+                        thread_pending,
+                        thread_plans,
+                        thread_questions,
+                        thread_sessions,
+                        init_tx,
+                        shutdown_rx,
+                    )
+                    .await;
+                });
+            })
+            .map_err(|e| NexError::Agent(format!("failed to spawn session thread: {e}")))?;
+
+        let (conn, agent_session_id, modes, models, config_options, available_commands) = init_rx
+            .await
+            .map_err(|_| NexError::Agent("session thread stopped during initialization".to_string()))??;
+
+        let handle = Arc::new(SessionHandle {
+            conn,
+            agent_session_id,
+            conversation_id: conversation_id.to_string(),
+            prompt_in_flight: AtomicBool::new(false),
+            _shutdown: shutdown_tx,
+        });
+        self.sessions.lock().unwrap().insert(session_key.clone(), handle);
+        Ok(CreateSessionResult {
+            session_id: session_key,
+            modes,
+            models,
+            config_options,
+            available_commands,
+        })
+    }
+
+    pub async fn send_prompt(
+        &self,
+        session_id: &str,
+        blocks: Vec<PromptBlock>,
+    ) -> Result<super::types::PromptResultDto, NexError> {
         let handle = self.session(session_id)?;
         if handle
             .prompt_in_flight
@@ -609,7 +1383,14 @@ impl AcpSessionManager {
         })
         .await;
         handle.prompt_in_flight.store(false, Ordering::SeqCst);
-        result.map(|_| ())
+        let resp = result?;
+        let had_mutations = resp
+            .meta
+            .as_ref()
+            .and_then(|m| m.get("hadMutations"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        Ok(super::types::PromptResultDto { had_mutations })
     }
 
     pub async fn set_session_mode(&self, session_id: &str, mode_id: &str) -> Result<(), NexError> {
@@ -633,11 +1414,15 @@ impl AcpSessionManager {
         .map(|_| ())
     }
 
-    pub async fn set_session_model(&self, session_id: &str, model_id: &str) -> Result<(), NexError> {
+    pub async fn set_session_model(
+        &self,
+        session_id: &str,
+        model_id: &str,
+    ) -> Result<Option<Vec<SessionConfigOptionDto>>, NexError> {
         let handle = self.session(session_id)?;
         let agent_session_id = handle.agent_session_id.clone();
         let model_id = model_id.to_string();
-        run_acp({
+        let resp = run_acp({
             let handle = Arc::clone(&handle);
             move || async move {
                 handle
@@ -650,8 +1435,8 @@ impl AcpSessionManager {
                     .await
             }
         })
-        .await
-        .map(|_| ())
+        .await?;
+        Ok(resp.meta.as_ref().and_then(config_options_from_json))
     }
 
     pub async fn set_session_config_option(
@@ -670,6 +1455,12 @@ impl AcpSessionManager {
                 handle
                     .conn
                     .request_raw(
+                        // ACP `session/set_config_option` is the standard method
+                        // name external agents (Claude Code / Codex / Cursor)
+                        // register. Our in-process native agent's decode layer
+                        // (patched in `agent-client-protocol/src/lib.rs`) routes
+                        // this same unprefixed name into `Agent::ext_method`,
+                        // so the same call works for both transports.
                         "session/set_config_option",
                         serde_json::json!({
                             "sessionId": agent_session_id,
@@ -687,6 +1478,8 @@ impl AcpSessionManager {
     pub async fn cancel(&self, session_id: &str) -> Result<(), NexError> {
         let handle = self.session(session_id)?;
         self.resolve_session_permissions(session_id, Some(acp::RequestPermissionOutcome::Cancelled));
+        self.resolve_session_plan_approvals(session_id, PlanApprovalOutcome::Cancelled);
+        self.resolve_session_ask_questions(session_id, AskQuestionOutcome::Cancelled);
         let agent_session_id = handle.agent_session_id.clone();
         run_acp({
             let handle = Arc::clone(&handle);
@@ -719,7 +1512,82 @@ impl AcpSessionManager {
             .map_err(|_| NexError::Agent("permission request already resolved".to_string()))
     }
 
+    /// Resolves a Cursor `cursor/create_plan` approval (`accepted` / `rejected` / `cancelled`).
+    pub fn respond_plan(
+        &self,
+        request_id: &str,
+        outcome: &str,
+        reason: Option<String>,
+    ) -> Result<(), NexError> {
+        let pending = self
+            .pending_plan_approvals
+            .lock()
+            .unwrap()
+            .remove(request_id)
+            .ok_or_else(|| NexError::Agent(format!("unknown plan approval request `{request_id}`")))?;
+        let mapped = match outcome {
+            "accepted" => PlanApprovalOutcome::Accepted,
+            "rejected" => PlanApprovalOutcome::Rejected { reason },
+            "cancelled" => PlanApprovalOutcome::Cancelled,
+            other => {
+                return Err(NexError::Agent(format!(
+                    "invalid plan approval outcome `{other}` (expected accepted|rejected|cancelled)"
+                )));
+            }
+        };
+        pending
+            .tx
+            .send(mapped)
+            .map_err(|_| NexError::Agent("plan approval request already resolved".to_string()))
+    }
+
+    /// Resolves a Cursor `cursor/ask_question` prompt (`answered` / `skipped` / `cancelled`).
+    pub fn respond_ask_question(
+        &self,
+        request_id: &str,
+        outcome: &str,
+        answers: Option<Vec<AskQuestionAnswerDto>>,
+        reason: Option<String>,
+    ) -> Result<(), NexError> {
+        let pending = self
+            .pending_ask_questions
+            .lock()
+            .unwrap()
+            .remove(request_id)
+            .ok_or_else(|| NexError::Agent(format!("unknown ask-question request `{request_id}`")))?;
+        let mapped = match outcome {
+            "answered" => {
+                let answers = answers.unwrap_or_default();
+                if answers.is_empty() {
+                    return Err(NexError::Agent(
+                        "ask-question answered outcome requires at least one answer".into(),
+                    ));
+                }
+                AskQuestionOutcome::Answered { answers }
+            }
+            "skipped" => AskQuestionOutcome::Skipped { reason },
+            "cancelled" => AskQuestionOutcome::Cancelled,
+            other => {
+                return Err(NexError::Agent(format!(
+                    "invalid ask-question outcome `{other}` (expected answered|skipped|cancelled)"
+                )));
+            }
+        };
+        pending
+            .tx
+            .send(mapped)
+            .map_err(|_| NexError::Agent("ask-question request already resolved".to_string()))
+    }
+
     pub fn remove_session(&self, session_id: &str) {
+        // Closing the session must unblock any in-flight permission / plan /
+        // ask-question waiters (cancel already does this; remove alone did not).
+        self.resolve_session_permissions(
+            session_id,
+            Some(acp::RequestPermissionOutcome::Cancelled),
+        );
+        self.resolve_session_plan_approvals(session_id, PlanApprovalOutcome::Cancelled);
+        self.resolve_session_ask_questions(session_id, AskQuestionOutcome::Cancelled);
         self.sessions.lock().unwrap().remove(session_id);
     }
 
@@ -745,6 +1613,46 @@ impl AcpSessionManager {
             }
         }
     }
+
+    fn resolve_session_plan_approvals(&self, session_id: &str, outcome: PlanApprovalOutcome) {
+        let mut map = self.pending_plan_approvals.lock().unwrap();
+        let keys: Vec<String> = map
+            .iter()
+            .filter(|(_, p)| p.session_key == session_id)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for key in keys {
+            if let Some(pending) = map.remove(&key) {
+                let _ = pending.tx.send(outcome.clone());
+            }
+        }
+    }
+
+    fn resolve_session_ask_questions(&self, session_id: &str, outcome: AskQuestionOutcome) {
+        let mut map = self.pending_ask_questions.lock().unwrap();
+        let keys: Vec<String> = map
+            .iter()
+            .filter(|(_, p)| p.session_key == session_id)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for key in keys {
+            if let Some(pending) = map.remove(&key) {
+                let _ = pending.tx.send(outcome.clone());
+            }
+        }
+    }
+}
+
+/// Diagnostics + lifecycle context for the spawned transport behind a session.
+///
+/// External agents carry their child process here (so handshake failures can be
+/// enriched with stderr and the process can be killed). The in-process native
+/// agent has no child, so `child` is `None` and the kill helpers are no-ops.
+struct DiagCtx {
+    program: String,
+    args: Vec<String>,
+    child: Option<tokio::process::Child>,
+    stderr_tail: Arc<Mutex<VecDeque<String>>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -753,6 +1661,8 @@ async fn run_session(
     session_key: String,
     spec: LaunchSpec,
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
+    pending_plan_approvals: Arc<Mutex<HashMap<String, PendingPlanApproval>>>,
+    pending_ask_questions: Arc<Mutex<HashMap<String, PendingAskQuestion>>>,
     sessions: Arc<Mutex<HashMap<String, Arc<SessionHandle>>>>,
     init_tx: oneshot::Sender<SessionInitResult>,
     shutdown_rx: oneshot::Receiver<()>,
@@ -780,10 +1690,137 @@ async fn run_session(
     let outgoing = child.stdin.take().expect("agent stdin not piped").compat_write();
     let incoming = child.stdout.take().expect("agent stdout not piped").compat();
 
+    let diag = DiagCtx {
+        program: program.clone(),
+        args: spec.args.clone(),
+        child: Some(child),
+        stderr_tail,
+    };
+
+    run_acp_session(
+        app,
+        session_key,
+        cwd,
+        outgoing,
+        incoming,
+        pending_permissions,
+        pending_plan_approvals,
+        pending_ask_questions,
+        sessions,
+        init_tx,
+        shutdown_rx,
+        diag,
+        None,
+    )
+    .await;
+}
+
+/// Starts the in-process native agent over an in-memory duplex pipe.
+///
+/// One end of the pipe is handed to `NexNativeAgent` (via `AgentSideConnection`),
+/// the other end flows into the shared `run_acp_session` pipeline so the client
+/// handshake / notification / permission / cancel plumbing is identical to an
+/// external agent — only the byte transport differs.
+#[allow(clippy::too_many_arguments)]
+async fn run_session_native(
+    app: AppHandle,
+    session_key: String,
+    cwd: String,
+    conversation_id: String,
+    config_path: std::path::PathBuf,
+    pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
+    pending_plan_approvals: Arc<Mutex<HashMap<String, PendingPlanApproval>>>,
+    pending_ask_questions: Arc<Mutex<HashMap<String, PendingAskQuestion>>>,
+    sessions: Arc<Mutex<HashMap<String, Arc<SessionHandle>>>>,
+    init_tx: oneshot::Sender<SessionInitResult>,
+    shutdown_rx: oneshot::Receiver<()>,
+) {
+    log::info!("starting in-process native Nex agent (cwd: {cwd})");
+
+    // Two bidirectional in-memory endpoints. `client_end` talks to the agent;
+    // `agent_end` is driven by the agent's connection.
+    let (client_end, agent_end) = tokio::io::duplex(64 * 1024);
+
+    let agent = NexNativeAgent::new(config_path);
+
+    // Split the agent endpoint into read/write halves and build the agent side.
+    let (agent_read, agent_write) = tokio::io::split(agent_end);
+    let (agent_conn, agent_io_task) = acp::AgentSideConnection::new(
+        agent.clone(),
+        agent_write.compat_write(),
+        agent_read.compat(),
+        |fut| {
+            tokio::task::spawn_local(fut);
+        },
+    );
+    agent.set_conn(Arc::new(agent_conn));
+    tokio::task::spawn_local(async move {
+        if let Err(e) = agent_io_task.await {
+            log::error!("native agent io failed: {e}");
+        }
+    });
+
+    // Split the client endpoint and run the shared ACP pipeline.
+    let (client_read, client_write) = tokio::io::split(client_end);
+    let diag = DiagCtx {
+        program: "nex".to_string(),
+        args: Vec::new(),
+        child: None,
+        stderr_tail: Arc::new(Mutex::new(VecDeque::new())),
+    };
+
+    run_acp_session(
+        app,
+        session_key,
+        cwd,
+        client_write.compat_write(),
+        client_read.compat(),
+        pending_permissions,
+        pending_plan_approvals,
+        pending_ask_questions,
+        sessions,
+        init_tx,
+        shutdown_rx,
+        diag,
+        Some(conversation_id),
+    )
+    .await;
+}
+
+/// Transport-agnostic session pipeline: everything after the byte streams are
+/// ready. Builds the client connection, performs the ACP handshake, reports it
+/// through `init_tx`, then keeps the session alive until the IO task ends or a
+/// shutdown is requested. Used by both external (child process) and native
+/// (duplex pipe) transports.
+#[allow(clippy::too_many_arguments)]
+async fn run_acp_session<W, R>(
+    app: AppHandle,
+    session_key: String,
+    cwd: String,
+    outgoing: W,
+    incoming: R,
+    pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
+    pending_plan_approvals: Arc<Mutex<HashMap<String, PendingPlanApproval>>>,
+    pending_ask_questions: Arc<Mutex<HashMap<String, PendingAskQuestion>>>,
+    sessions: Arc<Mutex<HashMap<String, Arc<SessionHandle>>>>,
+    init_tx: oneshot::Sender<SessionInitResult>,
+    shutdown_rx: oneshot::Receiver<()>,
+    mut diag: DiagCtx,
+    // When `Some`, try `session/load` first (native resume). External agents
+    // always pass `None` and go straight to `session/new`.
+    resume_conversation_id: Option<String>,
+) where
+    W: futures::io::AsyncWrite + Unpin + 'static,
+    R: futures::io::AsyncRead + Unpin + 'static,
+{
     let client = NexAcpClient {
         app: app.clone(),
         session_key: session_key.clone(),
+        cwd: PathBuf::from(&cwd),
         pending_permissions: Arc::clone(&pending_permissions),
+        pending_plan_approvals: Arc::clone(&pending_plan_approvals),
+        pending_ask_questions: Arc::clone(&pending_ask_questions),
+        cursor_todos: Mutex::new(Vec::new()),
     };
     let (conn, io_task) = acp::ClientSideConnection::new(client, outgoing, incoming, |fut| {
         tokio::task::spawn_local(fut);
@@ -836,56 +1873,118 @@ async fn run_session(
             })?;
         }
 
-        let response = conn
-            .request_raw(
-                "session/new",
-                serde_json::json!({
-                    "cwd": cwd,
-                    "mcpServers": [],
-                }),
-            )
-            .await
-            .map_err(NexError::from)?;
+        let mcp_servers = acp_mcp_servers_from_nex(std::path::Path::new(&cwd));
+        let (session_id, response) = if let Some(id) = resume_conversation_id.as_deref() {
+            // Native resume: try archived history first; on miss fall back to a
+            // fresh session with a stable conversation-scoped id.
+            match conn
+                .request_raw(
+                    "session/load",
+                    serde_json::json!({
+                        "sessionId": id,
+                        "cwd": cwd,
+                        "mcpServers": [],
+                    }),
+                )
+                .await
+            {
+                Ok(response) => {
+                    log::info!("resumed native ACP session via session/load ({id})");
+                    (acp::SessionId(Arc::from(id)), response)
+                }
+                Err(e) => {
+                    log::info!(
+                        "session/load failed for `{id}` ({e}); falling back to session/new"
+                    );
+                    let response = conn
+                        .request_raw(
+                            "session/new",
+                            serde_json::json!({
+                                "cwd": cwd,
+                                "mcpServers": mcp_servers,
+                                "_meta": { "nexConversationId": id },
+                            }),
+                        )
+                        .await
+                        .map_err(NexError::from)?;
+                    let session_id = response
+                        .get("sessionId")
+                        .or_else(|| response.get("session_id"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(id);
+                    (acp::SessionId(Arc::from(session_id)), response)
+                }
+            }
+        } else {
+            let response = conn
+                .request_raw(
+                    "session/new",
+                    serde_json::json!({
+                        "cwd": cwd,
+                        "mcpServers": mcp_servers,
+                    }),
+                )
+                .await
+                .map_err(NexError::from)?;
+            let session_id = response
+                .get("sessionId")
+                .or_else(|| response.get("session_id"))
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| NexError::Agent("session/new response missing sessionId".into()))?;
+            (acp::SessionId(Arc::from(session_id)), response)
+        };
 
-        let session_id = response
-            .get("sessionId")
-            .or_else(|| response.get("session_id"))
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| NexError::Agent("session/new response missing sessionId".into()))?;
-        let session_id = acp::SessionId(Arc::from(session_id));
-
-        // Prefer typed fields when present; also keep configOptions which the
-        // 0.7 schema drops from NewSessionResponse.
+        // Prefer typed fields when present; also keep configOptions /
+        // availableCommands which the 0.7 schema drops from NewSessionResponse
+        // / LoadSessionResponse (they travel in `_meta`).
         let modes = modes_from_json(&response);
         let models = models_from_json(&response);
         let config_options = config_options_from_json(&response);
-        Ok((session_id, modes, models, config_options))
+        let available_commands = available_commands_from_json(&response);
+        Ok((
+            session_id,
+            modes,
+            models,
+            config_options,
+            available_commands,
+        ))
     })
     .await;
 
     let handshake: Result<SessionHandshakeInfo, NexError> = match handshake {
         Ok(Ok(v)) => Ok(v),
-        Ok(Err(e)) => Err(enrich(e, &mut child, &stderr_tail, &program, &spec.args)),
-        Err(_) => Err(NexError::Agent(format!(
-            "agent `{program}` did not complete the ACP handshake within {}s{}",
-            HANDSHAKE_TIMEOUT.as_secs(),
-            diag(&mut child, &stderr_tail, &program, &spec.args)
-        ))),
+        Ok(Err(e)) => Err(enrich(e, &mut diag)),
+        Err(_) => {
+            let details = diag_details(&mut diag);
+            Err(NexError::Agent(format!(
+                "agent `{}` did not complete the ACP handshake within {}s{}",
+                diag.program,
+                HANDSHAKE_TIMEOUT.as_secs(),
+                details
+            )))
+        }
     };
 
     match handshake {
-        Ok((agent_session_id, modes, models, config_options)) => {
+        Ok((agent_session_id, modes, models, config_options, available_commands)) => {
             if init_tx
-                .send(Ok((conn, agent_session_id, modes, models, config_options)))
+                .send(Ok((
+                    conn,
+                    agent_session_id,
+                    modes,
+                    models,
+                    config_options,
+                    available_commands,
+                )))
                 .is_err()
             {
-                let _ = child.kill().await;
+                kill_diag(&mut diag).await;
                 return;
             }
         }
         Err(e) => {
             let _ = init_tx.send(Err(e));
-            let _ = child.kill().await;
+            kill_diag(&mut diag).await;
             return;
         }
     }
@@ -895,17 +1994,44 @@ async fn run_session(
         _ = shutdown_rx => {},
     }
 
-    let _ = child.start_kill();
-    let mut map = pending_permissions.lock().unwrap();
-    let keys: Vec<String> = map
-        .iter()
-        .filter(|(_, p)| p.session_key == session_key)
-        .map(|(k, _)| k.clone())
-        .collect();
-    for key in keys {
-        map.remove(&key);
+    start_kill_diag(&mut diag);
+    {
+        let mut map = pending_permissions.lock().unwrap();
+        let keys: Vec<String> = map
+            .iter()
+            .filter(|(_, p)| p.session_key == session_key)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for key in keys {
+            map.remove(&key);
+        }
     }
-    drop(map);
+    {
+        let mut map = pending_plan_approvals.lock().unwrap();
+        let keys: Vec<String> = map
+            .iter()
+            .filter(|(_, p)| p.session_key == session_key)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for key in keys {
+            if let Some(pending) = map.remove(&key) {
+                let _ = pending.tx.send(PlanApprovalOutcome::Cancelled);
+            }
+        }
+    }
+    {
+        let mut map = pending_ask_questions.lock().unwrap();
+        let keys: Vec<String> = map
+            .iter()
+            .filter(|(_, p)| p.session_key == session_key)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for key in keys {
+            if let Some(pending) = map.remove(&key) {
+                let _ = pending.tx.send(AskQuestionOutcome::Cancelled);
+            }
+        }
+    }
 
     sessions.lock().unwrap().remove(&session_key);
     let _ = app.emit(AGENT_SESSION_TERMINATED_EVENT, AgentSessionTerminated { session_id: session_key });
@@ -924,14 +2050,15 @@ fn pick_auth_method(methods: &[acp::AuthMethod]) -> Option<&acp::AuthMethod> {
     methods.first()
 }
 
-fn diag(
-    child: &mut tokio::process::Child,
-    tail: &Mutex<VecDeque<String>>,
-    program: &str,
-    args: &[String],
-) -> String {
+/// Builds a human-readable diagnostic tail for handshake failures. External
+/// agents contribute the command line, process state and stderr; the native
+/// agent (no child) contributes nothing extra.
+fn diag_details(diag: &mut DiagCtx) -> String {
     let mut out = String::new();
-    out.push_str(&format!("\ncommand: {program} {}", args.join(" ")));
+    let Some(child) = diag.child.as_mut() else {
+        return out;
+    };
+    out.push_str(&format!("\ncommand: {} {}", diag.program, diag.args.join(" ")));
     match child.try_wait() {
         Ok(Some(status)) => out.push_str(&format!("\nagent process exited ({status})")),
         Ok(None) => out.push_str(
@@ -941,7 +2068,7 @@ fn diag(
         ),
         Err(e) => out.push_str(&format!("\nfailed to query agent process status: {e}")),
     }
-    let lines = tail.lock().unwrap();
+    let lines = diag.stderr_tail.lock().unwrap();
     if !lines.is_empty() {
         out.push_str("\nagent stderr:");
         for line in lines.iter() {
@@ -951,16 +2078,25 @@ fn diag(
     out
 }
 
-fn enrich(
-    e: NexError,
-    child: &mut tokio::process::Child,
-    tail: &Mutex<VecDeque<String>>,
-    program: &str,
-    args: &[String],
-) -> NexError {
+fn enrich(e: NexError, diag: &mut DiagCtx) -> NexError {
     match e {
-        NexError::Agent(msg) => NexError::Agent(format!("{msg}{}", diag(child, tail, program, args))),
+        NexError::Agent(msg) => NexError::Agent(format!("{msg}{}", diag_details(diag))),
         other => other,
+    }
+}
+
+/// Forcefully terminates the transport on handshake failure. A child process is
+/// killed; the native agent has nothing to stop here.
+async fn kill_diag(diag: &mut DiagCtx) {
+    if let Some(child) = diag.child.as_mut() {
+        let _ = child.kill().await;
+    }
+}
+
+/// Requests termination of the transport during normal teardown.
+fn start_kill_diag(diag: &mut DiagCtx) {
+    if let Some(child) = diag.child.as_mut() {
+        let _ = child.start_kill();
     }
 }
 
@@ -993,4 +2129,174 @@ fn drain_stderr(stderr: tokio::process::ChildStderr, program: String, tail: Arc<
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn available_commands_from_json_skips_bad_items() {
+        let value = serde_json::json!({
+            "_meta": {
+                "availableCommands": [
+                    { "description": "no name" },
+                    { "name": "", "description": "empty" },
+                    { "name": "review", "description": "Review code.", "input": { "hint": "files" } },
+                ]
+            }
+        });
+        let cmds = available_commands_from_json(&value).expect("catalog");
+        assert_eq!(cmds.len(), 1);
+        assert_eq!(cmds[0].name, "review");
+        assert_eq!(cmds[0].input_hint.as_deref(), Some("files"));
+    }
+
+    #[test]
+    fn parse_cursor_todos_reads_items() {
+        let params = serde_json::json!({
+            "todos": [
+                { "id": "1", "content": "A", "status": "completed" },
+                { "id": "2", "content": "  ", "status": "pending" },
+                { "content": "B", "status": "in_progress" }
+            ]
+        });
+        let todos = parse_cursor_todos(&params);
+        assert_eq!(todos.len(), 2);
+        assert_eq!(todos[0].id, "1");
+        assert_eq!(todos[0].content, "A");
+        assert_eq!(todos[1].content, "B");
+        assert!(todos[1].id.is_empty());
+    }
+
+    #[test]
+    fn parse_cursor_todos_from_phases_flattens() {
+        let params = serde_json::json!({
+            "phases": [
+                { "name": "p1", "todos": [{ "id": "a", "content": "one", "status": "pending" }] },
+                { "name": "p2", "todos": [{ "id": "b", "content": "two", "status": "completed" }] }
+            ]
+        });
+        let todos = parse_cursor_todos_from_phases(&params);
+        assert_eq!(todos.len(), 2);
+        assert_eq!(todos[0].id, "a");
+        assert_eq!(todos[1].content, "two");
+    }
+
+    #[test]
+    fn merge_cursor_todos_replace_and_merge() {
+        let mut existing = vec![CursorTodoDto {
+            id: "1".into(),
+            content: "old".into(),
+            status: "pending".into(),
+        }];
+        merge_cursor_todos(
+            &mut existing,
+            vec![CursorTodoDto {
+                id: "1".into(),
+                content: "new".into(),
+                status: "completed".into(),
+            }],
+            true,
+        );
+        assert_eq!(existing.len(), 1);
+        assert_eq!(existing[0].content, "new");
+        assert_eq!(existing[0].status, "completed");
+
+        merge_cursor_todos(
+            &mut existing,
+            vec![CursorTodoDto {
+                id: "x".into(),
+                content: "only".into(),
+                status: "pending".into(),
+            }],
+            false,
+        );
+        assert_eq!(existing.len(), 1);
+        assert_eq!(existing[0].id, "x");
+
+        // Empty ids merge by content (no duplicate rows).
+        let mut empty_ids = vec![CursorTodoDto {
+            id: String::new(),
+            content: "same".into(),
+            status: "pending".into(),
+        }];
+        merge_cursor_todos(
+            &mut empty_ids,
+            vec![CursorTodoDto {
+                id: String::new(),
+                content: "same".into(),
+                status: "completed".into(),
+            }],
+            true,
+        );
+        assert_eq!(empty_ids.len(), 1);
+        assert_eq!(empty_ids[0].status, "completed");
+    }
+
+    #[test]
+    fn parse_ask_questions_filters_invalid() {
+        let params = serde_json::json!({
+            "questions": [
+                {
+                    "id": "q1",
+                    "prompt": "Which mode?",
+                    "options": [
+                        { "id": "agent", "label": "Agent" },
+                        { "id": "plan", "label": "Plan" }
+                    ],
+                    "allowMultiple": false
+                },
+                { "id": "q2", "prompt": "No options", "options": [] },
+                { "id": "q3", "prompt": "  ", "options": [{ "id": "x", "label": "X" }] }
+            ]
+        });
+        let qs = parse_ask_questions(&params);
+        assert_eq!(qs.len(), 1);
+        assert_eq!(qs[0].id, "q1");
+        assert_eq!(qs[0].options.len(), 2);
+        assert!(!qs[0].allow_multiple);
+    }
+
+    #[test]
+    fn generate_image_path_stays_under_cwd() {
+        let tmp = tempfile::tempdir().unwrap();
+        // resolve_within returns canonical paths; compare against the canonical root.
+        let canon = tmp.path().canonicalize().unwrap();
+        let ok = resolve_image_path_under_cwd(&canon, "shots/a.png").unwrap();
+        assert!(ok.starts_with(&canon));
+        let err = resolve_image_path_under_cwd(&canon, "../escape.png").unwrap_err();
+        assert!(err.contains("escapes"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn read_image_under_cwd_allows_in_workspace_rejects_escape() {
+        let tmp = tempfile::tempdir().unwrap();
+        let inside = tmp.path().join("ok.png");
+        std::fs::write(&inside, b"png-bytes").unwrap();
+        let (bytes, mime) = read_image_under_cwd(tmp.path(), "ok.png").await.unwrap();
+        assert_eq!(bytes, b"png-bytes");
+        assert_eq!(mime, "image/png");
+
+        let outside = tmp.path().parent().unwrap().join("outside.png");
+        std::fs::write(&outside, b"secret").unwrap();
+        let err = read_image_under_cwd(tmp.path(), outside.to_str().unwrap())
+            .await
+            .unwrap_err();
+        assert!(err.contains("escapes"), "{err}");
+        let _ = std::fs::remove_file(&outside);
+    }
+
+    #[tokio::test]
+    async fn persist_generated_image_writes_under_nex_generated() {
+        let tmp = tempfile::tempdir().unwrap();
+        use base64::Engine;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(b"tiny");
+        let path = persist_generated_image(tmp.path(), &b64, "image/png")
+            .await
+            .unwrap();
+        let p = PathBuf::from(&path);
+        assert!(p.starts_with(tmp.path().join(".nex").join("generated")));
+        assert_eq!(std::fs::read(&p).unwrap(), b"tiny");
+    }
 }

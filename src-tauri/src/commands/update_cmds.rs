@@ -96,8 +96,13 @@ fn pick_asset_pair(assets: &[(String, String)]) -> Option<(String, String)> {
     None
 }
 
+/// Strip a release tag down to a bare semver for comparison. Published tags
+/// vary between `release-v1.2.3`, `v1.2.3` and `1.2.3` (prerelease/build
+/// suffixes like `-beta.1` are kept, `release-v` is normalized away).
 fn strip_v(tag: &str) -> &str {
-    tag.trim().trim_start_matches('v')
+    let trimmed = tag.trim();
+    let without_release = trimmed.strip_prefix("release-").unwrap_or(trimmed);
+    without_release.strip_prefix('v').unwrap_or(without_release)
 }
 
 fn build_update_info(current_version: &str, snap: ReleaseSnapshot) -> UpdateInfo {
@@ -583,6 +588,18 @@ mod tests {
         );
         let msg = format!("{err}");
         assert!(msg.contains("请求次数已达上限"), "{msg}");
+    }
+
+    #[test]
+    fn strip_v_normalizes_all_published_tag_formats() {
+        // CI publishes `release-vX.Y.Z`; manual/older releases may use `v` or bare.
+        assert_eq!(strip_v("release-v1.2.3"), "1.2.3");
+        assert_eq!(strip_v("v1.2.3"), "1.2.3");
+        assert_eq!(strip_v("1.2.3"), "1.2.3");
+        // Prerelease/build suffixes survive.
+        assert_eq!(strip_v("release-v1.0.0-beta8"), "1.0.0-beta8");
+        assert_eq!(strip_v("v1.2.3+build.5"), "1.2.3+build.5");
+        assert_eq!(strip_v("  release-v2.0.0  "), "2.0.0");
     }
 
     #[test]

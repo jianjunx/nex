@@ -1,7 +1,20 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { COMMANDS } from "./commands";
-import { EVENTS, type AgentNotificationPayload, type AgentPermissionRequestPayload, type TerminalOutputPayload, type TerminalExitedPayload, type FsChangedPayload, type GitStatusChangedPayload, type GitCredentialRequestPayload, type UpdateDownloadProgressPayload } from "./events";
+import {
+  EVENTS,
+  type AgentAskQuestionRequestPayload,
+  type AgentNotificationPayload,
+  type AgentPermissionRequestPayload,
+  type AgentPlanApprovalRequestPayload,
+  type AskQuestionAnswerPayload,
+  type TerminalOutputPayload,
+  type TerminalExitedPayload,
+  type FsChangedPayload,
+  type GitStatusChangedPayload,
+  type GitCredentialRequestPayload,
+  type UpdateDownloadProgressPayload,
+} from "./events";
 
 // --- Projects ---
 export interface Project {
@@ -111,7 +124,7 @@ export interface ServerDescriptor {
   installedVersion?: string;
   description: string;
   icon: string | null;
-  kind: "registry" | "custom";
+  kind: "registry" | "custom" | "native";
 }
 
 /** A user-defined ACP server (persisted on the Rust side). */
@@ -125,7 +138,91 @@ export interface CustomServer {
 /** Which agent to start a session against; serialized to Rust's `SessionTarget`. */
 export type SessionTarget =
   | { type: "registry"; id: string }
-  | { type: "custom"; id: string };
+  | { type: "custom"; id: string }
+  | { type: "native" };
+
+/**
+ * Config of the built-in native agent (`nex-agent.json`), camelCase DTO.
+ * `reasoningSupport` records whether the model accepts `reasoning_effort`:
+ * `unknown` (not verified), `yes` (accepted), `no` (rejected).
+ * Ladder provenance is `reasoningSource`; Settings ownership is `reasoningManual`.
+ */
+export interface NativeAgentModelCapabilities {
+  tools: boolean;
+  vision: boolean;
+  reasoning: boolean;
+}
+
+export type ReasoningSource = "none" | "heuristic" | "api" | "probe" | "manual";
+
+export interface NativeAgentModel {
+  id: string;
+  reasoningSupport: "unknown" | "yes" | "no";
+  capabilities: NativeAgentModelCapabilities;
+  /** Composer-selectable reasoning effort ids for this model. */
+  reasoningLevels: string[];
+  /** Per-model context window in tokens; omit/undefined = no limit. */
+  contextWindow?: number | null;
+  /** When true, Settings owns reasoning on/off + levels. */
+  reasoningManual?: boolean;
+  /** Provenance of `reasoningLevels`. */
+  reasoningSource?: ReasoningSource;
+}
+
+export interface NativeAgentProvider {
+  id: string;
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+  models: NativeAgentModel[];
+}
+
+export interface NativeAgentConfig {
+  providers: NativeAgentProvider[];
+  /** Composite `<providerId>/<modelId>` used for fresh sessions. */
+  defaultModel?: string | null;
+  agent: {
+    maxSteps: number;
+    contextWindow: number;
+    bashTimeoutSecs: number;
+    maxSubagentConcurrency: number;
+    /** After a mutating turn, automatically send `/review`. */
+    autoReview?: boolean;
+  };
+  disabledSkills?: string[];
+  disabledMcpServers?: string[];
+}
+
+export interface PromptResultDto {
+  hadMutations: boolean;
+}
+
+export interface NativeMcpServerInfo {
+  name: string;
+  command?: string | null;
+  args: string[];
+  env: Record<string, string>;
+  url?: string | null;
+  headers: Record<string, string>;
+  enabled: boolean;
+  source: string;
+}
+
+export interface NativeSkillInfo {
+  name: string;
+  description: string;
+  enabled: boolean;
+  source: "builtin" | "user" | string;
+}
+
+export interface NativeMcpUpsert {
+  name: string;
+  command?: string | null;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string | null;
+  headers?: Record<string, string>;
+}
 
 export async function agentListServers(): Promise<ServerDescriptor[]> {
   return invoke(COMMANDS.AGENT_LIST_SERVERS);
@@ -154,6 +251,7 @@ export interface SessionModelDto {
   id: string;
   name: string;
   description?: string | null;
+  vision?: boolean | null;
 }
 
 export interface SessionModelsDto {
@@ -174,11 +272,18 @@ export interface SessionConfigOptionDto {
   options: SessionConfigValueDto[];
 }
 
+export interface AvailableCommandDto {
+  name: string;
+  description: string;
+  inputHint?: string | null;
+}
+
 export interface CreateSessionResult {
   sessionId: string;
   modes?: SessionModesDto | null;
   models?: SessionModelsDto | null;
   configOptions?: SessionConfigOptionDto[] | null;
+  availableCommands?: AvailableCommandDto[] | null;
 }
 
 export type PromptBlock =
@@ -195,7 +300,10 @@ export async function agentCreateSession(
   return invoke(COMMANDS.AGENT_CREATE_SESSION, { conversationId, target, cwd });
 }
 
-export async function agentSendPrompt(sessionId: string, blocks: PromptBlock[]): Promise<void> {
+export async function agentSendPrompt(
+  sessionId: string,
+  blocks: PromptBlock[],
+): Promise<PromptResultDto> {
   return invoke(COMMANDS.AGENT_SEND_PROMPT, { sessionId, blocks });
 }
 
@@ -203,7 +311,10 @@ export async function agentSetSessionMode(sessionId: string, modeId: string): Pr
   return invoke(COMMANDS.AGENT_SET_SESSION_MODE, { sessionId, modeId });
 }
 
-export async function agentSetSessionModel(sessionId: string, modelId: string): Promise<void> {
+export async function agentSetSessionModel(
+  sessionId: string,
+  modelId: string,
+): Promise<SessionConfigOptionDto[] | null> {
   return invoke(COMMANDS.AGENT_SET_SESSION_MODEL, { sessionId, modelId });
 }
 
@@ -223,6 +334,28 @@ export async function agentRespondPermission(requestId: string, optionId: string
   return invoke(COMMANDS.AGENT_RESPOND_PERMISSION, { requestId, optionId });
 }
 
+export async function agentRespondPlan(
+  requestId: string,
+  outcome: "accepted" | "rejected" | "cancelled",
+  reason?: string | null,
+): Promise<void> {
+  return invoke(COMMANDS.AGENT_RESPOND_PLAN, { requestId, outcome, reason: reason ?? null });
+}
+
+export async function agentRespondAskQuestion(
+  requestId: string,
+  outcome: "answered" | "skipped" | "cancelled",
+  answers?: AskQuestionAnswerPayload[] | null,
+  reason?: string | null,
+): Promise<void> {
+  return invoke(COMMANDS.AGENT_RESPOND_ASK_QUESTION, {
+    requestId,
+    outcome,
+    answers: answers ?? null,
+    reason: reason ?? null,
+  });
+}
+
 export async function agentCloseSession(sessionId: string): Promise<void> {
   return invoke(COMMANDS.AGENT_CLOSE_SESSION, { sessionId });
 }
@@ -233,6 +366,67 @@ export async function agentCustomUpsert(server: CustomServer): Promise<void> {
 
 export async function agentCustomDelete(id: string): Promise<void> {
   return invoke(COMMANDS.AGENT_CUSTOM_DELETE, { id });
+}
+
+export async function nativeAgentGetConfig(): Promise<NativeAgentConfig> {
+  return invoke(COMMANDS.NATIVE_AGENT_GET_CONFIG);
+}
+
+export async function nativeAgentSetConfig(config: NativeAgentConfig): Promise<void> {
+  return invoke(COMMANDS.NATIVE_AGENT_SET_CONFIG, { config });
+}
+
+/** Fetches model ids from an OpenAI-compatible `{baseUrl}/models` endpoint. */
+export async function nativeAgentListModels(
+  baseUrl: string,
+  apiKey: string,
+): Promise<NativeAgentModel[]> {
+  return invoke(COMMANDS.NATIVE_AGENT_LIST_MODELS, { baseUrl, apiKey });
+}
+
+/** Probe which reasoning effort values a model accepts (tiny chat calls). */
+export async function nativeAgentProbeReasoning(
+  baseUrl: string,
+  apiKey: string,
+  modelId: string,
+): Promise<NativeAgentModel> {
+  return invoke(COMMANDS.NATIVE_AGENT_PROBE_REASONING, { baseUrl, apiKey, modelId });
+}
+
+export async function nativeAgentListMcp(): Promise<NativeMcpServerInfo[]> {
+  return invoke(COMMANDS.NATIVE_AGENT_LIST_MCP);
+}
+
+export async function nativeAgentUpsertMcp(server: NativeMcpUpsert): Promise<void> {
+  return invoke(COMMANDS.NATIVE_AGENT_UPSERT_MCP, { server });
+}
+
+export async function nativeAgentDeleteMcp(name: string): Promise<void> {
+  return invoke(COMMANDS.NATIVE_AGENT_DELETE_MCP, { name });
+}
+
+export async function nativeAgentSetMcpEnabled(name: string, enabled: boolean): Promise<void> {
+  return invoke(COMMANDS.NATIVE_AGENT_SET_MCP_ENABLED, { name, enabled });
+}
+
+export async function nativeAgentProbeMcp(name: string): Promise<string> {
+  return invoke(COMMANDS.NATIVE_AGENT_PROBE_MCP, { name });
+}
+
+export async function nativeAgentListSkills(): Promise<NativeSkillInfo[]> {
+  return invoke(COMMANDS.NATIVE_AGENT_LIST_SKILLS);
+}
+
+export async function nativeAgentDeleteSkill(name: string): Promise<void> {
+  return invoke(COMMANDS.NATIVE_AGENT_DELETE_SKILL, { name });
+}
+
+export async function nativeAgentSetSkillEnabled(name: string, enabled: boolean): Promise<void> {
+  return invoke(COMMANDS.NATIVE_AGENT_SET_SKILL_ENABLED, { name, enabled });
+}
+
+export async function nativeAgentOpenSkillsDir(): Promise<string> {
+  return invoke(COMMANDS.NATIVE_AGENT_OPEN_SKILLS_DIR);
 }
 
 // --- Git ---
@@ -561,6 +755,18 @@ export function onAgentNotification(cb: (payload: AgentNotificationPayload) => v
 
 export function onAgentPermissionRequest(cb: (payload: AgentPermissionRequestPayload) => void): Promise<UnlistenFn> {
   return listen(EVENTS.AGENT_PERMISSION_REQUEST, (e) => cb(e.payload as AgentPermissionRequestPayload));
+}
+
+export function onAgentPlanApprovalRequest(
+  cb: (payload: AgentPlanApprovalRequestPayload) => void,
+): Promise<UnlistenFn> {
+  return listen(EVENTS.AGENT_PLAN_APPROVAL_REQUEST, (e) => cb(e.payload as AgentPlanApprovalRequestPayload));
+}
+
+export function onAgentAskQuestionRequest(
+  cb: (payload: AgentAskQuestionRequestPayload) => void,
+): Promise<UnlistenFn> {
+  return listen(EVENTS.AGENT_ASK_QUESTION_REQUEST, (e) => cb(e.payload as AgentAskQuestionRequestPayload));
 }
 
 export function onAgentSessionTerminated(cb: (payload: { sessionId: string }) => void): Promise<UnlistenFn> {

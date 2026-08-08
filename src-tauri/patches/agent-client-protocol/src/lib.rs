@@ -1,5 +1,6 @@
 use futures::{AsyncRead, AsyncWrite, future::LocalBoxFuture};
 use rpc::RpcConnection;
+use std::sync::Arc;
 
 mod agent;
 mod client;
@@ -15,6 +16,26 @@ pub use rpc::*;
 pub use stream_broadcast::{
     StreamMessage, StreamMessageContent, StreamMessageDirection, StreamReceiver,
 };
+
+// Standard ACP method name modeled in 0.7+ but not yet present in the 0.6.x
+// schema this patch targets. Spelled out so the decode layer can route it as an
+// extension method instead of returning `method_not_found`.
+const SESSION_SET_CONFIG_OPTION: &str = "session/set_config_option";
+
+/// Routes an ACP method that the schema doesn't type yet into `ext_method`.
+///
+/// ACP convention is that custom extensions carry a leading `_` on the wire;
+/// newer standard methods (e.g. `session/set_config_option`) land unprefixed
+/// but still aren't in the typed `ClientRequest` enum on the schema version we
+/// pin. Accept both spellings and hand the handler one canonical (stripped)
+/// name plus the raw params.
+fn ext_method_for(method: &str, params: std::sync::Arc<serde_json::value::RawValue>) -> ExtRequest {
+    let canonical = method.strip_prefix('_').unwrap_or(method);
+    ExtRequest {
+        method: Arc::from(canonical),
+        params,
+    }
+}
 
 // Client to Agent
 
@@ -548,6 +569,15 @@ impl Side for AgentSide {
             m if m == AGENT_METHOD_NAMES.session_prompt => serde_json::from_str(params.get())
                 .map(ClientRequest::PromptRequest)
                 .map_err(Into::into),
+            // `session/set_config_option` isn't yet typed in the pinned schema.
+            // Route the standard (unprefixed) form — and the legacy `_`-prefixed
+            // spelling — to `ext_method` so external ACP agents (Claude Code,
+            // Codex, Cursor) and our in-process native agent share one path.
+            m if m == SESSION_SET_CONFIG_OPTION
+                || method.strip_prefix('_').unwrap_or(method) == SESSION_SET_CONFIG_OPTION =>
+            {
+                Ok(ClientRequest::ExtMethodRequest(ext_method_for(method, params.to_owned().into())))
+            }
             _ => {
                 if let Some(custom_method) = method.strip_prefix('_') {
                     Ok(ClientRequest::ExtMethodRequest(ExtRequest {

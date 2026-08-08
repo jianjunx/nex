@@ -72,6 +72,55 @@ describe("applySessionUpdate", () => {
     expect(meta.plan).toBeNull();
   });
 
+  it("maps tool image and terminal content blocks", () => {
+    const entries: ThreadEntry[] = [];
+    const meta = emptySessionMeta();
+    applySessionUpdate(entries, meta, {
+      sessionUpdate: "tool_call",
+      toolCallId: "img1",
+      title: "Generated image",
+      kind: "other",
+      status: "completed",
+      content: [
+        {
+          type: "content",
+          content: { type: "image", mimeType: "image/png", data: "abc", uri: "/tmp/a.png" },
+        },
+        { type: "terminal", output: "hello\n", terminalId: "t1" },
+      ],
+    });
+    expect(entries).toHaveLength(1);
+    if (entries[0].kind === "tool_call") {
+      expect(entries[0].content).toEqual([
+        { type: "image", data: "abc", mimeType: "image/png", path: "/tmp/a.png" },
+        { type: "terminal", text: "hello\n", terminalId: "t1" },
+      ]);
+    }
+  });
+
+  it("updates plan progress from Cursor-style synthetic plan notifications", () => {
+    const entries: ThreadEntry[] = [];
+    const meta = emptySessionMeta();
+    applySessionUpdate(entries, meta, {
+      sessionUpdate: "plan",
+      entries: [
+        { content: "Inspect", priority: "medium", status: "completed" },
+        { content: "Edit", priority: "medium", status: "in_progress" },
+        { content: "Verify", priority: "medium", status: "pending" },
+      ],
+    });
+    expect(meta.plan?.map((p) => p.status)).toEqual(["completed", "in_progress", "pending"]);
+    applySessionUpdate(entries, meta, {
+      sessionUpdate: "plan",
+      entries: [
+        { content: "Inspect", priority: "medium", status: "completed" },
+        { content: "Edit", priority: "medium", status: "completed" },
+        { content: "Verify", priority: "medium", status: "completed" },
+      ],
+    });
+    expect(meta.plan).toBeNull();
+  });
+
   it("records context usage from session_info_update", () => {
     const entries: ThreadEntry[] = [];
     const meta = emptySessionMeta();

@@ -48,6 +48,8 @@ pub enum SessionTarget {
     Registry { id: String },
     /// A user-defined server, resolved by id from the custom-servers store.
     Custom { id: String },
+    /// The built-in in-process Nex native agent (no external process).
+    Native,
 }
 
 /// One row in the frontend's agent dropdown.
@@ -73,7 +75,12 @@ pub struct ServerDescriptor {
 pub enum ServerKind {
     Registry,
     Custom,
+    /// The built-in in-process Nex native agent.
+    Native,
 }
+
+/// Id of the built-in native agent descriptor shown in the agent dropdowns.
+pub const NATIVE_AGENT_ID: &str = "nex";
 
 /// A user-defined ACP server (Zed-compatible `type:custom` shape).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,6 +166,8 @@ pub struct AgentSessionManager {
     shell_env: Arc<ShellEnv>,
     /// Per-cwd env (direnv / nix) layered on top of `shell_env`.
     project_envs: Arc<super::project_env::ProjectEnvCache>,
+    /// App data dir; hosts `nex-agent.json` for the built-in native agent.
+    app_data_dir: PathBuf,
 }
 
 impl AgentSessionManager {
@@ -196,6 +205,7 @@ impl AgentSessionManager {
             package_cache,
             shell_env,
             project_envs,
+            app_data_dir: app_data_dir.to_path_buf(),
         }
     }
 
@@ -214,6 +224,14 @@ impl AgentSessionManager {
         target: SessionTarget,
         cwd: &str,
     ) -> Result<CreateSessionResult, NexError> {
+        // The built-in native agent runs in-process over a memory ACP pipe;
+        // it needs no launch spec, node runtime, or PATH resolution.
+        if matches!(target, SessionTarget::Native) {
+            return self
+                .acp
+                .create_native_session(app, conversation_id, cwd, self.app_data_dir.clone())
+                .await;
+        }
         let spec = match target {
             SessionTarget::Registry { id } => {
                 if let Err(e) = self.registry.refresh_if_stale().await {
@@ -247,6 +265,7 @@ impl AgentSessionManager {
                 let shell_path = self.path_for_cwd(cwd).await;
                 launch::resolve_custom(&server.command, server.env.clone(), cwd, &shell_path)?
             }
+            SessionTarget::Native => unreachable!("native target handled above"),
         };
         self.acp.create_session(app, conversation_id, spec).await
     }
@@ -255,7 +274,7 @@ impl AgentSessionManager {
     /// Custom servers are managed in Settings but omitted from the New-
     /// Conversation dropdown this phase.
     pub fn list_servers(&self) -> Vec<ServerDescriptor> {
-        let mut out = Vec::new();
+        let mut out = vec![Self::native_descriptor()];
         for e in self.registry.list() {
             if !WHITELISTED_REGISTRY_IDS.contains(&e.id.as_str()) {
                 continue;
@@ -287,6 +306,22 @@ impl AgentSessionManager {
             out.push(self.registry_entry_to_descriptor(&e));
         }
         out
+    }
+
+    /// Descriptor for the built-in in-process native agent. Always pinned to
+    /// the top of the dropdown; `installed_version` equals `version` so the
+    /// UI never shows an update badge for it.
+    fn native_descriptor() -> ServerDescriptor {
+        let version = env!("CARGO_PKG_VERSION").to_string();
+        ServerDescriptor {
+            id: NATIVE_AGENT_ID.to_string(),
+            name: "Nex Agent".to_string(),
+            version: version.clone(),
+            installed_version: Some(version),
+            description: "内置原生编码 agent（DeepSeek）".to_string(),
+            icon: None,
+            kind: ServerKind::Native,
+        }
     }
 
     /// Build a `ServerDescriptor` from a `RegistryEntry`, filling the cached
@@ -323,7 +358,11 @@ impl AgentSessionManager {
 
     // --- Delegates to the ACP transport (session lifecycle) ---
 
-    pub async fn send_prompt(&self, session_id: &str, blocks: Vec<PromptBlock>) -> Result<(), NexError> {
+    pub async fn send_prompt(
+        &self,
+        session_id: &str,
+        blocks: Vec<PromptBlock>,
+    ) -> Result<super::types::PromptResultDto, NexError> {
         self.acp.send_prompt(session_id, blocks).await
     }
 
@@ -331,7 +370,11 @@ impl AgentSessionManager {
         self.acp.set_session_mode(session_id, mode_id).await
     }
 
-    pub async fn set_session_model(&self, session_id: &str, model_id: &str) -> Result<(), NexError> {
+    pub async fn set_session_model(
+        &self,
+        session_id: &str,
+        model_id: &str,
+    ) -> Result<Option<Vec<super::types::SessionConfigOptionDto>>, NexError> {
         self.acp.set_session_model(session_id, model_id).await
     }
 
@@ -352,6 +395,26 @@ impl AgentSessionManager {
 
     pub fn respond_permission(&self, request_id: &str, option_id: Option<String>) -> Result<(), NexError> {
         self.acp.respond_permission(request_id, option_id)
+    }
+
+    pub fn respond_plan(
+        &self,
+        request_id: &str,
+        outcome: &str,
+        reason: Option<String>,
+    ) -> Result<(), NexError> {
+        self.acp.respond_plan(request_id, outcome, reason)
+    }
+
+    pub fn respond_ask_question(
+        &self,
+        request_id: &str,
+        outcome: &str,
+        answers: Option<Vec<crate::agent::types::AskQuestionAnswerDto>>,
+        reason: Option<String>,
+    ) -> Result<(), NexError> {
+        self.acp
+            .respond_ask_question(request_id, outcome, answers, reason)
     }
 
     pub fn remove_session(&self, session_id: &str) {

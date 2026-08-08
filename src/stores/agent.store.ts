@@ -7,6 +7,8 @@ import {
   agentSendPrompt,
   agentCancel,
   agentRespondPermission,
+  agentRespondPlan,
+  agentRespondAskQuestion,
   agentCloseSession,
   agentListServers,
   agentListAllServers,
@@ -17,8 +19,11 @@ import {
   agentSetSessionModel,
   agentSetSessionConfigOption,
   conversationReplaceThreadEntries,
+  nativeAgentGetConfig,
   onAgentNotification,
   onAgentPermissionRequest,
+  onAgentPlanApprovalRequest,
+  onAgentAskQuestionRequest,
   onAgentSessionTerminated,
   type PromptBlock,
   type ServerDescriptor,
@@ -26,7 +31,12 @@ import {
   type CustomServer,
   type CreateSessionResult,
 } from "../bridge/tauri";
-import type { AgentPermissionRequestPayload } from "../bridge/events";
+import type {
+  AgentAskQuestionRequestPayload,
+  AgentPermissionRequestPayload,
+  AgentPlanApprovalRequestPayload,
+  AskQuestionAnswerPayload,
+} from "../bridge/events";
 import { pickAllowOptionId } from "../features/agent/pickAllowOptionId";
 import {
   applyPermissionRequestToEntries,
@@ -102,6 +112,10 @@ interface AgentStore {
   pendingPermission: AgentPermissionRequestPayload | null;
   /** Shown on a tool card — exclude from PermissionModal fallback. */
   inlinePermissionIds: Record<string, true>;
+  planApprovalQueues: Record<string, AgentPlanApprovalRequestPayload[]>;
+  pendingPlanApproval: AgentPlanApprovalRequestPayload | null;
+  askQuestionQueues: Record<string, AgentAskQuestionRequestPayload[]>;
+  pendingAskQuestion: AgentAskQuestionRequestPayload | null;
   /** Pending user messages waiting for session to become available (starting → idle) or current task to finish. */
   pendingMessagesByConversation: Record<string, PendingMessage[]>;
   servers: ServerDescriptor[];
@@ -127,10 +141,29 @@ interface AgentStore {
   sendPrompt: (sessionId: string, blocks: PromptBlock[]) => Promise<void>;
   cancel: (sessionId: string) => Promise<void>;
   respondPermission: (requestId: string, optionId: string | null) => Promise<void>;
-  setMode: (sessionId: string, modeId: string) => Promise<void>;
+  respondPlan: (
+    requestId: string,
+    outcome: "accepted" | "rejected" | "cancelled",
+    reason?: string | null,
+  ) => Promise<void>;
+  respondAskQuestion: (
+    requestId: string,
+    outcome: "answered" | "skipped" | "cancelled",
+    answers?: AskQuestionAnswerPayload[] | null,
+    reason?: string | null,
+  ) => Promise<void>;
+  setMode: (
+    sessionId: string,
+    modeId: string,
+    opts?: { skipConfirm?: boolean },
+  ) => Promise<void>;
   setModel: (sessionId: string, modelId: string) => Promise<void>;
   setConfigOption: (sessionId: string, configId: string, value: string) => Promise<void>;
   setAuthMode: (conversationId: string, authMode: AuthMode) => void;
+  /** Cached from nex-agent.json; used to chain `/review` after mutating turns. */
+  nativeAutoReview: boolean;
+  /** Refresh `nativeAutoReview` from disk (call after settings save). */
+  refreshNativeAutoReview: () => Promise<void>;
   /** Queue a message for later sending when the session is starting or busy. */
   enqueuePendingMessage: (
     conversationId: string,
@@ -174,6 +207,119 @@ function nextPendingPermission(
   return null;
 }
 
+function nextPendingPlanApproval(
+  queues: Record<string, AgentPlanApprovalRequestPayload[]>,
+): AgentPlanApprovalRequestPayload | null {
+  for (const queue of Object.values(queues)) {
+    if (queue.length > 0) return queue[0];
+  }
+  return null;
+}
+
+function nextPendingAskQuestion(
+  queues: Record<string, AgentAskQuestionRequestPayload[]>,
+): AgentAskQuestionRequestPayload | null {
+  for (const queue of Object.values(queues)) {
+    if (queue.length > 0) return queue[0];
+  }
+  return null;
+}
+
+/**
+ * Drops every queued request belonging to `sessionId` (permission / plan /
+ * ask-question) plus their inline-permission markers, and re-derives the
+ * single visible pending request. Shared by `removeSession` and the
+ * `session/terminated` notification so both cleanup paths stay identical.
+ */
+function clearSessionQueues(
+  s: {
+    permissionQueues: Record<string, AgentPermissionRequestPayload[]>;
+    planApprovalQueues: Record<string, AgentPlanApprovalRequestPayload[]>;
+    askQuestionQueues: Record<string, AgentAskQuestionRequestPayload[]>;
+    inlinePermissionIds: Record<string, true>;
+    pendingPermission: AgentPermissionRequestPayload | null;
+    pendingPlanApproval: AgentPlanApprovalRequestPayload | null;
+    pendingAskQuestion: AgentAskQuestionRequestPayload | null;
+  },
+  sessionId: string,
+): void {
+  // Drop inline-permission markers belonging to this session's queue.
+  for (const req of s.permissionQueues[sessionId] ?? []) {
+    delete s.inlinePermissionIds[req.requestId];
+  }
+  delete s.permissionQueues[sessionId];
+  delete s.planApprovalQueues[sessionId];
+  delete s.askQuestionQueues[sessionId];
+  if (s.pendingPermission?.sessionId === sessionId) {
+    s.pendingPermission = nextPendingPermission(s.permissionQueues, s.inlinePermissionIds);
+  }
+  if (s.pendingPlanApproval?.sessionId === sessionId) {
+    s.pendingPlanApproval = nextPendingPlanApproval(s.planApprovalQueues);
+  }
+  if (s.pendingAskQuestion?.sessionId === sessionId) {
+    s.pendingAskQuestion = nextPendingAskQuestion(s.askQuestionQueues);
+  }
+}
+
+function sessionStillWaiting(
+  s: {
+    permissionQueues: Record<string, AgentPermissionRequestPayload[]>;
+    planApprovalQueues: Record<string, AgentPlanApprovalRequestPayload[]>;
+    askQuestionQueues: Record<string, AgentAskQuestionRequestPayload[]>;
+  },
+  sessionId: string,
+): boolean {
+  return (
+    (s.permissionQueues[sessionId] ?? []).length > 0 ||
+    (s.planApprovalQueues[sessionId] ?? []).length > 0 ||
+    (s.askQuestionQueues[sessionId] ?? []).length > 0
+  );
+}
+
+/** After Cursor plan accept: leave plan/ask for an executable mode and continue. */
+async function handoffPlanToExecute(
+  get: () => AgentStore,
+  set: (fn: (s: AgentStore) => void) => void,
+  sessionId: string,
+  conversationId: string,
+): Promise<void> {
+  const meta = get().metaByConversation[conversationId];
+  const current = meta?.currentModeId ?? "";
+  if (current === "plan" || current === "ask") {
+    const preferred = ["agent", "code", "auto"] as const;
+    const execMode =
+      preferred.find((id) => meta?.modes.some((m) => m.id === id)) ??
+      meta?.modes.find((m) => m.id !== "plan" && m.id !== "ask")?.id;
+    if (execMode) {
+      try {
+        await agentSetSessionMode(sessionId, execMode);
+        set((s) => {
+          const m = s.metaByConversation[conversationId];
+          if (m) m.currentModeId = execMode;
+        });
+        patchPrefs(set, conversationId, { modeId: execMode });
+      } catch (err) {
+        set((s) => {
+          s.error = errorMessage(err);
+        });
+      }
+    }
+  }
+
+  const continueText = "计划已确认，请开始执行。";
+  const blocks: PromptBlock[] = [{ type: "text", text: continueText }];
+  const session = get().sessions[conversationId];
+  if (!session || session.sessionId !== sessionId) return;
+
+  // If the create_plan turn is still finishing, queue; otherwise send now.
+  if (session.status === "idle") {
+    get().appendUserMessage(conversationId, continueText);
+    await get().sendPrompt(sessionId, blocks);
+  } else {
+    get().enqueuePendingMessage(conversationId, blocks, continueText);
+  }
+}
+
 function applyCreateMeta(result: CreateSessionResult): SessionMeta {
   const meta = emptySessionMeta();
   if (result.modes) {
@@ -190,6 +336,7 @@ function applyCreateMeta(result: CreateSessionResult): SessionMeta {
       id: m.id,
       name: m.name,
       description: m.description ?? undefined,
+      vision: typeof m.vision === "boolean" ? m.vision : undefined,
     }));
   }
   if (result.configOptions && result.configOptions.length > 0) {
@@ -199,6 +346,13 @@ function applyCreateMeta(result: CreateSessionResult): SessionMeta {
       category: o.category ?? undefined,
       currentValueId: o.currentValueId,
       options: o.options.map((x) => ({ id: x.id, name: x.name })),
+    }));
+  }
+  if (result.availableCommands && result.availableCommands.length > 0) {
+    meta.availableCommands = result.availableCommands.map((c) => ({
+      name: c.name,
+      description: c.description,
+      inputHint: c.inputHint ?? undefined,
     }));
   }
   return meta;
@@ -223,6 +377,98 @@ function patchPrefs(
     const prev = s.sessionPrefsByConversation[conversationId] ?? {};
     s.sessionPrefsByConversation[conversationId] = { ...prev, ...patch };
   });
+}
+
+/**
+ * Notifications that arrive before `createSession` finishes registering the
+ * live `sessionId` (classic race for `available_commands_update`). Flushed in
+ * [`flushPendingNotifications`].
+ */
+const pendingNotificationsBySessionId = new Map<string, unknown[]>();
+/** Cap per sessionId so a stuck/orphan agent cannot grow the buffer unboundedly. */
+const MAX_PENDING_UPDATES_PER_SESSION = 8;
+
+/** Only meta catalogs that must survive the create-session race. Drop stream chunks. */
+function isBufferableSessionUpdate(update: unknown): boolean {
+  if (!update || typeof update !== "object") return false;
+  const kind = (update as { sessionUpdate?: unknown }).sessionUpdate;
+  return (
+    kind === "available_commands_update" ||
+    kind === "current_mode_update" ||
+    kind === "config_option_update"
+  );
+}
+
+function sessionCreateInFlight(get: () => AgentStore): boolean {
+  return Object.values(get().sessions).some(
+    (ss) => ss.status === "starting" || ss.sessionId === "",
+  );
+}
+
+/** Drop buffered updates when no create is in flight (failed create / stale ids). */
+function pruneStalePendingNotifications(get: () => AgentStore): void {
+  if (sessionCreateInFlight(get)) return;
+  pendingNotificationsBySessionId.clear();
+}
+
+function enqueuePendingNotification(sessionId: string, update: unknown, get: () => AgentStore): void {
+  pruneStalePendingNotifications(get);
+  if (!sessionCreateInFlight(get)) return;
+  if (!isBufferableSessionUpdate(update)) return;
+  const q = pendingNotificationsBySessionId.get(sessionId) ?? [];
+  if (q.length >= MAX_PENDING_UPDATES_PER_SESSION) return;
+  q.push(update);
+  pendingNotificationsBySessionId.set(sessionId, q);
+}
+
+function applyNotificationUpdate(
+  set: (fn: (s: AgentStore) => void) => void,
+  get: () => AgentStore,
+  sessionId: string,
+  update: unknown,
+): void {
+  const session = Object.values(get().sessions).find((ss) => ss.sessionId === sessionId);
+  if (!session) return;
+  let modeFromAgent: string | null = null;
+  set((s) => {
+    if (!s.entriesByConversation[session.conversationId]) {
+      s.entriesByConversation[session.conversationId] = [];
+    }
+    if (!s.metaByConversation[session.conversationId]) {
+      s.metaByConversation[session.conversationId] = emptySessionMeta();
+    }
+    const entries = s.entriesByConversation[session.conversationId];
+    const meta = s.metaByConversation[session.conversationId];
+    const prevMode = meta.currentModeId;
+    const applied = applySessionUpdate(entries, meta, update);
+    if (applied.completedPlanSnapshot) {
+      entries.push({
+        id: crypto.randomUUID(),
+        kind: "completed_plan",
+        timestamp: Date.now(),
+        entries: applied.completedPlanSnapshot,
+      });
+    }
+    if (applied.metaChanged && meta.currentModeId && meta.currentModeId !== prevMode) {
+      modeFromAgent = meta.currentModeId;
+    }
+  });
+  if (modeFromAgent) {
+    patchPrefs(set, session.conversationId, { modeId: modeFromAgent });
+  }
+}
+
+function flushPendingNotifications(
+  set: (fn: (s: AgentStore) => void) => void,
+  get: () => AgentStore,
+  sessionId: string,
+): void {
+  const pending = pendingNotificationsBySessionId.get(sessionId);
+  if (!pending?.length) return;
+  pendingNotificationsBySessionId.delete(sessionId);
+  for (const update of pending) {
+    applyNotificationUpdate(set, get, sessionId, update);
+  }
 }
 
 function clearPrefKey(
@@ -294,10 +540,22 @@ async function restorePrefsToLiveSession(
     const inConfig = modelOpt?.options.some((o) => o.id === prefs.modelId) ?? false;
     if (inModels || inConfig) {
       try {
-        await agentSetSessionModel(sessionId, prefs.modelId);
+        // Must apply returned configOptions — native agent refreshes reasoning
+        // levels for the restored model; discarding them hides the Composer menu.
+        const next = await agentSetSessionModel(sessionId, prefs.modelId);
         set((s) => {
           const m = s.metaByConversation[conversationId];
-          if (m) m.currentModelId = prefs.modelId!;
+          if (!m) return;
+          m.currentModelId = prefs.modelId!;
+          if (next) {
+            m.configOptions = next.map((o) => ({
+              id: o.id,
+              name: o.name,
+              category: o.category ?? undefined,
+              currentValueId: o.currentValueId,
+              options: o.options.map((x) => ({ id: x.id, name: x.name })),
+            }));
+          }
         });
       } catch {
         clearPrefKey(set, conversationId, "modelId");
@@ -350,12 +608,17 @@ export const useAgentStore = create<AgentStore>()(
     permissionQueues: {},
     pendingPermission: null,
     inlinePermissionIds: {},
+    planApprovalQueues: {},
+    pendingPlanApproval: null,
+    askQuestionQueues: {},
+    pendingAskQuestion: null,
     pendingMessagesByConversation: {},
     servers: [],
     loading: false,
     serversLoading: false,
     serversLoadedAt: 0,
     error: null,
+    nativeAutoReview: false,
 
     createSession: async (conversationId, target, cwd) => {
       set((s) => {
@@ -379,6 +642,9 @@ export const useAgentStore = create<AgentStore>()(
           if (!s.entriesByConversation[conversationId]) s.entriesByConversation[conversationId] = [];
           s.metaByConversation[conversationId] = applyCreateMeta(result);
         });
+        // Drain commands/mode updates that raced ahead of the sessionId mapping.
+        flushPendingNotifications(set, get, result.sessionId);
+        pruneStalePendingNotifications(get);
         await restorePrefsToLiveSession(set, get, conversationId, result.sessionId);
         // Auto-process any messages queued while the session was starting
         void get().processNextPending(conversationId);
@@ -388,6 +654,7 @@ export const useAgentStore = create<AgentStore>()(
           delete s.sessions[conversationId];
           s.error = errorMessage(err);
         });
+        pruneStalePendingNotifications(get);
         throw err;
       } finally {
         set((s) => {
@@ -418,14 +685,8 @@ export const useAgentStore = create<AgentStore>()(
           delete s.pendingMessagesByConversation[conversationId];
           const liveSessionId = session.sessionId;
           if (liveSessionId) {
-            // Drop inline-permission markers belonging to this session's queue.
-            for (const req of s.permissionQueues[liveSessionId] ?? []) {
-              delete s.inlinePermissionIds[req.requestId];
-            }
-            delete s.permissionQueues[liveSessionId];
-            if (s.pendingPermission?.sessionId === liveSessionId) {
-              s.pendingPermission = nextPendingPermission(s.permissionQueues, s.inlinePermissionIds);
-            }
+            pendingNotificationsBySessionId.delete(liveSessionId);
+            clearSessionQueues(s, liveSessionId);
           }
         });
       }
@@ -528,75 +789,103 @@ export const useAgentStore = create<AgentStore>()(
         s.error = null;
       });
       let promptFailed = false;
+      let hadMutations = false;
       try {
-        await agentSendPrompt(sessionId, blocks);
+        const result = await agentSendPrompt(sessionId, blocks);
+        hadMutations = !!result?.hadMutations;
       } catch (err) {
         promptFailed = true;
         set((s) => {
           s.error = errorMessage(err);
         });
-      } finally {
-        const entries = get().entriesByConversation[session.conversationId] ?? [];
-        // Never synthesize a "turn completed" assistant message when the
-        // prompt itself failed — that would disguise an error as success.
-        if (!promptFailed) {
-          const assistantText = assistantTextAfterLastUser(entries);
-          if (assistantText) {
-            void useConversationStore.getState().persistMessage(
-              session.conversationId,
-              "assistant",
-              assistantText,
-            );
-          } else {
-            // Agents like Cursor may finish a turn with only tool cards and no
-            // agent_message_chunk. Surface an explicit completion so the thread
-            // doesn't look stuck after status returns to idle.
-            set((s) => {
-              const list = s.entriesByConversation[session.conversationId];
-              if (!list) return;
-              const last = list[list.length - 1];
-              if (last?.kind === "user_message") {
-                list.push({
-                  id: crypto.randomUUID(),
-                  kind: "assistant_message",
-                  timestamp: Date.now(),
-                  chunks: [{ type: "message", text: "（本回合已完成，未返回文本消息）" }],
-                });
-              } else if (last?.kind === "tool_call") {
-                list.push({
-                  id: crypto.randomUUID(),
-                  kind: "assistant_message",
-                  timestamp: Date.now(),
-                  chunks: [{ type: "message", text: "（本回合已完成）" }],
-                });
-              }
-            });
-          }
+      }
+
+      const entries = get().entriesByConversation[session.conversationId] ?? [];
+      // Never synthesize a "turn completed" assistant message when the
+      // prompt itself failed — that would disguise an error as success.
+      if (!promptFailed) {
+        const assistantText = assistantTextAfterLastUser(entries);
+        if (assistantText) {
+          void useConversationStore.getState().persistMessage(
+            session.conversationId,
+            "assistant",
+            assistantText,
+          );
+        } else {
+          // Agents like Cursor may finish a turn with only tool cards and no
+          // agent_message_chunk. Surface an explicit completion so the thread
+          // doesn't look stuck after status returns to idle.
+          set((s) => {
+            const list = s.entriesByConversation[session.conversationId];
+            if (!list) return;
+            const last = list[list.length - 1];
+            if (last?.kind === "user_message") {
+              list.push({
+                id: crypto.randomUUID(),
+                kind: "assistant_message",
+                timestamp: Date.now(),
+                chunks: [{ type: "message", text: "（本回合已完成，未返回文本消息）" }],
+              });
+            } else if (last?.kind === "tool_call") {
+              list.push({
+                id: crypto.randomUUID(),
+                kind: "assistant_message",
+                timestamp: Date.now(),
+                chunks: [{ type: "message", text: "（本回合已完成）" }],
+              });
+            }
+          });
         }
-        // Persist full thread snapshot (thought/tool_call/etc.) so the UI can
-        // restore complete history after restart.
-        const latestEntries = get().entriesByConversation[session.conversationId] ?? entries;
-        void conversationReplaceThreadEntries(
-          session.conversationId,
-          latestEntries.map((e, sequence) => ({
-            kind: e.kind,
-            sequence,
-            timestamp: e.timestamp,
-            payload: e,
-          })),
-        ).catch((e) => {
-          console.error("[conversation] persistThreadEntries failed:", e);
-        });
-        set((s) => {
-          if (s.sessions[session.conversationId]) {
-            const hasWaiting = (s.permissionQueues[sessionId] ?? []).length > 0;
-            s.sessions[session.conversationId].status = hasWaiting ? "waiting" : "idle";
-          }
-        });
-        // Auto-process next queued message if session returned to idle
-        if (get().sessions[session.conversationId]?.status === "idle") {
-          void get().processNextPending(session.conversationId);
+      }
+      // Persist full thread snapshot (thought/tool_call/etc.) so the UI can
+      // restore complete history after restart.
+      const latestEntries = get().entriesByConversation[session.conversationId] ?? entries;
+      void conversationReplaceThreadEntries(
+        session.conversationId,
+        latestEntries.map((e, sequence) => ({
+          kind: e.kind,
+          sequence,
+          timestamp: e.timestamp,
+          payload: e,
+        })),
+      ).catch((e) => {
+        console.error("[conversation] persistThreadEntries failed:", e);
+      });
+      set((s) => {
+        if (s.sessions[session.conversationId]) {
+          s.sessions[session.conversationId].status = sessionStillWaiting(s, sessionId)
+            ? "waiting"
+            : "idle";
         }
+      });
+
+      // NexAgent: after a mutating turn, chain a visible `/review` once.
+      const conv = Object.values(useConversationStore.getState().conversationsByProject)
+        .flat()
+        .find((c) => c.id === session.conversationId);
+      const isNative = conv?.agent_type === "nex" || conv?.agent_type === "native";
+      const promptText = blocks
+        .filter((b): b is Extract<PromptBlock, { type: "text" }> => b.type === "text")
+        .map((b) => b.text)
+        .join(" ")
+        .trim();
+      const wasReview = /^\/review(?:\s|$)/i.test(promptText);
+      if (
+        !promptFailed &&
+        isNative &&
+        get().nativeAutoReview &&
+        hadMutations &&
+        !wasReview &&
+        get().sessions[session.conversationId]?.status === "idle"
+      ) {
+        get().appendUserMessage(session.conversationId, "/review");
+        await get().sendPrompt(sessionId, [{ type: "text", text: "/review" }]);
+        return;
+      }
+
+      // Auto-process next queued message if session returned to idle
+      if (get().sessions[session.conversationId]?.status === "idle") {
+        void get().processNextPending(session.conversationId);
       }
     },
 
@@ -613,10 +902,30 @@ export const useAgentStore = create<AgentStore>()(
       } finally {
         set((s) => {
           const session = Object.values(s.sessions).find((ss) => ss.sessionId === sessionId);
-          if (session) session.status = "idle";
+          if (session) {
+            session.status = "idle";
+            // Backend cancels waiters; mark in-thread plan cards so they don't
+            // look actionable after the oneshot is gone.
+            const list = s.entriesByConversation[session.conversationId];
+            if (list) {
+              for (const e of list) {
+                if (e.kind === "plan_approval" && e.status === "pending") {
+                  e.status = "cancelled";
+                }
+              }
+            }
+          }
           delete s.permissionQueues[sessionId];
+          delete s.planApprovalQueues[sessionId];
+          delete s.askQuestionQueues[sessionId];
           if (s.pendingPermission?.sessionId === sessionId) {
             s.pendingPermission = nextPendingPermission(s.permissionQueues, s.inlinePermissionIds);
+          }
+          if (s.pendingPlanApproval?.sessionId === sessionId) {
+            s.pendingPlanApproval = nextPendingPlanApproval(s.planApprovalQueues);
+          }
+          if (s.pendingAskQuestion?.sessionId === sessionId) {
+            s.pendingAskQuestion = nextPendingAskQuestion(s.askQuestionQueues);
           }
         });
       }
@@ -654,16 +963,175 @@ export const useAgentStore = create<AgentStore>()(
             if (session) {
               // 已处理（同意/拒绝）：撤掉该会话的「等待确认」通知，避免误导。
               useNotificationStore.getState().dismissForConversation(session.conversationId);
-              const stillWaiting = (s.permissionQueues[sessionIdForStatus] ?? []).length > 0;
-              if (session.status === "waiting" && !stillWaiting) session.status = "running";
+              if (session.status === "waiting" && !sessionStillWaiting(s, sessionIdForStatus)) {
+                session.status = "running";
+              }
             }
           }
         });
       }
     },
 
-    setMode: async (sessionId, modeId) => {
+    respondPlan: async (requestId, outcome, reason) => {
+      // Dequeue first so double-clicks cannot resolve the same request twice.
+      // Keep a plain copy for re-queue if the RPC fails.
+      let sessionIdForStatus: string | null = null;
+      let conversationIdForHandoff: string | null = null;
+      let dequeued: AgentPlanApprovalRequestPayload | null = null;
+      set((s) => {
+        s.error = null;
+        for (const [sessionId, queue] of Object.entries(s.planApprovalQueues)) {
+          const idx = queue.findIndex((q) => q.requestId === requestId);
+          if (idx !== -1) {
+            const item = queue[idx];
+            dequeued = {
+              sessionId: item.sessionId,
+              requestId: item.requestId,
+              name: item.name,
+              overview: item.overview,
+              plan: item.plan,
+              todos: item.todos.map((t) => ({ ...t })),
+            };
+            queue.splice(idx, 1);
+            if (queue.length === 0) delete s.planApprovalQueues[sessionId];
+            sessionIdForStatus = sessionId;
+            break;
+          }
+        }
+        s.pendingPlanApproval = nextPendingPlanApproval(s.planApprovalQueues);
+        // Mirror outcome onto the in-thread card.
+        const session = sessionIdForStatus
+          ? Object.values(s.sessions).find((ss) => ss.sessionId === sessionIdForStatus)
+          : undefined;
+        if (session) {
+          conversationIdForHandoff = session.conversationId;
+          const list = s.entriesByConversation[session.conversationId];
+          const card = list?.find(
+            (e) => e.kind === "plan_approval" && e.requestId === requestId,
+          );
+          if (card && card.kind === "plan_approval") {
+            card.status =
+              outcome === "accepted"
+                ? "accepted"
+                : outcome === "rejected"
+                  ? "rejected"
+                  : "cancelled";
+          }
+        }
+      });
+      if (!sessionIdForStatus) return;
+      const resolvedSessionId = sessionIdForStatus;
+      let respondedOk = false;
+      try {
+        await agentRespondPlan(requestId, outcome, reason);
+        respondedOk = true;
+      } catch (err) {
+        set((s) => {
+          s.error = errorMessage(err);
+          // Re-queue + roll back card so the user can retry.
+          if (dequeued) {
+            const queue = s.planApprovalQueues[resolvedSessionId] ?? [];
+            if (!queue.some((q) => q.requestId === requestId)) {
+              queue.unshift(dequeued);
+              s.planApprovalQueues[resolvedSessionId] = queue;
+            }
+            s.pendingPlanApproval = nextPendingPlanApproval(s.planApprovalQueues);
+          }
+          if (conversationIdForHandoff) {
+            const list = s.entriesByConversation[conversationIdForHandoff];
+            const card = list?.find(
+              (e) => e.kind === "plan_approval" && e.requestId === requestId,
+            );
+            if (card && card.kind === "plan_approval") card.status = "pending";
+          }
+        });
+      } finally {
+        set((s) => {
+          const session = Object.values(s.sessions).find((ss) => ss.sessionId === resolvedSessionId);
+          if (session) {
+            useNotificationStore.getState().dismissForConversation(session.conversationId);
+            if (session.status === "waiting" && !sessionStillWaiting(s, resolvedSessionId)) {
+              session.status = "running";
+            }
+          }
+        });
+      }
+
+      // Accept alone unblocks Cursor but often leaves the session in plan/ask
+      // mode with the prompt turn ending — switch to an executable mode and
+      // queue a continue turn so the plan actually runs.
+      if (respondedOk && outcome === "accepted" && conversationIdForHandoff) {
+        await handoffPlanToExecute(get, set, resolvedSessionId, conversationIdForHandoff);
+      }
+    },
+
+    respondAskQuestion: async (requestId, outcome, answers, reason) => {
+      let sessionIdForStatus: string | null = null;
+      let dequeued: AgentAskQuestionRequestPayload | null = null;
+      set((s) => {
+        s.error = null;
+        for (const [sessionId, queue] of Object.entries(s.askQuestionQueues)) {
+          const idx = queue.findIndex((q) => q.requestId === requestId);
+          if (idx !== -1) {
+            const item = queue[idx];
+            dequeued = {
+              sessionId: item.sessionId,
+              requestId: item.requestId,
+              title: item.title,
+              questions: item.questions.map((q) => ({
+                ...q,
+                options: q.options.map((o) => ({ ...o })),
+              })),
+            };
+            queue.splice(idx, 1);
+            if (queue.length === 0) delete s.askQuestionQueues[sessionId];
+            sessionIdForStatus = sessionId;
+            break;
+          }
+        }
+        s.pendingAskQuestion = nextPendingAskQuestion(s.askQuestionQueues);
+      });
+      if (!sessionIdForStatus) return;
+      const resolvedSessionId = sessionIdForStatus;
+      try {
+        await agentRespondAskQuestion(requestId, outcome, answers, reason);
+      } catch (err) {
+        set((s) => {
+          s.error = errorMessage(err);
+          if (dequeued) {
+            const queue = s.askQuestionQueues[resolvedSessionId] ?? [];
+            if (!queue.some((q) => q.requestId === requestId)) {
+              queue.unshift(dequeued);
+              s.askQuestionQueues[resolvedSessionId] = queue;
+            }
+            s.pendingAskQuestion = nextPendingAskQuestion(s.askQuestionQueues);
+          }
+        });
+      } finally {
+        set((s) => {
+          const session = Object.values(s.sessions).find((ss) => ss.sessionId === resolvedSessionId);
+          if (session) {
+            useNotificationStore.getState().dismissForConversation(session.conversationId);
+            if (session.status === "waiting" && !sessionStillWaiting(s, resolvedSessionId)) {
+              session.status = "running";
+            }
+          }
+        });
+      }
+    },
+
+    setMode: async (sessionId, modeId, opts) => {
       const session = Object.values(get().sessions).find((ss) => ss.sessionId === sessionId);
+      if (session && !opts?.skipConfirm) {
+        const from = get().metaByConversation[session.conversationId]?.currentModeId;
+        if (
+          from === "plan" &&
+          (modeId === "code" || modeId === "auto" || modeId === "agent")
+        ) {
+          const ok = window.confirm("确认离开 Plan 并开始执行？");
+          if (!ok) return;
+        }
+      }
       try {
         await agentSetSessionMode(sessionId, modeId);
         if (session) {
@@ -683,11 +1151,22 @@ export const useAgentStore = create<AgentStore>()(
     setModel: async (sessionId, modelId) => {
       const session = Object.values(get().sessions).find((ss) => ss.sessionId === sessionId);
       try {
-        await agentSetSessionModel(sessionId, modelId);
+        const next = await agentSetSessionModel(sessionId, modelId);
         if (session) {
           set((s) => {
             const meta = s.metaByConversation[session.conversationId];
-            if (meta) meta.currentModelId = modelId;
+            if (!meta) return;
+            meta.currentModelId = modelId;
+            // Native agent returns refreshed reasoning levels for the new model.
+            if (next) {
+              meta.configOptions = next.map((o) => ({
+                id: o.id,
+                name: o.name,
+                category: o.category ?? undefined,
+                currentValueId: o.currentValueId,
+                options: o.options.map((x) => ({ id: x.id, name: x.name })),
+              }));
+            }
           });
           patchPrefs(set, session.conversationId, { modelId });
         }
@@ -755,6 +1234,17 @@ export const useAgentStore = create<AgentStore>()(
 
     setAuthMode: (conversationId, authMode) => {
       patchPrefs(set, conversationId, { authMode });
+    },
+
+    refreshNativeAutoReview: async () => {
+      try {
+        const cfg = await nativeAgentGetConfig();
+        set((s) => {
+          s.nativeAutoReview = !!cfg.agent.autoReview;
+        });
+      } catch {
+        /* settings unavailable — leave cached value */
+      }
     },
 
     enqueuePendingMessage: (conversationId, blocks, text, images) => {
@@ -950,30 +1440,21 @@ export const useAgentStore = create<AgentStore>()(
       let disposed = false;
       let unlistenNotification: UnlistenFn | null = null;
       let unlistenPermission: UnlistenFn | null = null;
+      let unlistenPlanApproval: UnlistenFn | null = null;
+      let unlistenAskQuestion: UnlistenFn | null = null;
       let unlistenTerminated: UnlistenFn | null = null;
+
+      void get().refreshNativeAutoReview();
 
       onAgentNotification(({ sessionId, update }) => {
         const session = Object.values(get().sessions).find((ss) => ss.sessionId === sessionId);
-        if (!session) return;
-        set((s) => {
-          if (!s.entriesByConversation[session.conversationId]) {
-            s.entriesByConversation[session.conversationId] = [];
-          }
-          if (!s.metaByConversation[session.conversationId]) {
-            s.metaByConversation[session.conversationId] = emptySessionMeta();
-          }
-          const entries = s.entriesByConversation[session.conversationId];
-          const meta = s.metaByConversation[session.conversationId];
-          const applied = applySessionUpdate(entries, meta, update);
-          if (applied.completedPlanSnapshot) {
-            entries.push({
-              id: crypto.randomUUID(),
-              kind: "completed_plan",
-              timestamp: Date.now(),
-              entries: applied.completedPlanSnapshot,
-            });
-          }
-        });
+        if (!session) {
+          // SessionId not registered yet (createSession still in flight) — buffer
+          // meta catalogs only; stream chunks for unknown ids are dropped.
+          enqueuePendingNotification(sessionId, update, get);
+          return;
+        }
+        applyNotificationUpdate(set, get, sessionId, update);
       }).then((fn) => {
         if (disposed) fn();
         else unlistenNotification = fn;
@@ -1036,14 +1517,104 @@ export const useAgentStore = create<AgentStore>()(
         else unlistenPermission = fn;
       });
 
+      onAgentPlanApprovalRequest((payload) => {
+        const session = Object.values(get().sessions).find((ss) => ss.sessionId === payload.sessionId);
+        set((s) => {
+          if (!s.planApprovalQueues[payload.sessionId]) s.planApprovalQueues[payload.sessionId] = [];
+          s.planApprovalQueues[payload.sessionId].push(payload);
+          const live = Object.values(s.sessions).find((ss) => ss.sessionId === payload.sessionId);
+          if (live) live.status = "waiting";
+          if (!s.pendingPlanApproval) s.pendingPlanApproval = payload;
+          // Inline card in the conversation thread (no modal).
+          if (live) {
+            if (!s.entriesByConversation[live.conversationId]) {
+              s.entriesByConversation[live.conversationId] = [];
+            }
+            const list = s.entriesByConversation[live.conversationId];
+            if (!list.some((e) => e.kind === "plan_approval" && e.requestId === payload.requestId)) {
+              list.push({
+                id: crypto.randomUUID(),
+                kind: "plan_approval",
+                timestamp: Date.now(),
+                requestId: payload.requestId,
+                name: payload.name ?? undefined,
+                overview: payload.overview ?? undefined,
+                plan: payload.plan,
+                todos: payload.todos.map((t) => ({
+                  id: t.id,
+                  content: t.content,
+                  status: t.status,
+                })),
+                status: "pending",
+              });
+            }
+          }
+        });
+
+        if (session) {
+          let projectId: string | null = null;
+          let convTitle = "";
+          const byProject = useConversationStore.getState().conversationsByProject;
+          for (const [pid, list] of Object.entries(byProject)) {
+            const c = list.find((x) => x.id === session.conversationId);
+            if (c) {
+              projectId = pid;
+              convTitle = c.title;
+              break;
+            }
+          }
+          useNotificationStore.getState().push({
+            title: "计划等待确认",
+            body: `${payload.name?.trim() || "执行计划"}${convTitle ? ` · ${convTitle}` : ""}`,
+            projectId,
+            conversationId: session.conversationId,
+          });
+        }
+      }).then((fn) => {
+        if (disposed) fn();
+        else unlistenPlanApproval = fn;
+      });
+
+      onAgentAskQuestionRequest((payload) => {
+        const session = Object.values(get().sessions).find((ss) => ss.sessionId === payload.sessionId);
+        set((s) => {
+          if (!s.askQuestionQueues[payload.sessionId]) s.askQuestionQueues[payload.sessionId] = [];
+          s.askQuestionQueues[payload.sessionId].push(payload);
+          const live = Object.values(s.sessions).find((ss) => ss.sessionId === payload.sessionId);
+          if (live) live.status = "waiting";
+          if (!s.pendingAskQuestion) s.pendingAskQuestion = payload;
+        });
+
+        if (session) {
+          let projectId: string | null = null;
+          let convTitle = "";
+          const byProject = useConversationStore.getState().conversationsByProject;
+          for (const [pid, list] of Object.entries(byProject)) {
+            const c = list.find((x) => x.id === session.conversationId);
+            if (c) {
+              projectId = pid;
+              convTitle = c.title;
+              break;
+            }
+          }
+          const firstPrompt = payload.questions[0]?.prompt?.trim();
+          useNotificationStore.getState().push({
+            title: "Agent 需要选择",
+            body: `${payload.title?.trim() || firstPrompt || "选择题"}${convTitle ? ` · ${convTitle}` : ""}`,
+            projectId,
+            conversationId: session.conversationId,
+          });
+        }
+      }).then((fn) => {
+        if (disposed) fn();
+        else unlistenAskQuestion = fn;
+      });
+
       onAgentSessionTerminated(({ sessionId }) => {
         set((s) => {
           const session = Object.values(s.sessions).find((ss) => ss.sessionId === sessionId);
           if (session) delete s.sessions[session.conversationId];
-          delete s.permissionQueues[sessionId];
-          if (s.pendingPermission?.sessionId === sessionId) {
-            s.pendingPermission = nextPendingPermission(s.permissionQueues, s.inlinePermissionIds);
-          }
+          clearSessionQueues(s, sessionId);
         });
       }).then((fn) => {
         if (disposed) fn();
@@ -1054,6 +1625,8 @@ export const useAgentStore = create<AgentStore>()(
         disposed = true;
         unlistenNotification?.();
         unlistenPermission?.();
+        unlistenPlanApproval?.();
+        unlistenAskQuestion?.();
         unlistenTerminated?.();
         listenerTeardown = null;
       };

@@ -659,8 +659,9 @@ export const useAgentStore = create<AgentStore>()(
         });
         set((s) => {
           if (s.sessions[session.conversationId]) {
-            const hasWaiting = (s.permissionQueues[sessionId] ?? []).length > 0;
-            s.sessions[session.conversationId].status = hasWaiting ? "waiting" : "idle";
+            s.sessions[session.conversationId].status = sessionStillWaiting(s, sessionId)
+              ? "waiting"
+              : "idle";
           }
         });
         // Auto-process next queued message if session returned to idle
@@ -742,9 +743,22 @@ export const useAgentStore = create<AgentStore>()(
     },
 
     respondPlan: async (requestId, outcome, reason) => {
+      // Dequeue first so double-clicks cannot resolve the same request twice.
+      let sessionIdForStatus: string | null = null;
       set((s) => {
         s.error = null;
+        for (const [sessionId, queue] of Object.entries(s.planApprovalQueues)) {
+          const idx = queue.findIndex((q) => q.requestId === requestId);
+          if (idx !== -1) {
+            queue.splice(idx, 1);
+            if (queue.length === 0) delete s.planApprovalQueues[sessionId];
+            sessionIdForStatus = sessionId;
+            break;
+          }
+        }
+        s.pendingPlanApproval = nextPendingPlanApproval(s.planApprovalQueues);
       });
+      if (!sessionIdForStatus) return;
       try {
         await agentRespondPlan(requestId, outcome, reason);
       } catch (err) {
@@ -753,24 +767,11 @@ export const useAgentStore = create<AgentStore>()(
         });
       } finally {
         set((s) => {
-          let sessionIdForStatus: string | null = null;
-          for (const [sessionId, queue] of Object.entries(s.planApprovalQueues)) {
-            const idx = queue.findIndex((q) => q.requestId === requestId);
-            if (idx !== -1) {
-              queue.splice(idx, 1);
-              if (queue.length === 0) delete s.planApprovalQueues[sessionId];
-              sessionIdForStatus = sessionId;
-              break;
-            }
-          }
-          s.pendingPlanApproval = nextPendingPlanApproval(s.planApprovalQueues);
-          if (sessionIdForStatus) {
-            const session = Object.values(s.sessions).find((ss) => ss.sessionId === sessionIdForStatus);
-            if (session) {
-              useNotificationStore.getState().dismissForConversation(session.conversationId);
-              if (session.status === "waiting" && !sessionStillWaiting(s, sessionIdForStatus)) {
-                session.status = "running";
-              }
+          const session = Object.values(s.sessions).find((ss) => ss.sessionId === sessionIdForStatus);
+          if (session) {
+            useNotificationStore.getState().dismissForConversation(session.conversationId);
+            if (session.status === "waiting" && !sessionStillWaiting(s, sessionIdForStatus)) {
+              session.status = "running";
             }
           }
         });
@@ -778,9 +779,21 @@ export const useAgentStore = create<AgentStore>()(
     },
 
     respondAskQuestion: async (requestId, outcome, answers, reason) => {
+      let sessionIdForStatus: string | null = null;
       set((s) => {
         s.error = null;
+        for (const [sessionId, queue] of Object.entries(s.askQuestionQueues)) {
+          const idx = queue.findIndex((q) => q.requestId === requestId);
+          if (idx !== -1) {
+            queue.splice(idx, 1);
+            if (queue.length === 0) delete s.askQuestionQueues[sessionId];
+            sessionIdForStatus = sessionId;
+            break;
+          }
+        }
+        s.pendingAskQuestion = nextPendingAskQuestion(s.askQuestionQueues);
       });
+      if (!sessionIdForStatus) return;
       try {
         await agentRespondAskQuestion(requestId, outcome, answers, reason);
       } catch (err) {
@@ -789,24 +802,11 @@ export const useAgentStore = create<AgentStore>()(
         });
       } finally {
         set((s) => {
-          let sessionIdForStatus: string | null = null;
-          for (const [sessionId, queue] of Object.entries(s.askQuestionQueues)) {
-            const idx = queue.findIndex((q) => q.requestId === requestId);
-            if (idx !== -1) {
-              queue.splice(idx, 1);
-              if (queue.length === 0) delete s.askQuestionQueues[sessionId];
-              sessionIdForStatus = sessionId;
-              break;
-            }
-          }
-          s.pendingAskQuestion = nextPendingAskQuestion(s.askQuestionQueues);
-          if (sessionIdForStatus) {
-            const session = Object.values(s.sessions).find((ss) => ss.sessionId === sessionIdForStatus);
-            if (session) {
-              useNotificationStore.getState().dismissForConversation(session.conversationId);
-              if (session.status === "waiting" && !sessionStillWaiting(s, sessionIdForStatus)) {
-                session.status = "running";
-              }
+          const session = Object.values(s.sessions).find((ss) => ss.sessionId === sessionIdForStatus);
+          if (session) {
+            useNotificationStore.getState().dismissForConversation(session.conversationId);
+            if (session.status === "waiting" && !sessionStillWaiting(s, sessionIdForStatus)) {
+              session.status = "running";
             }
           }
         });
@@ -815,6 +815,13 @@ export const useAgentStore = create<AgentStore>()(
 
     setMode: async (sessionId, modeId) => {
       const session = Object.values(get().sessions).find((ss) => ss.sessionId === sessionId);
+      if (session) {
+        const from = get().metaByConversation[session.conversationId]?.currentModeId;
+        if (from === "plan" && (modeId === "code" || modeId === "auto")) {
+          const ok = window.confirm("确认离开 Plan 并开始执行？");
+          if (!ok) return;
+        }
+      }
       try {
         await agentSetSessionMode(sessionId, modeId);
         if (session) {

@@ -8,6 +8,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -31,6 +32,9 @@ const AGENT_PERMISSION_REQUEST_EVENT: &str = "agent-permission-request";
 const AGENT_PLAN_APPROVAL_REQUEST_EVENT: &str = "agent-plan-approval-request";
 const AGENT_ASK_QUESTION_REQUEST_EVENT: &str = "agent-ask-question-request";
 const AGENT_SESSION_TERMINATED_EVENT: &str = "agent-session-terminated";
+
+/// Cap for `cursor/generate_image` file reads / embedded payloads (base64 of this).
+const MAX_GENERATED_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
 
 // 120s covers the worst case: cold-cache `npm install` of a new agent
 // (downloads the package + transitive deps) plus the agent's own bootstrap.
@@ -133,6 +137,8 @@ pub struct AcpSessionManager {
 struct NexAcpClient {
     app: AppHandle,
     session_key: String,
+    /// Session working directory — used to sandbox `generate_image` file reads.
+    cwd: PathBuf,
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
     pending_plan_approvals: Arc<Mutex<HashMap<String, PendingPlanApproval>>>,
     pending_ask_questions: Arc<Mutex<HashMap<String, PendingAskQuestion>>>,
@@ -330,11 +336,6 @@ impl NexAcpClient {
         if todos.is_empty() {
             todos = parse_cursor_todos_from_phases(&params);
         }
-        {
-            let mut guard = self.cursor_todos.lock().unwrap();
-            *guard = todos.clone();
-        }
-        self.emit_plan_from_todos(&todos);
 
         let request_id = uuid::Uuid::new_v4().to_string();
         let (tx, rx) = oneshot::channel();
@@ -354,13 +355,19 @@ impl NexAcpClient {
                 name,
                 overview,
                 plan,
-                todos,
+                todos: todos.clone(),
             },
         );
 
         let outcome = rx.await.unwrap_or(PlanApprovalOutcome::Cancelled);
         match outcome {
             PlanApprovalOutcome::Accepted => {
+                // Only publish PlanBar after the user accepts.
+                {
+                    let mut guard = self.cursor_todos.lock().unwrap();
+                    *guard = todos.clone();
+                }
+                self.emit_plan_from_todos(&todos);
                 serde_json::json!({ "outcome": { "outcome": "accepted" } })
             }
             PlanApprovalOutcome::Rejected { reason } => {
@@ -403,11 +410,8 @@ impl NexAcpClient {
             .get("durationMs")
             .or_else(|| params.get("duration_ms"))
             .and_then(|v| v.as_u64());
-        let status = if duration_ms.is_some() {
-            "completed"
-        } else {
-            "in_progress"
-        };
+        let completed = duration_ms.is_some();
+        let status = if completed { "completed" } else { "in_progress" };
         let mut content = Vec::new();
         if !prompt.is_empty() {
             content.push(serde_json::json!({
@@ -435,7 +439,10 @@ impl NexAcpClient {
                 }),
             },
         );
-        let mut outcome = serde_json::json!({ "outcome": "completed" });
+        // Keep RPC outcome aligned with the tool card status.
+        let mut outcome = serde_json::json!({
+            "outcome": if completed { "completed" } else { "started" }
+        });
         if let Some(id) = agent_id {
             outcome["agentId"] = serde_json::Value::String(id);
         }
@@ -458,7 +465,7 @@ impl NexAcpClient {
             .and_then(|v| v.as_str())
             .unwrap_or("Generated image")
             .to_string();
-        let file_path = params
+        let mut file_path = params
             .get("filePath")
             .or_else(|| params.get("file_path"))
             .and_then(|v| v.as_str())
@@ -469,22 +476,42 @@ impl NexAcpClient {
             .and_then(|v| v.as_str())
             .map(str::to_string);
         let mut mime = "image/png".to_string();
+
+        if let Some(data) = image_data.as_ref() {
+            // Rough decoded-size check (base64 expands ~4/3).
+            let approx = (data.len() as u64).saturating_mul(3) / 4;
+            if approx > MAX_GENERATED_IMAGE_BYTES {
+                return serde_json::json!({
+                    "outcome": {
+                        "outcome": "rejected",
+                        "reason": format!(
+                            "imageData exceeds {} byte limit",
+                            MAX_GENERATED_IMAGE_BYTES
+                        )
+                    }
+                });
+            }
+        }
+
         if image_data.is_none() {
             if let Some(path) = file_path.as_deref() {
-                match tokio::fs::read(path).await {
-                    Ok(bytes) => {
-                        mime = mime_from_path(path);
+                match read_image_under_cwd(&self.cwd, path).await {
+                    Ok((bytes, detected_mime)) => {
+                        mime = detected_mime;
                         image_data = Some(base64::Engine::encode(
                             &base64::engine::general_purpose::STANDARD,
                             &bytes,
                         ));
                     }
-                    Err(e) => {
-                        log::warn!("cursor/generate_image: failed to read `{path}`: {e}");
+                    Err(reason) => {
+                        return serde_json::json!({
+                            "outcome": { "outcome": "rejected", "reason": reason }
+                        });
                     }
                 }
             }
         }
+
         let Some(data) = image_data else {
             return serde_json::json!({
                 "outcome": {
@@ -493,6 +520,27 @@ impl NexAcpClient {
                 }
             });
         };
+
+        // Spec requires `filePath` on `generated`; materialize under cwd if absent.
+        if file_path.is_none() {
+            match persist_generated_image(&self.cwd, &data, &mime).await {
+                Ok(path) => file_path = Some(path),
+                Err(reason) => {
+                    return serde_json::json!({
+                        "outcome": { "outcome": "rejected", "reason": reason }
+                    });
+                }
+            }
+        } else if let Some(path) = file_path.as_deref() {
+            // Validate declared path stays in the workspace even when data was inline.
+            if let Err(reason) = resolve_image_path_under_cwd(&self.cwd, path) {
+                return serde_json::json!({
+                    "outcome": { "outcome": "rejected", "reason": reason }
+                });
+            }
+        }
+
+        let file_path = file_path.expect("file_path set above");
         let _ = self.app.emit(
             AGENT_NOTIFICATION_EVENT,
             AgentNotification {
@@ -515,11 +563,12 @@ impl NexAcpClient {
                 }),
             },
         );
-        let mut outcome = serde_json::json!({ "outcome": "generated" });
-        if let Some(path) = file_path {
-            outcome["filePath"] = serde_json::Value::String(path);
-        }
-        serde_json::json!({ "outcome": outcome })
+        serde_json::json!({
+            "outcome": {
+                "outcome": "generated",
+                "filePath": file_path,
+            }
+        })
     }
 
     async fn handle_ask_question(&self, params: serde_json::Value) -> serde_json::Value {
@@ -601,6 +650,68 @@ fn mime_from_path(path: &str) -> String {
     }
 }
 
+fn ext_for_mime(mime: &str) -> &'static str {
+    match mime {
+        "image/jpeg" => "jpg",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        _ => "png",
+    }
+}
+
+fn resolve_image_path_under_cwd(cwd: &Path, raw: &str) -> Result<PathBuf, String> {
+    super::native::tools::resolve_within(cwd, raw)
+}
+
+async fn read_image_under_cwd(cwd: &Path, raw: &str) -> Result<(Vec<u8>, String), String> {
+    let path = resolve_image_path_under_cwd(cwd, raw)?;
+    let meta = tokio::fs::metadata(&path)
+        .await
+        .map_err(|e| format!("cannot stat `{raw}`: {e}"))?;
+    if !meta.is_file() {
+        return Err(format!("`{raw}` is not a file"));
+    }
+    if meta.len() > MAX_GENERATED_IMAGE_BYTES {
+        return Err(format!(
+            "image file exceeds {} byte limit",
+            MAX_GENERATED_IMAGE_BYTES
+        ));
+    }
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| format!("failed to read `{raw}`: {e}"))?;
+    if bytes.len() as u64 > MAX_GENERATED_IMAGE_BYTES {
+        return Err(format!(
+            "image file exceeds {} byte limit",
+            MAX_GENERATED_IMAGE_BYTES
+        ));
+    }
+    Ok((bytes, mime_from_path(raw)))
+}
+
+async fn persist_generated_image(cwd: &Path, b64: &str, mime: &str) -> Result<String, String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| format!("invalid imageData base64: {e}"))?;
+    if bytes.len() as u64 > MAX_GENERATED_IMAGE_BYTES {
+        return Err(format!(
+            "imageData exceeds {} byte limit",
+            MAX_GENERATED_IMAGE_BYTES
+        ));
+    }
+    let dir = cwd.join(".nex").join("generated");
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| format!("mkdir generated: {e}"))?;
+    let name = format!("{}.{}", uuid::Uuid::new_v4(), ext_for_mime(mime));
+    let path = dir.join(name);
+    tokio::fs::write(&path, &bytes)
+        .await
+        .map_err(|e| format!("write generated image: {e}"))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
 /// Builds ACP `mcpServers` for `session/new` from Nex's `~/.nex/mcp.json` +
 /// project `.nex/mcp.json`. External agents (Claude/Codex/Cursor) receive the
 /// same stdio/HTTP servers the built-in agent uses.
@@ -613,11 +724,16 @@ fn acp_mcp_servers_from_nex(cwd: &std::path::Path) -> Vec<serde_json::Value> {
 
 fn mcp_config_to_acp_value(name: &str, cfg: &super::native::mcp::McpServerConfig) -> Option<serde_json::Value> {
     if let Some(url) = cfg.url.as_ref().filter(|u| !u.trim().is_empty()) {
+        let headers: Vec<serde_json::Value> = cfg
+            .headers
+            .iter()
+            .map(|(k, v)| serde_json::json!({ "name": k, "value": v }))
+            .collect();
         return Some(serde_json::json!({
             "type": "http",
             "name": name,
             "url": url,
-            "headers": [],
+            "headers": headers,
         }));
     }
     let command = cfg.command.as_ref().filter(|c| !c.trim().is_empty())?;
@@ -684,11 +800,20 @@ fn merge_cursor_todos(existing: &mut Vec<CursorTodoDto>, incoming: Vec<CursorTod
         return;
     }
     for todo in incoming {
-        if let Some(slot) = existing.iter_mut().find(|e| !todo.id.is_empty() && e.id == todo.id) {
+        if !todo.id.is_empty() {
+            if let Some(slot) = existing.iter_mut().find(|e| e.id == todo.id) {
+                *slot = todo;
+                continue;
+            }
+        } else if let Some(slot) = existing
+            .iter_mut()
+            .find(|e| e.id.is_empty() && e.content == todo.content)
+        {
+            // Empty ids: match by content so merge doesn't duplicate rows.
             *slot = todo;
-        } else {
-            existing.push(todo);
+            continue;
         }
+        existing.push(todo);
     }
 }
 
@@ -1406,6 +1531,14 @@ impl AcpSessionManager {
     }
 
     pub fn remove_session(&self, session_id: &str) {
+        // Closing the session must unblock any in-flight permission / plan /
+        // ask-question waiters (cancel already does this; remove alone did not).
+        self.resolve_session_permissions(
+            session_id,
+            Some(acp::RequestPermissionOutcome::Cancelled),
+        );
+        self.resolve_session_plan_approvals(session_id, PlanApprovalOutcome::Cancelled);
+        self.resolve_session_ask_questions(session_id, AskQuestionOutcome::Cancelled);
         self.sessions.lock().unwrap().remove(session_id);
     }
 
@@ -1634,6 +1767,7 @@ async fn run_acp_session<W, R>(
     let client = NexAcpClient {
         app: app.clone(),
         session_key: session_key.clone(),
+        cwd: PathBuf::from(&cwd),
         pending_permissions: Arc::clone(&pending_permissions),
         pending_plan_approvals: Arc::clone(&pending_plan_approvals),
         pending_ask_questions: Arc::clone(&pending_ask_questions),
@@ -1999,6 +2133,24 @@ mod tests {
         );
         assert_eq!(existing.len(), 1);
         assert_eq!(existing[0].id, "x");
+
+        // Empty ids merge by content (no duplicate rows).
+        let mut empty_ids = vec![CursorTodoDto {
+            id: String::new(),
+            content: "same".into(),
+            status: "pending".into(),
+        }];
+        merge_cursor_todos(
+            &mut empty_ids,
+            vec![CursorTodoDto {
+                id: String::new(),
+                content: "same".into(),
+                status: "completed".into(),
+            }],
+            true,
+        );
+        assert_eq!(empty_ids.len(), 1);
+        assert_eq!(empty_ids[0].status, "completed");
     }
 
     #[test]

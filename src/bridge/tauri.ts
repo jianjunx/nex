@@ -188,6 +188,7 @@ export interface NativeMcpServerInfo {
   args: string[];
   env: Record<string, string>;
   url?: string | null;
+  headers: Record<string, string>;
   enabled: boolean;
   source: string;
 }
@@ -205,6 +206,7 @@ export interface NativeMcpUpsert {
   args?: string[];
   env?: Record<string, string>;
   url?: string | null;
+  headers?: Record<string, string>;
 }
 
 export async function agentListServers(): Promise<ServerDescriptor[]> {

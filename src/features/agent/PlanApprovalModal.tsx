@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -13,10 +14,21 @@ export function PlanApprovalModal() {
   const respondPlan = useAgentStore((s) => s.respondPlan);
   const sessions = useAgentStore((s) => s.sessions);
   const conversationsByProject = useConversationStore((s) => s.conversationsByProject);
+  const submittingRef = useRef(false);
+
+  useEffect(() => {
+    submittingRef.current = false;
+  }, [pending?.requestId]);
 
   if (!pending) return null;
 
-  const dismiss = () => void respondPlan(pending.requestId, "cancelled");
+  const respondOnce = (outcome: "accepted" | "rejected" | "cancelled") => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    void respondPlan(pending.requestId, outcome);
+  };
+
+  const dismiss = () => respondOnce("cancelled");
 
   const session = Object.values(sessions).find((ss) => ss.sessionId === pending.sessionId);
   const conversation = session
@@ -60,10 +72,10 @@ export function PlanApprovalModal() {
           )}
         </div>
         <div className="flex gap-2 justify-end">
-          <Button variant="ghost" onClick={() => void respondPlan(pending.requestId, "rejected")}>
+          <Button variant="ghost" onClick={() => respondOnce("rejected")}>
             拒绝
           </Button>
-          <Button onClick={() => void respondPlan(pending.requestId, "accepted")}>
+          <Button onClick={() => respondOnce("accepted")}>
             接受并执行
           </Button>
         </div>

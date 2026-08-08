@@ -48,6 +48,10 @@ struct SessionHandles {
     cancelled: Rc<Cell<bool>>,
     /// Tools the user chose "始终允许该工具" for; survives across turns.
     auto_allow: Rc<RefCell<HashSet<String>>>,
+    /// Set when the session enters Plan; cleared after the user confirms
+    /// execution (switch to code/auto, or Composer `set_session_mode`).
+    /// Blocks `plan → ask → code` bypasses of the plan gate.
+    plan_pending_confirm: Rc<Cell<bool>>,
 }
 
 /// Per-session mutable state held by the native agent.
@@ -73,6 +77,7 @@ impl SessionHandles {
             reasoning: Rc::new(Cell::new(reasoning)),
             cancelled: Rc::new(Cell::new(false)),
             auto_allow: Rc::new(RefCell::new(HashSet::new())),
+            plan_pending_confirm: Rc::new(Cell::new(false)),
         }
     }
 
@@ -83,6 +88,7 @@ impl SessionHandles {
             reasoning: self.reasoning.clone(),
             cancelled: self.cancelled.clone(),
             auto_allow: self.auto_allow.clone(),
+            plan_pending_confirm: self.plan_pending_confirm.clone(),
         }
     }
 }
@@ -440,8 +446,18 @@ impl acp::Agent for NexNativeAgent {
 
         let handles = SessionHandles::new(current_model.clone(), initial_reasoning);
         *handles.mode_id.borrow_mut() = mode_id.clone();
+        // Restored Plan sessions still need an explicit confirm before execute.
+        if mode_id == "plan" {
+            handles.plan_pending_confirm.set(true);
+        }
+        // Prefer the client's current cwd (project may have moved).
+        let cwd = if args.cwd.as_os_str().is_empty() {
+            arch.cwd.clone()
+        } else {
+            args.cwd.clone()
+        };
         let session = NativeSession {
-            cwd: arch.cwd.clone(),
+            cwd: cwd.clone(),
             handles: handles.clone_handles(),
             history: arch.history,
             jobs: Rc::new(RefCell::new(tools::jobs::JobTable::default())),
@@ -456,14 +472,7 @@ impl acp::Agent for NexNativeAgent {
             .borrow_mut()
             .insert(session_key, session);
 
-        // Prefer the client's current cwd for MCP / commands (project may move);
-        // transcript sandbox root stays the archived cwd above.
-        let extras_cwd = if args.cwd.as_os_str().is_empty() {
-            &arch.cwd
-        } else {
-            &args.cwd
-        };
-        self.setup_session_extras(&args.session_id, extras_cwd, &cfg)
+        self.setup_session_extras(&args.session_id, &cwd, &cfg)
             .await;
 
         Ok(acp::LoadSessionResponse {
@@ -668,6 +677,7 @@ impl acp::Agent for NexNativeAgent {
                     // Live mode handle: Auto/Ask/Plan take effect even when the
                     // user switches mid-turn (session is checked out of the map).
                     mode_id: session.handles.mode_id.clone(),
+                    plan_pending_confirm: session.handles.plan_pending_confirm.clone(),
                     cancelled: session.handles.cancelled.clone(),
                     auto_allow: session.handles.auto_allow.clone(),
                     tool_ctx: ToolCtx {
@@ -715,13 +725,14 @@ impl acp::Agent for NexNativeAgent {
         };
 
         // Persist history so `session/load` can resume after app restart.
+        // Strip multimodal image payloads — archives must stay small/safe.
         let _ = archive::save(
             &session_key,
             &archive::SessionArchive {
                 cwd: session.cwd.clone(),
                 model_id: session.handles.model_id.borrow().clone(),
                 mode_id: session.handles.mode_id.borrow().clone(),
-                history: session.history.clone(),
+                history: archive::history_without_images(&session.history),
             },
         );
 
@@ -755,13 +766,20 @@ impl acp::Agent for NexNativeAgent {
                 acp::Error::invalid_params().with_data(format!("unknown session mode: {mode}"))
             );
         }
-        let mode_cell = {
+        let (mode_cell, pending) = {
             let handles = self.inner.handles.borrow();
             let Some(h) = handles.get(args.session_id.0.as_ref()) else {
                 return Err(acp::Error::invalid_params());
             };
-            h.mode_id.clone()
+            (h.mode_id.clone(), h.plan_pending_confirm.clone())
         };
+        // Composer `set_session_mode` is an explicit user action: entering
+        // plan arms the gate; leaving to code/auto via the UI counts as confirm.
+        if mode == "plan" {
+            pending.set(true);
+        } else if matches!(mode, "code" | "auto") && pending.get() {
+            pending.set(false);
+        }
         *mode_cell.borrow_mut() = mode.to_string();
         Ok(acp::SetSessionModeResponse { meta: None })
     }

@@ -38,6 +38,9 @@ pub struct McpServerConfig {
     /// Streamable HTTP endpoint (preferred over `command` when set).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Extra HTTP headers for Streamable HTTP transports (e.g. Authorization).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub headers: HashMap<String, String>,
 }
 
 /// The `mcp.json` file shape (Claude-compatible).
@@ -56,6 +59,7 @@ pub struct McpServerInfo {
     pub args: Vec<String>,
     pub env: HashMap<String, String>,
     pub url: Option<String>,
+    pub headers: HashMap<String, String>,
     pub enabled: bool,
     /// `global` for `~/.nex/mcp.json` entries.
     pub source: String,
@@ -83,6 +87,7 @@ pub fn list_global(disabled: &[String]) -> Vec<McpServerInfo> {
                 args: cfg.args,
                 env: cfg.env,
                 url: cfg.url,
+                headers: cfg.headers,
                 enabled,
                 source: "global".to_string(),
             }
@@ -186,6 +191,7 @@ enum Transport {
     Http {
         client: reqwest::Client,
         url: String,
+        headers: HashMap<String, String>,
         session_id: Option<String>,
         next_id: u64,
     },
@@ -224,7 +230,7 @@ impl McpClient {
     /// keeps running (stdio children are dropped and killed).
     pub async fn connect(name: &str, config: &McpServerConfig) -> Result<Self, String> {
         if let Some(url) = config.url.as_deref().filter(|u| !u.is_empty()) {
-            return Self::connect_http(name, url).await;
+            return Self::connect_http(name, url, &config.headers).await;
         }
         let Some(command) = &config.command else {
             return Err(format!("MCP server `{name}` has no `command`"));
@@ -232,14 +238,22 @@ impl McpClient {
         Self::connect_stdio(name, command, config).await
     }
 
-    async fn connect_http(name: &str, url: &str) -> Result<Self, String> {
+    async fn connect_http(
+        name: &str,
+        url: &str,
+        headers: &HashMap<String, String>,
+    ) -> Result<Self, String> {
+        // No automatic redirects: MCP session headers / auth must not follow
+        // off-origin Location targets silently.
         let client = reqwest::Client::builder()
             .timeout(CALL_TIMEOUT)
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|e| format!("failed to build HTTP client for MCP server `{name}`: {e}"))?;
         let transport = Arc::new(Mutex::new(Transport::Http {
             client,
             url: url.to_string(),
+            headers: headers.clone(),
             session_id: None,
             next_id: 1,
         }));
@@ -525,6 +539,7 @@ impl Transport {
         let Self::Http {
             client,
             url,
+            headers,
             session_id,
             ..
         } = self
@@ -539,6 +554,9 @@ impl Transport {
                 "application/json, text/event-stream",
             )
             .json(payload);
+        for (k, v) in headers.iter() {
+            req = req.header(k.as_str(), v.as_str());
+        }
         if let Some(sid) = session_id.as_deref() {
             req = req.header("Mcp-Session-Id", sid);
         }
@@ -585,32 +603,62 @@ impl Transport {
         if content_type.contains("text/event-stream") {
             parse_sse_jsonrpc(&body, id)
         } else {
-            serde_json::from_str(&body).map_err(|e| format!("bad MCP HTTP JSON: {e}"))
+            let msg: serde_json::Value =
+                serde_json::from_str(&body).map_err(|e| format!("bad MCP HTTP JSON: {e}"))?;
+            let got = msg.get("id").and_then(|v| v.as_u64());
+            if got != Some(id) {
+                return Err(format!(
+                    "MCP HTTP JSON-RPC id mismatch: expected {id}, got {got:?}"
+                ));
+            }
+            Ok(msg)
         }
     }
 }
 
-/// Parse the first SSE `data:` JSON-RPC message whose `id` matches.
+/// Parse the first SSE event whose JSON-RPC `id` matches.
+///
+/// Multi-line `data:` fields are concatenated (SSE spec) before JSON parse.
 fn parse_sse_jsonrpc(body: &str, id: u64) -> Result<serde_json::Value, String> {
+    let mut data_buf = String::new();
+
     for line in body.lines() {
-        let trimmed = line.trim();
-        let Some(data) = trimmed.strip_prefix("data:") else {
-            continue;
-        };
-        let data = data.trim();
-        if data.is_empty() || data == "[DONE]" {
+        if line.is_empty() {
+            if let Some(msg) = take_sse_jsonrpc_event(&mut data_buf, id) {
+                return Ok(msg);
+            }
             continue;
         }
-        let Ok(msg) = serde_json::from_str::<serde_json::Value>(data) else {
-            continue;
-        };
-        if msg.get("id").and_then(|v| v.as_u64()) == Some(id) {
-            return Ok(msg);
+        let trimmed = line.trim_end();
+        if let Some(rest) = trimmed.strip_prefix("data:") {
+            if !data_buf.is_empty() {
+                data_buf.push('\n');
+            }
+            // SSE allows optional leading space after `data:`.
+            data_buf.push_str(rest.strip_prefix(' ').unwrap_or(rest));
         }
+        // Ignore other field names (event:, id:, retry:, comments).
+    }
+    if let Some(msg) = take_sse_jsonrpc_event(&mut data_buf, id) {
+        return Ok(msg);
     }
     Err(format!(
         "no SSE JSON-RPC response with id {id} in event stream"
     ))
+}
+
+fn take_sse_jsonrpc_event(buf: &mut String, id: u64) -> Option<serde_json::Value> {
+    if buf.is_empty() {
+        return None;
+    }
+    let data = buf.trim();
+    if data.is_empty() || data == "[DONE]" {
+        buf.clear();
+        return None;
+    }
+    let msg = serde_json::from_str::<serde_json::Value>(data).ok();
+    buf.clear();
+    msg.filter(|m| m.get("id").and_then(|v| v.as_u64()) == Some(id))
 }
 
 #[cfg(test)]
@@ -745,6 +793,17 @@ data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[]}}\n\
         assert!(err.contains("id 99"), "got: {err}");
     }
 
+    #[test]
+    fn parse_sse_jsonrpc_joins_multiline_data() {
+        let body = "\
+data: {\"jsonrpc\":\"2.0\",\"id\":1,\n\
+data: \"result\":{\"ok\":true}}\n\
+\n\
+";
+        let msg = parse_sse_jsonrpc(body, 1).expect("multiline");
+        assert_eq!(msg.pointer("/result/ok").and_then(|v| v.as_bool()), Some(true));
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn stdio_handshake_and_tool_call_round_trip() {
         let tmp = tempfile::tempdir().unwrap();
@@ -756,6 +815,7 @@ data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[]}}\n\
             args: vec![script.to_string_lossy().to_string()],
             env: HashMap::new(),
             url: None,
+            headers: HashMap::new(),
         };
         let client = McpClient::connect("fake", &cfg).await.expect("handshake");
         let names: Vec<&str> = client.tools.iter().map(|t| t.name.as_str()).collect();
@@ -796,6 +856,7 @@ data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[]}}\n\
             args: vec![script.to_string_lossy().to_string()],
             env: HashMap::new(),
             url: None,
+            headers: HashMap::new(),
         };
         let client = Rc::new(McpClient::connect("fake", &cfg).await.expect("handshake"));
 
@@ -851,6 +912,7 @@ data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[]}}\n\
             args: vec![],
             env: HashMap::new(),
             url: Some("http://127.0.0.1:9".to_string()),
+            headers: HashMap::new(),
         };
         let err = McpClient::connect("http", &cfg)
             .await
@@ -875,6 +937,7 @@ data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[]}}\n\
                 args: vec![],
                 env: HashMap::new(),
                 url: None,
+                headers: HashMap::new(),
             },
         )
         .await

@@ -63,6 +63,8 @@ pub struct TurnEnv {
     /// Live session mode (`code`/`ask`/`plan`/`auto`). Re-read on every tool
     /// call so mid-turn switches (especially Auto) take effect immediately.
     pub mode_id: Rc<RefCell<String>>,
+    /// True after entering Plan until the user confirms code/auto execution.
+    pub plan_pending_confirm: Rc<Cell<bool>>,
     /// Cooperative cancellation flag set by `session/cancel`.
     pub cancelled: Rc<Cell<bool>>,
     /// Tools the user chose "always allow" for (session-scoped).
@@ -136,6 +138,7 @@ pub async fn run_subagent(harness: &SubagentHarness, task: &str) -> Result<Strin
         reasoning: harness.reasoning,
         max_steps: harness.max_sub_steps,
         mode_id: harness.mode_id.clone(),
+        plan_pending_confirm: Rc::new(Cell::new(false)),
         cancelled: harness.cancelled.clone(),
         auto_allow: Rc::new(RefCell::new(HashSet::new())),
         tool_ctx,
@@ -512,19 +515,30 @@ async fn execute_tool(env: &TurnEnv, call: &NativeToolCall) -> Result<String, St
         }
     }
 
-    // Leaving Plan for Code/Auto requires explicit user confirmation (PlanBar
-    // already shows the todos). Rejected switches revert the mode cell.
+    // Plan gate: entering plan arms `plan_pending_confirm`; any later switch
+    // into code/auto (including plan→ask→code) requires explicit approval.
+    // Rejected switches revert the mode cell.
     if call.name == "switch_mode" && result.is_ok() {
         let current = env.mode_id.borrow().clone();
-        let leaving_plan_to_exec = mode_before == "plan"
-            && (current == "code" || current == "auto");
-        if leaving_plan_to_exec {
-            match request_plan_execution_approval(env, &call_id, &current).await {
-                PermissionDecision::Allowed { .. } => {}
+        if current == "plan" {
+            env.plan_pending_confirm.set(true);
+        }
+        let leaving_to_exec = matches!(current.as_str(), "code" | "auto")
+            && env.plan_pending_confirm.get();
+        if leaving_to_exec {
+            match request_plan_execution_approval(env, &call_id, &mode_before, &current).await {
+                PermissionDecision::Allowed { .. } => {
+                    env.plan_pending_confirm.set(false);
+                }
                 PermissionDecision::Denied => {
-                    *env.mode_id.borrow_mut() = mode_before;
-                    return finish_tool(env, &call_id, false, "用户拒绝执行计划，仍停留在 plan 模式")
-                        .await;
+                    *env.mode_id.borrow_mut() = mode_before.clone();
+                    return finish_tool(
+                        env,
+                        &call_id,
+                        false,
+                        "用户拒绝执行计划，未切换到执行模式",
+                    )
+                    .await;
                 }
                 PermissionDecision::TurnCancelled => {
                     *env.mode_id.borrow_mut() = mode_before;
@@ -606,10 +620,11 @@ enum PermissionDecision {
     TurnCancelled,
 }
 
-/// Confirms leaving Plan mode to start executing (code/auto).
+/// Confirms leaving a pending Plan to start executing (code/auto).
 async fn request_plan_execution_approval(
     env: &TurnEnv,
     call_id: &acp::ToolCallId,
+    from_mode: &str,
     target_mode: &str,
 ) -> PermissionDecision {
     use acp::Client as _;
@@ -623,8 +638,9 @@ async fn request_plan_execution_approval(
                 status: Some(acp::ToolCallStatus::Pending),
                 title: Some(format!("确认执行计划（切换到 {target_mode}）")),
                 raw_input: Some(serde_json::json!({
-                    "from": "plan",
+                    "from": from_mode,
                     "to": target_mode,
+                    "planPending": true,
                 })),
                 ..Default::default()
             },
@@ -959,6 +975,7 @@ mod tests {
             reasoning: ReasoningControl::Off,
             max_steps: 5,
             mode_id: mode_id.clone(),
+            plan_pending_confirm: Rc::new(Cell::new(false)),
             cancelled: Rc::new(Cell::new(false)),
             auto_allow: Rc::new(RefCell::new(HashSet::new())),
             tool_ctx: ToolCtx {
@@ -1291,12 +1308,18 @@ mod tests {
                     ])),
                     tools_nonempty: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
                 };
-                let (env, nots, _perms) = make_env(provider, tmp.path(), false);
+                let (env, nots, perms) = make_env(provider, tmp.path(), false);
                 *env.mode_id.borrow_mut() = "plan".to_string();
+                env.plan_pending_confirm.set(true);
                 let mut messages = vec![ChatMessage::system("sys")];
                 let stop = run_turn(&env, &mut messages, Content::Text("按方案实现".into())).await;
                 assert!(matches!(stop, acp::StopReason::EndTurn));
                 assert_eq!(env.mode_id.borrow().as_str(), "code");
+                assert!(
+                    *perms.borrow() >= 1,
+                    "leaving plan for code must request confirmation"
+                );
+                assert!(!env.plan_pending_confirm.get());
                 assert!(tmp.path().join("out.txt").exists());
 
                 for _ in 0..200 {
@@ -1322,6 +1345,53 @@ mod tests {
                 assert!(
                     mode_updates.iter().any(|m| m == "code"),
                     "expected CurrentModeUpdate(code), got {mode_updates:?}"
+                );
+            })
+            .await;
+    }
+
+    /// `plan → ask → code` must still hit the plan gate (not only direct
+    /// `plan → code`).
+    #[tokio::test(flavor = "current_thread")]
+    async fn plan_ask_code_bypass_still_requires_confirm() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let tmp = tempfile::tempdir().unwrap();
+                let provider = ScriptedProvider {
+                    turns: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
+                        vec![
+                            Chunk::ToolCall(NativeToolCall {
+                                id: "c_ask".into(),
+                                name: "switch_mode".into(),
+                                arguments: serde_json::json!({ "mode": "ask" }),
+                            }),
+                            done(),
+                        ],
+                        vec![
+                            Chunk::ToolCall(NativeToolCall {
+                                id: "c_code".into(),
+                                name: "switch_mode".into(),
+                                arguments: serde_json::json!({ "mode": "code" }),
+                            }),
+                            done(),
+                        ],
+                        vec![text_chunk("stuck"), done()],
+                    ])),
+                    tools_nonempty: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+                };
+                let (env, _nots, perms) = make_env(provider, tmp.path(), true);
+                *env.mode_id.borrow_mut() = "plan".to_string();
+                env.plan_pending_confirm.set(true);
+                let mut messages = vec![ChatMessage::system("sys")];
+                let stop = run_turn(&env, &mut messages, Content::Text("绕过".into())).await;
+                assert!(matches!(stop, acp::StopReason::EndTurn));
+                // Denied plan confirm keeps the pre-switch mode (`ask`).
+                assert_eq!(env.mode_id.borrow().as_str(), "ask");
+                assert!(env.plan_pending_confirm.get());
+                assert!(
+                    *perms.borrow() >= 1,
+                    "ask→code after plan must still prompt"
                 );
             })
             .await;

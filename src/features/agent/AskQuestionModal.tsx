@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -17,8 +17,10 @@ export function AskQuestionModal() {
   const sessions = useAgentStore((s) => s.sessions);
   const conversationsByProject = useConversationStore((s) => s.conversationsByProject);
   const [selections, setSelections] = useState<Record<string, string[]>>({});
+  const submittingRef = useRef(false);
 
   useEffect(() => {
+    submittingRef.current = false;
     if (!pending) {
       setSelections({});
       return;
@@ -30,8 +32,17 @@ export function AskQuestionModal() {
 
   if (!pending) return null;
 
-  const dismiss = () => void respondAskQuestion(pending.requestId, "cancelled");
-  const skip = () => void respondAskQuestion(pending.requestId, "skipped");
+  const respondOnce = (
+    outcome: "answered" | "skipped" | "cancelled",
+    answers?: AskQuestionAnswerPayload[],
+  ) => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    void respondAskQuestion(pending.requestId, outcome, answers);
+  };
+
+  const dismiss = () => respondOnce("cancelled");
+  const skip = () => respondOnce("skipped");
 
   const session = Object.values(sessions).find((ss) => ss.sessionId === pending.sessionId);
   const conversation = session
@@ -48,7 +59,7 @@ export function AskQuestionModal() {
       questionId: q.id,
       selectedOptionIds: selections[q.id] ?? [],
     }));
-    void respondAskQuestion(pending.requestId, "answered", answers);
+    respondOnce("answered", answers);
   };
 
   const toggleOption = (questionId: string, optionId: string, allowMultiple: boolean) => {
@@ -70,9 +81,7 @@ export function AskQuestionModal() {
 
   const onOptionClick = (questionId: string, optionId: string, allowMultiple: boolean) => {
     if (singleFastPath) {
-      void respondAskQuestion(pending.requestId, "answered", [
-        { questionId, selectedOptionIds: [optionId] },
-      ]);
+      respondOnce("answered", [{ questionId, selectedOptionIds: [optionId] }]);
       return;
     }
     toggleOption(questionId, optionId, allowMultiple);

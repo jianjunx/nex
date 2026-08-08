@@ -208,6 +208,8 @@ pub struct McpUpsertRequest {
     #[serde(default)]
     pub env: std::collections::HashMap<String, String>,
     pub url: Option<String>,
+    #[serde(default)]
+    pub headers: std::collections::HashMap<String, String>,
 }
 
 #[tauri::command]
@@ -225,6 +227,7 @@ pub fn native_agent_upsert_mcp(server: McpUpsertRequest) -> Result<(), NexError>
             args: server.args,
             env: server.env,
             url: server.url,
+            headers: server.headers,
         },
     )
     .map_err(NexError::Agent)
@@ -262,6 +265,7 @@ pub async fn native_agent_probe_mcp(name: String) -> Result<String, NexError> {
         args: info.args,
         env: info.env,
         url: info.url,
+        headers: info.headers,
     };
     match mcp::McpClient::connect(&name, &cfg).await {
         Ok(client) => Ok(format!("connected:{} tools", client.tools.len())),

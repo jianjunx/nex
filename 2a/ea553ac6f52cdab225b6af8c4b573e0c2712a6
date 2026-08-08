@@ -1,0 +1,23 @@
+src/stores/agent.store.ts
+  s_532164b3bb56f1::t_03af581ce6ce90 228-263,689,1617
+src/stores/fs.store.ts
+  s_532164b3bb56f1::t_4a9f1c4f358466 73-78
+src/stores/fs.store.undo.test.ts
+  s_532164b3bb56f1::t_87f69f35a883de 1-166
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "2aea553ac6f52cdab225b6af8c4b573e0c2712a6",
+  "prompts": {},
+  "sessions": {
+    "s_532164b3bb56f1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_532164b3bb56f1",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

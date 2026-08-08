@@ -109,15 +109,6 @@ function reasoningLevelsFor(id: string): string[] {
 }
 
 const ALL_EFFORTS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
-const EFFORT_LABELS: Record<(typeof ALL_EFFORTS)[number], string> = {
-  off: "关",
-  minimal: "最小",
-  low: "低",
-  medium: "中",
-  high: "高",
-  xhigh: "极高",
-  max: "最大",
-};
 
 function detectModel(id: string): NativeAgentModel {
   const reasoningLevels = reasoningLevelsFor(id);
@@ -799,7 +790,8 @@ function ProviderEditorDialog({
                                   }
                                   onClick={() => toggleEffort(m.id, effort)}
                                 >
-                                  {EFFORT_LABELS[effort]}
+                                  {/* 显示档位原值（off/low/…），不翻译成中文 */}
+                                  {effort}
                                 </button>
                               );
                             })}

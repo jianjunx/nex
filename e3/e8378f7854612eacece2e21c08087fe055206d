@@ -1,0 +1,28 @@
+src-tauri/src/agent/acp_adapter.rs
+  s_80a861342bad6c::t_9067731cb933c8 930-933,950
+  s_80a861342bad6c::t_6e98a39d678cdc 2139-2154
+  s_80a861342bad6c::t_321aba4f5d4e66 2138
+src/stores/agent.store.ts
+  s_80a861342bad6c::t_27a7ce27f25f94 352-386
+  s_80a861342bad6c::t_3832ed7c3e6e55 611
+  s_80a861342bad6c::t_aa302eb5af3265 1431-1433
+  s_80a861342bad6c::t_b8e3aa464aa6fe 621
+src/stores/agent.store.test.ts
+  s_80a861342bad6c::t_8ed1d4118c9be9 259-301
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "e3e8378f7854612eacece2e21c08087fe055206d",
+  "prompts": {},
+  "sessions": {
+    "s_80a861342bad6c": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e16a261f-a8a1-45cf-85bf-da8e8ac0fddb",
+        "model": "grok-4.5"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

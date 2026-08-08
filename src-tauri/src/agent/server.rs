@@ -318,7 +318,7 @@ impl AgentSessionManager {
             name: "Nex Agent".to_string(),
             version: version.clone(),
             installed_version: Some(version),
-            description: "内置原生编码 agent（DeepSeek）".to_string(),
+            description: "内置原生编码 Agent".to_string(),
             icon: None,
             kind: ServerKind::Native,
         }

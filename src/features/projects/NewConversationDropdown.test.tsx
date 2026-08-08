@@ -40,7 +40,7 @@ const SERVER_CUSTOM: ServerDescriptor = {
 };
 const SERVER_NEX: ServerDescriptor = {
   id: "nex", name: "Nex Agent", version: "1.1.0",
-  description: "内置原生编码 agent（DeepSeek）", icon: null, kind: "native",
+  description: "内置原生编码 Agent", icon: null, kind: "native",
 };
 const CONV: Conversation = {
   id: "conv-1", project_id: "p1", title: "新对话", agent_type: "claude-code",

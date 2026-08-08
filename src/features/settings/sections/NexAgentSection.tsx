@@ -288,7 +288,7 @@ export function NexAgentSection() {
   return (
     <section className="space-y-4">
       <div className={SECTION_HEADER}>
-        <Label className="text-xs font-medium uppercase tracking-wide">Nex 智能体（内置原生 agent）</Label>
+        <Label className="text-xs font-medium uppercase tracking-wide">Nex 智能体</Label>
       </div>
 
       <div className="flex gap-1 rounded-[var(--radius-md)] border border-[color:var(--border-subtle)] p-0.5">

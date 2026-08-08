@@ -77,17 +77,11 @@ impl ReasoningControl {
         }
     }
 
-    /// Human label for Composer menus.
+    /// Wire id used by the Composer config option / API body. Also the
+    /// display label: Composer shows the raw API value (off/low/…),
+    /// not a localized alias, so users can match docs & probes.
     pub fn display_name(self) -> &'static str {
-        match self {
-            Self::Off => "关闭",
-            Self::Minimal => "最小",
-            Self::Low => "低",
-            Self::Medium => "中",
-            Self::High => "高",
-            Self::XHigh => "极高",
-            Self::Max => "最大",
-        }
+        self.as_str()
     }
 
     /// Pick a valid level for the given model options; prefer current, then

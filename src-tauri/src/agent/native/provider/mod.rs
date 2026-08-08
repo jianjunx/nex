@@ -76,12 +76,12 @@ impl ReasoningControl {
     /// Human label for Composer menus.
     pub fn display_name(self) -> &'static str {
         match self {
-            Self::Off => "Off",
-            Self::Minimal => "Minimal",
-            Self::Low => "Low",
-            Self::Medium => "Medium",
-            Self::High => "High",
-            Self::XHigh => "Extra high",
+            Self::Off => "关闭",
+            Self::Minimal => "最小",
+            Self::Low => "低",
+            Self::Medium => "中",
+            Self::High => "高",
+            Self::XHigh => "极高",
         }
     }
 

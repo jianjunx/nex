@@ -19,6 +19,7 @@ import {
   agentSetSessionModel,
   agentSetSessionConfigOption,
   conversationReplaceThreadEntries,
+  nativeAgentGetConfig,
   onAgentNotification,
   onAgentPermissionRequest,
   onAgentPlanApprovalRequest,
@@ -151,10 +152,18 @@ interface AgentStore {
     answers?: AskQuestionAnswerPayload[] | null,
     reason?: string | null,
   ) => Promise<void>;
-  setMode: (sessionId: string, modeId: string) => Promise<void>;
+  setMode: (
+    sessionId: string,
+    modeId: string,
+    opts?: { skipConfirm?: boolean },
+  ) => Promise<void>;
   setModel: (sessionId: string, modelId: string) => Promise<void>;
   setConfigOption: (sessionId: string, configId: string, value: string) => Promise<void>;
   setAuthMode: (conversationId: string, authMode: AuthMode) => void;
+  /** Cached from nex-agent.json; used to chain `/review` after mutating turns. */
+  nativeAutoReview: boolean;
+  /** Refresh `nativeAutoReview` from disk (call after settings save). */
+  refreshNativeAutoReview: () => Promise<void>;
   /** Queue a message for later sending when the session is starting or busy. */
   enqueuePendingMessage: (
     conversationId: string,
@@ -229,6 +238,50 @@ function sessionStillWaiting(
     (s.planApprovalQueues[sessionId] ?? []).length > 0 ||
     (s.askQuestionQueues[sessionId] ?? []).length > 0
   );
+}
+
+/** After Cursor plan accept: leave plan/ask for an executable mode and continue. */
+async function handoffPlanToExecute(
+  get: () => AgentStore,
+  set: (fn: (s: AgentStore) => void) => void,
+  sessionId: string,
+  conversationId: string,
+): Promise<void> {
+  const meta = get().metaByConversation[conversationId];
+  const current = meta?.currentModeId ?? "";
+  if (current === "plan" || current === "ask") {
+    const preferred = ["agent", "code", "auto"] as const;
+    const execMode =
+      preferred.find((id) => meta?.modes.some((m) => m.id === id)) ??
+      meta?.modes.find((m) => m.id !== "plan" && m.id !== "ask")?.id;
+    if (execMode) {
+      try {
+        await agentSetSessionMode(sessionId, execMode);
+        set((s) => {
+          const m = s.metaByConversation[conversationId];
+          if (m) m.currentModeId = execMode;
+        });
+        patchPrefs(set, conversationId, { modeId: execMode });
+      } catch (err) {
+        set((s) => {
+          s.error = errorMessage(err);
+        });
+      }
+    }
+  }
+
+  const continueText = "计划已确认，请开始执行。";
+  const blocks: PromptBlock[] = [{ type: "text", text: continueText }];
+  const session = get().sessions[conversationId];
+  if (!session || session.sessionId !== sessionId) return;
+
+  // If the create_plan turn is still finishing, queue; otherwise send now.
+  if (session.status === "idle") {
+    get().appendUserMessage(conversationId, continueText);
+    await get().sendPrompt(sessionId, blocks);
+  } else {
+    get().enqueuePendingMessage(conversationId, blocks, continueText);
+  }
 }
 
 function applyCreateMeta(result: CreateSessionResult): SessionMeta {
@@ -352,10 +405,22 @@ async function restorePrefsToLiveSession(
     const inConfig = modelOpt?.options.some((o) => o.id === prefs.modelId) ?? false;
     if (inModels || inConfig) {
       try {
-        await agentSetSessionModel(sessionId, prefs.modelId);
+        // Must apply returned configOptions — native agent refreshes reasoning
+        // levels for the restored model; discarding them hides the Composer menu.
+        const next = await agentSetSessionModel(sessionId, prefs.modelId);
         set((s) => {
           const m = s.metaByConversation[conversationId];
-          if (m) m.currentModelId = prefs.modelId!;
+          if (!m) return;
+          m.currentModelId = prefs.modelId!;
+          if (next) {
+            m.configOptions = next.map((o) => ({
+              id: o.id,
+              name: o.name,
+              category: o.category ?? undefined,
+              currentValueId: o.currentValueId,
+              options: o.options.map((x) => ({ id: x.id, name: x.name })),
+            }));
+          }
         });
       } catch {
         clearPrefKey(set, conversationId, "modelId");
@@ -418,6 +483,7 @@ export const useAgentStore = create<AgentStore>()(
     serversLoading: false,
     serversLoadedAt: 0,
     error: null,
+    nativeAutoReview: false,
 
     createSession: async (conversationId, target, cwd) => {
       set((s) => {
@@ -598,76 +664,103 @@ export const useAgentStore = create<AgentStore>()(
         s.error = null;
       });
       let promptFailed = false;
+      let hadMutations = false;
       try {
-        await agentSendPrompt(sessionId, blocks);
+        const result = await agentSendPrompt(sessionId, blocks);
+        hadMutations = !!result?.hadMutations;
       } catch (err) {
         promptFailed = true;
         set((s) => {
           s.error = errorMessage(err);
         });
-      } finally {
-        const entries = get().entriesByConversation[session.conversationId] ?? [];
-        // Never synthesize a "turn completed" assistant message when the
-        // prompt itself failed — that would disguise an error as success.
-        if (!promptFailed) {
-          const assistantText = assistantTextAfterLastUser(entries);
-          if (assistantText) {
-            void useConversationStore.getState().persistMessage(
-              session.conversationId,
-              "assistant",
-              assistantText,
-            );
-          } else {
-            // Agents like Cursor may finish a turn with only tool cards and no
-            // agent_message_chunk. Surface an explicit completion so the thread
-            // doesn't look stuck after status returns to idle.
-            set((s) => {
-              const list = s.entriesByConversation[session.conversationId];
-              if (!list) return;
-              const last = list[list.length - 1];
-              if (last?.kind === "user_message") {
-                list.push({
-                  id: crypto.randomUUID(),
-                  kind: "assistant_message",
-                  timestamp: Date.now(),
-                  chunks: [{ type: "message", text: "（本回合已完成，未返回文本消息）" }],
-                });
-              } else if (last?.kind === "tool_call") {
-                list.push({
-                  id: crypto.randomUUID(),
-                  kind: "assistant_message",
-                  timestamp: Date.now(),
-                  chunks: [{ type: "message", text: "（本回合已完成）" }],
-                });
-              }
-            });
-          }
+      }
+
+      const entries = get().entriesByConversation[session.conversationId] ?? [];
+      // Never synthesize a "turn completed" assistant message when the
+      // prompt itself failed — that would disguise an error as success.
+      if (!promptFailed) {
+        const assistantText = assistantTextAfterLastUser(entries);
+        if (assistantText) {
+          void useConversationStore.getState().persistMessage(
+            session.conversationId,
+            "assistant",
+            assistantText,
+          );
+        } else {
+          // Agents like Cursor may finish a turn with only tool cards and no
+          // agent_message_chunk. Surface an explicit completion so the thread
+          // doesn't look stuck after status returns to idle.
+          set((s) => {
+            const list = s.entriesByConversation[session.conversationId];
+            if (!list) return;
+            const last = list[list.length - 1];
+            if (last?.kind === "user_message") {
+              list.push({
+                id: crypto.randomUUID(),
+                kind: "assistant_message",
+                timestamp: Date.now(),
+                chunks: [{ type: "message", text: "（本回合已完成，未返回文本消息）" }],
+              });
+            } else if (last?.kind === "tool_call") {
+              list.push({
+                id: crypto.randomUUID(),
+                kind: "assistant_message",
+                timestamp: Date.now(),
+                chunks: [{ type: "message", text: "（本回合已完成）" }],
+              });
+            }
+          });
         }
-        // Persist full thread snapshot (thought/tool_call/etc.) so the UI can
-        // restore complete history after restart.
-        const latestEntries = get().entriesByConversation[session.conversationId] ?? entries;
-        void conversationReplaceThreadEntries(
-          session.conversationId,
-          latestEntries.map((e, sequence) => ({
-            kind: e.kind,
-            sequence,
-            timestamp: e.timestamp,
-            payload: e,
-          })),
-        ).catch((e) => {
-          console.error("[conversation] persistThreadEntries failed:", e);
-        });
-        set((s) => {
-          if (s.sessions[session.conversationId]) {
-            s.sessions[session.conversationId].status = sessionStillWaiting(s, sessionId)
-              ? "waiting"
-              : "idle";
-          }
-        });
-        // Auto-process next queued message if session returned to idle
-        if (get().sessions[session.conversationId]?.status === "idle") {
-          void get().processNextPending(session.conversationId);
+      }
+      // Persist full thread snapshot (thought/tool_call/etc.) so the UI can
+      // restore complete history after restart.
+      const latestEntries = get().entriesByConversation[session.conversationId] ?? entries;
+      void conversationReplaceThreadEntries(
+        session.conversationId,
+        latestEntries.map((e, sequence) => ({
+          kind: e.kind,
+          sequence,
+          timestamp: e.timestamp,
+          payload: e,
+        })),
+      ).catch((e) => {
+        console.error("[conversation] persistThreadEntries failed:", e);
+      });
+      set((s) => {
+        if (s.sessions[session.conversationId]) {
+          s.sessions[session.conversationId].status = sessionStillWaiting(s, sessionId)
+            ? "waiting"
+            : "idle";
         }
+      });
+
+      // NexAgent: after a mutating turn, chain a visible `/review` once.
+      const conv = useConversationStore
+        .getState()
+        .conversations.find((c) => c.id === session.conversationId);
+      const isNative = conv?.agent_type === "nex" || conv?.agent_type === "native";
+      const promptText = blocks
+        .filter((b): b is Extract<PromptBlock, { type: "text" }> => b.type === "text")
+        .map((b) => b.text)
+        .join(" ")
+        .trim();
+      const wasReview = /^\/review(?:\s|$)/i.test(promptText);
+      if (
+        !promptFailed &&
+        isNative &&
+        get().nativeAutoReview &&
+        hadMutations &&
+        !wasReview &&
+        get().sessions[session.conversationId]?.status === "idle"
+      ) {
+        get().appendUserMessage(session.conversationId, "/review");
+        await get().sendPrompt(sessionId, [{ type: "text", text: "/review" }]);
+        return;
+      }
+
+      // Auto-process next queued message if session returned to idle
+      if (get().sessions[session.conversationId]?.status === "idle") {
+        void get().processNextPending(session.conversationId);
       }
     },
 
@@ -745,6 +838,7 @@ export const useAgentStore = create<AgentStore>()(
     respondPlan: async (requestId, outcome, reason) => {
       // Dequeue first so double-clicks cannot resolve the same request twice.
       let sessionIdForStatus: string | null = null;
+      let conversationIdForHandoff: string | null = null;
       set((s) => {
         s.error = null;
         for (const [sessionId, queue] of Object.entries(s.planApprovalQueues)) {
@@ -757,24 +851,61 @@ export const useAgentStore = create<AgentStore>()(
           }
         }
         s.pendingPlanApproval = nextPendingPlanApproval(s.planApprovalQueues);
+        // Mirror outcome onto the in-thread card.
+        const session = sessionIdForStatus
+          ? Object.values(s.sessions).find((ss) => ss.sessionId === sessionIdForStatus)
+          : undefined;
+        if (session) {
+          conversationIdForHandoff = session.conversationId;
+          const list = s.entriesByConversation[session.conversationId];
+          const card = list?.find(
+            (e) => e.kind === "plan_approval" && e.requestId === requestId,
+          );
+          if (card && card.kind === "plan_approval") {
+            card.status =
+              outcome === "accepted"
+                ? "accepted"
+                : outcome === "rejected"
+                  ? "rejected"
+                  : "cancelled";
+          }
+        }
       });
       if (!sessionIdForStatus) return;
+      const resolvedSessionId = sessionIdForStatus;
+      let respondedOk = false;
       try {
         await agentRespondPlan(requestId, outcome, reason);
+        respondedOk = true;
       } catch (err) {
         set((s) => {
           s.error = errorMessage(err);
+          // Roll back optimistic card status if the backend reject failed.
+          if (conversationIdForHandoff) {
+            const list = s.entriesByConversation[conversationIdForHandoff];
+            const card = list?.find(
+              (e) => e.kind === "plan_approval" && e.requestId === requestId,
+            );
+            if (card && card.kind === "plan_approval") card.status = "pending";
+          }
         });
       } finally {
         set((s) => {
-          const session = Object.values(s.sessions).find((ss) => ss.sessionId === sessionIdForStatus);
+          const session = Object.values(s.sessions).find((ss) => ss.sessionId === resolvedSessionId);
           if (session) {
             useNotificationStore.getState().dismissForConversation(session.conversationId);
-            if (session.status === "waiting" && !sessionStillWaiting(s, sessionIdForStatus)) {
+            if (session.status === "waiting" && !sessionStillWaiting(s, resolvedSessionId)) {
               session.status = "running";
             }
           }
         });
+      }
+
+      // Accept alone unblocks Cursor but often leaves the session in plan/ask
+      // mode with the prompt turn ending — switch to an executable mode and
+      // queue a continue turn so the plan actually runs.
+      if (respondedOk && outcome === "accepted" && conversationIdForHandoff) {
+        await handoffPlanToExecute(get, set, resolvedSessionId, conversationIdForHandoff);
       }
     },
 
@@ -794,6 +925,7 @@ export const useAgentStore = create<AgentStore>()(
         s.pendingAskQuestion = nextPendingAskQuestion(s.askQuestionQueues);
       });
       if (!sessionIdForStatus) return;
+      const resolvedSessionId = sessionIdForStatus;
       try {
         await agentRespondAskQuestion(requestId, outcome, answers, reason);
       } catch (err) {
@@ -802,10 +934,10 @@ export const useAgentStore = create<AgentStore>()(
         });
       } finally {
         set((s) => {
-          const session = Object.values(s.sessions).find((ss) => ss.sessionId === sessionIdForStatus);
+          const session = Object.values(s.sessions).find((ss) => ss.sessionId === resolvedSessionId);
           if (session) {
             useNotificationStore.getState().dismissForConversation(session.conversationId);
-            if (session.status === "waiting" && !sessionStillWaiting(s, sessionIdForStatus)) {
+            if (session.status === "waiting" && !sessionStillWaiting(s, resolvedSessionId)) {
               session.status = "running";
             }
           }
@@ -813,11 +945,14 @@ export const useAgentStore = create<AgentStore>()(
       }
     },
 
-    setMode: async (sessionId, modeId) => {
+    setMode: async (sessionId, modeId, opts) => {
       const session = Object.values(get().sessions).find((ss) => ss.sessionId === sessionId);
-      if (session) {
+      if (session && !opts?.skipConfirm) {
         const from = get().metaByConversation[session.conversationId]?.currentModeId;
-        if (from === "plan" && (modeId === "code" || modeId === "auto")) {
+        if (
+          from === "plan" &&
+          (modeId === "code" || modeId === "auto" || modeId === "agent")
+        ) {
           const ok = window.confirm("确认离开 Plan 并开始执行？");
           if (!ok) return;
         }
@@ -924,6 +1059,17 @@ export const useAgentStore = create<AgentStore>()(
 
     setAuthMode: (conversationId, authMode) => {
       patchPrefs(set, conversationId, { authMode });
+    },
+
+    refreshNativeAutoReview: async () => {
+      try {
+        const cfg = await nativeAgentGetConfig();
+        set((s) => {
+          s.nativeAutoReview = !!cfg.agent.autoReview;
+        });
+      } catch {
+        /* settings unavailable — leave cached value */
+      }
     },
 
     enqueuePendingMessage: (conversationId, blocks, text, images) => {
@@ -1123,6 +1269,8 @@ export const useAgentStore = create<AgentStore>()(
       let unlistenAskQuestion: UnlistenFn | null = null;
       let unlistenTerminated: UnlistenFn | null = null;
 
+      void get().refreshNativeAutoReview();
+
       onAgentNotification(({ sessionId, update }) => {
         const session = Object.values(get().sessions).find((ss) => ss.sessionId === sessionId);
         if (!session) return;
@@ -1228,6 +1376,30 @@ export const useAgentStore = create<AgentStore>()(
           const live = Object.values(s.sessions).find((ss) => ss.sessionId === payload.sessionId);
           if (live) live.status = "waiting";
           if (!s.pendingPlanApproval) s.pendingPlanApproval = payload;
+          // Inline card in the conversation thread (no modal).
+          if (live) {
+            if (!s.entriesByConversation[live.conversationId]) {
+              s.entriesByConversation[live.conversationId] = [];
+            }
+            const list = s.entriesByConversation[live.conversationId];
+            if (!list.some((e) => e.kind === "plan_approval" && e.requestId === payload.requestId)) {
+              list.push({
+                id: crypto.randomUUID(),
+                kind: "plan_approval",
+                timestamp: Date.now(),
+                requestId: payload.requestId,
+                name: payload.name ?? undefined,
+                overview: payload.overview ?? undefined,
+                plan: payload.plan,
+                todos: payload.todos.map((t) => ({
+                  id: t.id,
+                  content: t.content,
+                  status: t.status,
+                })),
+                status: "pending",
+              });
+            }
+          }
         });
 
         if (session) {

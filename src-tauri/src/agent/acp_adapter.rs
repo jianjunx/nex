@@ -1315,7 +1315,11 @@ impl AcpSessionManager {
         })
     }
 
-    pub async fn send_prompt(&self, session_id: &str, blocks: Vec<PromptBlock>) -> Result<(), NexError> {
+    pub async fn send_prompt(
+        &self,
+        session_id: &str,
+        blocks: Vec<PromptBlock>,
+    ) -> Result<super::types::PromptResultDto, NexError> {
         let handle = self.session(session_id)?;
         if handle
             .prompt_in_flight
@@ -1341,7 +1345,14 @@ impl AcpSessionManager {
         })
         .await;
         handle.prompt_in_flight.store(false, Ordering::SeqCst);
-        result.map(|_| ())
+        let resp = result?;
+        let had_mutations = resp
+            .meta
+            .as_ref()
+            .and_then(|m| m.get("hadMutations"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        Ok(super::types::PromptResultDto { had_mutations })
     }
 
     pub async fn set_session_mode(&self, session_id: &str, mode_id: &str) -> Result<(), NexError> {

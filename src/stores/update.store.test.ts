@@ -17,7 +17,11 @@ vi.mock("../bridge/tauri", () => ({
   conversationGetThreadEntries: vi.fn(),
   conversationReplaceThreadEntries: (...args: unknown[]) => conversationReplaceThreadEntries(...args),
   agentCreateSession: vi.fn(),
-  agentSendPrompt: vi.fn(),
+  agentSendPrompt: vi.fn().mockResolvedValue({ hadMutations: false }),
+  nativeAgentGetConfig: vi.fn().mockResolvedValue({
+    providers: [],
+    agent: { maxSteps: 0, contextWindow: 0, bashTimeoutSecs: 120, maxSubagentConcurrency: 6, autoReview: false },
+  }),
   agentCancel: vi.fn(),
   agentRespondPermission: vi.fn(),
   agentRespondPlan: vi.fn(),

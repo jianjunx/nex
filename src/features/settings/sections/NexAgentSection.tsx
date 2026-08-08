@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { FolderOpen, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, FolderOpen, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -30,6 +31,7 @@ import {
   type NativeMcpServerInfo,
   type NativeSkillInfo,
 } from "../../../bridge/tauri";
+import { useAgentStore } from "../../../stores/agent.store";
 import { SECTION_HEADER } from "./_shared";
 
 type SubTab = "providers" | "mcp" | "skills" | "advanced";
@@ -42,8 +44,28 @@ function errorMessage(err: unknown): string {
 }
 
 /** Frontend mirror of backend `capabilities::detect` for newly typed model ids. */
-const REASONING_HINT = /reason|r1|thinking|o1|o3|o4|gpt-5|claude-4|gemini-2\.5|kimi-k2|qwq|qwen3/i;
-const VISION_HINT = /vision|\bvl\b|gpt-4o|gpt-4\.1|gpt-5|claude-|gemini|pixtral/i;
+const REASONING_HINT =
+  /reason|r1|thinking|o1|o3|o4|gpt-5|claude-4|gemini-2\.5|gemini-3|kimi-k2|kimi-k3|qwq|qwen3/i;
+const VISION_HINT =
+  /vision|\bvl\b|gpt-4o|gpt-4\.1|gpt-5|claude-|gemini|pixtral|minimax-m/i;
+
+function heuristicContextWindow(id: string): number | undefined {
+  const lower = id.toLowerCase();
+  const suffix = lower.match(/-(\d+)([km])$/);
+  if (suffix) {
+    const n = Number(suffix[1]);
+    return suffix[2] === "m" ? n * 1_000_000 : n * 1_000;
+  }
+  if (/kimi-k3/.test(lower)) return 1_000_000;
+  if (/kimi/.test(lower)) return 262_144;
+  if (/minimax/.test(lower)) return /m3|m2\.5/.test(lower) ? 645_000 : 327_680;
+  if (/gemini/.test(lower)) return 1_048_576;
+  if (/claude/.test(lower)) return 200_000;
+  if (/gpt-4\.1|gpt-4\.5/.test(lower)) return 1_047_576;
+  if (/gpt-4o|gpt-4-turbo|gpt-5|deepseek|qwen|qwq|o1|o3|o4/.test(lower)) return 128_000;
+  if (/o1|o3|o4/.test(lower)) return 200_000;
+  return undefined;
+}
 
 function detectModel(id: string): NativeAgentModel {
   const reasoning = REASONING_HINT.test(id);
@@ -58,7 +80,45 @@ function detectModel(id: string): NativeAgentModel {
     reasoningSupport: reasoning ? "yes" : "unknown",
     capabilities: { tools: true, vision, reasoning },
     reasoningLevels,
+    contextWindow: heuristicContextWindow(id) ?? null,
   };
+}
+
+/** Format tokens as `128K` / `1M` for the settings table. */
+function formatContextWindow(tokens: number | null | undefined): string {
+  if (tokens == null || tokens <= 0) return "—";
+  if (tokens >= 1_000_000) {
+    const m = tokens / 1_000_000;
+    return `${Number.isInteger(m) ? m : m.toFixed(1)}M`;
+  }
+  if (tokens >= 1_000) {
+    const k = tokens / 1_000;
+    return `${Number.isInteger(k) ? k : Math.round(k)}K`;
+  }
+  return String(tokens);
+}
+
+function parseContextWindowInput(raw: string): number | null {
+  const t = raw.trim().toLowerCase();
+  if (!t) return null;
+  const m = t.match(/^(\d+(?:\.\d+)?)\s*([km])?$/);
+  if (!m) {
+    const n = Number(t);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+  }
+  const n = Number(m[1]);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  if (m[2] === "m") return Math.floor(n * 1_000_000);
+  if (m[2] === "k") return Math.floor(n * 1_000);
+  return Math.floor(n);
+}
+
+function FeatureTag({ label }: { label: string }) {
+  return (
+    <span className="rounded border border-[color:var(--border-subtle)] px-1.5 py-0.5 text-[10px] text-[var(--text-secondary)]">
+      {label}
+    </span>
+  );
 }
 
 function freshProvider(): NativeAgentProvider {
@@ -134,6 +194,7 @@ export function NexAgentSection() {
     setSaved(false);
     try {
       await nativeAgentSetConfig(config);
+      await useAgentStore.getState().refreshNativeAutoReview();
       setSaved(true);
     } catch (err) {
       setError(errorMessage(err));
@@ -190,47 +251,12 @@ export function NexAgentSection() {
       </div>
 
       {tab === "providers" && (
-        <div className="space-y-3">
-          {config.providers.map((p) => {
-            const modelSummary =
-              p.models.length === 0
-                ? "暂无模型"
-                : p.models.length <= 3
-                  ? p.models.map((m) => m.id).join(" · ")
-                  : `${p.models
-                      .slice(0, 3)
-                      .map((m) => m.id)
-                      .join(" · ")} 等 ${p.models.length} 个`;
-            const isDefault = config.defaultModel?.startsWith(`${p.id}/`);
-            return (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => setEditor({ mode: "edit", provider: structuredClone(p) })}
-                className={`w-full rounded-[var(--radius-md)] border px-3 py-2.5 text-left transition-colors hover:bg-[var(--overlay-hover)] ${
-                  isDefault
-                    ? "border-[var(--accent)]/50 bg-[var(--accent)]/5"
-                    : "border-[color:var(--border-subtle)]"
-                }`}
-              >
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="text-sm font-medium text-[var(--text-primary)]">{p.name || "未命名供应商"}</span>
-                  <span className="shrink-0 text-[10px] text-[var(--text-tertiary)]">
-                    {p.models.length} 模型{isDefault ? " · 默认" : ""}
-                  </span>
-                </div>
-                <p className="mt-0.5 truncate text-xs text-[var(--text-tertiary)]">{modelSummary}</p>
-              </button>
-            );
-          })}
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setEditor({ mode: "add", provider: freshProvider() })}
-          >
-            <Plus size={14} /> 添加供应商
-          </Button>
-        </div>
+        <ProvidersModelTable
+          providers={config.providers}
+          defaultModel={config.defaultModel}
+          onEdit={(p) => setEditor({ mode: "edit", provider: structuredClone(p) })}
+          onAdd={() => setEditor({ mode: "add", provider: freshProvider() })}
+        />
       )}
 
       {tab === "mcp" && (
@@ -280,6 +306,24 @@ export function NexAgentSection() {
 
       {tab === "advanced" && (
         <div className="space-y-4">
+          <div className="flex items-center justify-between gap-3 rounded-[var(--radius-md)] border border-[color:var(--border-subtle)] px-3 py-2.5">
+            <div className="min-w-0 space-y-0.5">
+              <Label htmlFor="nex-auto-review" className="text-sm">任务后自动 Review</Label>
+              <p className="text-xs text-[var(--text-tertiary)]">
+                开启后，NexAgent 在有写文件/改代码等变更的回合结束后，自动再发一轮可见的 /review。
+              </p>
+            </div>
+            <Switch
+              id="nex-auto-review"
+              checked={!!config.agent.autoReview}
+              onCheckedChange={(checked) =>
+                setConfig({
+                  ...config,
+                  agent: { ...config.agent, autoReview: checked },
+                })
+              }
+            />
+          </div>
           <div className="space-y-1">
             <Label htmlFor="nex-max-steps" className="text-sm">最大步数</Label>
             <Input
@@ -299,7 +343,7 @@ export function NexAgentSection() {
             </p>
           </div>
           <div className="space-y-1">
-            <Label htmlFor="nex-context-window" className="text-sm">上下文窗口（token）</Label>
+            <Label htmlFor="nex-context-window" className="text-sm">全局上下文窗口（token）</Label>
             <Input
               id="nex-context-window"
               type="number"
@@ -313,7 +357,7 @@ export function NexAgentSection() {
               }
             />
             <p className="text-xs text-[var(--text-tertiary)]">
-              0 表示关闭上下文压缩。API Key 明文保存在应用数据目录的 nex-agent.json 中。
+              仅当所选模型未设置上下文窗口时生效。0 表示不限制、关闭压缩。优先使用模型级窗口。
             </p>
           </div>
           <div className="space-y-1">
@@ -394,23 +438,28 @@ function ProviderEditorDialog({
 }) {
   const [p, setP] = useState(initial);
   const [modelDraft, setModelDraft] = useState("");
+  const [windowDraft, setWindowDraft] = useState("");
   const [fetching, setFetching] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
   const addModel = (raw: string) => {
     const id = raw.trim();
     if (!id || p.models.some((m) => m.id === id)) return;
-    setP({ ...p, models: [...p.models, detectModel(id)] });
+    const entry = detectModel(id);
+    const manual = parseContextWindowInput(windowDraft);
+    if (manual != null) entry.contextWindow = manual;
+    setP({ ...p, models: [...p.models, entry] });
     setModelDraft("");
+    setWindowDraft("");
   };
 
   const fetchModels = async () => {
     setFetching(true);
     setFetchError(null);
     try {
-      const ids = await nativeAgentListModels(p.baseUrl, p.apiKey);
+      const listed = await nativeAgentListModels(p.baseUrl, p.apiKey);
       const seen = new Set(p.models.map((m) => m.id));
-      const added = ids.filter((id) => !seen.has(id)).map(detectModel);
+      const added = listed.filter((m) => !seen.has(m.id));
       setP({ ...p, models: [...p.models, ...added] });
     } catch (err) {
       setFetchError(errorMessage(err));
@@ -420,15 +469,35 @@ function ProviderEditorDialog({
   };
 
   const redetectAll = () => {
-    setP({ ...p, models: p.models.map((m) => detectModel(m.id)) });
+    setP({
+      ...p,
+      models: p.models.map((m) => {
+        const next = detectModel(m.id);
+        // Keep a manually set window when redetect fills the same id.
+        if (m.contextWindow != null && m.contextWindow > 0) {
+          next.contextWindow = m.contextWindow;
+        }
+        return next;
+      }),
+    });
+  };
+
+  const updateModelWindow = (modelId: string, raw: string) => {
+    const parsed = parseContextWindowInput(raw);
+    setP({
+      ...p,
+      models: p.models.map((m) =>
+        m.id === modelId ? { ...m, contextWindow: parsed } : m,
+      ),
+    });
   };
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="sm:max-w-lg max-h-[80vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{mode === "add" ? "添加供应商" : "编辑供应商"}</DialogTitle>
-          <DialogDescription>配置 OpenAI 兼容端点与模型列表。</DialogDescription>
+          <DialogDescription>配置 OpenAI 兼容端点与模型列表。上下文可填 128K / 1M；留空表示不限制。</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">
@@ -466,19 +535,40 @@ function ProviderEditorDialog({
                 <RefreshCw size={12} /> 重新检测能力
               </Button>
             </div>
-            <div className="flex flex-wrap gap-1.5">
+            <div className="overflow-hidden rounded-[var(--radius-md)] border border-[color:var(--border-subtle)]">
+              <div className="grid grid-cols-[1fr_5.5rem_7rem_1.5rem] gap-2 border-b border-[color:var(--border-subtle)] bg-[var(--overlay-hover)]/40 px-2 py-1.5 text-[10px] uppercase tracking-wide text-[var(--text-tertiary)]">
+                <span>名称</span>
+                <span>上下文</span>
+                <span>功能</span>
+                <span />
+              </div>
+              {p.models.length === 0 && (
+                <p className="px-2 py-3 text-xs text-[var(--text-tertiary)]">暂无模型</p>
+              )}
               {p.models.map((m) => (
-                <span
+                <div
                   key={m.id}
-                  className="inline-flex items-center gap-1 rounded-full border border-[color:var(--border-subtle)] px-2 py-0.5 text-xs"
+                  className="grid grid-cols-[1fr_5.5rem_7rem_1.5rem] items-center gap-2 border-b border-[color:var(--border-subtle)] px-2 py-1.5 last:border-b-0"
                 >
-                  {m.id}
-                  {m.capabilities.reasoning && (
-                    <span className="text-[var(--text-tertiary)]">推理</span>
-                  )}
-                  {m.capabilities.vision && (
-                    <span className="text-[var(--text-tertiary)]">视觉</span>
-                  )}
+                  <span className="truncate text-xs text-[var(--text-primary)]" title={m.id}>
+                    {m.id}
+                  </span>
+                  <Input
+                    className="h-7 px-1.5 text-xs"
+                    placeholder="—"
+                    defaultValue={
+                      m.contextWindow != null && m.contextWindow > 0
+                        ? formatContextWindow(m.contextWindow)
+                        : ""
+                    }
+                    onBlur={(e) => updateModelWindow(m.id, e.target.value)}
+                    title="可填 128K / 1M / 128000；留空不限制"
+                  />
+                  <div className="flex flex-wrap gap-1">
+                    {m.capabilities.tools && <FeatureTag label="工具" />}
+                    {m.capabilities.vision && <FeatureTag label="视觉" />}
+                    {m.capabilities.reasoning && <FeatureTag label="推理" />}
+                  </div>
                   <button
                     type="button"
                     aria-label={`删除 ${m.id}`}
@@ -487,21 +577,28 @@ function ProviderEditorDialog({
                   >
                     ×
                   </button>
-                </span>
+                </div>
               ))}
-              {p.models.length === 0 && (
-                <span className="text-xs text-[var(--text-tertiary)]">暂无模型</span>
-              )}
             </div>
             <div className="flex gap-2">
               <Input
-                placeholder="手动添加模型 id"
+                placeholder="模型 id"
                 value={modelDraft}
                 onChange={(e) => setModelDraft(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") addModel(modelDraft);
                 }}
                 className="flex-1"
+              />
+              <Input
+                placeholder="上下文(可选)"
+                value={windowDraft}
+                onChange={(e) => setWindowDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") addModel(modelDraft);
+                }}
+                className="w-28"
+                title="如 128K、1M；留空则尝试自动检测，检测不到则不限制"
               />
               <Button size="sm" variant="outline" onClick={() => addModel(modelDraft)}>
                 添加
@@ -538,6 +635,101 @@ function ProviderEditorDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function ProvidersModelTable({
+  providers,
+  defaultModel,
+  onEdit,
+  onAdd,
+}: {
+  providers: NativeAgentProvider[];
+  defaultModel?: string | null;
+  onEdit: (p: NativeAgentProvider) => void;
+  onAdd: () => void;
+}) {
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+
+  return (
+    <div className="space-y-3">
+      <div className="overflow-hidden rounded-[var(--radius-md)] border border-[color:var(--border-subtle)]">
+        <div className="grid grid-cols-[minmax(0,1fr)_5rem_8rem] gap-2 border-b border-[color:var(--border-subtle)] px-3 py-2 text-xs text-[var(--text-tertiary)]">
+          <span>名称</span>
+          <span>上下文大小</span>
+          <span>功能</span>
+        </div>
+        {providers.length === 0 && (
+          <p className="px-3 py-4 text-sm text-[var(--text-tertiary)]">尚未配置供应商</p>
+        )}
+        {providers.map((p) => {
+          const open = !collapsed[p.id];
+          const isDefault = defaultModel?.startsWith(`${p.id}/`);
+          return (
+            <div key={p.id} className="border-b border-[color:var(--border-subtle)] last:border-b-0">
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-[var(--overlay-hover)]"
+                onClick={() => setCollapsed((c) => ({ ...c, [p.id]: open }))}
+              >
+                {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                <span className="min-w-0 flex-1 truncate text-sm font-medium text-[var(--text-primary)]">
+                  {p.name || "未命名供应商"}
+                  {isDefault ? (
+                    <span className="ml-2 text-[10px] font-normal text-[var(--accent)]">默认</span>
+                  ) : null}
+                </span>
+                <span className="shrink-0 text-[10px] text-[var(--text-tertiary)]">
+                  {p.models.length} 模型
+                </span>
+                <span
+                  role="link"
+                  tabIndex={0}
+                  className="shrink-0 text-[10px] text-[var(--accent)] hover:underline"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onEdit(p);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.stopPropagation();
+                      onEdit(p);
+                    }
+                  }}
+                >
+                  编辑
+                </span>
+              </button>
+              {open &&
+                p.models.map((m) => (
+                  <div
+                    key={m.id}
+                    className="grid grid-cols-[minmax(0,1fr)_5rem_8rem] items-center gap-2 py-1.5 pl-9 pr-3 text-xs hover:bg-[var(--overlay-hover)]/50"
+                  >
+                    <span className="truncate text-[var(--text-primary)]" title={m.id}>
+                      {m.id}
+                    </span>
+                    <span className="text-[var(--text-secondary)]">
+                      {formatContextWindow(m.contextWindow)}
+                    </span>
+                    <div className="flex flex-wrap gap-1">
+                      {m.capabilities.tools && <FeatureTag label="工具" />}
+                      {m.capabilities.vision && <FeatureTag label="视觉" />}
+                      {m.capabilities.reasoning && <FeatureTag label="推理" />}
+                    </div>
+                  </div>
+                ))}
+              {open && p.models.length === 0 && (
+                <p className="px-9 py-2 text-xs text-[var(--text-tertiary)]">暂无模型 — 点编辑添加</p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <Button size="sm" variant="outline" onClick={onAdd}>
+        <Plus size={14} /> 添加供应商
+      </Button>
+    </div>
   );
 }
 

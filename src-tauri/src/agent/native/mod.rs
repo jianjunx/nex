@@ -168,7 +168,7 @@ impl NexNativeAgent {
         let current = current.clamp_to(levels);
         Some(serde_json::json!({
             "id": "reasoning",
-            "name": "Reasoning",
+            "name": "思考",
             "category": "reasoning",
             "currentValueId": current.as_str(),
             "options": options
@@ -619,7 +619,7 @@ impl acp::Agent for NexNativeAgent {
             Content::Parts(parts)
         };
 
-        let stop_reason = match conn {
+        let (stop_reason, had_mutations) = match conn {
             Some(conn) => {
                 let provider = Arc::new(provider::deepseek::DeepSeekProvider::new(
                     prov_base_url,
@@ -689,10 +689,11 @@ impl acp::Agent for NexNativeAgent {
                         mutations: Rc::new(RefCell::new(Vec::new())),
                         mode_id: Some(session.handles.mode_id.clone()),
                     },
-                    context_window: cfg.agent.context_window as u64,
+                    context_window: cfg.context_window_for(&model_id),
                     usage: RefCell::new(provider::Usage::default()),
                 };
                 let stop = session::run_turn(&env, &mut session.history, content).await;
+                let had_mutations = !env.tool_ctx.mutations.borrow().is_empty();
                 // Runtime reasoning-support detection: the provider strips
                 // `reasoning_effort` and retries when the endpoint rejects it.
                 // Remember the result so later turns skip the parameter.
@@ -715,12 +716,12 @@ impl acp::Agent for NexNativeAgent {
                     usage.completion_tokens,
                     usage.cache_hit_tokens
                 );
-                stop
+                (stop, had_mutations)
             }
             None => {
                 // No connection (shouldn't happen in production wiring).
                 self.emit_text(&args.session_id, "agent 连接未就绪").await;
-                acp::StopReason::EndTurn
+                (acp::StopReason::EndTurn, false)
             }
         };
 
@@ -742,7 +743,10 @@ impl acp::Agent for NexNativeAgent {
             .insert(session_key, session);
         Ok(acp::PromptResponse {
             stop_reason,
-            meta: None,
+            // Frontend uses this to chain a visible `/review` when autoReview is on.
+            meta: Some(serde_json::json!({
+                "hadMutations": had_mutations,
+            })),
         })
     }
 

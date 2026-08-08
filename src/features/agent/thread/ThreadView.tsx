@@ -30,6 +30,7 @@ function estimateRowHeight(item: ThreadRenderItem | undefined): number {
   const e = item.entry;
   // edit 卡行高估值贴近「内容区封顶 350 + 头/边距」实测(~386),首帧布局即准,减小上滚首测 delta。
   if (e.kind === "tool_call") return isEditTool(e) ? 386 : 48;
+  if (e.kind === "plan_approval") return 220;
   // 120: 贴近含代码块/表格/Mermaid 的助手消息实测高度（多在 80~500px）。
   // 上调首帧估值以减小「首次上滚未见行」的首滚 delta；measureElement
   // 仍持续校正（流式消息尾行常大幅超出，依赖实时测量）。
@@ -60,6 +61,10 @@ function shouldShowAgentLoading(
   if (entries.length === 0) return false;
   const last = entries[entries.length - 1];
   if (last.kind === "user_message" || last.kind === "completed_plan") return true;
+  if (last.kind === "plan_approval") {
+    // Pending card has its own CTA; after accept the agent should resume.
+    return last.status === "accepted";
+  }
   if (last.kind === "tool_call") {
     // Tool card already animates in-flight / permission states.
     return last.status === "completed" || last.status === "failed";

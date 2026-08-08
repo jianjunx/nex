@@ -163,6 +163,14 @@ pub struct CreateSessionResult {
     pub config_options: Option<Vec<SessionConfigOptionDto>>,
 }
 
+/// Result of `agent_send_prompt` — enough for post-turn client hooks.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptResultDto {
+    /// True when the native agent executed at least one mutating tool this turn.
+    pub had_mutations: bool,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionModesDto {

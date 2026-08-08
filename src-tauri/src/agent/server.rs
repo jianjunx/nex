@@ -358,7 +358,11 @@ impl AgentSessionManager {
 
     // --- Delegates to the ACP transport (session lifecycle) ---
 
-    pub async fn send_prompt(&self, session_id: &str, blocks: Vec<PromptBlock>) -> Result<(), NexError> {
+    pub async fn send_prompt(
+        &self,
+        session_id: &str,
+        blocks: Vec<PromptBlock>,
+    ) -> Result<super::types::PromptResultDto, NexError> {
         self.acp.send_prompt(session_id, blocks).await
     }
 

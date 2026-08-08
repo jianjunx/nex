@@ -21,13 +21,17 @@ vi.mock("../bridge/tauri", () => ({
   agentRespondPermission: (...args: unknown[]) => agentRespondPermission(...args),
   agentRespondPlan: (...args: unknown[]) => agentRespondPlan(...args),
   agentRespondAskQuestion: vi.fn(),
-  agentSendPrompt: vi.fn(),
+  agentSendPrompt: vi.fn().mockResolvedValue({ hadMutations: false }),
   agentCancel: vi.fn(),
   agentCloseSession: vi.fn(),
   agentRefreshRegistry: vi.fn(),
   agentCustomUpsert: vi.fn(),
   agentCustomDelete: vi.fn(),
   conversationReplaceThreadEntries: vi.fn(),
+  nativeAgentGetConfig: vi.fn().mockResolvedValue({
+    providers: [],
+    agent: { maxSteps: 0, contextWindow: 0, bashTimeoutSecs: 120, maxSubagentConcurrency: 6, autoReview: false },
+  }),
   onAgentNotification: () => Promise.resolve(() => {}),
   onAgentPermissionRequest: (cb: (payload: unknown) => void) => {
     permissionHandler = cb;

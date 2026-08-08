@@ -38,7 +38,7 @@ pub async fn agent_send_prompt(
     state: State<'_, AppState>,
     session_id: String,
     blocks: Vec<PromptBlock>,
-) -> Result<(), NexError> {
+) -> Result<crate::agent::types::PromptResultDto, NexError> {
     state.agent_manager.send_prompt(&session_id, blocks).await
 }
 
@@ -144,13 +144,16 @@ pub fn native_agent_set_config(app: AppHandle, config: NativeAgentConfig) -> Res
     config.save(&app_data_dir(&app)?)
 }
 
-/// Fetches the model id list from an OpenAI-compatible `{base_url}/v1/models`
-/// endpoint. Powers the settings panel's "获取模型" button.
+/// Fetches models from an OpenAI-compatible `{base_url}/v1/models` endpoint,
+/// merging API context-length fields with heuristic capability detection.
+/// Powers the settings panel's "获取模型" button.
 #[tauri::command]
 pub async fn native_agent_list_models(
     base_url: String,
     api_key: String,
-) -> Result<Vec<String>, NexError> {
+) -> Result<Vec<crate::agent::native::config::ModelEntry>, NexError> {
+    use crate::agent::native::capabilities::{context_window_from_api_model, detect_with_window};
+
     let url = crate::agent::native::provider::openai_endpoint(&base_url, "models");
     let resp = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
@@ -171,20 +174,23 @@ pub async fn native_agent_list_models(
     }
     let value: serde_json::Value = serde_json::from_str(&text)
         .map_err(|e| NexError::Agent(format!("invalid model list response: {e}")))?;
-    let ids = value
+    let models = value
         .get("data")
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
-                .filter_map(|m| m.get("id").and_then(|v| v.as_str()))
-                .map(str::to_string)
+                .filter_map(|m| {
+                    let id = m.get("id").and_then(|v| v.as_str())?;
+                    let api_window = context_window_from_api_model(m);
+                    Some(detect_with_window(id, api_window))
+                })
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    if ids.is_empty() {
+    if models.is_empty() {
         return Err(NexError::Agent("model list response has no data[].id entries".into()));
     }
-    Ok(ids)
+    Ok(models)
 }
 
 /// Settings-panel skill row.

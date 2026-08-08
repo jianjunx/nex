@@ -158,6 +158,8 @@ export interface NativeAgentModel {
   capabilities: NativeAgentModelCapabilities;
   /** Composer-selectable reasoning effort ids for this model. */
   reasoningLevels: string[];
+  /** Per-model context window in tokens; omit/undefined = no limit. */
+  contextWindow?: number | null;
 }
 
 export interface NativeAgentProvider {
@@ -177,9 +179,15 @@ export interface NativeAgentConfig {
     contextWindow: number;
     bashTimeoutSecs: number;
     maxSubagentConcurrency: number;
+    /** After a mutating turn, automatically send `/review`. */
+    autoReview?: boolean;
   };
   disabledSkills?: string[];
   disabledMcpServers?: string[];
+}
+
+export interface PromptResultDto {
+  hadMutations: boolean;
 }
 
 export interface NativeMcpServerInfo {
@@ -278,7 +286,10 @@ export async function agentCreateSession(
   return invoke(COMMANDS.AGENT_CREATE_SESSION, { conversationId, target, cwd });
 }
 
-export async function agentSendPrompt(sessionId: string, blocks: PromptBlock[]): Promise<void> {
+export async function agentSendPrompt(
+  sessionId: string,
+  blocks: PromptBlock[],
+): Promise<PromptResultDto> {
   return invoke(COMMANDS.AGENT_SEND_PROMPT, { sessionId, blocks });
 }
 
@@ -352,7 +363,10 @@ export async function nativeAgentSetConfig(config: NativeAgentConfig): Promise<v
 }
 
 /** Fetches model ids from an OpenAI-compatible `{baseUrl}/models` endpoint. */
-export async function nativeAgentListModels(baseUrl: string, apiKey: string): Promise<string[]> {
+export async function nativeAgentListModels(
+  baseUrl: string,
+  apiKey: string,
+): Promise<NativeAgentModel[]> {
   return invoke(COMMANDS.NATIVE_AGENT_LIST_MODELS, { baseUrl, apiKey });
 }
 

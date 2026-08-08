@@ -64,6 +64,10 @@ pub struct ModelEntry {
     /// Empty when the model does not expose controllable reasoning.
     #[serde(default)]
     pub reasoning_levels: Vec<String>,
+    /// Per-model context window in tokens. `None` / unset means no limit
+    /// (compression off for this model unless the global agent fallback is set).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u32>,
 }
 
 impl Default for ModelEntry {
@@ -73,6 +77,7 @@ impl Default for ModelEntry {
             reasoning_support: ReasoningSupport::Unknown,
             capabilities: ModelCapabilities::default(),
             reasoning_levels: Vec::new(),
+            context_window: None,
         }
     }
 }
@@ -113,12 +118,16 @@ pub struct AgentParams {
     /// Max tool-call loop iterations per prompt turn. `0` means no hard cap
     /// (the no-progress lease still stops runaway failure loops).
     pub max_steps: u32,
-    /// Context window in tokens; `0` disables compression (Phase 2).
+    /// Global fallback context window in tokens when the selected model has no
+    /// per-model `contextWindow`. `0` disables compression.
     pub context_window: u32,
     /// Synchronous `bash` tool timeout in seconds.
     pub bash_timeout_secs: u64,
     /// Max concurrent subagents launched by the `fleet` tool.
     pub max_subagent_concurrency: u32,
+    /// After a turn that mutated the workspace, automatically run `/review`.
+    #[serde(default)]
+    pub auto_review: bool,
 }
 
 impl Default for AgentParams {
@@ -130,6 +139,7 @@ impl Default for AgentParams {
             context_window: 0,
             bash_timeout_secs: 120,
             max_subagent_concurrency: 6,
+            auto_review: false,
         }
     }
 }
@@ -204,19 +214,33 @@ impl NativeAgentConfig {
             cfg.agent.max_steps = 0;
             let _ = cfg.save(dir);
         }
-        // Backfill capabilities for models saved before detection existed.
+        // Backfill capabilities / context windows for models saved before
+        // detection existed. Never overwrite a user-set context_window.
         let mut dirty = false;
         for p in &mut cfg.providers {
             for m in &mut p.models {
-                if !m.reasoning_levels.is_empty() {
+                let needs_levels = m.reasoning_levels.is_empty();
+                let needs_window = m.context_window.is_none();
+                if !needs_levels && !needs_window {
                     continue;
                 }
                 let refreshed = crate::agent::native::capabilities::refresh(m);
-                if refreshed.capabilities != m.capabilities
-                    || refreshed.reasoning_levels != m.reasoning_levels
-                    || refreshed.reasoning_support != m.reasoning_support
+                let mut changed = false;
+                if needs_levels
+                    && (refreshed.capabilities != m.capabilities
+                        || refreshed.reasoning_levels != m.reasoning_levels
+                        || refreshed.reasoning_support != m.reasoning_support)
                 {
-                    *m = refreshed;
+                    m.capabilities = refreshed.capabilities;
+                    m.reasoning_levels = refreshed.reasoning_levels;
+                    m.reasoning_support = refreshed.reasoning_support;
+                    changed = true;
+                }
+                if needs_window && refreshed.context_window.is_some() {
+                    m.context_window = refreshed.context_window;
+                    changed = true;
+                }
+                if changed {
                     dirty = true;
                 }
             }
@@ -349,6 +373,20 @@ impl NativeAgentConfig {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// Effective context window for a composite model id.
+    /// Prefers the model's own `context_window` when set (>0); otherwise the
+    /// global `agent.context_window` fallback. `0` means compression off.
+    pub fn context_window_for(&self, composite: &str) -> u64 {
+        if let Some((_, m)) = self.resolve_model(composite) {
+            if let Some(w) = m.context_window {
+                if w > 0 {
+                    return w as u64;
+                }
+            }
+        }
+        self.agent.context_window as u64
     }
 }
 

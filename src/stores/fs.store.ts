@@ -70,6 +70,12 @@ function popFsUndo(): FsUndoEntry | undefined {
   return FS_UNDO_STACKS.get(projectId)?.pop();
 }
 
+/** 测试辅助：清空撤销栈并复位撤销串行锁（跨测试隔离）。 */
+export function __resetFsUndoForTest(): void {
+  FS_UNDO_STACKS.clear();
+  undoFsOperationInFlight = false;
+}
+
 function parentDirOf(path: string): string {
   return path.replace(/[/\\][^/\\]*$/, "");
 }

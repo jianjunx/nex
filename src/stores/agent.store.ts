@@ -225,6 +225,42 @@ function nextPendingAskQuestion(
   return null;
 }
 
+/**
+ * Drops every queued request belonging to `sessionId` (permission / plan /
+ * ask-question) plus their inline-permission markers, and re-derives the
+ * single visible pending request. Shared by `removeSession` and the
+ * `session/terminated` notification so both cleanup paths stay identical.
+ */
+function clearSessionQueues(
+  s: {
+    permissionQueues: Record<string, AgentPermissionRequestPayload[]>;
+    planApprovalQueues: Record<string, AgentPlanApprovalRequestPayload[]>;
+    askQuestionQueues: Record<string, AgentAskQuestionRequestPayload[]>;
+    inlinePermissionIds: Record<string, true>;
+    pendingPermission: AgentPermissionRequestPayload | null;
+    pendingPlanApproval: AgentPlanApprovalRequestPayload | null;
+    pendingAskQuestion: AgentAskQuestionRequestPayload | null;
+  },
+  sessionId: string,
+): void {
+  // Drop inline-permission markers belonging to this session's queue.
+  for (const req of s.permissionQueues[sessionId] ?? []) {
+    delete s.inlinePermissionIds[req.requestId];
+  }
+  delete s.permissionQueues[sessionId];
+  delete s.planApprovalQueues[sessionId];
+  delete s.askQuestionQueues[sessionId];
+  if (s.pendingPermission?.sessionId === sessionId) {
+    s.pendingPermission = nextPendingPermission(s.permissionQueues, s.inlinePermissionIds);
+  }
+  if (s.pendingPlanApproval?.sessionId === sessionId) {
+    s.pendingPlanApproval = nextPendingPlanApproval(s.planApprovalQueues);
+  }
+  if (s.pendingAskQuestion?.sessionId === sessionId) {
+    s.pendingAskQuestion = nextPendingAskQuestion(s.askQuestionQueues);
+  }
+}
+
 function sessionStillWaiting(
   s: {
     permissionQueues: Record<string, AgentPermissionRequestPayload[]>;
@@ -650,22 +686,7 @@ export const useAgentStore = create<AgentStore>()(
           const liveSessionId = session.sessionId;
           if (liveSessionId) {
             pendingNotificationsBySessionId.delete(liveSessionId);
-            // Drop inline-permission markers belonging to this session's queue.
-            for (const req of s.permissionQueues[liveSessionId] ?? []) {
-              delete s.inlinePermissionIds[req.requestId];
-            }
-            delete s.permissionQueues[liveSessionId];
-            delete s.planApprovalQueues[liveSessionId];
-            delete s.askQuestionQueues[liveSessionId];
-            if (s.pendingPermission?.sessionId === liveSessionId) {
-              s.pendingPermission = nextPendingPermission(s.permissionQueues, s.inlinePermissionIds);
-            }
-            if (s.pendingPlanApproval?.sessionId === liveSessionId) {
-              s.pendingPlanApproval = nextPendingPlanApproval(s.planApprovalQueues);
-            }
-            if (s.pendingAskQuestion?.sessionId === liveSessionId) {
-              s.pendingAskQuestion = nextPendingAskQuestion(s.askQuestionQueues);
-            }
+            clearSessionQueues(s, liveSessionId);
           }
         });
       }
@@ -1593,18 +1614,7 @@ export const useAgentStore = create<AgentStore>()(
         set((s) => {
           const session = Object.values(s.sessions).find((ss) => ss.sessionId === sessionId);
           if (session) delete s.sessions[session.conversationId];
-          delete s.permissionQueues[sessionId];
-          delete s.planApprovalQueues[sessionId];
-          delete s.askQuestionQueues[sessionId];
-          if (s.pendingPermission?.sessionId === sessionId) {
-            s.pendingPermission = nextPendingPermission(s.permissionQueues, s.inlinePermissionIds);
-          }
-          if (s.pendingPlanApproval?.sessionId === sessionId) {
-            s.pendingPlanApproval = nextPendingPlanApproval(s.planApprovalQueues);
-          }
-          if (s.pendingAskQuestion?.sessionId === sessionId) {
-            s.pendingAskQuestion = nextPendingAskQuestion(s.askQuestionQueues);
-          }
+          clearSessionQueues(s, sessionId);
         });
       }).then((fn) => {
         if (disposed) fn();

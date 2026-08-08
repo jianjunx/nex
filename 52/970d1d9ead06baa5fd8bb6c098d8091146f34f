@@ -1,0 +1,75 @@
+src/bridge/commands.ts
+  s_fa4418faffcef1::t_f0e199dad279a2 27
+src-tauri/src/commands/agent_cmds.rs
+  s_fa4418faffcef1::t_99cdfceae9817b 101-112
+  s_fa4418faffcef1::t_2352fea46f931a 100
+src/stores/update.store.test.ts
+  s_fa4418faffcef1::t_516bbb16f6aa26 24,37
+src-tauri/src/agent/acp_adapter.rs
+  s_fa4418faffcef1::t_231bdd59d4b4db 1165-1202
+  s_fa4418faffcef1::t_b33e4c4c53353b 844,865,885
+  s_fa4418faffcef1::t_462ac011f32d60 1749-1772
+  s_fa4418faffcef1::t_aec29e1e4e7b15 937,958
+  s_fa4418faffcef1::t_54aaed331f3948 391-448
+  s_fa4418faffcef1::t_71bd503c364c2d 1103
+  s_fa4418faffcef1::t_8055831a511ac0 516-569
+  s_fa4418faffcef1::t_d68460d39a3364 22-23,32
+  s_fa4418faffcef1::t_70a5ca873abcd0 104-116,130,138
+  s_fa4418faffcef1::t_7c3620b5894d22 1391,1414,1428
+  s_fa4418faffcef1::t_fa05031c013446 228
+  s_fa4418faffcef1::t_0fe8bb59548b3e 1570-1582
+  s_fa4418faffcef1::t_f43ae23de8610a 1278
+  s_fa4418faffcef1::t_59196aa1a63f59 1243-1256
+  s_fa4418faffcef1::t_2e7135e9859a59 1321,1344
+src/bridge/events.ts
+  s_fa4418faffcef1::t_02f1b12313fe21 6
+  s_fa4418faffcef1::t_719fee4c52aee1 49-73
+src/stores/agent.store.test.ts
+  s_fa4418faffcef1::t_5b4968f92e5c41 23,37
+src/features/agent/AskQuestionModal.tsx
+  s_fa4418faffcef1::t_3a56172b289b46 1-131
+src/features/agent/thread/ThreadView.crosstalk.test.tsx
+  s_fa4418faffcef1::t_db7cc643d300b1 15,29
+src/features/agent/thread/ThreadView.virtual.test.tsx
+  s_fa4418faffcef1::t_9512af0cbe4951 13,27
+src/stores/agent.store.ts
+  s_fa4418faffcef1::t_05d85660625411 734-736
+  s_fa4418faffcef1::t_2c9c176807a9c1 497,697,1249-1283,1290,1297-1299,1311
+  s_fa4418faffcef1::t_c9a3839301700d 116-117
+  s_fa4418faffcef1::t_83af02cd47038d 488,495-496
+  s_fa4418faffcef1::t_a759658219a069 1115
+  s_fa4418faffcef1::t_2d829d650f2829 688,695-696
+  s_fa4418faffcef1::t_74aba5d0bc5246 210-233
+  s_fa4418faffcef1::t_de7234a891c712 412-413
+  s_fa4418faffcef1::t_4d1d2d2102cad4 148-153
+  s_fa4418faffcef1::t_b94b0b1d4be35c 770-808
+  s_fa4418faffcef1::t_493c4c05bd74ab 11,25,34,37
+src-tauri/src/lib.rs
+  s_fa4418faffcef1::t_250fbeaa355ac0 94
+src/bridge/tauri.ts
+  s_fa4418faffcef1::t_71881bb6ddf86d 726-731
+  s_fa4418faffcef1::t_b2f36aa3fb1670 317-330
+  s_fa4418faffcef1::t_9915db499eaf58 6,10
+src-tauri/src/agent/types.rs
+  s_fa4418faffcef1::t_2ca4e297cadcc6 82-119
+src/features/agent/ChatArea.tsx
+  s_fa4418faffcef1::t_1c80dfc4bd447c 5,14
+src-tauri/src/agent/server.rs
+  s_fa4418faffcef1::t_fcbf5344be63e4 405-415
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "52970d1d9ead06baa5fd8bb6c098d8091146f34f",
+  "prompts": {},
+  "sessions": {
+    "s_fa4418faffcef1": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "1b05f627-d561-4c60-97de-24bf619fce41",
+        "model": "grok-4.5"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

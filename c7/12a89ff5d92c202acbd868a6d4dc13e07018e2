@@ -1,0 +1,46 @@
+src/stores/keybindings.store.test.ts
+  s_e8ed4ecb304800::t_bff59d631c6220 13
+  s_e8ed4ecb304800::t_64c4d4cbc63419 76-80
+src/features/editor/language.test.ts
+  s_e8ed4ecb304800::t_cfe1f8c8172c15 10-14
+src/commands/registry.test.ts
+  s_e8ed4ecb304800::t_20eefd105ecf81 31
+src/features/files/FileTree.tsx
+  s_e8ed4ecb304800::t_b80be38f3f87d5 271-273,288-292
+  s_e8ed4ecb304800::t_f5b76c7a1e6b7d 269-270,274-279
+  s_e8ed4ecb304800::t_6fb31219a0cb30 553
+  s_e8ed4ecb304800::t_6771400be2a5ff 172-173
+src/commands/registry.ts
+  s_e8ed4ecb304800::t_83572f42d32e51 239-241
+  s_e8ed4ecb304800::t_c6d3a8dfa744b5 244-245,247-249,253
+  s_e8ed4ecb304800::t_ef021c6fa8c4db 15-17,27-40
+  s_e8ed4ecb304800::t_c8f02f499b30ca 41
+src/features/editor/language.ts
+  s_e8ed4ecb304800::t_5df8cce4cb2519 26-33
+  s_e8ed4ecb304800::t_adf3d9629049f5 126-138
+  s_e8ed4ecb304800::t_82f0269dc0ae1c 11-12,16-25,34-40,45-49,55-56,64,67-68,72,74-78,81,84-85,98-99,101-125,139-155
+src/stores/keybindings.store.ts
+  s_e8ed4ecb304800::t_564b0c06af557d 17-24
+  s_e8ed4ecb304800::t_5a27ef6babb3d5 4-9
+  s_e8ed4ecb304800::t_de0d066d43b965 64,82
+package.json
+  s_e8ed4ecb304800::t_7229d62ede3c81 23,26
+pnpm-lock.yaml
+  s_e8ed4ecb304800::t_4c6a8c9a1e4a02 29-31,38-40,237-239,246-248,550-552,3277-3284,3298-3306,3577-3582
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "c712a89ff5d92c202acbd868a6d4dc13e07018e2",
+  "prompts": {},
+  "sessions": {
+    "s_e8ed4ecb304800": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "dcb08a91-9115-4666-b6d6-44cfb83f72e8",
+        "model": "grok-4.5"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

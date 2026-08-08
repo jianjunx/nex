@@ -98,6 +98,7 @@ pub fn run() {
             commands::agent_cmds::native_agent_get_config,
             commands::agent_cmds::native_agent_set_config,
             commands::agent_cmds::native_agent_list_models,
+            commands::agent_cmds::native_agent_probe_reasoning,
             commands::agent_cmds::native_agent_list_mcp,
             commands::agent_cmds::native_agent_upsert_mcp,
             commands::agent_cmds::native_agent_delete_mcp,

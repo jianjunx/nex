@@ -31,6 +31,23 @@ pub enum ReasoningSupport {
     No,
 }
 
+/// Where the current Composer reasoning ladder came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningSource {
+    /// No controllable reasoning (or not yet classified).
+    #[default]
+    None,
+    /// Family / id heuristics.
+    Heuristic,
+    /// Declared by the provider `/models` payload (OpenRouter-style).
+    Api,
+    /// Learned by probing the chat-completions endpoint.
+    Probe,
+    /// Explicitly set in Settings.
+    Manual,
+}
+
 /// Static capability flags inferred (or later refined) for a model.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -51,7 +68,7 @@ impl Default for ModelCapabilities {
 }
 
 /// A single model entry inside a provider.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ModelEntry {
     /// Wire model id, e.g. `deepseek-chat`.
@@ -68,6 +85,13 @@ pub struct ModelEntry {
     /// (compression off for this model unless the global agent fallback is set).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_window: Option<u32>,
+    /// When true, Settings owns reasoning on/off + levels; auto refresh must
+    /// not overwrite them (runtime `No` still applies only when not manual).
+    #[serde(default)]
+    pub reasoning_manual: bool,
+    /// Provenance of `reasoning_levels` (drives load-time refresh policy).
+    #[serde(default)]
+    pub reasoning_source: ReasoningSource,
 }
 
 impl Default for ModelEntry {
@@ -78,6 +102,8 @@ impl Default for ModelEntry {
             capabilities: ModelCapabilities::default(),
             reasoning_levels: Vec::new(),
             context_window: None,
+            reasoning_manual: false,
+            reasoning_source: ReasoningSource::None,
         }
     }
 }
@@ -214,33 +240,16 @@ impl NativeAgentConfig {
             cfg.agent.max_steps = 0;
             let _ = cfg.save(dir);
         }
-        // Backfill capabilities / context windows for models saved before
-        // detection existed. Never overwrite a user-set context_window.
+        // Re-apply family heuristics on load for heuristic-sourced entries so
+        // Composer ladders stay current when detection rules improve. Manual /
+        // API / probe ladders are preserved. Never overwrite a user-/API-set
+        // context_window.
         let mut dirty = false;
         for p in &mut cfg.providers {
             for m in &mut p.models {
-                let needs_levels = m.reasoning_levels.is_empty();
-                let needs_window = m.context_window.is_none();
-                if !needs_levels && !needs_window {
-                    continue;
-                }
                 let refreshed = crate::agent::native::capabilities::refresh(m);
-                let mut changed = false;
-                if needs_levels
-                    && (refreshed.capabilities != m.capabilities
-                        || refreshed.reasoning_levels != m.reasoning_levels
-                        || refreshed.reasoning_support != m.reasoning_support)
-                {
-                    m.capabilities = refreshed.capabilities;
-                    m.reasoning_levels = refreshed.reasoning_levels;
-                    m.reasoning_support = refreshed.reasoning_support;
-                    changed = true;
-                }
-                if needs_window && refreshed.context_window.is_some() {
-                    m.context_window = refreshed.context_window;
-                    changed = true;
-                }
-                if changed {
+                if *m != refreshed {
+                    *m = refreshed;
                     dirty = true;
                 }
             }
@@ -353,6 +362,9 @@ impl NativeAgentConfig {
                     if support == ReasoningSupport::No {
                         m.capabilities.reasoning = false;
                         m.reasoning_levels.clear();
+                        if !m.reasoning_manual {
+                            m.reasoning_source = ReasoningSource::None;
+                        }
                     }
                     return true;
                 }

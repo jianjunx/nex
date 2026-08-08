@@ -21,6 +21,7 @@ import {
   nativeAgentListSkills,
   nativeAgentOpenSkillsDir,
   nativeAgentProbeMcp,
+  nativeAgentProbeReasoning,
   nativeAgentSetConfig,
   nativeAgentSetMcpEnabled,
   nativeAgentSetSkillEnabled,
@@ -30,6 +31,7 @@ import {
   type NativeAgentProvider,
   type NativeMcpServerInfo,
   type NativeSkillInfo,
+  type ReasoningSource,
 } from "../../../bridge/tauri";
 import { useAgentStore } from "../../../stores/agent.store";
 import { SECTION_HEADER } from "./_shared";
@@ -44,8 +46,6 @@ function errorMessage(err: unknown): string {
 }
 
 /** Frontend mirror of backend `capabilities::detect` for newly typed model ids. */
-const REASONING_HINT =
-  /reason|r1|thinking|o1|o3|o4|gpt-5|claude-4|gemini-2\.5|gemini-3|kimi-k2|kimi-k3|qwq|qwen3/i;
 const VISION_HINT =
   /vision|\bvl\b|gpt-4o|gpt-4\.1|gpt-5|claude-|gemini|pixtral|minimax-m/i;
 
@@ -56,32 +56,90 @@ function heuristicContextWindow(id: string): number | undefined {
     const n = Number(suffix[1]);
     return suffix[2] === "m" ? n * 1_000_000 : n * 1_000;
   }
+  if (/deepseek-v4/.test(lower)) return 1_000_000;
   if (/kimi-k3/.test(lower)) return 1_000_000;
   if (/kimi/.test(lower)) return 262_144;
   if (/minimax/.test(lower)) return /m3|m2\.5/.test(lower) ? 645_000 : 327_680;
   if (/gemini/.test(lower)) return 1_048_576;
   if (/claude/.test(lower)) return 200_000;
   if (/gpt-4\.1|gpt-4\.5/.test(lower)) return 1_047_576;
-  if (/gpt-4o|gpt-4-turbo|gpt-5|deepseek|qwen|qwq|o1|o3|o4/.test(lower)) return 128_000;
+  if (/gpt-4o|gpt-4-turbo|gpt-5/.test(lower)) return 128_000;
   if (/o1|o3|o4/.test(lower)) return 200_000;
+  if (/deepseek|qwen|qwq/.test(lower)) return 128_000;
   return undefined;
 }
 
+/** Family-specific ladders — keep in sync with `capabilities::reasoning_levels_for`. */
+function reasoningLevelsFor(id: string): string[] {
+  const lower = id.toLowerCase();
+  if (/deepseek-v4/.test(lower)) {
+    return /flash/.test(lower) ? ["off", "low", "high", "max"] : ["off", "high", "max"];
+  }
+  if (/deepseek-reasoner|deepseek-r1|deepseek-chat|deepseek-v3\.[12]|deepseek-v3-[12]/.test(lower)) {
+    return ["off", "low", "high", "max"];
+  }
+  if (/minimax/.test(lower) && /m3/.test(lower)) return ["off", "high"];
+  if (/minimax/.test(lower) && /m[12]/.test(lower)) return ["off", "low", "medium", "high"];
+  if (/gpt-5|gpt5/.test(lower)) {
+    if (/pro/.test(lower) && !/5\.[23]/.test(lower)) return ["high"];
+    if (/codex/.test(lower)) {
+      if (/5\.1/.test(lower) && /max/.test(lower)) return ["medium", "high", "xhigh"];
+      if (/5\.[23]/.test(lower)) return ["low", "medium", "high", "xhigh"];
+      return ["low", "medium", "high"];
+    }
+    if (/5\.1/.test(lower)) return ["off", "low", "medium", "high"];
+    return ["off", "minimal", "low", "medium", "high", "xhigh"];
+  }
+  if (/o3|o4/.test(lower)) return ["off", "minimal", "low", "medium", "high", "xhigh"];
+  if (/o1/.test(lower)) return ["low", "medium", "high"];
+  if (/claude/.test(lower)) {
+    if (/4\.6|4-6/.test(lower)) return ["off", "low", "medium", "high", "xhigh"];
+    if (/claude-4|opus-4|sonnet-4|3\.7|3-7|thinking/.test(lower)) {
+      return ["off", "low", "medium", "high"];
+    }
+    return [];
+  }
+  if (/gemini-(3|2\.5)/.test(lower)) return ["off", "low", "medium", "high"];
+  if (/kimi-k3|kimi\/k3/.test(lower)) return ["off", "low", "high", "max"];
+  if (/kimi-k2|kimi\/k2|kimi-k2\.5/.test(lower)) return ["off", "high"];
+  if (/grok-3-mini|grok-4/.test(lower) && !/non-reasoning/.test(lower)) return ["off", "low", "high"];
+  if (/qwq|qwen3/.test(lower)) return ["off", "low", "medium", "high"];
+  if (/reason|thinking|r1|hunyuan-t1|glm-zero/.test(lower)) return ["off", "low", "medium", "high"];
+  return [];
+}
+
+const ALL_EFFORTS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+const EFFORT_LABELS: Record<(typeof ALL_EFFORTS)[number], string> = {
+  off: "关",
+  minimal: "最小",
+  low: "低",
+  medium: "中",
+  high: "高",
+  xhigh: "极高",
+  max: "最大",
+};
+
 function detectModel(id: string): NativeAgentModel {
-  const reasoning = REASONING_HINT.test(id);
+  const reasoningLevels = reasoningLevelsFor(id);
+  const reasoning = reasoningLevels.length > 0;
   const vision = VISION_HINT.test(id);
-  const reasoningLevels = reasoning
-    ? /gpt-5|o3|o4/i.test(id)
-      ? ["off", "minimal", "low", "medium", "high", "xhigh"]
-      : ["off", "low", "medium", "high"]
-    : [];
   return {
     id,
     reasoningSupport: reasoning ? "yes" : "unknown",
     capabilities: { tools: true, vision, reasoning },
     reasoningLevels,
     contextWindow: heuristicContextWindow(id) ?? null,
+    reasoningManual: false,
+    reasoningSource: reasoning ? "heuristic" : "none",
   };
+}
+
+function sourceLabel(source?: ReasoningSource, manual?: boolean): string {
+  if (manual || source === "manual") return "手动";
+  if (source === "api") return "API";
+  if (source === "probe") return "探测";
+  if (source === "heuristic") return "启发式";
+  return "—";
 }
 
 /** Format tokens as `128K` / `1M` for the settings table. */
@@ -441,14 +499,26 @@ function ProviderEditorDialog({
   const [windowDraft, setWindowDraft] = useState("");
   const [fetching, setFetching] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [probingId, setProbingId] = useState<string | null>(null);
+  const [probeError, setProbeError] = useState<string | null>(null);
+
+  const patchModel = (modelId: string, patch: Partial<NativeAgentModel>) => {
+    setP((prev) => ({
+      ...prev,
+      models: prev.models.map((m) => (m.id === modelId ? { ...m, ...patch } : m)),
+    }));
+  };
 
   const addModel = (raw: string) => {
     const id = raw.trim();
-    if (!id || p.models.some((m) => m.id === id)) return;
-    const entry = detectModel(id);
-    const manual = parseContextWindowInput(windowDraft);
-    if (manual != null) entry.contextWindow = manual;
-    setP({ ...p, models: [...p.models, entry] });
+    setP((prev) => {
+      if (!id || prev.models.some((m) => m.id === id)) return prev;
+      const entry = detectModel(id);
+      const manual = parseContextWindowInput(windowDraft);
+      if (manual != null) entry.contextWindow = manual;
+      return { ...prev, models: [...prev.models, entry] };
+    });
     setModelDraft("");
     setWindowDraft("");
   };
@@ -456,11 +526,37 @@ function ProviderEditorDialog({
   const fetchModels = async () => {
     setFetching(true);
     setFetchError(null);
+    const baseUrl = p.baseUrl;
+    const apiKey = p.apiKey;
     try {
-      const listed = await nativeAgentListModels(p.baseUrl, p.apiKey);
-      const seen = new Set(p.models.map((m) => m.id));
-      const added = listed.filter((m) => !seen.has(m.id));
-      setP({ ...p, models: [...p.models, ...added] });
+      const listed = await nativeAgentListModels(baseUrl, apiKey);
+      setP((prev) => {
+        const byId = new Map(listed.map((m) => [m.id, m]));
+        const merged = prev.models.map((m) => {
+          const fresh = byId.get(m.id);
+          if (!fresh) return m;
+          if (m.reasoningManual) {
+            return {
+              ...m,
+              contextWindow: m.contextWindow ?? fresh.contextWindow,
+              capabilities: {
+                ...m.capabilities,
+                vision: m.capabilities.vision || fresh.capabilities.vision,
+              },
+            };
+          }
+          if (fresh.reasoningSource === "api") {
+            return {
+              ...fresh,
+              contextWindow: m.contextWindow ?? fresh.contextWindow,
+            };
+          }
+          return m;
+        });
+        const seen = new Set(prev.models.map((m) => m.id));
+        const added = listed.filter((m) => !seen.has(m.id));
+        return { ...prev, models: [...merged, ...added] };
+      });
     } catch (err) {
       setFetchError(errorMessage(err));
     } finally {
@@ -469,27 +565,98 @@ function ProviderEditorDialog({
   };
 
   const redetectAll = () => {
-    setP({
-      ...p,
-      models: p.models.map((m) => {
+    setP((prev) => ({
+      ...prev,
+      models: prev.models.map((m) => {
+        if (m.reasoningManual) return m;
         const next = detectModel(m.id);
-        // Keep a manually set window when redetect fills the same id.
         if (m.contextWindow != null && m.contextWindow > 0) {
           next.contextWindow = m.contextWindow;
         }
         return next;
       }),
-    });
+    }));
   };
 
   const updateModelWindow = (modelId: string, raw: string) => {
     const parsed = parseContextWindowInput(raw);
-    setP({
-      ...p,
-      models: p.models.map((m) =>
-        m.id === modelId ? { ...m, contextWindow: parsed } : m,
-      ),
-    });
+    patchModel(modelId, { contextWindow: parsed });
+  };
+
+  const setReasoningEnabled = (modelId: string, enabled: boolean) => {
+    setP((prev) => ({
+      ...prev,
+      models: prev.models.map((m) => {
+        if (m.id !== modelId) return m;
+        if (enabled) {
+          const levels =
+            m.reasoningLevels.length > 0 ? m.reasoningLevels : ["off", "low", "medium", "high"];
+          return {
+            ...m,
+            capabilities: { ...m.capabilities, reasoning: true },
+            reasoningLevels: levels,
+            reasoningSupport: "yes" as const,
+            reasoningManual: true,
+            reasoningSource: "manual" as const,
+          };
+        }
+        return {
+          ...m,
+          capabilities: { ...m.capabilities, reasoning: false },
+          reasoningLevels: [],
+          reasoningSupport: "no" as const,
+          reasoningManual: true,
+          reasoningSource: "manual" as const,
+        };
+      }),
+    }));
+  };
+
+  const toggleEffort = (modelId: string, effort: string) => {
+    setP((prev) => ({
+      ...prev,
+      models: prev.models.map((m) => {
+        if (m.id !== modelId) return m;
+        const has = m.reasoningLevels.includes(effort);
+        const next = ALL_EFFORTS.filter((e) =>
+          has ? e !== effort && m.reasoningLevels.includes(e) : e === effort || m.reasoningLevels.includes(e),
+        );
+        return {
+          ...m,
+          capabilities: { ...m.capabilities, reasoning: next.length > 0 },
+          reasoningLevels: [...next],
+          reasoningSupport: next.length > 0 ? ("yes" as const) : ("no" as const),
+          reasoningManual: true,
+          reasoningSource: "manual" as const,
+        };
+      }),
+    }));
+  };
+
+  const probeModel = async (modelId: string) => {
+    setProbingId(modelId);
+    setProbeError(null);
+    const baseUrl = p.baseUrl;
+    const apiKey = p.apiKey;
+    try {
+      const probed = await nativeAgentProbeReasoning(baseUrl, apiKey, modelId);
+      setP((prev) => ({
+        ...prev,
+        models: prev.models.map((m) => {
+          if (m.id !== modelId) return m;
+          return {
+            ...probed,
+            contextWindow: m.contextWindow ?? probed.contextWindow,
+            reasoningManual: false,
+          };
+        }),
+      }));
+      setExpandedId(modelId);
+    } catch (err) {
+      setProbeError(`${modelId}: ${errorMessage(err)}`);
+    } finally {
+      setProbingId(null);
+    }
   };
 
   return (
@@ -497,7 +664,9 @@ function ProviderEditorDialog({
       <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{mode === "add" ? "添加供应商" : "编辑供应商"}</DialogTitle>
-          <DialogDescription>配置 OpenAI 兼容端点与模型列表。上下文可填 128K / 1M；留空表示不限制。</DialogDescription>
+          <DialogDescription>
+            配置 OpenAI 兼容端点与模型列表。点击模型名可设置思考档位；支持从 API 声明、探测或手动指定。
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">
@@ -545,41 +714,104 @@ function ProviderEditorDialog({
               {p.models.length === 0 && (
                 <p className="px-2 py-3 text-xs text-[var(--text-tertiary)]">暂无模型</p>
               )}
-              {p.models.map((m) => (
-                <div
-                  key={m.id}
-                  className="grid grid-cols-[1fr_5.5rem_7rem_1.5rem] items-center gap-2 border-b border-[color:var(--border-subtle)] px-2 py-1.5 last:border-b-0"
-                >
-                  <span className="truncate text-xs text-[var(--text-primary)]" title={m.id}>
-                    {m.id}
-                  </span>
-                  <Input
-                    className="h-7 px-1.5 text-xs"
-                    placeholder="—"
-                    defaultValue={
-                      m.contextWindow != null && m.contextWindow > 0
-                        ? formatContextWindow(m.contextWindow)
-                        : ""
-                    }
-                    onBlur={(e) => updateModelWindow(m.id, e.target.value)}
-                    title="可填 128K / 1M / 128000；留空不限制"
-                  />
-                  <div className="flex flex-wrap gap-1">
-                    {m.capabilities.tools && <FeatureTag label="工具" />}
-                    {m.capabilities.vision && <FeatureTag label="视觉" />}
-                    {m.capabilities.reasoning && <FeatureTag label="推理" />}
-                  </div>
-                  <button
-                    type="button"
-                    aria-label={`删除 ${m.id}`}
-                    className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)]"
-                    onClick={() => setP({ ...p, models: p.models.filter((x) => x.id !== m.id) })}
+              {p.models.map((m) => {
+                const open = expandedId === m.id;
+                return (
+                  <div
+                    key={m.id}
+                    className="border-b border-[color:var(--border-subtle)] last:border-b-0"
                   >
-                    ×
-                  </button>
-                </div>
-              ))}
+                    <div className="grid grid-cols-[1fr_5.5rem_7rem_1.5rem] items-center gap-2 px-2 py-1.5">
+                      <button
+                        type="button"
+                        className="truncate text-left text-xs text-[var(--text-primary)] hover:underline"
+                        title={`${m.id} · 点击展开思考设置`}
+                        onClick={() => setExpandedId(open ? null : m.id)}
+                      >
+                        {m.id}
+                      </button>
+                      <Input
+                        className="h-7 px-1.5 text-xs"
+                        placeholder="—"
+                        defaultValue={
+                          m.contextWindow != null && m.contextWindow > 0
+                            ? formatContextWindow(m.contextWindow)
+                            : ""
+                        }
+                        onBlur={(e) => updateModelWindow(m.id, e.target.value)}
+                        title="可填 128K / 1M / 128000；留空不限制"
+                      />
+                      <div className="flex flex-wrap gap-1">
+                        {m.capabilities.tools && <FeatureTag label="工具" />}
+                        {m.capabilities.vision && <FeatureTag label="视觉" />}
+                        {m.capabilities.reasoning && <FeatureTag label="推理" />}
+                      </div>
+                      <button
+                        type="button"
+                        aria-label={`删除 ${m.id}`}
+                        className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)]"
+                        onClick={() =>
+                          setP((prev) => ({
+                            ...prev,
+                            models: prev.models.filter((x) => x.id !== m.id),
+                          }))
+                        }
+                      >
+                        ×
+                      </button>
+                    </div>
+                    {open && (
+                      <div className="space-y-2 border-t border-[color:var(--border-subtle)] bg-[var(--overlay-hover)]/20 px-3 py-2">
+                        <div className="flex flex-wrap items-center gap-3">
+                          <div className="flex items-center gap-2">
+                            <Switch
+                              checked={m.capabilities.reasoning}
+                              onCheckedChange={(v) => setReasoningEnabled(m.id, v)}
+                            />
+                            <span className="text-xs text-[var(--text-secondary)]">支持思考</span>
+                          </div>
+                          <span className="text-[10px] text-[var(--text-tertiary)]">
+                            来源：{sourceLabel(m.reasoningSource, m.reasoningManual)}
+                          </span>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs"
+                            disabled={probingId === m.id || !p.baseUrl.trim() || !p.apiKey}
+                            onClick={() => void probeModel(m.id)}
+                          >
+                            {probingId === m.id ? "探测中…" : "探测档位"}
+                          </Button>
+                        </div>
+                        {m.capabilities.reasoning && (
+                          <div className="flex flex-wrap gap-1.5">
+                            {ALL_EFFORTS.map((effort) => {
+                              const on = m.reasoningLevels.includes(effort);
+                              return (
+                                <button
+                                  key={effort}
+                                  type="button"
+                                  className={
+                                    on
+                                      ? "rounded px-1.5 py-0.5 text-[10px] bg-[var(--accent)]/15 text-[var(--accent)] border border-[color:var(--accent)]/40"
+                                      : "rounded px-1.5 py-0.5 text-[10px] text-[var(--text-tertiary)] border border-[color:var(--border-subtle)]"
+                                  }
+                                  onClick={() => toggleEffort(m.id, effort)}
+                                >
+                                  {EFFORT_LABELS[effort]}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
+            {probeError && <p className="text-xs text-[var(--error)]">{probeError}</p>}
             <div className="flex gap-2">
               <Input
                 placeholder="模型 id"

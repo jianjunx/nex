@@ -73,11 +73,37 @@ impl DeepSeekProvider {
         if let Some(mt) = req.max_tokens {
             body["max_tokens"] = serde_json::json!(mt);
         }
-        // Reasoning-effort hint (OpenAI-compatible / DeepSeek `reasoning_effort`).
-        if req.reasoning != ReasoningControl::Off {
-            body["reasoning_effort"] = serde_json::json!(req.reasoning.as_str());
-        }
+        Self::apply_reasoning(&mut body, &req.model, req.reasoning);
         body
+    }
+
+    /// Attach family-specific thinking / effort fields.
+    ///
+    /// DeepSeek V4 defaults thinking **on**, so Off must send
+    /// `thinking: {type: disabled}`. MiniMax-M3 gateways typically take a
+    /// binary thinking toggle rather than multi-tier `reasoning_effort`.
+    fn apply_reasoning(body: &mut serde_json::Value, model: &str, reasoning: ReasoningControl) {
+        use crate::agent::native::capabilities::{
+            uses_binary_thinking_toggle, uses_deepseek_thinking_toggle,
+        };
+        if uses_binary_thinking_toggle(model) {
+            body["thinking"] = serde_json::json!({
+                "type": if reasoning == ReasoningControl::Off { "disabled" } else { "enabled" }
+            });
+            return;
+        }
+        if uses_deepseek_thinking_toggle(model) {
+            if reasoning == ReasoningControl::Off {
+                body["thinking"] = serde_json::json!({ "type": "disabled" });
+            } else {
+                body["thinking"] = serde_json::json!({ "type": "enabled" });
+                body["reasoning_effort"] = serde_json::json!(reasoning.as_str());
+            }
+            return;
+        }
+        if reasoning != ReasoningControl::Off {
+            body["reasoning_effort"] = serde_json::json!(reasoning.as_str());
+        }
     }
 
     async fn send_with_retry(
@@ -398,9 +424,66 @@ mod tests {
     #[test]
     fn reasoning_parse() {
         assert_eq!(ReasoningControl::parse("high"), ReasoningControl::High);
+        assert_eq!(ReasoningControl::parse("max"), ReasoningControl::Max);
+        assert_eq!(ReasoningControl::parse("xhigh"), ReasoningControl::XHigh);
         assert_eq!(ReasoningControl::parse("bogus"), ReasoningControl::Off);
         assert_eq!(ReasoningControl::High.as_str(), "high");
+        assert_eq!(ReasoningControl::Max.as_str(), "max");
         assert_eq!(ReasoningControl::Off.as_str(), "off");
+    }
+
+    #[test]
+    fn deepseek_v4_off_sends_thinking_disabled() {
+        let p = DeepSeekProvider::new("https://api.deepseek.com", "k");
+        let body = p.build_body(&ChatRequest {
+            model: "deepseek-v4-flash".into(),
+            messages: vec![],
+            tools: vec![],
+            reasoning: ReasoningControl::Off,
+            max_tokens: None,
+            temperature: None,
+        });
+        assert_eq!(body["thinking"]["type"], "disabled");
+        assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn deepseek_v4_max_sends_effort_and_thinking() {
+        let p = DeepSeekProvider::new("https://api.deepseek.com", "k");
+        let body = p.build_body(&ChatRequest {
+            model: "deepseek-v4-pro".into(),
+            messages: vec![],
+            tools: vec![],
+            reasoning: ReasoningControl::Max,
+            max_tokens: None,
+            temperature: None,
+        });
+        assert_eq!(body["thinking"]["type"], "enabled");
+        assert_eq!(body["reasoning_effort"], "max");
+    }
+
+    #[test]
+    fn minimax_m3_uses_binary_thinking() {
+        let p = DeepSeekProvider::new("https://gateway.example/v1", "k");
+        let off = p.build_body(&ChatRequest {
+            model: "MiniMax-M3".into(),
+            messages: vec![],
+            tools: vec![],
+            reasoning: ReasoningControl::Off,
+            max_tokens: None,
+            temperature: None,
+        });
+        assert_eq!(off["thinking"]["type"], "disabled");
+        assert!(off.get("reasoning_effort").is_none());
+        let on = p.build_body(&ChatRequest {
+            model: "MiniMax-M3".into(),
+            messages: vec![],
+            tools: vec![],
+            reasoning: ReasoningControl::High,
+            max_tokens: None,
+            temperature: None,
+        });
+        assert_eq!(on["thinking"]["type"], "enabled");
     }
 
     #[test]

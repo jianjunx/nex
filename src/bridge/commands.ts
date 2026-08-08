@@ -31,6 +31,7 @@ export const COMMANDS = {
   NATIVE_AGENT_GET_CONFIG: "native_agent_get_config",
   NATIVE_AGENT_SET_CONFIG: "native_agent_set_config",
   NATIVE_AGENT_LIST_MODELS: "native_agent_list_models",
+  NATIVE_AGENT_PROBE_REASONING: "native_agent_probe_reasoning",
   NATIVE_AGENT_LIST_MCP: "native_agent_list_mcp",
   NATIVE_AGENT_UPSERT_MCP: "native_agent_upsert_mcp",
   NATIVE_AGENT_DELETE_MCP: "native_agent_delete_mcp",

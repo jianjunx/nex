@@ -47,6 +47,8 @@ pub enum ReasoningControl {
     Medium,
     High,
     XHigh,
+    /// DeepSeek V4 / Kimi K3 top tier (`reasoning_effort: "max"`).
+    Max,
 }
 
 impl ReasoningControl {
@@ -56,7 +58,8 @@ impl ReasoningControl {
             "low" => Self::Low,
             "medium" | "med" => Self::Medium,
             "high" => Self::High,
-            "xhigh" | "x-high" | "extra" | "max" => Self::XHigh,
+            "xhigh" | "x-high" | "extra" => Self::XHigh,
+            "max" => Self::Max,
             _ => Self::Off,
         }
     }
@@ -70,6 +73,7 @@ impl ReasoningControl {
             Self::Medium => "medium",
             Self::High => "high",
             Self::XHigh => "xhigh",
+            Self::Max => "max",
         }
     }
 
@@ -82,6 +86,7 @@ impl ReasoningControl {
             Self::Medium => "中",
             Self::High => "高",
             Self::XHigh => "极高",
+            Self::Max => "最大",
         }
     }
 
@@ -95,7 +100,7 @@ impl ReasoningControl {
         if levels.iter().any(|l| l.eq_ignore_ascii_case(cur)) {
             return self;
         }
-        for pref in ["medium", "low", "high", "minimal", "xhigh", "off"] {
+        for pref in ["medium", "high", "low", "minimal", "xhigh", "max", "off"] {
             if let Some(l) = levels.iter().find(|l| l.eq_ignore_ascii_case(pref)) {
                 return Self::parse(l);
             }

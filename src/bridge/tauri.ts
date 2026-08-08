@@ -144,13 +144,16 @@ export type SessionTarget =
 /**
  * Config of the built-in native agent (`nex-agent.json`), camelCase DTO.
  * `reasoningSupport` records whether the model accepts `reasoning_effort`:
- * `unknown` (not verified), `yes` (heuristic match), `no` (runtime rejection).
+ * `unknown` (not verified), `yes` (accepted), `no` (rejected).
+ * Ladder provenance is `reasoningSource`; Settings ownership is `reasoningManual`.
  */
 export interface NativeAgentModelCapabilities {
   tools: boolean;
   vision: boolean;
   reasoning: boolean;
 }
+
+export type ReasoningSource = "none" | "heuristic" | "api" | "probe" | "manual";
 
 export interface NativeAgentModel {
   id: string;
@@ -160,6 +163,10 @@ export interface NativeAgentModel {
   reasoningLevels: string[];
   /** Per-model context window in tokens; omit/undefined = no limit. */
   contextWindow?: number | null;
+  /** When true, Settings owns reasoning on/off + levels. */
+  reasoningManual?: boolean;
+  /** Provenance of `reasoningLevels`. */
+  reasoningSource?: ReasoningSource;
 }
 
 export interface NativeAgentProvider {
@@ -368,6 +375,15 @@ export async function nativeAgentListModels(
   apiKey: string,
 ): Promise<NativeAgentModel[]> {
   return invoke(COMMANDS.NATIVE_AGENT_LIST_MODELS, { baseUrl, apiKey });
+}
+
+/** Probe which reasoning effort values a model accepts (tiny chat calls). */
+export async function nativeAgentProbeReasoning(
+  baseUrl: string,
+  apiKey: string,
+  modelId: string,
+): Promise<NativeAgentModel> {
+  return invoke(COMMANDS.NATIVE_AGENT_PROBE_REASONING, { baseUrl, apiKey, modelId });
 }
 
 export async function nativeAgentListMcp(): Promise<NativeMcpServerInfo[]> {

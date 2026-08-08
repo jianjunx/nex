@@ -152,7 +152,7 @@ pub async fn native_agent_list_models(
     base_url: String,
     api_key: String,
 ) -> Result<Vec<crate::agent::native::config::ModelEntry>, NexError> {
-    use crate::agent::native::capabilities::{context_window_from_api_model, detect_with_window};
+    use crate::agent::native::capabilities::from_api_model;
 
     let url = crate::agent::native::provider::openai_endpoint(&base_url, "models");
     let resp = reqwest::Client::builder()
@@ -177,20 +177,22 @@ pub async fn native_agent_list_models(
     let models = value
         .get("data")
         .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|m| {
-                    let id = m.get("id").and_then(|v| v.as_str())?;
-                    let api_window = context_window_from_api_model(m);
-                    Some(detect_with_window(id, api_window))
-                })
-                .collect::<Vec<_>>()
-        })
+        .map(|arr| arr.iter().filter_map(from_api_model).collect::<Vec<_>>())
         .unwrap_or_default();
     if models.is_empty() {
         return Err(NexError::Agent("model list response has no data[].id entries".into()));
     }
     Ok(models)
+}
+
+/// Probe which `reasoning_effort` values a model accepts via tiny chat calls.
+#[tauri::command]
+pub async fn native_agent_probe_reasoning(
+    base_url: String,
+    api_key: String,
+    model_id: String,
+) -> Result<crate::agent::native::config::ModelEntry, NexError> {
+    crate::agent::native::probe::probe_reasoning_levels(&base_url, &api_key, &model_id).await
 }
 
 /// Settings-panel skill row.

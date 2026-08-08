@@ -1,10 +1,19 @@
-//! Heuristic model-capability detection for OpenAI-compatible endpoints.
+//! Model-capability detection for OpenAI-compatible endpoints.
 //!
-//! Used when the user adds or fetches models in Settings. Runtime rejection of
-//! `reasoning_effort` still wins and is persisted separately as
-//! [`super::config::ReasoningSupport::No`].
+//! Resolution order for Composer reasoning ladders:
+//! 1. Manual Settings override (`reasoning_manual`)
+//! 2. Provider `/models` declaration (OpenRouter-style `reasoning` /
+//!    `supported_parameters`)
+//! 3. Active probe results (`ReasoningSource::Probe`)
+//! 4. Family / id heuristics (CherryStudio / OpenCode / Pi style)
+//!
+//! Runtime rejection of `reasoning_effort` still wins (unless manual) and is
+//! persisted as [`super::config::ReasoningSupport::No`].
 
-use super::config::{ModelCapabilities, ModelEntry, ReasoningSupport};
+use super::config::{ModelCapabilities, ModelEntry, ReasoningSource, ReasoningSupport};
+
+/// Canonical effort ids Nex understands in Composer / wire bodies.
+pub const KNOWN_EFFORTS: &[&str] = &["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 /// Infers capabilities + reasoning levels + context window from a model id.
 pub fn detect(model_id: &str) -> ModelEntry {
@@ -15,13 +24,9 @@ pub fn detect(model_id: &str) -> ModelEntry {
 pub fn detect_with_window(model_id: &str, api_context_window: Option<u32>) -> ModelEntry {
     let id = model_id.trim();
     let lower = id.to_ascii_lowercase();
-    let reasoning = looks_like_reasoning(&lower);
+    let levels = reasoning_levels_for(&lower);
+    let reasoning = !levels.is_empty();
     let vision = looks_like_vision(&lower);
-    let levels = if reasoning {
-        reasoning_levels_for(&lower)
-    } else {
-        Vec::new()
-    };
     let context_window = api_context_window
         .filter(|&w| w > 0)
         .or_else(|| heuristic_context_window(&lower));
@@ -39,46 +44,220 @@ pub fn detect_with_window(model_id: &str, api_context_window: Option<u32>) -> Mo
         },
         reasoning_levels: levels,
         context_window,
+        reasoning_manual: false,
+        reasoning_source: if reasoning {
+            ReasoningSource::Heuristic
+        } else {
+            ReasoningSource::None
+        },
     }
 }
 
-/// Re-runs detection while preserving the wire `id`, runtime reasoning-no, and
-/// any user-/API-set context window.
+/// Build a [`ModelEntry`] from a `/models` list item.
+///
+/// Prefers OpenRouter-style capability declarations when present; otherwise
+/// falls back to id heuristics. Always merges an API-reported context window.
+pub fn from_api_model(value: &serde_json::Value) -> Option<ModelEntry> {
+    let id = value.get("id").and_then(|v| v.as_str())?;
+    let api_window = context_window_from_api_model(value);
+    let mut entry = detect_with_window(id, api_window);
+    if let Some(api_levels) = reasoning_levels_from_api(value) {
+        apply_reasoning_ladder(
+            &mut entry,
+            api_levels,
+            ReasoningSupport::Yes,
+            ReasoningSource::Api,
+            false,
+        );
+    }
+    // Vision from OpenRouter architecture.input_modalities when present.
+    if let Some(mods) = value
+        .pointer("/architecture/input_modalities")
+        .or_else(|| value.pointer("/architecture/inputModalities"))
+        .and_then(|v| v.as_array())
+    {
+        if mods.iter().any(|m| m.as_str() == Some("image")) {
+            entry.capabilities.vision = true;
+        }
+    }
+    Some(entry)
+}
+
+/// Apply a resolved ladder onto an entry (shared by API / probe / manual).
+pub fn apply_reasoning_ladder(
+    entry: &mut ModelEntry,
+    levels: Vec<String>,
+    support: ReasoningSupport,
+    source: ReasoningSource,
+    manual: bool,
+) {
+    let levels = normalize_effort_levels(levels);
+    entry.reasoning_levels = levels;
+    entry.capabilities.reasoning = !entry.reasoning_levels.is_empty();
+    entry.reasoning_support = if entry.capabilities.reasoning {
+        support
+    } else if manual {
+        ReasoningSupport::No
+    } else {
+        ReasoningSupport::Unknown
+    };
+    entry.reasoning_source = if entry.capabilities.reasoning {
+        source
+    } else if manual {
+        ReasoningSource::Manual
+    } else {
+        ReasoningSource::None
+    };
+    entry.reasoning_manual = manual;
+}
+
+/// Re-runs detection while preserving manual / API / probe ladders, runtime
+/// reasoning-no, and any user-/API-set context window.
 pub fn refresh(entry: &ModelEntry) -> ModelEntry {
+    let preserve_ladder = entry.reasoning_manual
+        || matches!(
+            entry.reasoning_source,
+            ReasoningSource::Manual | ReasoningSource::Api | ReasoningSource::Probe
+        );
+
+    if preserve_ladder {
+        let mut next = entry.clone();
+        // Fill missing context window from heuristics only.
+        if next.context_window.is_none() {
+            next.context_window = detect(&entry.id).context_window;
+        }
+        // Runtime "no" still clears auto-sourced ladders; manual stays put.
+        if entry.reasoning_support == ReasoningSupport::No && !entry.reasoning_manual {
+            next.capabilities.reasoning = false;
+            next.reasoning_levels.clear();
+            next.reasoning_source = ReasoningSource::None;
+        }
+        return next;
+    }
+
     let mut next = detect_with_window(&entry.id, entry.context_window);
-    // Runtime "no" always wins over heuristics.
     if entry.reasoning_support == ReasoningSupport::No {
         next.reasoning_support = ReasoningSupport::No;
         next.capabilities.reasoning = false;
         next.reasoning_levels.clear();
+        next.reasoning_source = ReasoningSource::None;
     }
-    // Keep an explicit context window (including cleared-via-Some if we ever
-    // need that); only fill when the stored value is absent.
     if entry.context_window.is_some() {
         next.context_window = entry.context_window;
     }
+    next.reasoning_manual = false;
     next
 }
 
-fn looks_like_reasoning(id: &str) -> bool {
-    id.contains("reason")
-        || id.contains("r1")
-        || id.contains("thinking")
-        || id.contains("o1")
-        || id.contains("o3")
-        || id.contains("o4")
-        || id.contains("gpt-5")
-        || id.contains("gpt5")
-        || id.contains("claude-4")
-        || id.contains("claude-opus-4")
-        || id.contains("claude-sonnet-4")
-        || id.contains("gemini-2.5")
-        || id.contains("gemini-3")
-        || id.contains("kimi-k2")
-        || id.contains("kimi-k3")
-        || id.contains("qwq")
-        || id.contains("qwen3")
-        || id.contains("deepseek-r")
+/// Normalize effort ids: map `none`→`off`, drop unknowns/duplicates, stable order.
+pub fn normalize_effort_levels(raw: Vec<String>) -> Vec<String> {
+    let mut out = Vec::new();
+    for level in raw {
+        let mapped = match level.to_ascii_lowercase().as_str() {
+            "none" | "off" | "disabled" => "off",
+            "minimal" | "min" => "minimal",
+            "low" => "low",
+            "medium" | "med" => "medium",
+            "high" => "high",
+            "xhigh" | "x-high" | "extra" => "xhigh",
+            "max" | "maximal" => "max",
+            // "auto" / "default" are not discrete Composer levels in Nex.
+            _ => continue,
+        };
+        if !out.iter().any(|x| x == mapped) {
+            out.push(mapped.to_string());
+        }
+    }
+    out.sort_by_key(|l| {
+        KNOWN_EFFORTS
+            .iter()
+            .position(|k| *k == l.as_str())
+            .unwrap_or(99)
+    });
+    out
+}
+
+/// Parse OpenRouter-style reasoning declaration from a `/models` item.
+///
+/// Returns `None` when the payload carries no reasoning capability signal
+/// (caller should keep heuristics). Returns `Some(vec![])` only when the API
+/// explicitly advertises reasoning with an empty controllable ladder — treated
+/// as "reasoning model, no effort UI" by applying a binary off/high fallback.
+fn reasoning_levels_from_api(value: &serde_json::Value) -> Option<Vec<String>> {
+    let has_param = value
+        .get("supported_parameters")
+        .or_else(|| value.get("supportedParameters"))
+        .and_then(|v| v.as_array())
+        .is_some_and(|arr| {
+            arr.iter().any(|p| {
+                matches!(
+                    p.as_str(),
+                    Some("reasoning" | "reasoning_effort" | "include_reasoning")
+                )
+            })
+        });
+
+    let reasoning = value.get("reasoning");
+    if let Some(obj) = reasoning.and_then(|v| v.as_object()) {
+        let mandatory = obj
+            .get("mandatory")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let mut levels = match obj.get("supported_efforts").or_else(|| obj.get("supportedEfforts"))
+        {
+            // null → gateway accepts the full effort set
+            Some(v) if v.is_null() => KNOWN_EFFORTS
+                .iter()
+                .filter(|e| **e != "off")
+                .map(|s| (*s).to_string())
+                .collect(),
+            Some(v) => {
+                let arr = v.as_array()?;
+                let parsed: Vec<String> = arr
+                    .iter()
+                    .filter_map(|x| x.as_str().map(str::to_string))
+                    .collect();
+                let norm = normalize_effort_levels(parsed);
+                if norm.is_empty() {
+                    // Present but empty / unrecognized → binary toggle.
+                    vec!["high".into()]
+                } else {
+                    norm.into_iter().filter(|l| l != "off").collect()
+                }
+            }
+            None => vec!["low".into(), "medium".into(), "high".into()],
+        };
+        if !mandatory && !levels.iter().any(|l| l == "off") {
+            levels.insert(0, "off".into());
+        }
+        return Some(normalize_effort_levels(levels));
+    }
+
+    if has_param {
+        return Some(normalize_effort_levels(vec![
+            "off".into(),
+            "low".into(),
+            "medium".into(),
+            "high".into(),
+        ]));
+    }
+    None
+}
+
+/// Whether the OpenAI-compatible request should send DeepSeek-style
+/// `thinking: {type}` alongside `reasoning_effort` (V4 + hybrid chat routes).
+pub fn uses_deepseek_thinking_toggle(model_id: &str) -> bool {
+    let lower = model_id.to_ascii_lowercase();
+    is_deepseek_v4(&lower)
+        || is_deepseek_hybrid(&lower)
+        || lower.contains("deepseek-reasoner")
+        || lower.contains("deepseek-r1")
+}
+
+/// Whether the model expects a binary thinking toggle (no multi-tier effort).
+pub fn uses_binary_thinking_toggle(model_id: &str) -> bool {
+    let lower = model_id.to_ascii_lowercase();
+    is_minimax_m3(&lower)
 }
 
 fn looks_like_vision(id: &str) -> bool {
@@ -102,6 +281,9 @@ fn heuristic_context_window(id: &str) -> Option<u32> {
     // Explicit size suffixes in the id (e.g. `…-256k`, `…-1m`).
     if let Some(w) = parse_size_suffix(id) {
         return Some(w);
+    }
+    if id.contains("deepseek-v4") {
+        return Some(1_000_000);
     }
     if id.contains("kimi-k3") || id.contains("kimi/k3") {
         return Some(1_000_000);
@@ -166,28 +348,151 @@ fn parse_size_suffix(id: &str) -> Option<u32> {
     num.checked_mul(unit)
 }
 
+fn s(levels: &[&str]) -> Vec<String> {
+    levels.iter().map(|l| (*l).to_string()).collect()
+}
+
+fn is_deepseek_v4(id: &str) -> bool {
+    id.contains("deepseek-v4") || id.contains("deepseek/v4")
+}
+
+fn is_deepseek_v4_flash(id: &str) -> bool {
+    is_deepseek_v4(id) && id.contains("flash")
+}
+
+fn is_deepseek_v4_pro(id: &str) -> bool {
+    is_deepseek_v4(id) && id.contains("pro")
+}
+
+/// Legacy chat / V3.x hybrids that expose a thinking toggle (and often effort).
+fn is_deepseek_hybrid(id: &str) -> bool {
+    if is_deepseek_v4(id) {
+        return false;
+    }
+    id.contains("deepseek-chat")
+        || id.contains("deepseek-v3.1")
+        || id.contains("deepseek-v3.2")
+        || id.contains("deepseek-v3-1")
+        || id.contains("deepseek-v3-2")
+}
+
+fn is_minimax_m3(id: &str) -> bool {
+    id.contains("minimax") && id.contains("m3")
+}
+
+fn is_minimax_m2(id: &str) -> bool {
+    id.contains("minimax") && (id.contains("m2") || id.contains("m1"))
+}
+
+/// Family-specific effort ladders (CherryStudio / Pi style).
+/// Empty = model does not expose controllable reasoning in Composer.
 fn reasoning_levels_for(id: &str) -> Vec<String> {
-    if id.contains("gpt-5") || id.contains("gpt5") || id.contains("o3") || id.contains("o4") {
-        return vec![
-            "off".into(),
-            "minimal".into(),
-            "low".into(),
-            "medium".into(),
-            "high".into(),
-            "xhigh".into(),
-        ];
+    // DeepSeek V4: official wire scale is low/high/max (+ thinking off).
+    // Flash accepts low; Pro maps low→high (Pi exposes high/max only).
+    if is_deepseek_v4_flash(id) {
+        return s(&["off", "low", "high", "max"]);
+    }
+    if is_deepseek_v4_pro(id) || is_deepseek_v4(id) {
+        return s(&["off", "high", "max"]);
+    }
+    // Legacy aliases now route to V4-Flash on the official API.
+    if id.contains("deepseek-reasoner") || id.contains("deepseek-r1") {
+        return s(&["off", "low", "high", "max"]);
+    }
+    if is_deepseek_hybrid(id) {
+        return s(&["off", "low", "high", "max"]);
+    }
+
+    // MiniMax: M3 is adaptive/binary on most OpenAI-compatible gateways;
+    // M2 exposes low|medium|high.
+    if is_minimax_m3(id) {
+        return s(&["off", "high"]);
+    }
+    if is_minimax_m2(id) {
+        return s(&["off", "low", "medium", "high"]);
+    }
+
+    if id.contains("gpt-5") || id.contains("gpt5") {
+        if id.contains("pro") && !id.contains("5.2") && !id.contains("5.3") {
+            return s(&["high"]);
+        }
+        if id.contains("codex") {
+            if id.contains("5.1") && id.contains("max") {
+                return s(&["medium", "high", "xhigh"]);
+            }
+            if id.contains("5.2") || id.contains("5.3") {
+                return s(&["low", "medium", "high", "xhigh"]);
+            }
+            return s(&["low", "medium", "high"]);
+        }
+        if id.contains("5.1") {
+            return s(&["off", "low", "medium", "high"]);
+        }
+        // GPT-5.2+ and generic gpt-5
+        return s(&["off", "minimal", "low", "medium", "high", "xhigh"]);
+    }
+
+    if id.contains("o3") || id.contains("o4") {
+        return s(&["off", "minimal", "low", "medium", "high", "xhigh"]);
     }
     if id.contains("o1") {
-        return vec!["low".into(), "medium".into(), "high".into()];
+        return s(&["low", "medium", "high"]);
     }
+
     if id.contains("claude") {
-        return vec!["off".into(), "low".into(), "medium".into(), "high".into()];
+        if id.contains("4.6") || id.contains("4-6") {
+            return s(&["off", "low", "medium", "high", "xhigh"]);
+        }
+        if id.contains("claude-4")
+            || id.contains("claude-opus-4")
+            || id.contains("claude-sonnet-4")
+            || id.contains("claude-3-7")
+            || id.contains("claude-3.7")
+            || id.contains("opus-4")
+            || id.contains("sonnet-4")
+        {
+            return s(&["off", "low", "medium", "high"]);
+        }
+        // Older Claude ids: only advertise when clearly a thinking SKU.
+        if id.contains("thinking") {
+            return s(&["off", "low", "medium", "high"]);
+        }
+        return Vec::new();
     }
+
     if id.contains("gemini") {
-        return vec!["off".into(), "low".into(), "medium".into(), "high".into()];
+        if id.contains("gemini-3") || id.contains("gemini-2.5") {
+            return s(&["off", "low", "medium", "high"]);
+        }
+        return Vec::new();
     }
-    // DeepSeek / generic OpenAI-compatible reasoning models.
-    vec!["off".into(), "low".into(), "medium".into(), "high".into()]
+
+    if id.contains("kimi-k3") || id.contains("kimi/k3") {
+        return s(&["off", "low", "high", "max"]);
+    }
+    if id.contains("kimi-k2") || id.contains("kimi/k2") || id.contains("kimi-k2.5") {
+        return s(&["off", "high"]);
+    }
+
+    if id.contains("grok-3-mini") || (id.contains("grok-4") && !id.contains("non-reasoning")) {
+        return s(&["off", "low", "high"]);
+    }
+
+    if id.contains("qwq") || id.contains("qwen3") {
+        return s(&["off", "low", "medium", "high"]);
+    }
+
+    // Generic catch-all for explicitly named reasoning SKUs.
+    if id.contains("reason")
+        || id.contains("thinking")
+        || id.contains("r1")
+        || id.contains("hunyuan-t1")
+        || id.contains("glm-zero")
+    {
+        return s(&["off", "low", "medium", "high"]);
+    }
+
+    Vec::new()
 }
 
 /// Pull a context-length field from a `/models` list item when present.
@@ -235,15 +540,60 @@ mod tests {
         assert!(m.capabilities.reasoning);
         assert_eq!(m.reasoning_support, ReasoningSupport::Yes);
         assert!(m.reasoning_levels.contains(&"high".to_string()));
+        assert!(m.reasoning_levels.contains(&"max".to_string()));
         assert_eq!(m.context_window, Some(128_000));
     }
 
     #[test]
-    fn plain_chat_has_no_levels() {
+    fn deepseek_v4_flash_and_pro_ladders() {
+        let flash = detect("deepseek-v4-flash");
+        assert!(flash.capabilities.reasoning);
+        assert_eq!(
+            flash.reasoning_levels,
+            vec!["off", "low", "high", "max"]
+                .into_iter()
+                .map(String::from)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(flash.context_window, Some(1_000_000));
+
+        let pro = detect("deepseek-v4-pro");
+        assert_eq!(
+            pro.reasoning_levels,
+            vec!["off", "high", "max"]
+                .into_iter()
+                .map(String::from)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn deepseek_chat_hybrid_gets_levels() {
         let m = detect("deepseek-chat");
+        assert!(m.capabilities.reasoning);
+        assert!(m.reasoning_levels.contains(&"off".to_string()));
+        assert!(m.reasoning_levels.contains(&"max".to_string()));
+    }
+
+    #[test]
+    fn plain_non_reasoning_has_no_levels() {
+        let m = detect("llama-3.3-70b");
         assert!(!m.capabilities.reasoning);
         assert!(m.reasoning_levels.is_empty());
-        assert_eq!(m.context_window, Some(128_000));
+    }
+
+    #[test]
+    fn minimax_m3_binary_thinking() {
+        let m = detect("MiniMax-M3");
+        assert!(m.capabilities.reasoning);
+        assert_eq!(
+            m.reasoning_levels,
+            vec!["off", "high"]
+                .into_iter()
+                .map(String::from)
+                .collect::<Vec<_>>()
+        );
+        assert!(uses_binary_thinking_toggle("MiniMax-M3[1m]"));
     }
 
     #[test]
@@ -295,5 +645,76 @@ mod tests {
         assert_eq!(context_window_from_api_model(&v3), None);
         let v4 = serde_json::json!({"id": "x", "max_model_len": 32768, "max_tokens": 4096});
         assert_eq!(context_window_from_api_model(&v4), Some(32_768));
+    }
+
+    #[test]
+    fn deepseek_thinking_toggle_helpers() {
+        assert!(uses_deepseek_thinking_toggle("deepseek-v4-pro"));
+        assert!(uses_deepseek_thinking_toggle("deepseek-chat"));
+        assert!(!uses_deepseek_thinking_toggle("gpt-5.2"));
+    }
+
+    #[test]
+    fn openrouter_supported_efforts_wins_over_heuristic() {
+        let v = serde_json::json!({
+            "id": "vendor/unknown-thinker",
+            "supported_parameters": ["reasoning", "tools"],
+            "reasoning": {
+                "supported_efforts": ["high", "medium", "none"],
+                "mandatory": false
+            },
+            "context_length": 200000
+        });
+        let m = from_api_model(&v).expect("entry");
+        assert_eq!(m.reasoning_source, ReasoningSource::Api);
+        assert!(m.capabilities.reasoning);
+        assert_eq!(
+            m.reasoning_levels,
+            vec!["off", "medium", "high"]
+                .into_iter()
+                .map(String::from)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(m.context_window, Some(200_000));
+    }
+
+    #[test]
+    fn openrouter_param_only_gets_default_ladder() {
+        let v = serde_json::json!({
+            "id": "vendor/foo",
+            "supported_parameters": ["reasoning_effort"]
+        });
+        let m = from_api_model(&v).expect("entry");
+        assert_eq!(m.reasoning_source, ReasoningSource::Api);
+        assert!(m.reasoning_levels.contains(&"off".to_string()));
+        assert!(m.reasoning_levels.contains(&"high".to_string()));
+    }
+
+    #[test]
+    fn refresh_preserves_manual_ladder() {
+        let mut m = detect("llama-3.3-70b");
+        assert!(!m.capabilities.reasoning);
+        apply_reasoning_ladder(
+            &mut m,
+            vec!["off".into(), "high".into()],
+            ReasoningSupport::Yes,
+            ReasoningSource::Manual,
+            true,
+        );
+        let next = refresh(&m);
+        assert!(next.reasoning_manual);
+        assert_eq!(next.reasoning_source, ReasoningSource::Manual);
+        assert_eq!(next.reasoning_levels, m.reasoning_levels);
+    }
+
+    #[test]
+    fn normalize_maps_none_to_off() {
+        let levels = normalize_effort_levels(vec![
+            "none".into(),
+            "HIGH".into(),
+            "auto".into(),
+            "high".into(),
+        ]);
+        assert_eq!(levels, vec!["off".to_string(), "high".to_string()]);
     }
 }

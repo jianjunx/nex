@@ -24,6 +24,7 @@ pub mod context;
 pub mod home;
 pub mod instructions;
 pub mod mcp;
+pub mod probe;
 pub mod provider;
 pub mod session;
 pub mod skills;
@@ -1158,7 +1159,8 @@ mod tests {
         let meta = session.meta.as_ref().expect("_meta");
         let options = meta.get("configOptions").expect("configOptions");
         assert_eq!(options[0]["id"], "reasoning");
-        assert_eq!(options[0]["currentValueId"], "medium");
+        // deepseek-reasoner ladder is off/low/high/max (no medium) → clamp prefers high.
+        assert_eq!(options[0]["currentValueId"], "high");
         assert!(options[0]["options"].as_array().expect("options").len() >= 4);
 
         let response = agent

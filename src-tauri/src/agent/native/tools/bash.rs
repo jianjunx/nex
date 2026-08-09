@@ -42,8 +42,8 @@ impl Tool for Bash {
             None => ctx.bash_timeout,
         };
 
-        let mut cmd = super::shell_command();
-        cmd.arg(&command).current_dir(&ctx.cwd);
+        let mut cmd = super::shell_command_script(super::shell_command(), &command);
+        cmd.current_dir(&ctx.cwd);
         // `output()` kills the child when its future is dropped (timeout).
         let output = match tokio::time::timeout(timeout, cmd.output()).await {
             Ok(res) => res.map_err(|e| format!("failed to run command: {e}"))?,

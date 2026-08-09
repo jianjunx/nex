@@ -269,14 +269,22 @@ pub fn truncate_output(s: String, max_chars: usize) -> String {
 
 /// Builds a platform-appropriate shell runner with the script passed as a
 /// single argument, so callers share one shape: `shell_command().arg(script)`.
-/// Windows uses `cmd.exe /C` (present on every Windows install); Unix uses
+/// Windows uses `cmd.exe /S /C` (present on every Windows install); Unix uses
 /// `/bin/sh -c`. `CREATE_NO_WINDOW` is applied on Windows so GUI-spawned
 /// shells never flash a console.
+///
+/// Windows quoting note: `Command::arg` escapes `"` as `\"` (CRT argv
+/// rules), but `cmd.exe` does not understand that escaping and passes the
+/// quotes through literally — a quoted argument like `"needle here"` arrives
+/// split. Callers must therefore use `raw_arg` on Windows so the script
+/// reaches cmd verbatim and cmd's own quote parsing applies.
 pub fn shell_command() -> tokio::process::Command {
     #[cfg(windows)]
     let mut cmd = {
         let mut c = tokio::process::Command::new("cmd.exe");
-        c.arg("/C");
+        // /S: strip surrounding quotes per cmd's rules when the script is
+        // passed as a raw (unescaped) argument.
+        c.arg("/S").arg("/C");
         c
     };
     #[cfg(not(windows))]
@@ -286,6 +294,20 @@ pub fn shell_command() -> tokio::process::Command {
         c
     };
     crate::win_process::no_window_tokio(&mut cmd);
+    cmd
+}
+
+/// Attach `script` to a [`shell_command`] result, preserving quotes on every
+/// platform: `raw_arg` on Windows (cmd parses quotes itself), `arg` elsewhere.
+pub fn shell_command_script(mut cmd: tokio::process::Command, script: &str) -> tokio::process::Command {
+    #[cfg(windows)]
+    {
+        cmd.raw_arg(script);
+    }
+    #[cfg(not(windows))]
+    {
+        cmd.arg(script);
+    }
     cmd
 }
 
@@ -438,5 +460,32 @@ mod tests {
 
     fn hex(digest: impl AsRef<[u8]>) -> String {
         digest.as_ref().iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// Windows: a quoted argument must arrive intact at the child process.
+    /// Regression — `Command::arg` escapes `"` inside the script, which
+    /// `cmd.exe` does not understand (it passes the quotes through as literal
+    /// chars), so `findstr /C:"needle here"` was split into two arguments.
+    #[cfg(windows)]
+    #[tokio::test(flavor = "current_thread")]
+    async fn windows_quoted_args_reach_child_intact() {
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("probe.txt");
+        std::fs::write(&f, "needle here\n").unwrap();
+        // The pattern contains a space and is quoted: `findstr` must receive
+        // it as ONE argument (`/C:"needle here"`).
+        let script = format!("findstr /C:\"needle here\" \"{}\"", f.display());
+        let mut cmd = shell_command_script(shell_command(), &script);
+        let out = cmd.output().await.unwrap();
+        assert!(
+            out.status.success(),
+            "quoted arg must reach findstr intact: {script}\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("needle here"),
+            "findstr must match the multi-word pattern"
+        );
     }
 }

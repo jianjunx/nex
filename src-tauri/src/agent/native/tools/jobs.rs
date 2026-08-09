@@ -52,9 +52,8 @@ impl JobTable {
     /// Sync on purpose: nothing here awaits (the drain/kill supervision runs on
     /// its own task), so callers can hold a `RefMut` without crossing an await.
     pub fn spawn(&mut self, command: &str, cwd: &std::path::Path) -> Result<String, String> {
-        let mut cmd = super::shell_command();
-        cmd.arg(command)
-            .current_dir(cwd)
+        let mut cmd = super::shell_command_script(super::shell_command(), command);
+        cmd.current_dir(cwd)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())

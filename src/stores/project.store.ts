@@ -92,10 +92,15 @@ export const useProjectStore = create<ProjectStore>()(
       },
 
       removeProject: async (id: string) => {
+        // 当前打开的项目不可删除（UI 也不显示入口；此处防御）。
+        const active = useProjectStore.getState().activeProjectId;
+        if (active === id) {
+          throw new Error("当前打开的项目不能移除");
+        }
         await projectRemove(id);
         set((s) => {
           s.projects = s.projects.filter((p) => p.id !== id);
-          if (s.activeProjectId === id) s.activeProjectId = null;
+          // 不触碰 activeProjectId：删除的只可能是非当前项目。
         });
       },
     })),

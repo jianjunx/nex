@@ -258,13 +258,13 @@ export function ProjectSelector() {
                         title={`从项目列表移除 ${p.name}`}
                         aria-label={`从项目列表移除 ${p.name}`}
                         className="rounded p-0.5 text-[var(--text-tertiary)] opacity-60 transition-opacity hover:bg-[var(--overlay-hover)] hover:text-[var(--error)] hover:opacity-100"
-                        onPointerDown={(e) => {
-                          // Radix onSelect fires on pointer-up; swallow it so the
-                          // row's switch-project handler doesn't run.
-                          e.stopPropagation();
-                        }}
                         onClick={(e) => {
+                          // 必须让 pointerdown 冒泡到 MenuItem（Radix 用它标记
+                          // isPointerDown，否则 pointerup 会手动 click 整行触发
+                          // onSelect 切换项目）。这里只拦 click 冒泡，阻止
+                          // MenuItem 的 handleSelect 执行。
                           e.stopPropagation();
+                          e.preventDefault();
                           void (async () => {
                             try {
                               await useProjectStore.getState().removeProject(p.id);

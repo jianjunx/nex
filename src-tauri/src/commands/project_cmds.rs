@@ -24,6 +24,13 @@ pub fn project_touch(state: State<AppState>, id: String) -> Result<i64, NexError
     state.db.update_project_last_opened(&id)
 }
 
+/// Remove a project from the list together with its conversations (the X
+/// button in the project dropdown).
+#[tauri::command]
+pub fn project_remove(state: State<AppState>, id: String) -> Result<(), NexError> {
+    state.db.delete_project(&id)
+}
+
 #[tauri::command]
 pub fn conversation_create(state: State<AppState>, project_id: String, agent_type: String) -> Result<Conversation, NexError> {
     state.db.create_conversation(&project_id, &agent_type)

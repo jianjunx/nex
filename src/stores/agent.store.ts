@@ -133,6 +133,8 @@ interface AgentStore {
   flushThreadSnapshots: () => Promise<void>;
   /** Drop hydrated thread entries for conversation ids not in `keepIds` (switch-project memory). */
   pruneEntriesExcept: (keepIds: Set<string>) => void;
+  /** Drop in-memory threads for conversations of a removed project (no session teardown). */
+  removeConversationEntries: (ids: string[]) => void;
   appendUserMessage: (
     conversationId: string,
     text: string,
@@ -749,6 +751,16 @@ export const useAgentStore = create<AgentStore>()(
           if (!keepIds.has(id) && !liveConversationIds.has(id)) {
             delete s.entriesByConversation[id];
           }
+        }
+      });
+    },
+
+    removeConversationEntries: (ids) => {
+      set((s) => {
+        for (const id of ids) {
+          delete s.entriesByConversation[id];
+          delete s.metaByConversation[id];
+          delete s.pendingMessagesByConversation[id];
         }
       });
     },

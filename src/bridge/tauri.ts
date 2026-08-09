@@ -38,6 +38,11 @@ export async function projectTouch(id: string): Promise<number> {
   return invoke(COMMANDS.PROJECT_TOUCH, { id });
 }
 
+/** Remove a project (and its conversations) from the list. */
+export async function projectRemove(id: string): Promise<void> {
+  return invoke(COMMANDS.PROJECT_REMOVE, { id });
+}
+
 // --- Conversations ---
 export interface Conversation {
   id: string;

@@ -11,6 +11,7 @@ import {
   type Message,
 } from "../bridge/tauri";
 import { useProjectStore } from "./project.store";
+import { useAgentStore } from "./agent.store";
 import { clearComposerDraft } from "./composerDrafts";
 import {
   DEFAULT_CONVERSATION_TITLE,
@@ -34,6 +35,8 @@ interface ConversationStore {
   createConversation: (projectId: string, agentType: string) => Promise<Conversation>;
   switchTab: (id: string) => void;
   closeTab: (id: string) => void;
+  /** Drop all in-memory state for a removed project (tabs, messages, entries). */
+  removeProjectData: (projectId: string) => void;
   /** Reorder open conversation tabs for the active project. */
   reorderTabs: (fromIndex: number, toIndex: number) => void;
   /** Persist a new title and update the in-memory conversation list. */
@@ -227,6 +230,27 @@ export const useConversationStore = create<ConversationStore>()(
           s.tabsByProject[projectId] = tabs;
           if (s.activeTabByProject[projectId] === id) {
             s.activeTabByProject[projectId] = tabs[tabs.length - 1] || null;
+          }
+        });
+      },
+
+      removeProjectData: (projectId) => {
+        const convs = useConversationStore.getState().conversationsByProject[projectId] ?? [];
+        const ids = convs.map((c) => c.id);
+        for (const c of convs) {
+          clearComposerDraft(c.id);
+          // Close the agent session (backend + in-memory entries) if any.
+          void useAgentStore.getState().removeSession(c.id);
+        }
+        // Sessions that never started have no in-memory session object, but
+        // may still have hydrated threads — drop them unconditionally.
+        useAgentStore.getState().removeConversationEntries(ids);
+        set((s) => {
+          delete s.conversationsByProject[projectId];
+          delete s.tabsByProject[projectId];
+          delete s.activeTabByProject[projectId];
+          for (const c of convs) {
+            delete s.messagesByConversation[c.id];
           }
         });
       },

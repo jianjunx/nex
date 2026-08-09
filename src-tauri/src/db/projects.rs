@@ -77,4 +77,33 @@ impl Database {
         conn.execute("UPDATE projects SET last_opened = ?1 WHERE id = ?2", params![now, id])?;
         Ok(now)
     }
+
+    /// Remove a project and everything it owns (conversations, their messages
+    /// and thread snapshots) in one transaction. Fails when the project id
+    /// does not exist so the UI can't silently desync.
+    pub fn delete_project(&self, id: &str) -> Result<(), NexError> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        // Delete in dependency order (FKs are enforced).
+        tx.execute(
+            "DELETE FROM messages WHERE conversation_id IN \
+             (SELECT id FROM conversations WHERE project_id = ?1)",
+            params![id],
+        )?;
+        tx.execute(
+            "DELETE FROM thread_entries WHERE conversation_id IN \
+             (SELECT id FROM conversations WHERE project_id = ?1)",
+            params![id],
+        )?;
+        tx.execute(
+            "DELETE FROM conversations WHERE project_id = ?1",
+            params![id],
+        )?;
+        let n = tx.execute("DELETE FROM projects WHERE id = ?1", params![id])?;
+        tx.commit()?;
+        if n == 0 {
+            return Err(NexError::Database(format!("project not found: {id}")));
+        }
+        Ok(())
+    }
 }

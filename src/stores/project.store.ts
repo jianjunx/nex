@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { persist } from "zustand/middleware";
-import { projectOpen, projectList, projectTouch, type Project } from "../bridge/tauri";
+import { projectOpen, projectList, projectRemove, projectTouch, type Project } from "../bridge/tauri";
 
 interface ProjectStore {
   projects: Project[];
@@ -12,6 +12,7 @@ interface ProjectStore {
   loadProjects: () => Promise<void>;
   openProject: (path: string) => Promise<void>;
   switchProject: (id: string) => void;
+  removeProject: (id: string) => Promise<void>;
 }
 
 // Backend errors arrive as { type, message }; fall back to String(err).
@@ -88,6 +89,14 @@ export const useProjectStore = create<ProjectStore>()(
           .catch(() => {
             /* switch still succeeded; list order stays optimistic */
           });
+      },
+
+      removeProject: async (id: string) => {
+        await projectRemove(id);
+        set((s) => {
+          s.projects = s.projects.filter((p) => p.id !== id);
+          if (s.activeProjectId === id) s.activeProjectId = null;
+        });
       },
     })),
     {

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -250,7 +250,34 @@ export function ProjectSelector() {
               <span className="flex w-full flex-col">
                 <span className="flex items-center justify-between w-full gap-2">
                   <span className="truncate">{p.name}</span>
-                  <StatusDots projectId={p.id} />
+                  <span className="flex items-center gap-1.5">
+                    <StatusDots projectId={p.id} />
+                    <button
+                      type="button"
+                      title={`从项目列表移除 ${p.name}`}
+                      aria-label={`从项目列表移除 ${p.name}`}
+                      className="rounded p-0.5 text-[var(--text-tertiary)] opacity-60 transition-opacity hover:bg-[var(--overlay-hover)] hover:text-[var(--error)] hover:opacity-100"
+                      onPointerDown={(e) => {
+                        // Radix onSelect fires on pointer-up; swallow it so the
+                        // row's switch-project handler doesn't run.
+                        e.stopPropagation();
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void (async () => {
+                          try {
+                            await useProjectStore.getState().removeProject(p.id);
+                            // 清掉该项目的会话页签/消息/线程，避免残留引用已删除项目。
+                            useConversationStore.getState().removeProjectData(p.id);
+                          } catch (err) {
+                            console.error("[ProjectSelector] remove project failed:", err);
+                          }
+                        })();
+                      }}
+                    >
+                      <X size={12} />
+                    </button>
+                  </span>
                 </span>
                 <LatestConversationRow projectId={p.id} />
               </span>

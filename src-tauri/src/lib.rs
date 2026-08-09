@@ -28,6 +28,7 @@ pub fn run() {
             commands::project_cmds::project_open,
             commands::project_cmds::project_list,
             commands::project_cmds::project_touch,
+            commands::project_cmds::project_remove,
             commands::project_cmds::conversation_create,
             commands::project_cmds::conversation_list,
             commands::project_cmds::conversation_get_messages,

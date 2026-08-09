@@ -4,6 +4,7 @@ export const COMMANDS = {
   PROJECT_OPEN: "project_open",
   PROJECT_LIST: "project_list",
   PROJECT_TOUCH: "project_touch",
+  PROJECT_REMOVE: "project_remove",
   // Conversations
   CONVERSATION_CREATE: "conversation_create",
   CONVERSATION_LIST: "conversation_list",

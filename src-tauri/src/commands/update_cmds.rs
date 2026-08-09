@@ -464,25 +464,52 @@ pub async fn update_download_and_install(
     file.flush()
         .await
         .map_err(|e| NexError::Internal(format!("写入安装包失败: {e}")))?;
+    // Release the download handle before launching: a still-open file
+    // (or an AV real-time scan of the freshly-written exe) blocks the
+    // installer from opening it — os error 32 (sharing violation).
+    drop(file);
 
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new(&dest)
-            .spawn()
-            .map_err(|e| NexError::Internal(format!("启动安装程序失败: {e}")))?;
-        // Exit so the NSIS installer can replace the running binaries.
-        app.exit(0);
+        // Windows Defender / other AVs briefly lock newly-downloaded
+        // executables, and a lingering installer from a previous attempt
+        // holds the same path. Retry with short backoff before failing.
+        let mut last_err: Option<std::io::Error> = None;
+        for attempt in 0..5u32 {
+            match std::process::Command::new(&dest).spawn() {
+                Ok(_) => {
+                    // Exit so the NSIS installer can replace the running
+                    // binaries.
+                    app.exit(0);
+                    return Ok(());
+                }
+                Err(e) => last_err = Some(e),
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(
+                500 * (attempt as u64 + 1),
+            ))
+            .await;
+        }
+        let detail = last_err
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        Err(NexError::Internal(format!(
+            "启动安装程序失败: {detail}。若杀毒软件正在扫描安装包，请稍后重试或暂时关闭实时防护；也可手动运行安装包: {}",
+            dest.display()
+        )))
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(not(target_os = "windows"))]
     {
-        std::process::Command::new("open")
-            .arg(&dest)
-            .spawn()
-            .map_err(|e| NexError::Internal(format!("打开安装镜像失败: {e}")))?;
+        #[cfg(target_os = "macos")]
+        {
+            std::process::Command::new("open")
+                .arg(&dest)
+                .spawn()
+                .map_err(|e| NexError::Internal(format!("打开安装镜像失败: {e}")))?;
+        }
+        Ok(())
     }
-
-    Ok(())
 }
 
 /// Open an http(s) URL in the system browser (terminal links, About, etc.).

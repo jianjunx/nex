@@ -11,6 +11,44 @@ import { useAgentStore } from "../../../stores/agent.store";
 import { fileBasename } from "../../editor/pathUtils";
 import { looksLikeFilePath, openPathToken, pathFromToolRawInput } from "./pathToken";
 
+/**
+ * NexAgent 走标准 ACP，工具通知不带 diff content 块（只有 raw_input）。
+ * 对 edit 类工具（edit_file / multi_edit），从 raw_input 的
+ * old_string → new_string 构造伪 diff，让 ThreadDiffBlock 能以
+ * 语言高亮渲染「修改的文件」。multi_edit 取首个 edit 作为代表。
+ */
+function syntheticDiffFromRawInput(raw: unknown): { path?: string; oldText: string; newText: string } | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const path = typeof o.path === "string" && o.path.trim() ? o.path.trim() : undefined;
+  if (Array.isArray(o.edits) && o.edits.length > 0) {
+    const first = o.edits[0] as Record<string, unknown> | undefined;
+    if (first && typeof first.old_string === "string" && typeof first.new_string === "string") {
+      return { path, oldText: first.old_string, newText: first.new_string };
+    }
+    return null;
+  }
+  if (typeof o.old_string === "string" && typeof o.new_string === "string") {
+    return { path, oldText: o.old_string, newText: o.new_string };
+  }
+  return null;
+}
+
+/** 工具卡内嵌 diff：优先 content 里的 diff 块；否则从 rawInput 合成。 */
+// oxlint-disable-next-line react/only-export-components
+export function entryDiffs(entry: ToolCallEntry): { path?: string; oldText: string; newText: string }[] {
+  const fromContent = entry.content.filter((c) => c.type === "diff");
+  if (fromContent.length > 0) {
+    return fromContent.map((c) => ({
+      path: c.path,
+      oldText: c.oldText ?? "",
+      newText: c.newText ?? "",
+    }));
+  }
+  const synthetic = syntheticDiffFromRawInput(entry.rawInput);
+  return synthetic ? [synthetic] : [];
+}
+
 /** Prefer diff path, then rawInput, then a path-like title. */
 function toolEntryFilePath(entry: ToolCallEntry): string | null {
   for (const c of entry.content) {
@@ -74,17 +112,20 @@ export function ToolCallCard({
             isEdit && "max-h-[350px] overflow-y-auto",
           )}
         >
+          {/* 内嵌 diff：标准 ACP 的 diff 块 + NexAgent 从 rawInput 合成的伪 diff */}
+          {entryDiffs(entry).map((d, i) => (
+            <ThreadDiffBlock
+              key={`diff-${i}`}
+              cacheKey={`${entry.id}:diff-${i}`}
+              path={d.path}
+              oldText={d.oldText}
+              newText={d.newText}
+            />
+          ))}
           {entry.content.map((c, i) => {
             if (c.type === "diff") {
-              return (
-                <ThreadDiffBlock
-                  key={i}
-                  cacheKey={`${entry.id}:${i}`}
-                  path={c.path}
-                  oldText={c.oldText}
-                  newText={c.newText}
-                />
-              );
+              // 已在上面 entryDiffs 渲染，避免重复。
+              return null;
             }
             if (c.type === "image" && c.data) {
               const src = `data:${c.mimeType || "image/png"};base64,${c.data}`;

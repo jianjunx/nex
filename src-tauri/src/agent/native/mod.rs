@@ -339,7 +339,7 @@ impl NexNativeAgent {
             }
         }
 
-        let commands = commands::discover(cwd);
+        let commands = commands::discover_with_skills(cwd, &cfg.disabled_skills);
         // Take the cloned connection out first: the `Ref` from `borrow()`
         // would otherwise live across the `await` below (if-let temporaries
         // extend to the end of the block).
@@ -670,7 +670,13 @@ impl acp::Agent for NexNativeAgent {
                 .filter_map(|p| p.text.clone())
                 .collect::<Vec<_>>()
                 .join(" ");
-            let commands = commands::discover(&session.cwd);
+            // Only build the slash catalog when a `/name` might be present;
+            // discovery reads command + skill files on every turn.
+            let commands = if joined.trim_start().starts_with('/') {
+                commands::discover_with_skills(&session.cwd, &cfg.disabled_skills)
+            } else {
+                Vec::new()
+            };
             if let Some(expanded) = commands::expand(&joined, &commands) {
                 let mut next: Vec<ContentPart> = Vec::new();
                 let mut replaced = false;

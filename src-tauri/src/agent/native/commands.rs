@@ -13,7 +13,7 @@
 //! (the chat bubble keeps the user's raw input, the model sees the expansion).
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// A parsed slash command.
 #[derive(Debug, Clone)]
@@ -31,6 +31,51 @@ pub struct Command {
 /// result is sorted by name so the published catalog is byte-stable.
 pub fn discover(cwd: &Path) -> Vec<Command> {
     discover_in(cwd, super::home::commands_dir())
+}
+
+/// Discovers slash commands for a session, merging in installed skills so
+/// they appear in the Composer's `/` menu (Claude Code behaviour: skills are
+/// invokable as slash commands). Commands win name collisions with skills;
+/// disabled skills (config `disabled_skills`) are skipped. Result is sorted
+/// by name so the published catalog is byte-stable.
+pub fn discover_with_skills(cwd: &Path, disabled_skills: &[String]) -> Vec<Command> {
+    discover_with_skills_in(cwd, super::home::commands_dir(), super::home::skills_dir(), disabled_skills)
+}
+
+/// `discover_with_skills` with injectable global dirs (tests).
+pub fn discover_with_skills_in(
+    cwd: &Path,
+    global_commands: Option<PathBuf>,
+    skills_root: Option<PathBuf>,
+    disabled_skills: &[String],
+) -> Vec<Command> {
+    let mut by_name: HashMap<String, Command> = HashMap::new();
+    for cmd in discover_in(cwd, global_commands) {
+        by_name.insert(cmd.name.clone(), cmd);
+    }
+    if let Some(root) = skills_root {
+        for skill in super::skills::discover(&root) {
+            if disabled_skills.iter().any(|d| d == &skill.name) {
+                continue;
+            }
+            if by_name.contains_key(&skill.name) {
+                continue;
+            }
+            let body = super::skills::load_body(&root, &skill.name).unwrap_or_default();
+            by_name.insert(
+                skill.name.clone(),
+                Command {
+                    name: skill.name.clone(),
+                    description: skill.description.clone(),
+                    argument_hint: None,
+                    body,
+                },
+            );
+        }
+    }
+    let mut out: Vec<Command> = by_name.into_values().collect();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
 }
 
 /// `discover` with an injectable global directory (tests).
@@ -239,5 +284,49 @@ mod tests {
         // Same-name project entry wins.
         assert_eq!(cmds[0].description, "project alpha");
         assert!(cmds[0].body.contains("PROJECT"));
+    }
+
+    #[test]
+    fn discover_with_skills_merges_skills_commands_win_and_disabled_skipped() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().join("proj");
+        std::fs::create_dir_all(cwd.join(".nex/commands")).unwrap();
+        write(
+            tmp.path(),
+            "commands/review.md",
+            "---\ndescription: Review code.\n---\nReview $ARGUMENTS",
+        );
+        // A skill sharing the command name must NOT override the command.
+        write(
+            tmp.path(),
+            "skills/review/SKILL.md",
+            "---\nname: review\ndescription: skill review\n---\nSKILL BODY",
+        );
+        // Ordinary skills become slash commands.
+        write(
+            tmp.path(),
+            "skills/tdd/SKILL.md",
+            "---\nname: tdd\ndescription: TDD loop.\n---\nRED GREEN REFACTOR",
+        );
+        write(
+            tmp.path(),
+            "skills/off/SKILL.md",
+            "---\nname: off\ndescription: disabled skill.\n---\nBODY",
+        );
+
+        let cmds = discover_with_skills_in(
+            &cwd,
+            Some(tmp.path().join("commands")),
+            Some(tmp.path().join("skills")),
+            &["off".to_string()],
+        );
+        let names: Vec<&str> = cmds.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["review", "tdd"]);
+        // The command body wins over the same-named skill.
+        assert!(cmds[0].body.contains("Review $"));
+        // The skill command body carries the full skill instructions.
+        let tdd = cmds.iter().find(|c| c.name == "tdd").unwrap();
+        assert_eq!(tdd.description, "TDD loop.");
+        assert!(tdd.body.contains("RED GREEN REFACTOR"));
     }
 }

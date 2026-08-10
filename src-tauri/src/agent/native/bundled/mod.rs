@@ -23,7 +23,14 @@ pub fn ensure_bundled(nex_home: &Path) {
 
 /// Names of bundled skills (used by the settings UI for the `builtin` badge).
 pub fn bundled_skill_names() -> &'static [&'static str] {
-    &["git-commit", "code-review", "debug", "refactor"]
+    &[
+        "git-commit",
+        "code-review",
+        "debug",
+        "refactor",
+        "create-skill",
+        "install-skill",
+    ]
 }
 
 fn write_if_missing(path: &Path, contents: &str) {
@@ -49,6 +56,8 @@ const SKILLS: &[(&str, &str)] = &[
     ("code-review", include_str!("skills/code-review/SKILL.md")),
     ("debug", include_str!("skills/debug/SKILL.md")),
     ("refactor", include_str!("skills/refactor/SKILL.md")),
+    ("create-skill", include_str!("skills/create-skill/SKILL.md")),
+    ("install-skill", include_str!("skills/install-skill/SKILL.md")),
 ];
 
 #[cfg(test)]
@@ -65,5 +74,18 @@ mod tests {
         ensure_bundled(tmp.path());
         assert_eq!(std::fs::read_to_string(&commit).unwrap(), "USER");
         assert!(tmp.path().join("skills/git-commit/SKILL.md").is_file());
+        assert!(tmp.path().join("skills/create-skill/SKILL.md").is_file());
+        assert!(tmp.path().join("skills/install-skill/SKILL.md").is_file());
+        assert_eq!(
+            bundled_skill_names(),
+            &[
+                "git-commit",
+                "code-review",
+                "debug",
+                "refactor",
+                "create-skill",
+                "install-skill",
+            ]
+        );
     }
 }

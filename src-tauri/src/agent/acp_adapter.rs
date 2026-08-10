@@ -1287,6 +1287,7 @@ impl AcpSessionManager {
         app: &AppHandle,
         conversation_id: &str,
         cwd: &str,
+        path_env: std::ffi::OsString,
         config_path: std::path::PathBuf,
     ) -> Result<CreateSessionResult, NexError> {
         let session_key = uuid::Uuid::new_v4().to_string();
@@ -1297,6 +1298,7 @@ impl AcpSessionManager {
         let thread_key = session_key.clone();
         let thread_cwd = cwd.to_string();
         let thread_conversation_id = conversation_id.to_string();
+        let thread_path_env = path_env;
         let thread_sessions = Arc::clone(&self.sessions);
         let thread_pending = Arc::clone(&self.pending_permissions);
         let thread_plans = Arc::clone(&self.pending_plan_approvals);
@@ -1319,6 +1321,7 @@ impl AcpSessionManager {
                         thread_key,
                         thread_cwd,
                         thread_conversation_id,
+                        thread_path_env,
                         config_path,
                         thread_pending,
                         thread_plans,
@@ -1727,6 +1730,7 @@ async fn run_session_native(
     session_key: String,
     cwd: String,
     conversation_id: String,
+    path_env: std::ffi::OsString,
     config_path: std::path::PathBuf,
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
     pending_plan_approvals: Arc<Mutex<HashMap<String, PendingPlanApproval>>>,
@@ -1741,7 +1745,7 @@ async fn run_session_native(
     // `agent_end` is driven by the agent's connection.
     let (client_end, agent_end) = tokio::io::duplex(64 * 1024);
 
-    let agent = NexNativeAgent::new(config_path);
+    let agent = NexNativeAgent::new(config_path, path_env);
 
     // Split the agent endpoint into read/write halves and build the agent side.
     let (agent_read, agent_write) = tokio::io::split(agent_end);

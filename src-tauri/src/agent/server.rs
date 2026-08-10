@@ -226,10 +226,11 @@ impl AgentSessionManager {
     ) -> Result<CreateSessionResult, NexError> {
         // The built-in native agent runs in-process over a memory ACP pipe;
         // it needs no launch spec, node runtime, or PATH resolution.
+        let shell_path = self.path_for_cwd(cwd).await;
         if matches!(target, SessionTarget::Native) {
             return self
                 .acp
-                .create_native_session(app, conversation_id, cwd, self.app_data_dir.clone())
+                .create_native_session(app, conversation_id, cwd, shell_path, self.app_data_dir.clone())
                 .await;
         }
         let spec = match target {
@@ -248,7 +249,6 @@ impl AgentSessionManager {
                 // Prefer project-scoped PATH (direnv) over bare login-shell
                 // PATH so agents see the same tools as an interactive shell
                 // in this cwd. Falls back to ShellEnv when capture fails.
-                let shell_path = self.path_for_cwd(cwd).await;
                 launch::resolve_registry(
                     &entry,
                     cwd,
@@ -262,7 +262,6 @@ impl AgentSessionManager {
                 let server = self.custom.find(&id).ok_or_else(|| {
                     NexError::Agent(format!("unknown custom server `{id}`"))
                 })?;
-                let shell_path = self.path_for_cwd(cwd).await;
                 launch::resolve_custom(&server.command, server.env.clone(), cwd, &shell_path)?
             }
             SessionTarget::Native => unreachable!("native target handled above"),

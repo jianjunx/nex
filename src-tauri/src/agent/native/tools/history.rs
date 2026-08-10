@@ -221,6 +221,7 @@ mod tests {
         let ctx = ToolCtx {
             cwd: tmp.path().to_path_buf(),
             bash_timeout: std::time::Duration::from_secs(10),
+            path_env: std::env::var_os("PATH").unwrap_or_default(),
             archive_dir: archive,
             jobs: std::rc::Rc::new(std::cell::RefCell::new(
                 super::super::jobs::JobTable::default(),

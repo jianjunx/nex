@@ -929,6 +929,7 @@ data: \"result\":{\"ok\":true}}\n\
         let ctx = ToolCtx {
             cwd: std::env::temp_dir(),
             bash_timeout: Duration::from_secs(5),
+            path_env: std::env::var_os("PATH").unwrap_or_default(),
             archive_dir: std::env::temp_dir(),
             jobs: Rc::new(RefCell::new(
                 crate::agent::native::tools::jobs::JobTable::default(),

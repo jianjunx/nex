@@ -106,6 +106,7 @@ mod tests {
         ToolCtx {
             cwd: PathBuf::from("/tmp"),
             bash_timeout: Duration::from_secs(1),
+            path_env: std::env::var_os("PATH").unwrap_or_default(),
             archive_dir: PathBuf::from("/tmp/.nex-archive"),
             jobs: Rc::new(RefCell::new(
                 crate::agent::native::tools::jobs::JobTable::default(),

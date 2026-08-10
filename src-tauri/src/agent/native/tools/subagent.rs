@@ -205,6 +205,7 @@ mod tests {
         ToolCtx {
             cwd: dir.to_path_buf(),
             bash_timeout: std::time::Duration::from_secs(10),
+            path_env: std::env::var_os("PATH").unwrap_or_default(),
             archive_dir: dir.join(".nex-archive"),
             jobs: Rc::new(RefCell::new(JobTable::default())),
             harness: None,
@@ -312,6 +313,7 @@ mod tests {
                     concurrency: 2,
                     cwd: tmp.path().to_path_buf(),
                     bash_timeout: std::time::Duration::from_secs(5),
+                    path_env: std::env::var_os("PATH").unwrap_or_default(),
                     archive_dir: tmp.path().join(".nex-archive"),
                     cancelled: Rc::new(std::cell::Cell::new(false)),
                     mode_id: Rc::new(std::cell::RefCell::new("code".to_string())),

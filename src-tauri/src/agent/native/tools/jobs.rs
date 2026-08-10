@@ -51,13 +51,26 @@ impl JobTable {
     /// Spawns `command` under the platform shell in `cwd`, returning the job id.
     /// Sync on purpose: nothing here awaits (the drain/kill supervision runs on
     /// its own task), so callers can hold a `RefMut` without crossing an await.
-    pub fn spawn(&mut self, command: &str, cwd: &std::path::Path) -> Result<String, String> {
+    pub fn spawn(
+        &mut self,
+        command: &str,
+        cwd: &std::path::Path,
+        path_env: &std::ffi::OsStr,
+    ) -> Result<String, String> {
         let mut cmd = super::shell_command_script(super::shell_command(), command);
         cmd.current_dir(cwd)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
+        #[cfg(windows)]
+        {
+            cmd.env("PATH", path_env).env("Path", path_env);
+        }
+        #[cfg(not(windows))]
+        {
+            cmd.env("PATH", path_env);
+        }
         let mut child = cmd
             .spawn()
             .map_err(|e| format!("failed to spawn background job: {e}"))?;
@@ -173,7 +186,7 @@ impl Tool for RunInBackground {
     }
     async fn execute(&self, args: serde_json::Value, ctx: &ToolCtx) -> Result<String, String> {
         let command = arg_str(&args, "command")?;
-        let id = ctx.jobs.borrow_mut().spawn(&command, &ctx.cwd)?;
+        let id = ctx.jobs.borrow_mut().spawn(&command, &ctx.cwd, &ctx.path_env)?;
         Ok(format!("started background job `{id}`: {command}"))
     }
 }
@@ -339,6 +352,7 @@ mod tests {
         ToolCtx {
             cwd: dir.to_path_buf(),
             bash_timeout: std::time::Duration::from_secs(10),
+            path_env: std::env::var_os("PATH").unwrap_or_default(),
             archive_dir: dir.join(".nex-archive"),
             jobs: Rc::new(RefCell::new(JobTable::default())),
             harness: None,

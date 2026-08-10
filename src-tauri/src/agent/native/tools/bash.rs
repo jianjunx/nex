@@ -4,6 +4,16 @@
 use super::{arg_str, truncate_output, Tool, ToolCtx};
 use agent_client_protocol as acp;
 
+#[cfg(windows)]
+fn apply_path_env(cmd: &mut tokio::process::Command, path_env: &std::ffi::OsStr) {
+    cmd.env("PATH", path_env).env("Path", path_env);
+}
+
+#[cfg(not(windows))]
+fn apply_path_env(cmd: &mut tokio::process::Command, path_env: &std::ffi::OsStr) {
+    cmd.env("PATH", path_env);
+}
+
 /// Cap on total output characters.
 const MAX_OUTPUT_CHARS: usize = 20_000;
 
@@ -44,6 +54,7 @@ impl Tool for Bash {
 
         let mut cmd = super::shell_command_script(super::shell_command(), &command);
         cmd.current_dir(&ctx.cwd);
+        apply_path_env(&mut cmd, &ctx.path_env);
         // `output()` kills the child when its future is dropped (timeout).
         let output = match tokio::time::timeout(timeout, cmd.output()).await {
             Ok(res) => res.map_err(|e| format!("failed to run command: {e}"))?,
@@ -83,6 +94,7 @@ mod tests {
         ToolCtx {
             cwd: dir.to_path_buf(),
             bash_timeout: Duration::from_secs(10),
+            path_env: std::env::var_os("PATH").unwrap_or_default(),
             archive_dir: dir.join(".nex-archive"),
             jobs: std::rc::Rc::new(std::cell::RefCell::new(
                 crate::agent::native::tools::jobs::JobTable::default(),
@@ -126,7 +138,7 @@ mod tests {
     async fn bash_nonzero_is_error() {
         let tmp = tempfile::tempdir().unwrap();
         let err = Bash
-            .execute(serde_json::json!({"command": "exit 3"}), &ctx(tmp.path()))
+            .execute(serde_json::json!({ "command": if cfg!(windows) { "exit /b 3" } else { "sh -c 'exit 3'" } }), &ctx(tmp.path()))
             .await
             .unwrap_err();
         assert!(err.contains("exit code: 3"));

@@ -8,6 +8,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -59,6 +60,8 @@ struct SessionHandles {
 struct NativeSession {
     /// Session working dir (the tool sandbox root).
     cwd: PathBuf,
+    /// PATH captured from the project/login shell for this session.
+    path_env: OsString,
     handles: SessionHandles,
     /// Append-only OpenAI-format transcript (system prompt pushed lazily on
     /// the first turn so config edits take effect for fresh sessions).
@@ -106,6 +109,7 @@ struct NativeInner {
     /// (compaction + subagent spills) live under `<app_data>/.nex-archive/`
     /// so the user's workspace and git status stay clean.
     archive_root: PathBuf,
+    default_path_env: OsString,
 }
 
 /// A cloneable handle to the shared native-agent state. The instance handed to
@@ -116,7 +120,7 @@ pub struct NexNativeAgent {
 }
 
 impl NexNativeAgent {
-    pub fn new(config_path: PathBuf) -> Self {
+    pub fn new(config_path: PathBuf, default_path_env: OsString) -> Self {
         let archive_root = config_path
             .parent()
             .map(|p| p.to_path_buf())
@@ -128,6 +132,7 @@ impl NexNativeAgent {
                 handles: RefCell::new(HashMap::new()),
                 config_path,
                 archive_root,
+                default_path_env,
             }),
         }
     }
@@ -454,6 +459,7 @@ impl acp::Agent for NexNativeAgent {
             })?;
         let session = NativeSession {
             cwd: cwd.clone(),
+            path_env: self.inner.default_path_env.clone(),
             handles: handles.clone_handles(),
             history: Vec::new(),
             jobs: Rc::new(RefCell::new(tools::jobs::JobTable::default())),
@@ -540,6 +546,7 @@ impl acp::Agent for NexNativeAgent {
         })?;
         let session = NativeSession {
             cwd: cwd.clone(),
+            path_env: self.inner.default_path_env.clone(),
             handles: handles.clone_handles(),
             history: arch.history,
             jobs: Rc::new(RefCell::new(tools::jobs::JobTable::default())),
@@ -750,6 +757,7 @@ impl acp::Agent for NexNativeAgent {
                     concurrency: (cfg.agent.max_subagent_concurrency as usize).max(1),
                     cwd: session.cwd.clone(),
                     bash_timeout,
+                    path_env: session.path_env.clone(),
                     archive_dir: archive_dir.clone(),
                     cancelled: session.handles.cancelled.clone(),
                     mode_id: session.handles.mode_id.clone(),
@@ -773,6 +781,7 @@ impl acp::Agent for NexNativeAgent {
                     tool_ctx: ToolCtx {
                         cwd: session.cwd.clone(),
                         bash_timeout,
+                        path_env: session.path_env.clone(),
                         archive_dir,
                         jobs: session.jobs.clone(),
                         harness: Some(harness),
@@ -1135,7 +1144,10 @@ mod tests {
             .run_until(async {
                 let (client_end, agent_end) = tokio::io::duplex(64 * 1024);
 
-                let agent = NexNativeAgent::new(std::env::temp_dir());
+                let agent = NexNativeAgent::new(
+                    std::env::temp_dir(),
+                    std::env::var_os("PATH").unwrap_or_default(),
+                );
                 let (agent_read, agent_write) = tokio::io::split(agent_end);
                 let (agent_conn, agent_io_task) = acp::AgentSideConnection::new(
                     agent.clone(),
@@ -1229,7 +1241,10 @@ mod tests {
         )];
         cfg.default_model = Some("deepseek/deepseek-reasoner".into());
         cfg.save(tmp.path()).unwrap();
-        let agent = NexNativeAgent::new(tmp.path().to_path_buf());
+        let agent = NexNativeAgent::new(
+            tmp.path().to_path_buf(),
+            std::env::var_os("PATH").unwrap_or_default(),
+        );
         let session = agent
             .new_session(acp::NewSessionRequest {
                 cwd: std::env::temp_dir(),
@@ -1307,7 +1322,10 @@ mod tests {
     /// (and so the UI isn't lying about the current mode).
     #[tokio::test(flavor = "current_thread")]
     async fn set_session_mode_works_while_session_checked_out() {
-        let agent = NexNativeAgent::new(std::env::temp_dir());
+        let agent = NexNativeAgent::new(
+            std::env::temp_dir(),
+            std::env::var_os("PATH").unwrap_or_default(),
+        );
         let session = agent
             .new_session(acp::NewSessionRequest {
                 cwd: std::env::temp_dir(),
@@ -1389,7 +1407,10 @@ mod tests {
                 )];
                 cfg.default_model = Some("deepseek/deepseek-reasoner".into());
                 cfg.save(tmp.path()).unwrap();
-                let agent = NexNativeAgent::new(tmp.path().to_path_buf());
+                let agent = NexNativeAgent::new(
+                    tmp.path().to_path_buf(),
+                    std::env::var_os("PATH").unwrap_or_default(),
+                );
 
                 let (client_end, agent_end) = tokio::io::duplex(64 * 1024);
                 let (agent_read, agent_write) = tokio::io::split(agent_end);
@@ -1544,7 +1565,10 @@ mod tests {
         tokio::task::LocalSet::new()
             .run_until(async {
                 let (client_end, agent_end) = tokio::io::duplex(64 * 1024);
-                let agent = NexNativeAgent::new(dir.clone());
+                let agent = NexNativeAgent::new(
+                    dir.clone(),
+                    std::env::var_os("PATH").unwrap_or_default(),
+                );
                 let (agent_read, agent_write) = tokio::io::split(agent_end);
                 let (agent_conn, agent_io) = acp::AgentSideConnection::new(
                     agent.clone(),
@@ -1620,7 +1644,10 @@ mod tests {
     );
     fn duplex_pair(config_path: PathBuf) -> DuplexPair {
         let (client_end, agent_end) = tokio::io::duplex(64 * 1024);
-        let agent = NexNativeAgent::new(config_path);
+        let agent = NexNativeAgent::new(
+            config_path,
+            std::env::var_os("PATH").unwrap_or_default(),
+        );
         let (agent_read, agent_write) = tokio::io::split(agent_end);
         let (agent_conn, agent_io) = acp::AgentSideConnection::new(
             agent.clone(),

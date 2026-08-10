@@ -18,6 +18,7 @@ pub mod subagent;
 pub mod todo;
 
 use std::cell::RefCell;
+use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
@@ -32,6 +33,8 @@ pub struct ToolCtx {
     pub cwd: PathBuf,
     /// Synchronous `bash` tool timeout.
     pub bash_timeout: Duration,
+    /// Project/login-shell PATH used for shell-based tools.
+    pub path_env: OsString,
     /// Where compacted transcript chunks are archived (`history` searches it)
     /// and where oversized subagent results are spilled.
     pub archive_dir: PathBuf,

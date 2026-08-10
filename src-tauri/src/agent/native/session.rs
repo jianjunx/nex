@@ -8,6 +8,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -103,6 +104,7 @@ pub struct SubagentHarness {
     pub concurrency: usize,
     pub cwd: PathBuf,
     pub bash_timeout: Duration,
+    pub path_env: OsString,
     pub archive_dir: PathBuf,
     /// Shared cancellation flag of the parent turn.
     pub cancelled: Rc<Cell<bool>>,
@@ -120,6 +122,7 @@ pub async fn run_subagent(harness: &SubagentHarness, task: &str) -> Result<Strin
     let tool_ctx = ToolCtx {
         cwd: harness.cwd.clone(),
         bash_timeout: harness.bash_timeout,
+        path_env: harness.path_env.clone(),
         archive_dir: harness.archive_dir.clone(),
         jobs: Rc::new(RefCell::new(super::tools::jobs::JobTable::default())),
         // No harness on the child: subagents cannot spawn subagents.
@@ -988,6 +991,7 @@ mod tests {
             tool_ctx: ToolCtx {
                 cwd: cwd.to_path_buf(),
                 bash_timeout: std::time::Duration::from_secs(10),
+                path_env: std::env::var_os("PATH").unwrap_or_default(),
                 archive_dir: cwd.join(".nex-archive"),
                 jobs: Rc::new(RefCell::new(
                     crate::agent::native::tools::jobs::JobTable::default(),

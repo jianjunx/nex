@@ -315,6 +315,7 @@ mod tests {
                     bash_timeout: std::time::Duration::from_secs(5),
                     path_env: std::env::var_os("PATH").unwrap_or_default(),
                     archive_dir: tmp.path().join(".nex-archive"),
+                    context_window: 0,
                     cancelled: Rc::new(std::cell::Cell::new(false)),
                     mode_id: Rc::new(std::cell::RefCell::new("code".to_string())),
                 };

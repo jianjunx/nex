@@ -166,6 +166,18 @@ impl Provider for DeepSeekProvider {
         "deepseek"
     }
 
+    fn reserved_response_hint(&self, model_id: &str) -> Option<u64> {
+        // DeepSeek caps `max_tokens` at 8k by default; reasoning models
+        // hit that ceiling with hidden chain-of-thought, so reserve more
+        // headroom up front rather than discovering it mid-stream.
+        let lower = model_id.to_ascii_lowercase();
+        if lower.contains("reason") || lower.contains("thinking") {
+            Some(8192)
+        } else {
+            Some(4096)
+        }
+    }
+
     async fn stream(&self, req: ChatRequest) -> Result<ChunkStream, NexError> {
         let body = self.build_body(&req);
         let resp = self.send_with_retry(&body).await?;
@@ -385,7 +397,16 @@ impl From<SseUsage> for Usage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::native::provider::Provider;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn reserved_response_hint_picks_reasoning_budget() {
+        let p = DeepSeekProvider::new("https://api.deepseek.com/v1", "k");
+        assert_eq!(p.reserved_response_hint("deepseek-chat"), Some(4096));
+        assert_eq!(p.reserved_response_hint("deepseek-reasoner"), Some(8192));
+        assert_eq!(p.reserved_response_hint("kimi-thinking"), Some(8192));
+    }
 
     #[tokio::test]
     async fn accumulator_merges_split_deltas() {

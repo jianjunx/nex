@@ -16,6 +16,7 @@ use std::sync::Arc;
 use agent_client_protocol::{self as acp};
 
 pub mod archive;
+pub mod budget;
 pub mod bundled;
 pub mod capabilities;
 pub mod commands;
@@ -759,6 +760,7 @@ impl acp::Agent for NexNativeAgent {
                     bash_timeout,
                     path_env: session.path_env.clone(),
                     archive_dir: archive_dir.clone(),
+                    context_window: cfg.context_window_for(&model_id),
                     cancelled: session.handles.cancelled.clone(),
                     mode_id: session.handles.mode_id.clone(),
                 });

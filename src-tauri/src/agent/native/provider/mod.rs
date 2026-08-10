@@ -355,6 +355,13 @@ pub trait Provider: Send + Sync {
     fn name(&self) -> &str;
     /// Start streaming; chunks arrive on the returned receiver.
     async fn stream(&self, req: ChatRequest) -> Result<ChunkStream, NexError>;
+    /// Provider's preferred reserved response budget for `model_id`, if
+    /// known. Returning `None` means "use the global default", which the
+    /// budget module derives from model id heuristics. Keep this cheap —
+    /// it is queried on every turn.
+    fn reserved_response_hint(&self, _model_id: &str) -> Option<u64> {
+        None
+    }
 }
 
 #[cfg(test)]

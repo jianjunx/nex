@@ -22,7 +22,7 @@ use super::provider::{
 };
 use super::tools::todo::parse_todos;
 use super::tools::{truncate_output, ToolCtx, ToolRegistry};
-use super::{compact, context};
+use super::{budget, context};
 
 /// Read-only tool calls in one round run concurrently, capped by this.
 const PARALLEL_BATCH_LIMIT: usize = 8;
@@ -106,6 +106,9 @@ pub struct SubagentHarness {
     pub bash_timeout: Duration,
     pub path_env: OsString,
     pub archive_dir: PathBuf,
+    /// Effective context window for the parent session; passed through so
+    /// subagent transcripts honour the same hard budget.
+    pub context_window: u64,
     /// Shared cancellation flag of the parent turn.
     pub cancelled: Rc<Cell<bool>>,
     /// Parent session mode (Auto skips approval prompts for subagents too).
@@ -145,7 +148,7 @@ pub async fn run_subagent(harness: &SubagentHarness, task: &str) -> Result<Strin
         cancelled: harness.cancelled.clone(),
         auto_allow: Rc::new(RefCell::new(HashSet::new())),
         tool_ctx,
-        context_window: 0,
+        context_window: harness.context_window,
         usage: RefCell::new(Usage::default()),
     };
     let mut messages = vec![ChatMessage::system(context::subagent_prompt(
@@ -211,8 +214,28 @@ pub async fn run_turn(
             return acp::StopReason::Cancelled;
         }
 
-        // Tiered compression before assembling the request (window=0 = off).
-        compact::maybe_compress(messages, env.context_window, &env.tool_ctx.archive_dir);
+        // Budget-driven compression before assembling the request.
+        // `window = 0` is the legacy sentinel for "compression disabled",
+        // kept for users who deliberately want the agent to send an
+        // unbounded transcript.
+        let budget = budget::resolve_for_session(
+            env.provider.as_ref(),
+            &env.model,
+            env.reasoning,
+            env.context_window,
+        );
+        let outcome = budget::enforce(messages, budget, &env.tool_ctx.archive_dir);
+        if outcome.passes > 0 {
+            log::debug!(
+                "context budget: initial={} final={} budget={} passes={} snipped={} folded={}",
+                outcome.initial_tokens,
+                outcome.final_tokens,
+                budget.prompt_budget,
+                outcome.passes,
+                outcome.total_snipped,
+                outcome.total_folded,
+            );
+        }
 
         // Hit the optional step cap: one final text-only turn (OpenCode-style),
         // then stop. `max_steps == 0` means unlimited.
@@ -1523,5 +1546,56 @@ mod tests {
                 );
             })
             .await;
+    }
+
+    /// `context_window` is threaded from the parent session into the
+    /// subagent's `TurnEnv`. With `context_window = 0` the subagent
+    /// transcript is left untouched (legacy behaviour preserved); with a
+    /// real window an over-budget transcript is compacted.
+    #[tokio::test(flavor = "current_thread")]
+    async fn subagent_compaction_respects_context_window() {
+        // Simulate an over-budget subagent transcript: many heavy tool
+        // results after the system prompt. The compact pass should
+        // snip them when `context_window > 0`, and leave them alone when
+        // it is `0` (the legacy sentinel).
+        let mut msgs = vec![ChatMessage::system("sys")];
+        for i in 0..6 {
+            msgs.push(ChatMessage::user(format!("user {i}")));
+            msgs.push(ChatMessage::tool_result(
+                &format!("id{i}"),
+                &format!("payload-{i}-{}", "z".repeat(4000)),
+            ));
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Disabled window: transcript unchanged.
+        let mut disabled = msgs.clone();
+        let before = compact::estimate_tokens(&disabled);
+        budget::enforce(
+            &mut disabled,
+            budget::ContextBudget {
+                model_window: 0,
+                reserved_response: 0,
+                safety_margin: 0,
+                prompt_budget: 0,
+            },
+            tmp.path(),
+        );
+        assert_eq!(compact::estimate_tokens(&disabled), before);
+
+        // Active window: transcript shrinks below the budget.
+        let mut active = msgs.clone();
+        let budget = budget::resolve(16_384, 4096, 2048);
+        let outcome = budget::enforce(&mut active, budget, tmp.path());
+        assert!(
+            outcome.passes >= 1,
+            "subagent with context_window>0 must compact"
+        );
+        assert!(compact::estimate_tokens(&active) <= budget.prompt_budget);
+        assert!(
+            compact::estimate_tokens(&active) < before,
+            "active window must produce a smaller transcript"
+        );
     }
 }

@@ -180,6 +180,10 @@ function freshProvider(): NativeAgentProvider {
   };
 }
 
+function configsEqual(a: NativeAgentConfig, b: NativeAgentConfig): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 const SUB_TABS: { id: SubTab; label: string }[] = [
   { id: "providers", label: "模型供应商" },
   { id: "mcp", label: "MCP" },
@@ -192,6 +196,7 @@ const SUB_TABS: { id: SubTab; label: string }[] = [
  */
 export function NexAgentSection() {
   const [config, setConfig] = useState<NativeAgentConfig | null>(null);
+  const [savedConfig, setSavedConfig] = useState<NativeAgentConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -218,7 +223,10 @@ export function NexAgentSection() {
     let cancelled = false;
     void nativeAgentGetConfig()
       .then((cfg) => {
-        if (!cancelled) setConfig(cfg);
+        if (!cancelled) {
+          setConfig(cfg);
+          setSavedConfig(cfg);
+        }
       })
       .catch((err) => {
         if (!cancelled) setError(errorMessage(err));
@@ -232,40 +240,65 @@ export function NexAgentSection() {
     };
   }, [reloadExtras]);
 
-  const setProviders = (updater: (ps: NativeAgentProvider[]) => NativeAgentProvider[]) => {
-    setConfig((cfg) => (cfg ? { ...cfg, providers: updater(cfg.providers) } : cfg));
-  };
-
-  const handleSave = async () => {
-    if (!config) return;
+  const persistConfig = async (configToSave: NativeAgentConfig, options?: { syncDraft?: boolean }) => {
     setSaving(true);
     setError(null);
     setSaved(false);
     try {
-      await nativeAgentSetConfig(config);
+      await nativeAgentSetConfig(configToSave);
+      setSavedConfig(configToSave);
+      if (options?.syncDraft) setConfig(configToSave);
       await useAgentStore.getState().refreshNativeAutoReview();
       setSaved(true);
     } catch (err) {
       setError(errorMessage(err));
+      throw err;
     } finally {
       setSaving(false);
     }
   };
 
-  const saveProvider = (provider: NativeAgentProvider, isNew: boolean) => {
-    setProviders((ps) => {
-      if (isNew) return [...ps, provider];
-      return ps.map((p) => (p.id === provider.id ? provider : p));
-    });
+  const handleSave = async () => {
+    if (!config) return;
+    await persistConfig(config, { syncDraft: true });
+  };
+
+  const saveProvider = async (provider: NativeAgentProvider, isNew: boolean) => {
+    if (!config || !savedConfig) return;
+    const nextProviders = isNew
+      ? [...savedConfig.providers, provider]
+      : savedConfig.providers.map((p) => (p.id === provider.id ? provider : p));
+    const nextSavedConfig: NativeAgentConfig = {
+      ...savedConfig,
+      providers: nextProviders,
+    };
+    const nextDraftConfig: NativeAgentConfig = {
+      ...config,
+      providers: isNew
+        ? [...config.providers, provider]
+        : config.providers.map((p) => (p.id === provider.id ? provider : p)),
+    };
+    await persistConfig(nextSavedConfig);
+    setConfig(nextDraftConfig);
+    setSaved(configsEqual(nextDraftConfig, nextSavedConfig));
     setEditor(null);
   };
 
-  const removeProvider = (pid: string) => {
-    setProviders((ps) => ps.filter((p) => p.id !== pid));
-    setConfig((cfg) => {
-      if (!cfg?.defaultModel?.startsWith(`${pid}/`)) return cfg;
-      return { ...cfg, defaultModel: null };
-    });
+  const removeProvider = async (pid: string) => {
+    if (!config || !savedConfig) return;
+    const nextSavedConfig: NativeAgentConfig = {
+      ...savedConfig,
+      providers: savedConfig.providers.filter((p) => p.id !== pid),
+      defaultModel: savedConfig.defaultModel?.startsWith(`${pid}/`) ? null : savedConfig.defaultModel,
+    };
+    const nextDraftConfig: NativeAgentConfig = {
+      ...config,
+      providers: config.providers.filter((p) => p.id !== pid),
+      defaultModel: config.defaultModel?.startsWith(`${pid}/`) ? null : config.defaultModel,
+    };
+    await persistConfig(nextSavedConfig);
+    setConfig(nextDraftConfig);
+    setSaved(configsEqual(nextDraftConfig, nextSavedConfig));
     setEditor(null);
   };
 
@@ -433,9 +466,9 @@ export function NexAgentSection() {
 
       {error && <p className="text-xs text-[var(--error)]">{error}</p>}
 
-      {(tab === "providers" || tab === "advanced") && (
+      {tab === "advanced" && (
         <div className="flex items-center gap-2">
-          <Button size="sm" disabled={saving} onClick={() => void handleSave()}>
+          <Button size="sm" disabled={saving} onClick={() => void handleSave().catch(() => {})}>
             {saving ? "保存中…" : "保存"}
           </Button>
           {saved && <span className="text-xs text-[var(--text-tertiary)]">已保存</span>}
@@ -446,6 +479,7 @@ export function NexAgentSection() {
         <ProviderEditorDialog
           mode={editor.mode}
           provider={editor.provider}
+          saving={saving}
           onClose={() => setEditor(null)}
           onSave={(p) => saveProvider(p, editor.mode === "add")}
           onDelete={editor.mode === "edit" ? () => removeProvider(editor.provider.id) : undefined}
@@ -475,15 +509,17 @@ export function NexAgentSection() {
 function ProviderEditorDialog({
   mode,
   provider: initial,
+  saving,
   onClose,
   onSave,
   onDelete,
 }: {
   mode: "add" | "edit";
   provider: NativeAgentProvider;
+  saving: boolean;
   onClose: () => void;
-  onSave: (p: NativeAgentProvider) => void;
-  onDelete?: () => void;
+  onSave: (p: NativeAgentProvider) => Promise<void>;
+  onDelete?: () => Promise<void>;
 }) {
   const [p, setP] = useState(initial);
   const [modelDraft, setModelDraft] = useState("");
@@ -493,6 +529,7 @@ function ProviderEditorDialog({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [probingId, setProbingId] = useState<string | null>(null);
   const [probeError, setProbeError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const patchModel = (modelId: string, patch: Partial<NativeAgentModel>) => {
     setP((prev) => ({
@@ -651,7 +688,12 @@ function ProviderEditorDialog({
   };
 
   return (
-    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+    <Dialog
+      open
+      onOpenChange={(o) => {
+        if (!o && !saving) onClose();
+      }}
+    >
       <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{mode === "add" ? "添加供应商" : "编辑供应商"}</DialogTitle>
@@ -845,16 +887,35 @@ function ProviderEditorDialog({
         <DialogFooter className="gap-2 sm:justify-between">
           <div>
             {onDelete && (
-              <Button size="sm" variant="ghost" className="text-[var(--error)]" onClick={onDelete}>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-[var(--error)]"
+                disabled={saving}
+                onClick={() => {
+                  setSaveError(null);
+                  void onDelete().catch((err) => setSaveError(errorMessage(err)));
+                }}
+              >
                 <Trash2 size={14} /> 删除供应商
               </Button>
             )}
           </div>
-          <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={onClose}>取消</Button>
-            <Button size="sm" onClick={() => onSave(p)} disabled={!p.name.trim()}>
-              {mode === "add" ? "添加" : "确定"}
-            </Button>
+          <div className="flex flex-col items-end gap-2">
+            {saveError && <p className="text-xs text-[var(--error)]">{saveError}</p>}
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={onClose} disabled={saving}>取消</Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  setSaveError(null);
+                  void onSave(p).catch((err) => setSaveError(errorMessage(err)));
+                }}
+                disabled={saving || !p.name.trim()}
+              >
+                {saving ? "保存中…" : mode === "add" ? "添加供应商" : "保存供应商"}
+              </Button>
+            </div>
           </div>
         </DialogFooter>
       </DialogContent>

@@ -1,0 +1,21 @@
+src/features/settings/sections/NexAgentSection.test.tsx
+  s_1e1d97f8585b06::t_ff954891f0f20a 61,135-168
+src/features/settings/sections/NexAgentSection.tsx
+  s_1e1d97f8585b06::t_0c9fbc061a130b 261-273,411-417,426,428-434,446,448-454,465-469
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "08c8e04bdf6b5d07ff6de3b487bdc23889eb6cbf",
+  "prompts": {},
+  "sessions": {
+    "s_1e1d97f8585b06": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_1e1d97f8585b06",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

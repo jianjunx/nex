@@ -1,0 +1,19 @@
+docs/superpowers/plans/2026-08-10-nex-agent-context-optimization.md
+  s_ccc26c98f9e43e::t_21674307c4c16f 1-637
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "65fcdcbacf63dacd37dc95d338163c843a0931f8",
+  "prompts": {},
+  "sessions": {
+    "s_ccc26c98f9e43e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_ccc26c98f9e43e",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

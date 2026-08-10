@@ -1,0 +1,25 @@
+src-tauri/src/agent/native/bundled/skills/install-skill/SKILL.md
+  s_a2343bff565f0e::t_ecb4f17ac50dd6 1-82
+src-tauri/src/agent/native/bundled/mod.rs
+  s_a2343bff565f0e::t_f56ee91bb0d321 26-33
+  s_a2343bff565f0e::t_304fba6680824f 59-60
+  s_a2343bff565f0e::t_3e398cfc8d3075 77-89
+src-tauri/src/agent/native/bundled/skills/create-skill/SKILL.md
+  s_a2343bff565f0e::t_a6e8f6a27beea0 1-65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "6ef0f0ec1615161e4b4d445f0692becee2204b3a",
+  "prompts": {},
+  "sessions": {
+    "s_a2343bff565f0e": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "cf927593-3741-4aec-9cba-d46890432968",
+        "model": "grok-4.5"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

@@ -258,9 +258,19 @@ export function NexAgentSection() {
     }
   };
 
-  const handleSave = async () => {
-    if (!config) return;
-    await persistConfig(config, { syncDraft: true });
+  const updateAdvancedConfig = async (updater: (cfg: NativeAgentConfig) => NativeAgentConfig) => {
+    if (!config || !savedConfig) return;
+    const currentConfig = config;
+    const nextSavedConfig = updater(savedConfig);
+    const nextDraftConfig = updater(currentConfig);
+    setConfig(nextDraftConfig);
+    try {
+      await persistConfig(nextSavedConfig);
+      setConfig(nextDraftConfig);
+      setSaved(configsEqual(nextDraftConfig, nextSavedConfig));
+    } catch {
+      setConfig(currentConfig);
+    }
   };
 
   const saveProvider = async (provider: NativeAgentProvider, isNew: boolean) => {
@@ -398,12 +408,13 @@ export function NexAgentSection() {
             <Switch
               id="nex-auto-review"
               checked={!!config.agent.autoReview}
-              onCheckedChange={(checked) =>
-                setConfig({
-                  ...config,
-                  agent: { ...config.agent, autoReview: checked },
-                })
-              }
+              disabled={saving}
+              onCheckedChange={(checked) => {
+                void updateAdvancedConfig((cfg) => ({
+                  ...cfg,
+                  agent: { ...cfg.agent, autoReview: checked },
+                }));
+              }}
             />
           </div>
           <div className="space-y-1">
@@ -412,13 +423,15 @@ export function NexAgentSection() {
               id="nex-max-steps"
               type="number"
               min={0}
+              disabled={saving}
               value={config.agent.maxSteps}
-              onChange={(e) =>
-                setConfig({
-                  ...config,
-                  agent: { ...config.agent, maxSteps: Math.max(0, Number(e.target.value) || 0) },
-                })
-              }
+              onChange={(e) => {
+                const value = Math.max(0, Number(e.target.value) || 0);
+                void updateAdvancedConfig((cfg) => ({
+                  ...cfg,
+                  agent: { ...cfg.agent, maxSteps: value },
+                }));
+              }}
             />
             <p className="text-xs text-[var(--text-tertiary)]">
               单轮「模型 ↔ 工具」循环上限。0 表示不限制（推荐）。
@@ -430,13 +443,15 @@ export function NexAgentSection() {
               id="nex-context-window"
               type="number"
               min={0}
+              disabled={saving}
               value={config.agent.contextWindow}
-              onChange={(e) =>
-                setConfig({
-                  ...config,
-                  agent: { ...config.agent, contextWindow: Math.max(0, Number(e.target.value) || 0) },
-                })
-              }
+              onChange={(e) => {
+                const value = Math.max(0, Number(e.target.value) || 0);
+                void updateAdvancedConfig((cfg) => ({
+                  ...cfg,
+                  agent: { ...cfg.agent, contextWindow: value },
+                }));
+              }}
             />
             <p className="text-xs text-[var(--text-tertiary)]">
               仅当所选模型未设置上下文窗口时生效。0 表示不限制、关闭压缩。优先使用模型级窗口。
@@ -447,9 +462,11 @@ export function NexAgentSection() {
             <select
               className="h-8 w-full rounded-[var(--radius-sm)] border border-[color:var(--border-subtle)] bg-transparent px-2 text-sm"
               value={config.defaultModel ?? ""}
-              onChange={(e) =>
-                setConfig({ ...config, defaultModel: e.target.value || null })
-              }
+              disabled={saving}
+              onChange={(e) => {
+                const value = e.target.value || null;
+                void updateAdvancedConfig((cfg) => ({ ...cfg, defaultModel: value }));
+              }}
             >
               <option value="">（自动：第一个可用模型）</option>
               {config.providers.flatMap((p) =>
@@ -465,15 +482,6 @@ export function NexAgentSection() {
       )}
 
       {error && <p className="text-xs text-[var(--error)]">{error}</p>}
-
-      {tab === "advanced" && (
-        <div className="flex items-center gap-2">
-          <Button size="sm" disabled={saving} onClick={() => void handleSave().catch(() => {})}>
-            {saving ? "保存中…" : "保存"}
-          </Button>
-          {saved && <span className="text-xs text-[var(--text-tertiary)]">已保存</span>}
-        </div>
-      )}
 
       {editor && (
         <ProviderEditorDialog

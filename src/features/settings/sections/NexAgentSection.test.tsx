@@ -58,7 +58,7 @@ const baseConfig: NativeAgentConfig = {
   disabledMcpServers: [],
 };
 
-describe("NexAgentSection provider saving", () => {
+describe("NexAgentSection auto-saving", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     nativeAgentGetConfig.mockResolvedValue(structuredClone(baseConfig));
@@ -129,6 +129,40 @@ describe("NexAgentSection provider saving", () => {
 
     await screen.findByText("save failed");
     expect(screen.getByRole("heading", { name: "添加供应商" })).toBeTruthy();
+    expect(nativeAgentSetConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it("auto-saves advanced maxSteps changes and keeps the save button hidden", async () => {
+    render(<NexAgentSection />);
+
+    await screen.findByText("尚未配置供应商");
+    fireEvent.click(screen.getByRole("button", { name: "高级" }));
+    expect(screen.queryByRole("button", { name: "保存" })).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("最大步数"), { target: { value: "9" } });
+
+    await waitFor(() => expect(nativeAgentSetConfig).toHaveBeenCalledTimes(1));
+    expect(nativeAgentSetConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agent: expect.objectContaining({ maxSteps: 9 }),
+      }),
+    );
+    expect(refreshNativeAutoReview).toHaveBeenCalledTimes(1);
+  });
+
+  it("reverts advanced changes when auto-save fails", async () => {
+    nativeAgentSetConfig.mockRejectedValueOnce(new Error("advanced save failed"));
+    render(<NexAgentSection />);
+
+    await screen.findByText("尚未配置供应商");
+    fireEvent.click(screen.getByRole("button", { name: "高级" }));
+    const input = screen.getByLabelText("最大步数") as HTMLInputElement;
+    expect(input.value).toBe("0");
+
+    fireEvent.change(input, { target: { value: "9" } });
+
+    await screen.findByText("advanced save failed");
+    expect(input.value).toBe("0");
     expect(nativeAgentSetConfig).toHaveBeenCalledTimes(1);
   });
 

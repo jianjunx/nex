@@ -1,0 +1,31 @@
+src-tauri/src/agent/native/budget.rs
+  s_56eee335a572e8::t_0fcf90fcd668f9 1-275
+src-tauri/src/agent/native/compact.rs
+  s_56eee335a572e8::t_5f1e050fce8d18 233-294,469-508
+src-tauri/src/agent/native/mod.rs
+  s_56eee335a572e8::t_42aae809e28e7d 19,763
+src-tauri/src/agent/native/provider/deepseek.rs
+  s_56eee335a572e8::t_836e00e2d88d00 169-180,400,403-410
+src-tauri/src/agent/native/provider/mod.rs
+  s_56eee335a572e8::t_986422e050b9ed 358-364
+src-tauri/src/agent/native/session.rs
+  s_56eee335a572e8::t_ffe937b9622946 25,109-111,151,217-238,1550-1600
+src-tauri/src/agent/native/tools/subagent.rs
+  s_56eee335a572e8::t_04f900c1381746 318
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "28b118852d701ddb328875c9634cb8f184fcf534",
+  "prompts": {},
+  "sessions": {
+    "s_56eee335a572e8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_56eee335a572e8",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

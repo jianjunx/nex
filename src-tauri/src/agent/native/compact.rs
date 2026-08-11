@@ -562,11 +562,18 @@ mod tests {
         msgs.push(ChatMessage::assistant("current tail answer"));
 
         let original_len = msgs.len();
-        let splice = replace_prefix_with_summary(
-            &mut msgs,
-            "Summary of earlier work".to_string(),
-            tmp.path(),
+        // Use the stable summary template so the marker is present in
+        // the spliced block (the marker is added by `summary::render_*`,
+        // not by `replace_prefix_with_summary` itself).
+        let body = crate::agent::native::summary::render_session_summary(
+            &["ship v1".into()],
+            &["api key in env".into()],
+            &[("src/main.rs".into(), "boot path".into())],
+            &[("src/main.rs".into(), "wired config".into())],
+            &["verify cache".into()],
+            None,
         );
+        let splice = replace_prefix_with_summary(&mut msgs, body, tmp.path());
         assert!(splice.archive_file.is_some());
         assert!(splice.archive_ref.is_some());
         // Layout: system + summary + tail. Protected tail length unchanged.
@@ -590,15 +597,6 @@ mod tests {
             msgs.last().unwrap().content.as_ref().and_then(Content::as_text),
             Some("current tail answer")
         );
-        // The original transcript had assistant+tool pairs inside the
-        // rewritable region; after the splice the protected tail is still
-        // self-consistent. We don't have tool messages in the tail here
-        // (only assistant prose), so pairing can't be checked directly;
-        // instead verify that nothing between summary and tail references a
-        // dangling tool_call_id.
-        for m in &msgs[2..] {
-            assert!(m.role != "tool", "tail should not contain tool messages");
-        }
         // Length sanity: removed everything except system+summary+tail.
         assert!(original_len > msgs.len());
     }

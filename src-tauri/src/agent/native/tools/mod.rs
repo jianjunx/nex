@@ -99,7 +99,7 @@ pub fn refresh_working_memory_in_place(
         if !starts_with_marker {
             continue;
         }
-        msg.content = Some(super::provider::Content::Text(render(memory)));
+        msg.content = Some(super::provider::Content::Text(super::memory::render(memory)));
         break;
     }
 }
@@ -529,7 +529,7 @@ mod tests {
         let hash = hex(Sha256::digest(&bytes));
         eprintln!("canonical schema sha256: {hash}");
         assert_eq!(
-            hash, "28ea480705f8e46a5e8339f570c777b86a20705d62caaeb5101a6e58f86964e3",
+            hash, "4a643180e7cf7e1da8a2b098227b27f86bec713f98f1a6594ea6801be450e1f3",
             "tool schema drift detected; update the snapshot intentionally"
         );
     }

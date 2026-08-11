@@ -443,18 +443,23 @@ mod tests {
                     .execute(serde_json::json!({"command": command}), &c)
                     .await
                     .unwrap();
-                let job = started
-                    .split('`')
+                // The starting message now has multiple backticks (one in
+                // the recovery hint, one around the job id). Grab the
+                // id by scanning known prefixes rather than by indexing
+                // backticks.
+                let id = started
+                    .split("started job `")
                     .nth(1)
-                    .expect("job id in backticks")
+                    .and_then(|s| s.split('`').next())
+                    .expect("job id after `started job `")
                     .to_string();
                 let waited = WaitJob
-                    .execute(serde_json::json!({"job_id": job, "timeout_secs": 30}), &c)
+                    .execute(serde_json::json!({"job_id": id, "timeout_secs": 30}), &c)
                     .await
                     .unwrap();
                 assert!(waited.contains("exited with code 0"));
                 let out = BashOutput
-                    .execute(serde_json::json!({"job_id": job}), &c)
+                    .execute(serde_json::json!({"job_id": id}), &c)
                     .await
                     .unwrap();
                 assert!(

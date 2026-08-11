@@ -92,7 +92,7 @@ impl WorkingMemory {
     /// Append to `state_notes`. Trims the oldest content if the cap is
     /// reached so we never grow the block unbounded.
     pub fn append_note(&mut self, note: impl AsRef<str>) {
-        let mut note = note.as_ref().to_string();
+        let note = note.as_ref().to_string();
         if self.state_notes.is_empty() {
             self.state_notes = note;
         } else {
@@ -108,7 +108,6 @@ impl WorkingMemory {
                 .map(|(i, _)| start + i)
                 .unwrap_or(start);
             self.state_notes = self.state_notes[cut..].to_string();
-            let _ = note; // silence unused if trimming short-circuited
         }
     }
 }

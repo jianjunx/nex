@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use agent_client_protocol as acp;
 
-use super::{preview_partial, Tool, ToolCtx, INLINE_CAP_CHARS, PARTIAL_MARKER};
+use super::{preview_partial, Tool, ToolCtx, INLINE_CAP_CHARS};
 use crate::agent::native::mcp::McpClient;
 
 /// Renders an MCP `content` array (text parts joined; other part types noted)

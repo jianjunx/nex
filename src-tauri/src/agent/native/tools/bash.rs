@@ -204,7 +204,7 @@ mod tests {
         let big = "x".repeat(8_000);
         let (body, was_truncated) = tier_tool_output("bash", &big);
         assert!(was_truncated);
-        assert!(body.contains(super::super::tools::PARTIAL_MARKER));
+        assert!(body.contains(super::super::PARTIAL_MARKER));
         assert!(body.contains("bash output truncated"));
     }
 }

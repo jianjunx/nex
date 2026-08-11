@@ -332,11 +332,13 @@ mod tests {
                 role: "assistant".into(),
                 content: "rust compiler error".into(),
                 tokens: tokenize("rust compiler error"),
+                source: "bm25-test.jsonl".into(),
             },
             Doc {
                 role: "assistant".into(),
                 content: "rust rust rust toolchain rust".into(),
                 tokens: tokenize("rust rust rust toolchain rust"),
+                source: "bm25-test.jsonl".into(),
             },
         ];
         let hits = bm25_search(&docs, "rust compiler", 2);

@@ -145,44 +145,44 @@ impl NexNativeAgent {
     }
 
     /// Per-session archive directory: `<app_data>/.nex-archive/<cwd-hash>/<session-id>/`.
-///
-/// Two-level layout so that:
-///  - `<cwd-hash>` keeps projects separated (stable across restarts);
-///  - `<session-id>` keeps two sessions in the same cwd from polluting
-///    each other's BM25 index when the `history` tool reads them.
-///
-/// All archive file references must include the session id so the model
-/// (and `history`) can scope retrieval correctly.
-fn archive_dir_for(&self, cwd: &Path, session_id: &str) -> PathBuf {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    cwd.hash(&mut h);
-    let digest = format!("{:016x}", h.finish());
-    let safe = sanitize_session_id(session_id);
-    self.inner
-        .archive_root
-        .join(".nex-archive")
-        .join(digest)
-        .join(safe)
-}
+    ///
+    /// Two-level layout so that:
+    ///  - `<cwd-hash>` keeps projects separated (stable across restarts);
+    ///  - `<session-id>` keeps two sessions in the same cwd from polluting
+    ///    each other's BM25 index when the `history` tool reads them.
+    ///
+    /// All archive file references must include the session id so the model
+    /// (and `history`) can scope retrieval correctly.
+    fn archive_dir_for(&self, cwd: &Path, session_id: &str) -> PathBuf {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        cwd.hash(&mut h);
+        let digest = format!("{:016x}", h.finish());
+        let safe = Self::sanitize_session_id(session_id);
+        self.inner
+            .archive_root
+            .join(".nex-archive")
+            .join(digest)
+            .join(safe)
+    }
 
-/// Same id-safety as [`archive::archive_path`]. Kept private here; the
-/// archive module owns its own sanitiser and this is the native-agent side.
-fn sanitize_session_id(id: &str) -> String {
-    let mut out = String::with_capacity(id.len());
-    for c in id.chars() {
-        if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-            out.push(c);
+    /// Same id-safety as [`archive::archive_path`]. Kept private here; the
+    /// archive module owns its own sanitiser and this is the native-agent side.
+    fn sanitize_session_id(id: &str) -> String {
+        let mut out = String::with_capacity(id.len());
+        for c in id.chars() {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                out.push(c);
+            } else {
+                out.push('_');
+            }
+        }
+        if out.is_empty() {
+            "session".to_string()
         } else {
-            out.push('_');
+            out
         }
     }
-    if out.is_empty() {
-        "session".to_string()
-    } else {
-        out
-    }
-}
 
     /// Installs the agent-side connection used to emit session notifications.
     /// Must be called once, after `AgentSideConnection::new`, before prompts.
@@ -767,7 +767,7 @@ impl acp::Agent for NexNativeAgent {
             Content::Parts(parts)
         };
 
-        let (stop_reason, had_mutations) = match conn {
+        let (stop_reason, had_mutations, turn_stats) = match conn {
             Some(conn) => {
                 let provider = Arc::new(provider::deepseek::DeepSeekProvider::new(
                     prov_base_url,
@@ -850,6 +850,10 @@ impl acp::Agent for NexNativeAgent {
                 // background jobs / other non-readonly tools.
                 let had_mutations =
                     tools::mutations_include_workspace_edit(&env.tool_ctx.mutations.borrow());
+                // Snapshot the per-turn context-engine stats while `env` is
+                // still in scope; we will surface them in the prompt meta
+                // after the match arm closes.
+                let turn_stats = env.stats.borrow().clone();
                 // Runtime reasoning-support detection: the provider strips
                 // `reasoning_effort` and retries when the endpoint rejects it.
                 // Remember the result so later turns skip the parameter.
@@ -872,12 +876,13 @@ impl acp::Agent for NexNativeAgent {
                     usage.completion_tokens,
                     usage.cache_hit_tokens
                 );
-                (stop, had_mutations)
+                (stop, had_mutations, turn_stats)
             }
             None => {
                 // No connection (shouldn't happen in production wiring).
                 self.emit_text(&args.session_id, "agent 连接未就绪").await;
-                (acp::StopReason::EndTurn, false)
+                let turn_stats = stats::ContextStats::new();
+                (acp::StopReason::EndTurn, false, turn_stats)
             }
         };
 
@@ -903,7 +908,7 @@ impl acp::Agent for NexNativeAgent {
             // autoReview is on; `_meta.contextStats` carries the per-turn
             // context-engine telemetry for dashboards.
             meta: Some(stats::to_meta(
-                &env.stats.borrow(),
+                &turn_stats,
                 Some(serde_json::json!({
                     "hadMutations": had_mutations,
                 })),
@@ -1879,7 +1884,9 @@ mod tests {
                 let s = sessions
                     .get(session.session_id.0.as_ref())
                     .expect("session");
-                let Some(Content::Parts(parts)) = &s.history[1].content else {
+                // history layout: [system_prompt, working_memory, user_turn, ...]
+                // Working memory is the second message; the user turn lands at index 2.
+                let Some(Content::Parts(parts)) = &s.history[2].content else {
                     panic!("user turn must be stored as parts");
                 };
                 assert_eq!(parts.len(), 3);

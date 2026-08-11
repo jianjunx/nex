@@ -11,10 +11,10 @@
 
 use crate::agent::native::provider::{Provider, ReasoningControl};
 
-/// Upper bound on the budget loop. Five passes is enough to walk through
-/// `Snip -> Compact -> Force` and still have headroom for a `summary`
-/// replacement in a later phase.
-pub const MAX_COMPACT_PASSES: usize = 5;
+/// Upper bound on the deliberate Snip -> Compact -> Force walk. Three
+/// passes is enough to apply every tier exactly once; the loop also bails
+/// early on no-progress, so this is a hard ceiling rather than a target.
+pub const MAX_COMPACT_PASSES: usize = 3;
 
 /// Fallback used when the model's window is too small to admit the
 /// `reserved_response + safety_margin` formula. Lets degraded sessions still
@@ -156,9 +156,18 @@ pub fn enforce(
         outcome.final_tokens = used;
         return outcome;
     }
-    for _ in 0..MAX_COMPACT_PASSES {
-        let step =
-            crate::agent::native::compact::step(messages, budget.prompt_budget, archive_dir);
+    // Deliberate walk: Snip -> Compact -> Force. Each pass re-estimates; if
+    // a pass made no progress we stop instead of burning budget cycles.
+    let tier_plan = [
+        crate::agent::native::compact::StepTier::Snip,
+        crate::agent::native::compact::StepTier::Compact,
+        crate::agent::native::compact::StepTier::Force,
+    ];
+    for tier in tier_plan.iter().copied() {
+        if used <= budget.prompt_budget {
+            break;
+        }
+        let step = crate::agent::native::compact::step(messages, budget.prompt_budget, tier, archive_dir);
         outcome.passes += 1;
         outcome.total_snipped += step.snipped;
         outcome.total_folded += step.folded;
@@ -167,14 +176,10 @@ pub fn enforce(
         }
         let used_after = crate::agent::native::compact::estimate_tokens(messages);
         if used_after >= used {
-            // A full pass saved nothing: bail before burning more passes.
+            // A full tier pass saved nothing: bail before burning more.
             break;
         }
         used = used_after;
-        if used <= budget.prompt_budget {
-            outcome.final_tokens = used;
-            return outcome;
-        }
     }
     outcome.final_tokens = used;
     outcome
@@ -242,6 +247,24 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let outcome = enforce(&mut msgs, budget, tmp.path());
         assert!(outcome.passes <= MAX_COMPACT_PASSES);
+    }
+
+    #[test]
+    fn enforce_walks_tiers_in_order() {
+        // A transcript that fits Snip should converge in exactly one pass.
+        let big = "z".repeat(8_000);
+        let mut msgs: Vec<ChatMessage> = vec![ChatMessage::system("sys")];
+        for i in 0..6 {
+            msgs.push(ChatMessage::user(format!("u{i}")));
+            msgs.push(ChatMessage::tool_result(&format!("t{i}"), &big));
+        }
+        let budget = model_window(16_000);
+        let tmp = tempfile::tempdir().unwrap();
+        let outcome = enforce(&mut msgs, budget, tmp.path());
+        assert!(outcome.passes >= 1);
+        assert!(outcome.passes <= MAX_COMPACT_PASSES);
+        assert!(outcome.total_snipped > 0 || outcome.total_folded > 0);
+        assert!(compact::estimate_tokens(&msgs) <= budget.prompt_budget);
     }
 
     #[test]

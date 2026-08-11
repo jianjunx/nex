@@ -230,6 +230,37 @@ pub fn maybe_compress(
     }
 }
 
+/// Which tier a single [`step`] should apply. Lets the budget loop walk
+/// `Snip -> Compact -> Force` deliberately, instead of inferring from the
+/// current size each pass (which would jump straight to `Force` on a
+/// partially-shrunk transcript and lose the snip-only chance to fit).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepTier {
+    Snip,
+    Compact,
+    Force,
+}
+
+impl StepTier {
+    /// Convert to the legacy [`CompactLevel`] used by the snip/compact
+    /// helpers below. `Force` produces a force-pass.
+    fn as_level(self) -> CompactLevel {
+        match self {
+            StepTier::Snip => CompactLevel::Snip,
+            StepTier::Compact => CompactLevel::Compact,
+            StepTier::Force => CompactLevel::Force,
+        }
+    }
+}
+
+/// Result of a single [`step`] pass. Used by the budget loop and metrics.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StepOutcome {
+    pub snipped: usize,
+    pub folded: usize,
+    pub archive_file: Option<std::path::PathBuf>,
+}
+
 /// One budget-driven compaction pass. Returns the number of messages that
 /// were modified (snipped) or folded (archived) in this pass, plus the
 /// archive file written, if any.
@@ -238,30 +269,25 @@ pub fn maybe_compress(
 /// [`maybe_compress`], the caller decides whether another pass is needed by
 /// re-estimating `messages` and comparing against `prompt_budget`.
 ///
+/// `tier` overrides the level inferred from transcript size so the caller
+/// can walk `Snip -> Compact -> Force` deliberately.
+///
 /// Idempotent: a no-op when `prompt_budget` is already satisfied.
 pub fn step(
     messages: &mut Vec<ChatMessage>,
     prompt_budget: u64,
+    tier: StepTier,
     archive_dir: &Path,
 ) -> StepOutcome {
     if prompt_budget == 0 {
-        // Sentinel from `compact::decide` for "compression disabled". Skipping
-        // avoids accidentally running snip with `force=false` against the full
-        // window, which would degrade cache without any budget pressure.
-        return StepOutcome {
-            snipped: 0,
-            folded: 0,
-            archive_file: None,
-        };
+        return StepOutcome::default();
     }
-    let level = decide(estimate_tokens(messages), prompt_budget);
-    match level {
-        CompactLevel::None => StepOutcome {
-            snipped: 0,
-            folded: 0,
-            archive_file: None,
-        },
-        CompactLevel::Snip => {
+    if estimate_tokens(messages) <= prompt_budget {
+        return StepOutcome::default();
+    }
+    let force = tier == StepTier::Force;
+    match tier.as_level() {
+        CompactLevel::None | CompactLevel::Snip => {
             let snipped = snip_tool_results(messages, false);
             StepOutcome {
                 snipped,
@@ -270,7 +296,6 @@ pub fn step(
             }
         }
         CompactLevel::Compact | CompactLevel::Force => {
-            let force = matches!(level, CompactLevel::Force);
             let removed = compact(messages, force);
             let folded = removed.len();
             let archive_file = archive(archive_dir, &removed);
@@ -282,14 +307,6 @@ pub fn step(
             }
         }
     }
-}
-
-/// Result of a single [`step`] pass. Used by the budget loop and metrics.
-#[derive(Debug, Clone, Default)]
-pub struct StepOutcome {
-    pub snipped: usize,
-    pub folded: usize,
-    pub archive_file: Option<std::path::PathBuf>,
 }
 
 #[cfg(test)]
@@ -472,7 +489,7 @@ mod tests {
         let big = "w".repeat(20_000);
         let mut msgs = vec![ChatMessage::system("s"), tool_msg("1", &big)];
         let tmp = tempfile::tempdir().unwrap();
-        let outcome = step(&mut msgs, 0, tmp.path());
+        let outcome = step(&mut msgs, 0, StepTier::Snip, tmp.path());
         assert_eq!(outcome.snipped, 0);
         assert_eq!(outcome.folded, 0);
         assert!(outcome.archive_file.is_none());
@@ -491,7 +508,7 @@ mod tests {
     fn step_under_budget_is_noop() {
         let mut msgs = vec![ChatMessage::system("s"), ChatMessage::user("hi")];
         let tmp = tempfile::tempdir().unwrap();
-        let outcome = step(&mut msgs, 4096, tmp.path());
+        let outcome = step(&mut msgs, 4096, StepTier::Snip, tmp.path());
         assert_eq!(outcome, StepOutcome::default());
     }
 
@@ -500,7 +517,7 @@ mod tests {
         let big = "y".repeat(10_000);
         let mut msgs = vec![ChatMessage::system("s"), tool_msg("a", &big)];
         let tmp = tempfile::tempdir().unwrap();
-        let outcome = step(&mut msgs, 100, tmp.path());
+        let outcome = step(&mut msgs, 100, StepTier::Force, tmp.path());
         assert!(outcome.snipped > 0 || outcome.folded > 0);
         if outcome.folded > 0 {
             assert!(outcome.archive_file.is_some());

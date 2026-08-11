@@ -1,0 +1,41 @@
+src-tauri/src/agent/native/mod.rs
+  s_3fab36017f69c0::t_073681ae606e6a 34,846,902-910
+src-tauri/src/agent/native/session.rs
+  s_3fab36017f69c0::t_cb84813c7ff5b8 78-82,159,235-242,319-321,576-590,1095
+src-tauri/src/agent/native/stats.rs
+  s_3fab36017f69c0::t_c87a00f5e829c8 1-144
+src-tauri/src/agent/native/tools/checkpoint.rs
+  s_3fab36017f69c0::t_0213bebdc97e8f 186
+src-tauri/src/agent/native/tools/fs.rs
+  s_3fab36017f69c0::t_f5f9bcfa59d62d 266
+src-tauri/src/agent/native/tools/history.rs
+  s_3fab36017f69c0::t_16f53aa8805bdf 252,304
+src-tauri/src/agent/native/tools/jobs.rs
+  s_3fab36017f69c0::t_de2bc39995aa4d 373
+src-tauri/src/agent/native/tools/mode.rs
+  s_3fab36017f69c0::t_7aa9c93de8e71c 117
+src-tauri/src/agent/native/tools/search.rs
+  s_3fab36017f69c0::t_311c89d125ede4 256
+src-tauri/src/agent/native/tools/skill.rs
+  s_3fab36017f69c0::t_fb0c7468a9a7b5 73
+src-tauri/src/agent/native/tools/spreadsheet.rs
+  s_3fab36017f69c0::t_1adb2697757b0f 234
+src-tauri/src/agent/native/tools/subagent.rs
+  s_3fab36017f69c0::t_2f752dea18350a 214
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "e3902dc69a08e8a91a91a468355011b527490258",
+  "prompts": {},
+  "sessions": {
+    "s_3fab36017f69c0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_3fab36017f69c0",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

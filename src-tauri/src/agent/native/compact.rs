@@ -206,6 +206,81 @@ pub fn archive(archive_dir: &Path, removed: &[ChatMessage]) -> Option<PathBuf> {
     }
 }
 
+/// Stable marker prefix for summary splices so the model (and `history`)
+/// can tell at a glance that a transcript message is a folded-summary
+/// anchor pointing at the archive, not a literal user/assistant turn.
+pub const SUMMARY_MARKER: &str = "[nex:summary]";
+
+/// Splices a single summary message into the rewritable prefix, after
+/// archiving the original prefix contents to a fresh archive file. The
+/// pairing invariant (assistant `tool_calls` ↔ `tool` results) is
+/// preserved because the rewritable region only covers turns that are
+/// already in scope for [`compact`].
+pub struct SummarySplice {
+    /// File written of the archived original prefix. `None` when nothing was
+    /// folded (e.g. empty rewritable region).
+    pub archive_file: Option<PathBuf>,
+    /// Reference the model (and `history`) should use to recover the full
+    /// original contents. Mirrors `archive_file` filename when present.
+    pub archive_ref: Option<String>,
+}
+
+/// Replace the rewritable prefix (everything before the protected tail)
+/// with a single summary message that names the archive. Returns
+/// [`SummarySplice`] describing the file written.
+///
+/// `summary_text` is used verbatim. Callers compose the actual content
+/// (template-driven in [`crate::agent::native::summary`]) so this helper
+/// stays focused on the splice mechanics.
+pub fn replace_prefix_with_summary(
+    messages: &mut Vec<ChatMessage>,
+    summary_text: String,
+    archive_dir: &Path,
+) -> SummarySplice {
+    if messages.len() <= KEEP_TAIL_MESSAGES + 1 {
+        return SummarySplice {
+            archive_file: None,
+            archive_ref: None,
+        };
+    }
+    let boundary = messages.len() - KEEP_TAIL_MESSAGES;
+    // Snapshot the original prefix (everything between system prompt and
+    // tail) before splicing the summary in. The tool↔assistant pairing is
+    // already inside this prefix and is preserved as a unit.
+    let prefix: Vec<ChatMessage> = messages[1..boundary].to_vec();
+    let archive_file = archive(archive_dir, &prefix);
+    let archive_ref = archive_file
+        .as_ref()
+        .and_then(|p| p.file_name().and_then(|s| s.to_str()).map(String::from));
+    let mut summary_msg = ChatMessage::assistant(summary_text);
+    if let Some(ref r) = archive_ref {
+        // Pin the role to assistant (never system) so the summary can't
+        // be mistaken for instructions; inject the archive ref into the
+        // content for downstream `history` queries.
+        summary_msg.content = Some(Content::Text(format!(
+            "{}\n[archive_ref: {}]",
+            summary_msg
+                .content
+                .as_ref()
+                .and_then(Content::as_text)
+                .unwrap_or(""),
+            r
+        )));
+    }
+    // Splice: keep system prompt (idx 0) + summary + protected tail.
+    let new_len = 1 + 1 + KEEP_TAIL_MESSAGES;
+    let tail_start = boundary;
+    let mut new_msgs: Vec<ChatMessage> = Vec::with_capacity(new_len);
+    new_msgs.push(messages[0].clone());
+    new_msgs.push(summary_msg);
+    new_msgs.extend(messages[tail_start..].iter().cloned());
+    *messages = new_msgs;
+    SummarySplice {
+        archive_file,
+        archive_ref,
+    }
+}
+
 /// Applies the appropriate tier for the current transcript size. Returns the
 /// archive file written, if any. `window = 0` is a no-op.
 pub fn maybe_compress(
@@ -465,6 +540,67 @@ mod tests {
         let lines = std::fs::read_to_string(&path).unwrap();
         assert_eq!(lines.lines().count(), 2);
         assert!(archive(tmp.path(), &[]).is_none());
+    }
+
+    #[test]
+    fn replace_prefix_with_summary_archives_and_preserves_pairing() {
+        let tmp = tempfile::tempdir().unwrap();
+        // System prompt (idx 0), assistant with two tool calls, two tool
+        // results, an old assistant prose, plus a recent tail that must
+        // survive untouched.
+        let mut msgs: Vec<ChatMessage> = vec![ChatMessage::system("sys")];
+        msgs.push(assistant_calls(&["a", "b"]));
+        msgs.push(tool_msg("a", "alpha"));
+        msgs.push(tool_msg("b", "beta"));
+        msgs.push(ChatMessage::assistant("old prose ".repeat(80)));
+        // Pad so the rewritable region is clearly > KEEP_TAIL_MESSAGES.
+        for i in 0..6 {
+            msgs.push(assistant_calls(&[&format!("p{i}")]));
+            msgs.push(tool_msg(&format!("p{i}"), "payload"));
+        }
+        // Recent tail (≤ KEEP_TAIL_MESSAGES): must survive untouched.
+        msgs.push(ChatMessage::assistant("current tail answer"));
+
+        let original_len = msgs.len();
+        let splice = replace_prefix_with_summary(
+            &mut msgs,
+            "Summary of earlier work".to_string(),
+            tmp.path(),
+        );
+        assert!(splice.archive_file.is_some());
+        assert!(splice.archive_ref.is_some());
+        // Layout: system + summary + tail. Protected tail length unchanged.
+        assert_eq!(msgs.len(), 1 + 1 + KEEP_TAIL_MESSAGES);
+        // System prompt untouched.
+        assert_eq!(
+            msgs[0].content.as_ref().and_then(Content::as_text),
+            Some("sys")
+        );
+        // Summary message carries the archive_ref line.
+        let summary_text = msgs[1]
+            .content
+            .as_ref()
+            .and_then(Content::as_text)
+            .unwrap();
+        assert!(summary_text.starts_with(SUMMARY_MARKER));
+        assert!(summary_text.contains("archive_ref"));
+        assert!(summary_text.contains(splice.archive_ref.as_deref().unwrap()));
+        // Recent tail untouched.
+        assert_eq!(
+            msgs.last().unwrap().content.as_ref().and_then(Content::as_text),
+            Some("current tail answer")
+        );
+        // The original transcript had assistant+tool pairs inside the
+        // rewritable region; after the splice the protected tail is still
+        // self-consistent. We don't have tool messages in the tail here
+        // (only assistant prose), so pairing can't be checked directly;
+        // instead verify that nothing between summary and tail references a
+        // dangling tool_call_id.
+        for m in &msgs[2..] {
+            assert!(m.role != "tool", "tail should not contain tool messages");
+        }
+        // Length sanity: removed everything except system+summary+tail.
+        assert!(original_len > msgs.len());
     }
 
     #[test]

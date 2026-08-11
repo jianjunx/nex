@@ -30,6 +30,7 @@ pub mod probe;
 pub mod provider;
 pub mod session;
 pub mod skills;
+pub mod summary;
 pub mod tools;
 
 pub use config::NativeAgentConfig;
@@ -138,16 +139,45 @@ impl NexNativeAgent {
         }
     }
 
-    /// Per-session archive directory: `<app_data>/.nex-archive/<cwd-hash>/`.
-    /// The hash keeps projects separated (and is stable across restarts) while
-    /// keeping everything out of the user's workspace tree.
-    fn archive_dir_for(&self, cwd: &Path) -> PathBuf {
-        use std::hash::{Hash, Hasher};
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        cwd.hash(&mut h);
-        let digest = format!("{:016x}", h.finish());
-        self.inner.archive_root.join(".nex-archive").join(digest)
+    /// Per-session archive directory: `<app_data>/.nex-archive/<cwd-hash>/<session-id>/`.
+///
+/// Two-level layout so that:
+///  - `<cwd-hash>` keeps projects separated (stable across restarts);
+///  - `<session-id>` keeps two sessions in the same cwd from polluting
+///    each other's BM25 index when the `history` tool reads them.
+///
+/// All archive file references must include the session id so the model
+/// (and `history`) can scope retrieval correctly.
+fn archive_dir_for(&self, cwd: &Path, session_id: &str) -> PathBuf {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    cwd.hash(&mut h);
+    let digest = format!("{:016x}", h.finish());
+    let safe = sanitize_session_id(session_id);
+    self.inner
+        .archive_root
+        .join(".nex-archive")
+        .join(digest)
+        .join(safe)
+}
+
+/// Same id-safety as [`archive::archive_path`]. Kept private here; the
+/// archive module owns its own sanitiser and this is the native-agent side.
+fn sanitize_session_id(id: &str) -> String {
+    let mut out = String::with_capacity(id.len());
+    for c in id.chars() {
+        if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+            out.push(c);
+        } else {
+            out.push('_');
+        }
     }
+    if out.is_empty() {
+        "session".to_string()
+    } else {
+        out
+    }
+}
 
     /// Installs the agent-side connection used to emit session notifications.
     /// Must be called once, after `AgentSideConnection::new`, before prompts.
@@ -741,7 +771,7 @@ impl acp::Agent for NexNativeAgent {
                     }
                 }
                 let registry = Rc::new(registry);
-                let archive_dir = self.archive_dir_for(&session.cwd);
+                let archive_dir = self.archive_dir_for(&session.cwd, &args.session_id.0);
                 let bash_timeout = std::time::Duration::from_secs(cfg.agent.bash_timeout_secs);
 
                 // Subagent orchestration support (task/fleet/read_subagent_result).

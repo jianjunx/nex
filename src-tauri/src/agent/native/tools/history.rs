@@ -1,7 +1,7 @@
 //! The read-only `history` tool: BM25 search over archived (compacted-away)
 //! transcript chunks stored as `<archive_dir>/*.jsonl`.
 
-use super::{arg_str, arg_usize, truncate_output, Tool, ToolCtx};
+use super::{arg_str, arg_str_opt, arg_usize, truncate_output, Tool, ToolCtx};
 use agent_client_protocol as acp;
 
 /// Cap on total output characters.
@@ -19,14 +19,16 @@ impl Tool for History {
     }
     fn description(&self) -> &'static str {
         "Search the session's archived conversation history (earlier context that was \
-         compacted out of the active window) with keywords. Returns matching excerpts."
+         compacted out of the active window) with keywords. Optionally scope to a single \
+         archive file via `archive_ref`. Returns matching excerpts."
     }
     fn schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
                 "query": { "type": "string", "description": "Keywords to search for." },
-                "max_results": { "type": "integer", "description": "Maximum excerpts to return. Default 8." }
+                "max_results": { "type": "integer", "description": "Maximum excerpts to return. Default 8." },
+                "archive_ref": { "type": "string", "description": "Optional archive file name (e.g. \"20260810-103045-abc.jsonl\") to scope the search to a single compaction slice. Prefer this over keyword-only search when a summary block names the ref." }
             },
             "required": ["query"],
             "additionalProperties": false
@@ -41,10 +43,14 @@ impl Tool for History {
     async fn execute(&self, args: serde_json::Value, ctx: &ToolCtx) -> Result<String, String> {
         let query = arg_str(&args, "query")?;
         let max = arg_usize(&args, "max_results", 8).min(30);
+        let archive_ref = arg_str_opt(&args, "archive_ref");
 
-        let docs = load_archive(&ctx.archive_dir);
+        let docs = load_archive(&ctx.archive_dir, archive_ref.as_deref());
         if docs.is_empty() {
-            return Ok("(no archived history yet)".to_string());
+            return Ok(match archive_ref {
+                Some(r) => format!("(no archive slice named `{r}` in this session)"),
+                None => "(no archived history yet)".to_string(),
+            });
         }
         let hits = bm25_search(&docs, &query, max);
         if hits.is_empty() {
@@ -53,8 +59,9 @@ impl Tool for History {
         let mut out = String::new();
         for (rank, (score, doc)) in hits.iter().enumerate() {
             out.push_str(&format!(
-                "--- [{rank}] score {score:.2} | role={} ---\n{}\n",
+                "--- [{rank}] score {score:.2} | role={} | source={} ---\n{}\n",
                 doc.role,
+                doc.source,
                 excerpt(&doc.content, &tokenize(&query))
             ));
         }
@@ -67,9 +74,13 @@ struct Doc {
     role: String,
     content: String,
     tokens: Vec<String>,
+    /// Basename of the jsonl file the message came from. Echoed back in
+    /// hits so the model (and the human) can correlate the excerpt with
+    /// an `archive_ref` from a summary block.
+    source: String,
 }
 
-fn load_archive(dir: &std::path::Path) -> Vec<Doc> {
+fn load_archive(dir: &std::path::Path, only_file: Option<&str>) -> Vec<Doc> {
     let mut docs = Vec::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
         return docs;
@@ -81,6 +92,14 @@ fn load_archive(dir: &std::path::Path) -> Vec<Doc> {
         .collect();
     paths.sort(); // chronological order by timestamped file names
     for path in paths {
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if let Some(want) = only_file {
+            if name != want {
+                continue;
+            }
+        }
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };
@@ -104,6 +123,7 @@ fn load_archive(dir: &std::path::Path) -> Vec<Doc> {
                 role,
                 content: content.to_string(),
                 tokens,
+                source: name.to_string(),
             });
         }
     }
@@ -237,12 +257,62 @@ mod tests {
             .unwrap();
         assert!(out.contains("payment gateway"));
         assert!(out.contains("role=assistant"));
+        // Source tag is echoed back so the model can route via archive_ref.
+        assert!(out.contains("source=20240101-000000-000.jsonl"));
 
         let none = History
             .execute(serde_json::json!({"query": "kubernetes"}), &ctx)
             .await
             .unwrap();
         assert!(none.contains("no archived excerpts"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn history_archive_ref_scopes_search() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("archive");
+        std::fs::create_dir_all(&archive).unwrap();
+        for (name, msg) in [
+            (
+                "20240101-000000-001.jsonl",
+                ChatMessage::assistant("alpha feature: payment refactor"),
+            ),
+            (
+                "20240101-000000-002.jsonl",
+                ChatMessage::assistant("beta feature: payment refactor"),
+            ),
+        ] {
+            let path = archive.join(name);
+            std::fs::write(
+                &path,
+                format!("{}\n", serde_json::to_string(&msg).unwrap()),
+            )
+            .unwrap();
+        }
+        let ctx = ToolCtx {
+            cwd: tmp.path().to_path_buf(),
+            bash_timeout: std::time::Duration::from_secs(10),
+            path_env: std::env::var_os("PATH").unwrap_or_default(),
+            archive_dir: archive,
+            jobs: std::rc::Rc::new(std::cell::RefCell::new(
+                super::super::jobs::JobTable::default(),
+            )),
+            harness: None,
+            mutations: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            mode_id: None,
+        };
+        let scoped = History
+            .execute(
+                serde_json::json!({
+                    "query": "refactor",
+                    "archive_ref": "20240101-000000-001.jsonl"
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(scoped.contains("alpha"));
+        assert!(!scoped.contains("beta"));
     }
 
     #[test]

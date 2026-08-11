@@ -1,0 +1,37 @@
+src-tauri/src/agent/native/budget.rs
+  s_8950545f1e5861::t_0791f40dab0af8 191,228-231,239,242-245
+src-tauri/src/agent/native/compact.rs
+  s_8950545f1e5861::t_1f4b5cfd65a142 565-574,576
+src-tauri/src/agent/native/memory.rs
+  s_8950545f1e5861::t_30a2c5761d1f05 95
+src-tauri/src/agent/native/mod.rs
+  s_8950545f1e5861::t_f819a57143f3a1 148-167,169-181,183,770,853-856,879,884-885,911,1887-1889
+src-tauri/src/agent/native/session.rs
+  s_8950545f1e5861::t_49325b53a22ce1 23,25,586,897,1627-1629,1631-1632,1635,1655-1658,1661-1664
+src-tauri/src/agent/native/tools/bash.rs
+  s_8950545f1e5861::t_c2c557248356bb 207
+src-tauri/src/agent/native/tools/history.rs
+  s_8950545f1e5861::t_f61f14b2749556 335,341
+src-tauri/src/agent/native/tools/jobs.rs
+  s_8950545f1e5861::t_dc6d248e40a74c 446-451,453-454,457,462
+src-tauri/src/agent/native/tools/mcp.rs
+  s_8950545f1e5861::t_5e7cf926fdf87a 12
+src-tauri/src/agent/native/tools/mod.rs
+  s_8950545f1e5861::t_b72e156d6c3a51 102,532
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "9acc19bc1a8bb7050262ccf0647ef5c4221c901c",
+  "prompts": {},
+  "sessions": {
+    "s_8950545f1e5861": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_8950545f1e5861",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

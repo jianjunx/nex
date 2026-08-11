@@ -8,7 +8,7 @@ use std::rc::Rc;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 use tokio::sync::oneshot;
 
-use super::{arg_str, arg_usize, truncate_output, Tool, ToolCtx};
+use super::{arg_str, arg_usize, truncate_output, Tool, ToolCtx, PARTIAL_MARKER};
 use agent_client_protocol as acp;
 
 /// Cap on total output characters returned per call.
@@ -187,7 +187,10 @@ impl Tool for RunInBackground {
     async fn execute(&self, args: serde_json::Value, ctx: &ToolCtx) -> Result<String, String> {
         let command = arg_str(&args, "command")?;
         let id = ctx.jobs.borrow_mut().spawn(&command, &ctx.cwd, &ctx.path_env)?;
-        Ok(format!("started background job `{id}`: {command}"))
+        Ok(format!(
+            "{PARTIAL_MARKER} background job started, output is NOT in this transcript. \
+Use `bash_output(job_id=\"{id}\", offset=0)` to read.\nstarted job `{id}`: {command}"
+        ))
     }
 }
 
@@ -241,7 +244,16 @@ impl Tool for BashOutput {
         let body = if text.is_empty() {
             "(no new output)".to_string()
         } else {
-            truncate_output(text, MAX_OUTPUT_CHARS)
+            // Output is always a slice from `offset`; tag it so the model
+            // knows the result is partial even when `truncate_output` is a
+            // no-op.
+            let mut tagged = truncate_output(text, MAX_OUTPUT_CHARS);
+            if tagged.starts_with("(no new output)") {
+                tagged
+            } else {
+                tagged.insert_str(0, &format!("{PARTIAL_MARKER} bash_output slice ({status})\n"));
+                tagged
+            }
         };
         Ok(format!(
             "job `{job_id}` ({status}); next offset: {next_offset}\n{body}"

@@ -3,7 +3,7 @@
 
 use ignore::WalkBuilder;
 
-use super::{arg_str, arg_str_opt, arg_usize, resolve_within, truncate_output, Tool, ToolCtx};
+use super::{arg_str, arg_str_opt, arg_usize, resolve_within, truncate_output, Tool, ToolCtx, PARTIAL_MARKER};
 use agent_client_protocol as acp;
 
 /// Cap on emitted matches/entries.
@@ -87,7 +87,9 @@ impl Tool for Grep {
                     let rel = path.strip_prefix(&ctx.cwd).unwrap_or(path);
                     out.push_str(&format!("{}:{}:{}\n", rel.display(), idx + 1, line.trim()));
                     if found >= max {
-                        out.push_str(&format!("… [stopped at {max} matches]\n"));
+                        out.push_str(&format!(
+                            "{PARTIAL_MARKER} grep stopped at {max} matches; refine `pattern` or `path` to see the rest\n"
+                        ));
                         break 'outer;
                     }
                 }
@@ -95,6 +97,12 @@ impl Tool for Grep {
         }
         if found == 0 {
             return Ok(format!("no matches for `{pattern}`"));
+        }
+        if found >= max {
+            out.insert_str(
+                0,
+                &format!("{PARTIAL_MARKER} grep result is a partial slice ({found} of up to {max} matches)\n"),
+            );
         }
         Ok(truncate_output(out, MAX_OUTPUT_CHARS))
     }
@@ -159,12 +167,20 @@ impl Tool for Glob {
             let suffix = if path.is_dir() { "/" } else { "" };
             out.push_str(&format!("{}{}\n", rel.display(), suffix));
             if found >= max {
-                out.push_str(&format!("… [stopped at {max} entries]\n"));
+                out.push_str(&format!(
+                    "{PARTIAL_MARKER} glob stopped at {max} entries; refine `pattern` or `path` to see the rest\n"
+                ));
                 break;
             }
         }
         if found == 0 {
             return Ok(format!("no files match `{pattern}`"));
+        }
+        if found >= max {
+            out.insert_str(
+                0,
+                &format!("{PARTIAL_MARKER} glob result is a partial slice ({found} of up to {max} entries)\n"),
+            );
         }
         Ok(truncate_output(out, MAX_OUTPUT_CHARS))
     }

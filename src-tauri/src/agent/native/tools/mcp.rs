@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use agent_client_protocol as acp;
 
-use super::{Tool, ToolCtx};
+use super::{preview_partial, Tool, ToolCtx, INLINE_CAP_CHARS, PARTIAL_MARKER};
 use crate::agent::native::mcp::McpClient;
 
 /// Renders an MCP `content` array (text parts joined; other part types noted)
@@ -80,7 +80,7 @@ impl Tool for McpProxy {
             .get("isError")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        let text = render_content(result.get("content"));
+        let text = tier_mcp_text(&self.name, render_content(result.get("content")));
         if is_error {
             Err(if text.is_empty() {
                 "MCP tool failed".to_string()
@@ -91,4 +91,23 @@ impl Tool for McpProxy {
             Ok(text)
         }
     }
+}
+
+/// Tag MCP text responses with the shared partial-output marker so the
+/// model knows when it sees only the head of a long payload.
+fn tier_mcp_text(tool_name: &str, raw: String) -> String {
+    let chars = raw.chars().count();
+    if chars <= INLINE_CAP_CHARS {
+        return raw;
+    }
+    let head_chars = INLINE_CAP_CHARS / 2;
+    let head: String = raw.chars().take(head_chars).collect();
+    let notice = preview_partial(
+        "mcp",
+        chars,
+        head_chars,
+        "Re-call the tool with smaller `arguments` (e.g. add a limit/offset/pagination field) to fetch the rest.",
+    );
+    let prefixed = format!("{notice}{tool_name} (truncated head)\n");
+    format!("{prefixed}{head}")
 }

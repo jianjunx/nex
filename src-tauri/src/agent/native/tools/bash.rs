@@ -65,24 +65,53 @@ impl Tool for Bash {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let code = output.status.code().unwrap_or(-1);
         let mut out = format!("exit code: {code}\n");
+        let mut truncated = false;
         if !stdout.is_empty() {
-            out.push_str(&format!("--- stdout ---\n{stdout}"));
-            if !stdout.ends_with('\n') {
+            let (body, was_truncated) = tier_tool_output("bash", &stdout);
+            truncated |= was_truncated;
+            out.push_str(&format!("--- stdout ---\n{body}"));
+            if !body.ends_with('\n') {
                 out.push('\n');
             }
         }
         if !stderr.is_empty() {
-            out.push_str(&format!("--- stderr ---\n{stderr}"));
-            if !stderr.ends_with('\n') {
+            let (body, was_truncated) = tier_tool_output("bash", &stderr);
+            truncated |= was_truncated;
+            out.push_str(&format!("--- stderr ---\n{body}"));
+            if !body.ends_with('\n') {
                 out.push('\n');
             }
         }
+        // Captured for future use (e.g. tagging the result as partial in
+        // metrics). Keeping it explicit avoids silently reintroducing the
+        // "we don't know the model saw partial output" regression in the
+        // next refactor.
+        let _ = truncated;
         if code != 0 {
             // Surface non-zero exits as tool errors so the model reacts.
             return Err(truncate_output(out, MAX_OUTPUT_CHARS));
         }
         Ok(truncate_output(out, MAX_OUTPUT_CHARS))
     }
+}
+
+/// Apply the shared output tiering helper: inline if it fits, else
+/// preview head + stable marker + recovery hint.
+fn tier_tool_output(tool: &'static str, raw: &str) -> (String, bool) {
+    use super::super::tools::{preview_partial, INLINE_CAP_CHARS};
+    let chars = raw.chars().count();
+    if chars <= INLINE_CAP_CHARS {
+        return (raw.to_string(), false);
+    }
+    let head_chars = INLINE_CAP_CHARS / 2;
+    let head: String = raw.chars().take(head_chars).collect();
+    let notice = preview_partial(
+        tool,
+        chars,
+        head_chars,
+        "Re-run with `head/tail/sed`/`grep -n` to inspect the rest, or archive via `history` if the transcript already compacted it.",
+    );
+    (format!("{notice}{head}"), true)
 }
 
 #[cfg(test)]
@@ -160,5 +189,21 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("timed out"));
+    }
+
+    #[test]
+    fn tier_tool_output_inlines_small_results() {
+        let (body, was_truncated) = tier_tool_output("bash", "small output");
+        assert_eq!(body, "small output");
+        assert!(!was_truncated);
+    }
+
+    #[test]
+    fn tier_tool_output_truncates_with_stable_marker() {
+        let big = "x".repeat(8_000);
+        let (body, was_truncated) = tier_tool_output("bash", &big);
+        assert!(was_truncated);
+        assert!(body.contains(super::super::tools::PARTIAL_MARKER));
+        assert!(body.contains("bash output truncated"));
     }
 }

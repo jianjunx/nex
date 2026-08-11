@@ -3,7 +3,7 @@
 //! All paths are resolved through [`super::resolve_within`] so they can never
 //! escape the session cwd.
 
-use super::{arg_str, arg_usize, resolve_within, Tool, ToolCtx};
+use super::{arg_str, arg_usize, resolve_within, Tool, ToolCtx, PARTIAL_MARKER};
 use agent_client_protocol as acp;
 
 /// Default page size for `read_file`.
@@ -53,14 +53,14 @@ impl Tool for ReadFile {
         for (idx, line) in content.lines().enumerate().skip(start - 1).take(limit) {
             out.push_str(&format!("{:>6}→{}\n", idx + 1, line));
         }
-        if out.is_empty() {
+                if out.is_empty() {
             return Ok(format!(
                 "(file has {total} lines; offset {start} is past the end)"
             ));
         }
         if start + limit <= total {
             out.push_str(&format!(
-                "… [showing lines {start}–{} of {total}; pass a larger `offset` for more]",
+                "{PARTIAL_MARKER} read_file slice: showing lines {start}–{} of {total}; pass a larger `offset` for more\n",
                 start + limit - 1
             ));
         }

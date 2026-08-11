@@ -270,6 +270,41 @@ pub fn truncate_output(s: String, max_chars: usize) -> String {
     format!("{cut}\n… [output truncated at {max_chars} chars]")
 }
 
+// ----- Output tiering ---------------------------------------------------
+//
+// Shared building blocks for keeping long tool results out of the live
+// transcript. Each tool picks its own character budget, but the truncation
+// marker is byte-stable across tools so it is friendly to the provider's
+// prefix cache and friendly to BM25-style retrievers that scan the transcript
+// looking for partial content.
+
+/// Stable marker that the model can grep for when it wants to know whether
+/// a transcript result is partial. The literal `partial-output` is shared
+/// with archive-side search tools.
+pub const PARTIAL_MARKER: &str = "[nex:partial-output]";
+
+/// Per-tool inline cap: anything bigger than this is considered "long" and
+/// should be replaced with a summary + `preview_partial` instead of being
+/// embedded verbatim. Kept as a constant so the threshold is shared and
+/// greppable in tests.
+pub const INLINE_CAP_CHARS: usize = 4_000;
+
+/// Build a stable, byte-stable "this output was truncated" notice for a
+/// tool result, leaving the first `head_chars` of the original in place so
+/// the model still has a hook to anchor on.
+pub fn preview_partial(
+    tool: &'static str,
+    original_chars: usize,
+    head_chars: usize,
+    recovery_hint: &str,
+) -> String {
+    debug_assert!(head_chars <= original_chars);
+    format!(
+        "{PARTIAL_MARKER} {tool} output truncated: showing first {head_chars} of {original_chars} chars. \
+{recovery_hint}\n--- preview head ---\n",
+    )
+}
+
 /// Builds a platform-appropriate shell runner with the script passed as a
 /// single argument, so callers share one shape: `shell_command().arg(script)`.
 /// Windows uses `cmd.exe /S /C` (present on every Windows install); Unix uses

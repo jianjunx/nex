@@ -1,0 +1,47 @@
+src-tauri/src/agent/native/mcp.rs
+  s_274d182625bb0b::t_541c18e624b6bc 940
+src-tauri/src/agent/native/memory.rs
+  s_274d182625bb0b::t_1522a58a84efb2 1-229
+src-tauri/src/agent/native/mod.rs
+  s_274d182625bb0b::t_5b41b289219f19 29,68-70,498,586,694-706,841
+src-tauri/src/agent/native/session.rs
+  s_274d182625bb0b::t_d9dee481c9d5e9 136,241-248,534-558,1059
+src-tauri/src/agent/native/tools/bash.rs
+  s_274d182625bb0b::t_1469b233516278 134
+src-tauri/src/agent/native/tools/checkpoint.rs
+  s_274d182625bb0b::t_503e57984ee7da 186
+src-tauri/src/agent/native/tools/fs.rs
+  s_274d182625bb0b::t_92af99c56f96b1 266
+src-tauri/src/agent/native/tools/history.rs
+  s_274d182625bb0b::t_6dcc78dc98014a 252,304
+src-tauri/src/agent/native/tools/jobs.rs
+  s_274d182625bb0b::t_13602a45e7a82c 373
+src-tauri/src/agent/native/tools/mod.rs
+  s_274d182625bb0b::t_abf4825192108a 28,54-57,74-106
+src-tauri/src/agent/native/tools/mode.rs
+  s_274d182625bb0b::t_6a8905d1af8f52 117
+src-tauri/src/agent/native/tools/search.rs
+  s_274d182625bb0b::t_206a859ea5efc3 256
+src-tauri/src/agent/native/tools/skill.rs
+  s_274d182625bb0b::t_101e1f0a7bc3e6 73
+src-tauri/src/agent/native/tools/spreadsheet.rs
+  s_274d182625bb0b::t_74a1c791383ebd 234
+src-tauri/src/agent/native/tools/subagent.rs
+  s_274d182625bb0b::t_74180fc61cc322 214
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "1c97c95958e6c2a9306daa2db63d2639bf56df6e",
+  "prompts": {},
+  "sessions": {
+    "s_274d182625bb0b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_274d182625bb0b",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

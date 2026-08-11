@@ -249,7 +249,7 @@ mod tests {
             harness: None,
             mutations: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             mode_id: None,
-            memory: super::super::super::tools::test_memory_handle(),
+            memory: super::super::test_memory_handle(),
         };
 
         let out = History
@@ -301,7 +301,7 @@ mod tests {
             harness: None,
             mutations: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             mode_id: None,
-            memory: super::super::super::tools::test_memory_handle(),
+            memory: super::super::test_memory_handle(),
         };
         let scoped = History
             .execute(

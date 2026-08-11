@@ -31,6 +31,7 @@ pub mod probe;
 pub mod provider;
 pub mod session;
 pub mod skills;
+pub mod stats;
 pub mod summary;
 pub mod tools;
 
@@ -842,6 +843,7 @@ impl acp::Agent for NexNativeAgent {
                     },
                     context_window: cfg.context_window_for(&model_id),
                     usage: RefCell::new(provider::Usage::default()),
+                    stats: RefCell::new(stats::ContextStats::new()),
                 };
                 let stop = session::run_turn(&env, &mut session.history, content).await;
                 // Auto-review only cares about workspace file edits, not bash /
@@ -897,10 +899,15 @@ impl acp::Agent for NexNativeAgent {
             .insert(session_key, session);
         Ok(acp::PromptResponse {
             stop_reason,
-            // Frontend uses this to chain a visible `/review` when autoReview is on.
-            meta: Some(serde_json::json!({
-                "hadMutations": had_mutations,
-            })),
+            // Frontend reads `hadMutations` to chain a visible `/review` when
+            // autoReview is on; `_meta.contextStats` carries the per-turn
+            // context-engine telemetry for dashboards.
+            meta: Some(stats::to_meta(
+                &env.stats.borrow(),
+                Some(serde_json::json!({
+                    "hadMutations": had_mutations,
+                })),
+            )),
         })
     }
 

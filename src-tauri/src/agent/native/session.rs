@@ -75,6 +75,11 @@ pub struct TurnEnv {
     pub context_window: u64,
     /// Accumulated provider usage for the turn (observability).
     pub usage: RefCell<Usage>,
+    /// Per-turn context-engine stats (compaction, partials, cache hit).
+    /// Surfaced through the `prompt` response's `_meta.contextStats` so
+    /// dashboards can monitor optimization efficacy without a separate
+    /// log scrape.
+    pub stats: RefCell<stats::ContextStats>,
 }
 
 impl TurnEnv {
@@ -151,6 +156,7 @@ pub async fn run_subagent(harness: &SubagentHarness, task: &str) -> Result<Strin
         tool_ctx,
         context_window: harness.context_window,
         usage: RefCell::new(Usage::default()),
+        stats: RefCell::new(stats::ContextStats::new()),
     };
     let mut messages = vec![ChatMessage::system(context::subagent_prompt(
         &harness.cwd,
@@ -226,6 +232,14 @@ pub async fn run_turn(
             env.context_window,
         );
         let outcome = budget::enforce(messages, budget, &env.tool_ctx.archive_dir);
+        {
+            let mut s = env.stats.borrow_mut();
+            s.compaction_passes = outcome.passes as u32;
+            s.snipped_messages = outcome.total_snipped as u32;
+            s.folded_messages = outcome.total_folded as u32;
+            s.archive_files_written = outcome.archive_files.len() as u32;
+            s.final_tokens = outcome.final_tokens;
+        }
         if outcome.passes > 0 {
             log::debug!(
                 "context budget: initial={} final={} budget={} passes={} snipped={} folded={}",
@@ -302,6 +316,9 @@ pub async fn run_turn(
                         acc.prompt_tokens += u.prompt_tokens;
                         acc.completion_tokens += u.completion_tokens;
                         acc.cache_hit_tokens += u.cache_hit_tokens;
+                        let mut s = env.stats.borrow_mut();
+                        s.cache_hit_tokens = acc.cache_hit_tokens;
+                        s.prompt_tokens = acc.prompt_tokens;
                     }
                     break;
                 }
@@ -553,6 +570,21 @@ async fn execute_tool(env: &TurnEnv, call: &NativeToolCall) -> Result<String, St
                 }
             }
             _ => {}
+        }
+    }
+
+    // Tool-result metrics. Every successful tool call produces a result
+    // message; a `partial` marker on it (see Ticket 3) signals the model
+    // only saw a preview head, which we count separately so dashboards
+    // can spot the "model reasons on partial info" failure mode.
+    {
+        let body = result.as_ref().map(|s| s.as_str()).unwrap_or("");
+        if !call.name.is_empty() {
+            let mut s = env.stats.borrow_mut();
+            s.tool_results += 1;
+            if body.contains(tools::PARTIAL_MARKER) {
+                s.partial_tool_results += 1;
+            }
         }
     }
 
@@ -1060,6 +1092,7 @@ mod tests {
             },
             context_window: 0,
             usage: RefCell::new(Usage::default()),
+            stats: RefCell::new(stats::ContextStats::new()),
         };
         (env, notifications, permission_requests)
     }

@@ -25,6 +25,7 @@ use std::time::Duration;
 
 use agent_client_protocol as acp;
 
+use super::memory::WorkingMemory;
 use super::provider::{FunctionSpec, ToolSpec};
 
 /// Per-turn environment handed to every tool execution.
@@ -50,6 +51,10 @@ pub struct ToolCtx {
     /// Live session mode (`code`/`ask`/`plan`/`auto`); shared with [`super::session::TurnEnv`].
     /// `None` inside contexts that must not change the parent mode (rare test stubs).
     pub mode_id: Option<Rc<RefCell<String>>>,
+    /// Session working memory; tools call `record_*` here when they touch
+    /// tracked state (file write, tool error, etc.). The harness renders it
+    /// back into the transcript just before each provider request.
+    pub memory: Rc<RefCell<WorkingMemory>>,
 }
 
 /// Tools that rewrite workspace files. Auto-`/review` triggers only when at
@@ -64,6 +69,39 @@ pub fn mutations_include_workspace_edit(log: &[String]) -> bool {
         let name = entry.split('(').next().unwrap_or("");
         is_workspace_edit_tool(name)
     })
+}
+
+/// Build a no-op working-memory handle for tests and other contexts where
+/// memory is not exercised (subagents, MCP proxies, mock tool contexts).
+pub fn test_memory_handle() -> Rc<RefCell<WorkingMemory>> {
+    Rc::new(RefCell::new(WorkingMemory::new()))
+}
+
+/// Refresh the working-memory block already spliced into `messages`.
+/// Looks for the first assistant message that starts with the
+/// `WORKING_MEMORY_MARKER` and rewrites its content in-place; a no-op when
+/// the marker isn't present (e.g. older transcripts loaded from archive).
+pub fn refresh_working_memory_in_place(
+    messages: &mut [super::provider::ChatMessage],
+    memory: &WorkingMemory,
+) {
+    const MARKER: &str = "[nex:working-memory]";
+    for msg in messages.iter_mut() {
+        if msg.role != "assistant" {
+            continue;
+        }
+        let starts_with_marker = msg
+            .content
+            .as_ref()
+            .and_then(super::provider::Content::as_text)
+            .map(|s| s.starts_with(MARKER))
+            .unwrap_or(false);
+        if !starts_with_marker {
+            continue;
+        }
+        msg.content = Some(super::provider::Content::Text(render(memory)));
+        break;
+    }
 }
 
 /// A builtin tool.

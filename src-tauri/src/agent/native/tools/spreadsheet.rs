@@ -231,6 +231,7 @@ mod tests {
             harness: None,
             mutations: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             mode_id: None,
+            memory: super::super::super::tools::test_memory_handle(),
         }
     }
 

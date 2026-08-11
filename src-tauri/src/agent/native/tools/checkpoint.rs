@@ -183,6 +183,7 @@ mod tests {
             harness: None,
             mutations: Rc::new(RefCell::new(Vec::new())),
             mode_id: None,
+            memory: super::super::super::tools::test_memory_handle(),
         }
     }
 

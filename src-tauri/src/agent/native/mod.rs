@@ -26,6 +26,7 @@ pub mod context;
 pub mod home;
 pub mod instructions;
 pub mod mcp;
+pub mod memory;
 pub mod probe;
 pub mod provider;
 pub mod session;
@@ -64,6 +65,9 @@ struct NativeSession {
     cwd: PathBuf,
     /// PATH captured from the project/login shell for this session.
     path_env: OsString,
+    /// Stable session-level working memory. Updated by the harness via
+    /// hooks; the model cannot rewrite it directly.
+    memory: Rc<RefCell<memory::WorkingMemory>>,
     handles: SessionHandles,
     /// Append-only OpenAI-format transcript (system prompt pushed lazily on
     /// the first turn so config edits take effect for fresh sessions).
@@ -491,6 +495,7 @@ impl acp::Agent for NexNativeAgent {
         let session = NativeSession {
             cwd: cwd.clone(),
             path_env: self.inner.default_path_env.clone(),
+            memory: Rc::new(RefCell::new(memory::WorkingMemory::new())),
             handles: handles.clone_handles(),
             history: Vec::new(),
             jobs: Rc::new(RefCell::new(tools::jobs::JobTable::default())),
@@ -578,6 +583,7 @@ impl acp::Agent for NexNativeAgent {
         let session = NativeSession {
             cwd: cwd.clone(),
             path_env: self.inner.default_path_env.clone(),
+            memory: Rc::new(RefCell::new(memory::WorkingMemory::new())),
             handles: handles.clone_handles(),
             history: arch.history,
             jobs: Rc::new(RefCell::new(tools::jobs::JobTable::default())),
@@ -685,6 +691,19 @@ impl acp::Agent for NexNativeAgent {
                 }
             }
             session.history.push(ChatMessage::system(sys));
+            // Working memory lives right after the system prompt. The
+            // block is re-rendered on every turn (cheap, byte-stable), so
+            // the model always sees the current task state without
+            // waiting for a summary splice to surface it.
+            session
+                .memory
+                .borrow_mut()
+                .set_goal("理解用户的目标并开始工作");
+            session
+                .history
+                .push(ChatMessage::assistant(memory::render(
+                    &session.memory.borrow(),
+                )));
         }
 
         // Build the multimodal user turn from the incoming prompt blocks
@@ -819,6 +838,7 @@ impl acp::Agent for NexNativeAgent {
                         harness: Some(harness),
                         mutations: Rc::new(RefCell::new(Vec::new())),
                         mode_id: Some(session.handles.mode_id.clone()),
+                        memory: session.memory.clone(),
                     },
                     context_window: cfg.context_window_for(&model_id),
                     usage: RefCell::new(provider::Usage::default()),

@@ -133,6 +133,7 @@ pub async fn run_subagent(harness: &SubagentHarness, task: &str) -> Result<Strin
         mutations: Rc::new(RefCell::new(Vec::new())),
         // Parent mode is not mutable from subagents (`switch_mode` is filtered out).
         mode_id: None,
+        memory: super::tools::test_memory_handle(),
     };
     let env = TurnEnv {
         conn: harness.conn.clone(),
@@ -236,6 +237,14 @@ pub async fn run_turn(
                 outcome.total_folded,
             );
         }
+
+        // Refresh the working-memory block in-place. The block is byte-stable
+        // when the memory state doesn't change, so this preserves prefix
+        // cache as long as nothing actually moved.
+        crate::agent::native::tools::refresh_working_memory_in_place(
+            messages,
+            &env.tool_ctx.memory.borrow(),
+        );
 
         // Hit the optional step cap: one final text-only turn (OpenCode-style),
         // then stop. `max_steps == 0` means unlimited.
@@ -521,6 +530,31 @@ async fn execute_tool(env: &TurnEnv, call: &NativeToolCall) -> Result<String, St
     update_status(env, &call_id, acp::ToolCallStatus::InProgress).await;
     let mode_before = env.mode_id.borrow().clone();
     let result = tool.execute(call.arguments.clone(), &env.tool_ctx).await;
+
+    // System-driven working-memory updates. The model never rewrites the
+    // memory block; the harness observes tool outcomes and folds them in.
+    {
+        let mut mem = env.tool_ctx.memory.borrow_mut();
+        match result.as_ref() {
+            Ok(_) if matches!(call.name.as_str(), "write_file" | "edit_file" | "multi_edit") => {
+                if let Some(path) = call.arguments.get("path").and_then(|v| v.as_str()) {
+                    mem.record_file_changed(path);
+                }
+            }
+            Ok(_) if call.name == "read_file" => {
+                if let Some(path) = call.arguments.get("path").and_then(|v| v.as_str()) {
+                    mem.record_file_inspected(path);
+                }
+            }
+            Err(e) => {
+                let first_line = e.lines().next().unwrap_or("").to_string();
+                if !first_line.is_empty() {
+                    mem.record_tool_error(format!("{}: {}", call.name, first_line));
+                }
+            }
+            _ => {}
+        }
+    }
 
     // Mirror the model's todo list as an ACP plan update.
     if call.name == "todo_write" {
@@ -1022,6 +1056,7 @@ mod tests {
                 harness: None,
                 mutations: Rc::new(RefCell::new(Vec::new())),
                 mode_id: Some(mode_id),
+                memory: crate::agent::native::tools::test_memory_handle(),
             },
             context_window: 0,
             usage: RefCell::new(Usage::default()),

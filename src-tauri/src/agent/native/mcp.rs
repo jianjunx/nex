@@ -937,6 +937,7 @@ data: \"result\":{\"ok\":true}}\n\
             harness: None,
             mutations: Rc::new(RefCell::new(Vec::new())),
             mode_id: None,
+            memory: crate::agent::native::tools::test_memory_handle(),
         };
         let ok = proxy
             .execute(serde_json::json!({ "text": "yo" }), &ctx)

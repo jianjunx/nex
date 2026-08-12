@@ -1,0 +1,33 @@
+src/features/projects/NewConversationDropdown.tsx
+  s_5843a04271e5ca::t_b03473ca6e3b9d 16
+src/features/projects/ProjectSelector.tsx
+  s_5843a04271e5ca::t_1fb4cc80e631a0 5
+src/lib/errors.test.ts
+  s_5843a04271e5ca::t_432e38acc39b22 1-27
+src/lib/errors.ts
+  s_5843a04271e5ca::t_c4e9df5539d127 1-48
+src/stores/agent.store.ts
+  s_5843a04271e5ca::t_6c8c423d48e6aa 5
+src/stores/conversation.store.ts
+  s_5843a04271e5ca::t_32e6b6c88693a4 4
+src/stores/project.store.ts
+  s_5843a04271e5ca::t_cc91206d8ed55e 4
+src/stores/terminal.store.ts
+  s_5843a04271e5ca::t_9af66696de91ee 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "fb6ef83390af9cd4b0f5fa04925d583da8ef3e05",
+  "prompts": {},
+  "sessions": {
+    "s_5843a04271e5ca": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_5843a04271e5ca",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

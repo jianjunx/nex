@@ -6,7 +6,6 @@ import {
   conversationList,
   conversationGetMessages,
   conversationUpdateTitle,
-  conversationDelete,
   type Conversation,
   type ConversationMessage,
 } from "../bridge/tauri";

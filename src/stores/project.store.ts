@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { persist } from "zustand/middleware";
+import { projectOpen, projectList, projectRemove, projectTouch, type Project } from "../bridge/tauri";
 import { errorMessage } from "../lib/errors";
 
 interface ProjectStore {

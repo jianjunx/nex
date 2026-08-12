@@ -1,6 +1,14 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { type UnlistenFn } from "@tauri-apps/api/event";
+import {
+  terminalCreate,
+  terminalWrite,
+  terminalResize,
+  terminalKill,
+  onTerminalOutput,
+  onTerminalExited,
+} from "../bridge/tauri";
 import { errorMessage } from "../lib/errors";
 
 interface TerminalSession {

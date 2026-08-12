@@ -96,22 +96,37 @@ impl Tool for Bash {
 }
 
 /// Apply the shared output tiering helper: inline if it fits, else
-/// preview head + stable marker + recovery hint.
+/// preview head + tail + stable marker + recovery hint.
 fn tier_tool_output(tool: &'static str, raw: &str) -> (String, bool) {
     use super::super::tools::{preview_partial, INLINE_CAP_CHARS};
     let chars = raw.chars().count();
     if chars <= INLINE_CAP_CHARS {
         return (raw.to_string(), false);
     }
-    let head_chars = INLINE_CAP_CHARS / 2;
+    let head_chars = INLINE_CAP_CHARS / 3;
+    let tail_chars = INLINE_CAP_CHARS / 3;
     let head: String = raw.chars().take(head_chars).collect();
+    let tail: String = raw
+        .chars()
+        .rev()
+        .take(tail_chars)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    let omitted = chars.saturating_sub(head_chars + tail_chars);
     let notice = preview_partial(
         tool,
         chars,
         head_chars,
         "Re-run with `head/tail/sed`/`grep -n` to inspect the rest, or archive via `history` if the transcript already compacted it.",
     );
-    (format!("{notice}{head}"), true)
+    (
+        format!(
+            "{notice}{head}\n--- omitted middle: {omitted} chars ---\n{tail}"
+        ),
+        true,
+    )
 }
 
 #[cfg(test)]
@@ -201,10 +216,12 @@ mod tests {
 
     #[test]
     fn tier_tool_output_truncates_with_stable_marker() {
-        let big = "x".repeat(8_000);
+        let big = format!("{}TAIL-ERROR-SUMMARY", "x".repeat(8_000));
         let (body, was_truncated) = tier_tool_output("bash", &big);
         assert!(was_truncated);
         assert!(body.contains(super::super::PARTIAL_MARKER));
         assert!(body.contains("bash output truncated"));
+        assert!(body.contains("TAIL-ERROR-SUMMARY"), "tail should survive preview");
+        assert!(body.contains("omitted middle"));
     }
 }

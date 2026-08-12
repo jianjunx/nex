@@ -1,0 +1,21 @@
+src-tauri/src/agent/launch.rs
+  s_ce2866d7f897f9::t_e62d77a79cc84c 55,67-77,105,133-141,171,179,337-344,451,471,482,493,587,594,603-621,624
+src-tauri/src/agent/server.rs
+  s_ce2866d7f897f9::t_8e96bc05125a33 217-223,237,265,273
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "7dcaa0a664c48e054de916b34e5097aad6c34a64",
+  "prompts": {},
+  "sessions": {
+    "s_ce2866d7f897f9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_ce2866d7f897f9",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

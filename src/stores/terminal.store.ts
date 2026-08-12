@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { type UnlistenFn } from "@tauri-apps/api/event";
-import { terminalCreate, terminalWrite, terminalResize, terminalKill, onTerminalOutput, onTerminalExited } from "../bridge/tauri";
+import { errorMessage } from "../lib/errors";
 
 interface TerminalSession {
   id: string;
@@ -39,13 +39,6 @@ interface TerminalStore {
 }
 
 // Backend errors arrive as { type, message }; fall back to String(err).
-function errorMessage(err: unknown): string {
-  if (err && typeof err === "object" && "message" in err && typeof (err as { message: unknown }).message === "string") {
-    return (err as { message: string }).message;
-  }
-  return String(err);
-}
-
 /** Sessions belonging to a project (stable empty array for selectors). */
 const EMPTY_SESSIONS: TerminalSession[] = [];
 

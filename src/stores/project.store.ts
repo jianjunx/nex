@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { persist } from "zustand/middleware";
-import { projectOpen, projectList, projectRemove, projectTouch, type Project } from "../bridge/tauri";
+import { errorMessage } from "../lib/errors";
 
 interface ProjectStore {
   projects: Project[];
@@ -16,13 +16,6 @@ interface ProjectStore {
 }
 
 // Backend errors arrive as { type, message }; fall back to String(err).
-function errorMessage(err: unknown): string {
-  if (err && typeof err === "object" && "message" in err && typeof (err as { message: unknown }).message === "string") {
-    return (err as { message: string }).message;
-  }
-  return String(err);
-}
-
 function sortByLastOpened(projects: Project[]): Project[] {
   return [...projects].sort((a, b) => b.last_opened - a.last_opened);
 }

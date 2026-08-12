@@ -1,8 +1,7 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { persist } from "zustand/middleware";
-import {
-  conversationCreate,
+import { errorMessage } from "../lib/errors";
   conversationList,
   conversationGetMessages,
   conversationUpdateTitle,
@@ -140,13 +139,6 @@ export function migrateConversationPersist(
     activeTabByProject: old.activeTabByProject ?? {},
     legacyTabsMigration: old.legacyTabsMigration ?? legacy,
   };
-}
-
-function errorMessage(err: unknown): string {
-  if (err && typeof err === "object" && "message" in err && typeof (err as { message: unknown }).message === "string") {
-    return (err as { message: string }).message;
-  }
-  return String(err);
 }
 
 export const useConversationStore = create<ConversationStore>()(

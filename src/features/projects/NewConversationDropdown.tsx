@@ -13,17 +13,7 @@ import { useAgentStore } from "../../stores/agent.store";
 import { useConversationStore } from "../../stores/conversation.store";
 import { useProjectStore } from "../../stores/project.store";
 import { useUiStore } from "../../stores/ui.store";
-import type { Conversation, ServerDescriptor, SessionTarget } from "../../bridge/tauri";
-
-function errorMessage(err: unknown): string {
-  if (
-    err && typeof err === "object" && "message" in err &&
-    typeof (err as { message: unknown }).message === "string"
-  ) {
-    return (err as { message: string }).message;
-  }
-  return String(err);
-}
+import { errorMessage } from "@/lib/errors";
 
 /**
  * Compare two semver-ish version strings (e.g. "0.64.2" vs "0.65.0").

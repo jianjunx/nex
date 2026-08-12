@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ChevronDown, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { errorMessage } from "@/lib/errors";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -40,13 +40,6 @@ function onProjectActivated(projectId: string) {
 // override shadcn's solid accent focus with the app's subtle overlay token.
 const ITEM_HIGHLIGHT =
   "focus:bg-[var(--overlay-hover)] focus:text-[var(--text-primary)] data-[highlighted]:bg-[var(--overlay-hover)]";
-
-function errorMessage(err: unknown): string {
-  if (err && typeof err === "object" && "message" in err) {
-    return String((err as { message: unknown }).message);
-  }
-  return String(err);
-}
 
 function StatusDots({ projectId }: { projectId: string }) {
   const sessions = useAgentStore((s) => s.sessions);

@@ -2,8 +2,7 @@ import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { persist } from "zustand/middleware";
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import {
-  agentCreateSession,
+import { errorMessage } from "../lib/errors";
   agentSendPrompt,
   agentCancel,
   agentRespondPermission,
@@ -186,13 +185,6 @@ interface AgentStore {
   upsertCustom: (server: CustomServer) => Promise<void>;
   deleteCustom: (id: string) => Promise<void>;
   initListeners: () => () => void;
-}
-
-function errorMessage(err: unknown): string {
-  if (err && typeof err === "object" && "message" in err && typeof (err as { message: unknown }).message === "string") {
-    return (err as { message: string }).message;
-  }
-  return String(err);
 }
 
 let listenerTeardown: (() => void) | null = null;

@@ -2,7 +2,8 @@ import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { persist } from "zustand/middleware";
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import { errorMessage } from "../lib/errors";
+import {
+  agentCreateSession,
   agentSendPrompt,
   agentCancel,
   agentRespondPermission,
@@ -14,18 +15,17 @@ import { errorMessage } from "../lib/errors";
   agentRefreshRegistry,
   agentCustomUpsert,
   agentCustomDelete,
-  agentSetSessionMode,
-  agentSetSessionModel,
-  agentSetSessionConfigOption,
-  conversationReplaceThreadEntries,
   nativeAgentGetConfig,
   onAgentNotification,
   onAgentPermissionRequest,
   onAgentPlanApprovalRequest,
   onAgentAskQuestionRequest,
   onAgentSessionTerminated,
-  type PromptBlock,
-  type ServerDescriptor,
+  type AgentConfigOptionDto,
+  type AgentPromptBlock,
+  type AgentSessionTerminatedPayload,
+  type AgentServerDescriptor,
+  type AgentSessionDescriptor,
   type SessionTarget,
   type CustomServer,
   type CreateSessionResult,
@@ -34,16 +34,17 @@ import type {
   AgentAskQuestionRequestPayload,
   AgentPermissionRequestPayload,
   AgentPlanApprovalRequestPayload,
-  AskQuestionAnswerPayload,
+  AgentNotificationPayload,
 } from "../bridge/events";
-import { pickAllowOptionId } from "../features/agent/pickAllowOptionId";
+import { errorMessage } from "../lib/errors";
 import {
-  applyPermissionRequestToEntries,
+  entriesToChatRequest,
+  requestToEntries,
   applySessionUpdate,
   emptySessionMeta,
 } from "../features/agent/thread/applySessionUpdate";
+import type { ThreadEntry } from "../features/agent/thread/types";
 import { assistantTextAfterLastUser } from "../features/agent/thread/messagesToThreadEntries";
-import type { SessionMeta, ThreadEntry } from "../features/agent/thread/types";
 import { useConversationStore } from "./conversation.store";
 import { useNotificationStore } from "./notification.store";
 

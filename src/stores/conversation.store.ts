@@ -1,23 +1,16 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { persist } from "zustand/middleware";
-import { errorMessage } from "../lib/errors";
+import {
+  conversationCreate,
   conversationList,
   conversationGetMessages,
   conversationUpdateTitle,
-  conversationAppendMessage,
+  conversationDelete,
   type Conversation,
-  type Message,
+  type ConversationMessage,
 } from "../bridge/tauri";
-import { useProjectStore } from "./project.store";
-import { useAgentStore } from "./agent.store";
-import { clearComposerDraft } from "./composerDrafts";
-import {
-  DEFAULT_CONVERSATION_TITLE,
-  deriveConversationTitle,
-} from "../features/agent/deriveConversationTitle";
-
-export type LegacyTabsMigration = { tabs: string[]; activeId: string | null };
+import { errorMessage } from "../lib/errors";
 
 interface ConversationStore {
   conversationsByProject: Record<string, Conversation[]>;

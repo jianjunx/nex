@@ -244,10 +244,23 @@ pub fn replace_prefix_with_summary(
         };
     }
     let boundary = messages.len() - KEEP_TAIL_MESSAGES;
-    // Snapshot the original prefix (everything between system prompt and
-    // tail) before splicing the summary in. The tool↔assistant pairing is
-    // already inside this prefix and is preserved as a unit.
-    let prefix: Vec<ChatMessage> = messages[1..boundary].to_vec();
+    let existing_summary = messages
+        .get(1)
+        .and_then(|m| {
+            if m.role != "assistant" {
+                return None;
+            }
+            m.content
+                .as_ref()
+                .and_then(Content::as_text)
+                .filter(|t| t.starts_with(SUMMARY_MARKER))
+        })
+        .is_some();
+    // Snapshot the original prefix before splicing the summary in.
+    // If a summary already exists at index 1, reuse that slot and archive
+    // only the turns *after* it, preventing summary-on-summary growth.
+    let prefix_start = if existing_summary { 2 } else { 1 };
+    let prefix: Vec<ChatMessage> = messages[prefix_start..boundary].to_vec();
     let archive_file = archive(archive_dir, &prefix);
     let archive_ref = archive_file
         .as_ref()
@@ -267,10 +280,9 @@ pub fn replace_prefix_with_summary(
             r
         )));
     }
-    // Splice: keep system prompt (idx 0) + summary + protected tail.
-    let new_len = 1 + 1 + KEEP_TAIL_MESSAGES;
+    // Splice: keep system prompt (idx 0) + one summary + protected tail.
     let tail_start = boundary;
-    let mut new_msgs: Vec<ChatMessage> = Vec::with_capacity(new_len);
+    let mut new_msgs: Vec<ChatMessage> = Vec::with_capacity(1 + 1 + KEEP_TAIL_MESSAGES);
     new_msgs.push(messages[0].clone());
     new_msgs.push(summary_msg);
     new_msgs.extend(messages[tail_start..].iter().cloned());
@@ -615,6 +627,62 @@ mod tests {
                 .unwrap()
                 .len(),
             big.len()
+        );
+    }
+
+    #[test]
+    fn replace_prefix_with_summary_reuses_existing_summary_slot() {
+        let tmp = tempfile::tempdir().unwrap();
+        let existing = crate::agent::native::summary::render_session_summary(
+            &["ship v1".into()],
+            &["fact".into()],
+            &[],
+            &[],
+            &[],
+            Some("old.jsonl"),
+        );
+        let mut msgs: Vec<ChatMessage> = vec![
+            ChatMessage::system("sys"),
+            ChatMessage::assistant(existing),
+        ];
+        for i in 0..10 {
+            msgs.push(ChatMessage::user(format!("u{i}")));
+            msgs.push(ChatMessage::assistant(format!("a{i}")));
+        }
+        let tail_before = msgs.last().cloned();
+        let splice = replace_prefix_with_summary(
+            &mut msgs,
+            crate::agent::native::summary::render_session_summary(
+                &["new goal".into()],
+                &["new fact".into()],
+                &[],
+                &[],
+                &[],
+                None,
+            ),
+            tmp.path(),
+        );
+        assert!(splice.archive_file.is_some());
+        // Still exactly one summary block at index 1.
+        assert_eq!(
+            msgs.iter()
+                .filter(|m| {
+                    m.role == "assistant"
+                        && m.content
+                            .as_ref()
+                            .and_then(Content::as_text)
+                            .map(|t| t.starts_with(SUMMARY_MARKER))
+                            .unwrap_or(false)
+                })
+                .count(),
+            1
+        );
+        assert_eq!(
+            msgs.last().and_then(|m| m.content.as_ref()).and_then(Content::as_text),
+            tail_before
+                .as_ref()
+                .and_then(|m| m.content.as_ref())
+                .and_then(Content::as_text)
         );
     }
 

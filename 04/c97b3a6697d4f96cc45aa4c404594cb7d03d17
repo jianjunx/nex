@@ -1,0 +1,19 @@
+src-tauri/src/agent/native/tools/bash.rs
+  s_b00913bf0f56f7::t_ae43e323e72375 99,106-107,109-117,124-129,219,224-225
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "04c97b3a6697d4f96cc45aa4c404594cb7d03d17",
+  "prompts": {},
+  "sessions": {
+    "s_b00913bf0f56f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_b00913bf0f56f7",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

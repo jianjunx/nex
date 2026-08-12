@@ -1,0 +1,21 @@
+src/bridge/tauri.ts
+  s_6c23d66d80c0a9::t_d0750000ffc40f 201-213,216
+src/stores/agent.store.ts
+  s_6c23d66d80c0a9::t_0bb83de5d55190 165-166,617,802-806
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "468e01b0dd8c328f8538da3358b82f0548533cdb",
+  "prompts": {},
+  "sessions": {
+    "s_6c23d66d80c0a9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_6c23d66d80c0a9",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

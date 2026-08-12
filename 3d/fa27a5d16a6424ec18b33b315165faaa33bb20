@@ -1,0 +1,21 @@
+src/stores/agent.store.ts
+  s_be5a91dc8bd6b6::t_49dcd4224a04b0 5-6,24-28,37,39,41-42,46
+src/stores/conversation.store.ts
+  s_be5a91dc8bd6b6::t_59b04cd3a5c429 4-5,9,11,13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "3dfa27a5d16a6424ec18b33b315165faaa33bb20",
+  "prompts": {},
+  "sessions": {
+    "s_be5a91dc8bd6b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_be5a91dc8bd6b6",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

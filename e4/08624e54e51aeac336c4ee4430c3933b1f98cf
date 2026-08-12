@@ -1,0 +1,21 @@
+src/stores/project.store.ts
+  s_c43ffa02c928b3::t_02360188d48776 4
+src/stores/terminal.store.ts
+  s_c43ffa02c928b3::t_8ee45668b791ec 4-11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "e408624e54e51aeac336c4ee4430c3933b1f98cf",
+  "prompts": {},
+  "sessions": {
+    "s_c43ffa02c928b3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_c43ffa02c928b3",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

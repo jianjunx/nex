@@ -1,0 +1,19 @@
+src-tauri/src/agent/native/compact.rs
+  s_89dc5398c19877::t_5dde02deb8d053 247-263,283,285,633-688
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "a02e1e66090772c1e5bba21412cc594dfd8d4d31",
+  "prompts": {},
+  "sessions": {
+    "s_89dc5398c19877": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_89dc5398c19877",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

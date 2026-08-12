@@ -38,8 +38,6 @@ import type {
 } from "../bridge/events";
 import { errorMessage } from "../lib/errors";
 import {
-  entriesToChatRequest,
-  requestToEntries,
   applySessionUpdate,
   emptySessionMeta,
 } from "../features/agent/thread/applySessionUpdate";

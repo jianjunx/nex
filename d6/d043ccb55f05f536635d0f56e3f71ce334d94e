@@ -1,0 +1,21 @@
+src-tauri/src/agent/native/memory.rs
+  s_9d0b14dda4dc5c::t_4e067360684ccd 71-125,190-210,335-359
+src-tauri/src/agent/native/mod.rs
+  s_9d0b14dda4dc5c::t_8827a19126ecb9 584-585,589
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "d6d043ccb55f05f536635d0f56e3f71ce334d94e",
+  "prompts": {},
+  "sessions": {
+    "s_9d0b14dda4dc5c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_9d0b14dda4dc5c",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

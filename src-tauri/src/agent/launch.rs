@@ -52,7 +52,7 @@ pub async fn resolve_registry(
     cwd: &str,
     binary_cache: &BinaryCache,
     package_resolver: &dyn PackageResolver,
-    shell_path: &OsStr,
+    shell_env: &HashMap<String, String>,
 ) -> Result<LaunchSpec, NexError> {
     if let Some(npx) = &entry.distribution.npx {
         let resolved = package_resolver.resolve_npx(entry, npx).await?;
@@ -64,9 +64,17 @@ pub async fn resolve_registry(
         // Per-agent env override (e.g. clear ANTHROPIC_API_KEY for claude-acp)
         // is applied at the **final** spawn env, never during `npm install`.
         apply_per_id_env(&entry.id, &mut env);
-        // Prepend the managed Node dir to the login-shell PATH so agents see
-        // both our node and system tools (git, rg, …).
-        env.extend(node_path_env_overlay(&resolved.node_path, shell_path));
+        // Layer the full shell/project env first so credentials such as
+        // `CODEX_API_KEY` survive the GUI boundary, then prepend the managed
+        // Node dir onto PATH so agents also see our runtime.
+        apply_shell_env(&mut env, shell_env);
+        env.extend(node_path_env_overlay(
+            &resolved.node_path,
+            shell_env
+                .get("PATH")
+                .map(OsStr::new)
+                .unwrap_or_else(|| OsStr::new("")),
+        ));
 
         log::info!(
             "resolved npx agent `{}`: {} {}",
@@ -94,7 +102,7 @@ pub async fn resolve_registry(
             apply_per_id_env(&entry.id, &mut env);
             // Binary agents (e.g. Cursor) also need the login-shell PATH —
             // without it `git: command not found` in packaged builds.
-            apply_shell_path(&mut env, shell_path);
+            apply_shell_env(&mut env, shell_env);
             log::info!(
                 "resolved binary agent `{}`: {} {}",
                 entry.id,
@@ -122,16 +130,15 @@ fn node_path_env_overlay(node_path: &Path, shell_path: &OsStr) -> HashMap<String
     super::node_runtime::npm_command_env_with_base(node_path, Some(shell_path))
 }
 
-/// Ensure `env` carries the login-shell PATH unless the agent already set one.
-fn apply_shell_path(env: &mut HashMap<String, String>, shell_path: &OsStr) {
-    if env.contains_key("PATH") || env.contains_key("Path") {
-        return;
-    }
-    let value = shell_path.to_string_lossy().into_owned();
-    env.insert("PATH".to_string(), value.clone());
-    #[cfg(windows)]
-    {
-        env.insert("Path".to_string(), value);
+/// Layer the captured login/project shell env under any per-agent overrides.
+///
+/// Existing keys in `env` win (the agent's explicit config should override the
+/// shell), but any missing variables from the captured shell snapshot are
+/// copied through. This is what lets GUI-spawned agents inherit credentials
+/// such as `CODEX_API_KEY` / `OPENAI_API_KEY` in addition to PATH.
+fn apply_shell_env(env: &mut HashMap<String, String>, shell_env: &HashMap<String, String>) {
+    for (k, v) in shell_env {
+        env.entry(k.clone()).or_insert_with(|| v.clone());
     }
 }
 
@@ -161,7 +168,7 @@ pub fn resolve_custom(
     command: &str,
     mut env: HashMap<String, String>,
     cwd: &str,
-    shell_path: &OsStr,
+    shell_env: &HashMap<String, String>,
 ) -> Result<LaunchSpec, NexError> {
     let mut parts = command.split_whitespace();
     let program = parts
@@ -169,7 +176,7 @@ pub fn resolve_custom(
         .ok_or_else(|| NexError::Agent("empty agent command".to_string()))?
         .to_string();
     let args: Vec<String> = parts.map(str::to_string).collect();
-    apply_shell_path(&mut env, shell_path);
+    apply_shell_env(&mut env, shell_env);
     Ok(LaunchSpec { program, args, env, cwd: cwd.to_string() })
 }
 
@@ -327,6 +334,14 @@ mod tests {
         OsStr::new("/opt/homebrew/bin:/usr/bin:/bin")
     }
 
+    /// Full shell/project env stand-in used by resolve_* tests.
+    fn test_shell_env() -> HashMap<String, String> {
+        let mut env = HashMap::new();
+        env.insert("PATH".to_string(), test_shell_path().to_string_lossy().into_owned());
+        env.insert("CODEX_API_KEY".to_string(), "test-key".to_string());
+        env
+    }
+
     /// Test double for `PackageResolver` that returns a canned `ResolvedNpx`
     /// without ever touching the filesystem. The optional `installed_version`
     /// field lets tests pin what `newest_installed_version` reports.
@@ -433,7 +448,7 @@ mod tests {
             "/opt/homebrew/bin/node",
             "/cache/agent-packages/_codex-acp/_pkg_1.1.7/node-/node_modules/.../cli.js",
         ));
-        let spec = resolve_registry(&e, "/work", &test_cache(), &resolver, test_shell_path()).await.unwrap();
+        let spec = resolve_registry(&e, "/work", &test_cache(), &resolver, &test_shell_env()).await.unwrap();
         assert_eq!(spec.program, "/opt/homebrew/bin/node");
         assert!(spec.args[0].ends_with("cli.js"));
         assert_eq!(spec.cwd, "/work");
@@ -453,7 +468,7 @@ mod tests {
     async fn resolve_registry_appends_entry_args() {
         let e = entry("gemini", Some(npx("@google/gemini-cli@0.52.0", &["--acp"])));
         let resolver = FakePackageResolver::ok(fake_resolved("/usr/bin/node", "/cache/bin"));
-        let spec = resolve_registry(&e, "/w", &test_cache(), &resolver, test_shell_path()).await.unwrap();
+        let spec = resolve_registry(&e, "/w", &test_cache(), &resolver, &test_shell_env()).await.unwrap();
         // args: [bin, --acp]
         assert_eq!(spec.args.len(), 2);
         assert_eq!(spec.args[0], "/cache/bin");
@@ -464,7 +479,7 @@ mod tests {
     async fn resolve_registry_clears_anthropic_key_for_claude() {
         let e = entry("claude-acp", Some(npx("@agentclientprotocol/claude-agent-acp@0.62.0", &[])));
         let resolver = FakePackageResolver::ok(fake_resolved("/usr/bin/node", "/cache/bin"));
-        let spec = resolve_registry(&e, "/w", &test_cache(), &resolver, test_shell_path()).await.unwrap();
+        let spec = resolve_registry(&e, "/w", &test_cache(), &resolver, &test_shell_env()).await.unwrap();
         assert_eq!(spec.env.get("ANTHROPIC_API_KEY").map(String::as_str), Some(""));
     }
 
@@ -475,7 +490,7 @@ mod tests {
             what: "npm package",
             hint: "synthetic failure".into(),
         });
-        let err = resolve_registry(&e, "/w", &test_cache(), &resolver, test_shell_path()).await.unwrap_err();
+        let err = resolve_registry(&e, "/w", &test_cache(), &resolver, &test_shell_env()).await.unwrap_err();
         match err {
             NexError::AgentNotInstalled { what, hint } => {
                 assert_eq!(what, "npm package");
@@ -569,14 +584,14 @@ mod tests {
             distribution: RegistryDistribution { binary: Some(binary), npx: None },
         };
         let resolver = FakePackageResolver::ok(fake_resolved("/usr/bin/node", "/cache/bin"));
-        let err = resolve_registry(&e, "/w", &test_cache(), &resolver, test_shell_path()).await.unwrap_err();
+        let err = resolve_registry(&e, "/w", &test_cache(), &resolver, &test_shell_env()).await.unwrap_err();
         let msg = format!("{err}");
         assert!(msg.contains("has no binary for platform"), "error should mention missing platform: {msg}");
     }
 
     #[test]
     fn resolve_custom_splits_command() {
-        let spec = resolve_custom("my-agent --acp --verbose", HashMap::new(), "/w", test_shell_path()).unwrap();
+        let spec = resolve_custom("my-agent --acp --verbose", HashMap::new(), "/w", &test_shell_env()).unwrap();
         assert_eq!(spec.program, "my-agent");
         assert_eq!(spec.args, vec!["--acp", "--verbose"]);
         assert_eq!(
@@ -586,8 +601,27 @@ mod tests {
     }
 
     #[test]
+    fn resolve_custom_inherits_shell_credentials() {
+        let spec = resolve_custom("my-agent --acp", HashMap::new(), "/w", &test_shell_env()).unwrap();
+        assert_eq!(spec.env.get("CODEX_API_KEY").map(String::as_str), Some("test-key"));
+        assert!(spec.env.get("PATH").is_some());
+    }
+
+    #[tokio::test]
+    async fn resolve_registry_inherits_shell_credentials_for_npx_agents() {
+        let e = entry("codex-acp", Some(npx("@agentclientprotocol/codex-acp@1.1.14", &[])));
+        let resolver = FakePackageResolver::ok(fake_resolved(
+            "/opt/homebrew/bin/node",
+            "/cache/agent-packages/_codex-acp/_pkg_1.1.14/node_modules/@agentclientprotocol/codex-acp/dist/index.js",
+        ));
+        let spec = resolve_registry(&e, "/work", &test_cache(), &resolver, &test_shell_env()).await.unwrap();
+        assert_eq!(spec.env.get("CODEX_API_KEY").map(String::as_str), Some("test-key"));
+        assert!(spec.env.get("PATH").is_some());
+    }
+
+    #[test]
     fn resolve_custom_rejects_empty() {
-        assert!(resolve_custom("   ", HashMap::new(), "/w", test_shell_path()).is_err());
+        assert!(resolve_custom("   ", HashMap::new(), "/w", &test_shell_env()).is_err());
     }
 
     #[test]

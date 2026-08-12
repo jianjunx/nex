@@ -214,6 +214,13 @@ impl AgentSessionManager {
         self.project_envs.path_for_cwd(cwd, &self.shell_env).await
     }
 
+    /// Full env for a project cwd: login-shell snapshot plus any project-level
+    /// overlays (direnv / nix / mise). Used when spawning external agents so
+    /// credentials such as `CODEX_API_KEY` survive the GUI boundary.
+    pub async fn env_for_cwd(&self, cwd: &str) -> std::collections::HashMap<String, String> {
+        self.project_envs.env_for_cwd(cwd, &self.shell_env).await
+    }
+
     /// Resolves the target to a concrete launch spec and starts the session.
     /// For registry agents we opportunistically refresh a stale registry first
     /// (best-effort — the cached/loaded list is still usable offline).
@@ -227,6 +234,7 @@ impl AgentSessionManager {
         // The built-in native agent runs in-process over a memory ACP pipe;
         // it needs no launch spec, node runtime, or PATH resolution.
         let shell_path = self.path_for_cwd(cwd).await;
+        let shell_env = self.env_for_cwd(cwd).await;
         if matches!(target, SessionTarget::Native) {
             return self
                 .acp
@@ -254,7 +262,7 @@ impl AgentSessionManager {
                     cwd,
                     &self.binary_cache,
                     &*self.package_cache,
-                    &shell_path,
+                    &shell_env,
                 )
                 .await?
             }
@@ -262,7 +270,7 @@ impl AgentSessionManager {
                 let server = self.custom.find(&id).ok_or_else(|| {
                     NexError::Agent(format!("unknown custom server `{id}`"))
                 })?;
-                launch::resolve_custom(&server.command, server.env.clone(), cwd, &shell_path)?
+                launch::resolve_custom(&server.command, server.env.clone(), cwd, &shell_env)?
             }
             SessionTarget::Native => unreachable!("native target handled above"),
         };

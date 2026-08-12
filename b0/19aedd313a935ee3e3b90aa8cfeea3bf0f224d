@@ -1,0 +1,21 @@
+src/lib/errors.test.ts
+  s_4dd98f028e8156::t_0e34f26e6ab2bb 27-34
+src/lib/errors.ts
+  s_4dd98f028e8156::t_836beea152822a 5-6,8,10,12,14,46-48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "b019aedd313a935ee3e3b90aa8cfeea3bf0f224d",
+  "prompts": {},
+  "sessions": {
+    "s_4dd98f028e8156": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_4dd98f028e8156",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

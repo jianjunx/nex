@@ -84,24 +84,28 @@ pub fn test_memory_handle() -> Rc<RefCell<WorkingMemory>> {
 pub fn refresh_working_memory_in_place(
     messages: &mut [super::provider::ChatMessage],
     memory: &WorkingMemory,
-) {
+) -> bool {
     const MARKER: &str = "[nex:working-memory]";
+    let next = super::memory::render(memory);
     for msg in messages.iter_mut() {
         if msg.role != "assistant" {
             continue;
         }
-        let starts_with_marker = msg
+        let current = msg
             .content
             .as_ref()
             .and_then(super::provider::Content::as_text)
-            .map(|s| s.starts_with(MARKER))
-            .unwrap_or(false);
-        if !starts_with_marker {
+            .unwrap_or("");
+        if !current.starts_with(MARKER) {
             continue;
         }
-        msg.content = Some(super::provider::Content::Text(super::memory::render(memory)));
-        break;
+        if current == next {
+            return false;
+        }
+        msg.content = Some(super::provider::Content::Text(next));
+        return true;
     }
+    false
 }
 
 /// A builtin tool.
@@ -390,6 +394,8 @@ pub fn shell_command_script(mut cmd: tokio::process::Command, script: &str) -> t
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::native::memory;
+    use crate::agent::native::provider::{ChatMessage, Content};
 
     #[test]
     fn workspace_edit_gate_ignores_bash_only_mutations() {
@@ -512,6 +518,25 @@ mod tests {
         assert!(!sub.contains(&"fleet".to_string()));
         assert!(!sub.contains(&"read_subagent_result".to_string()));
         assert!(!sub.contains(&"switch_mode".to_string()));
+    }
+
+    #[test]
+    fn test_memory_handle_builds_empty_memory() {
+        let mem = test_memory_handle();
+        assert_eq!(mem.borrow().goal.len(), 0);
+    }
+
+    #[test]
+    fn refresh_working_memory_in_place_returns_false_when_unchanged() {
+        let mem = test_memory_handle();
+        mem.borrow_mut().set_goal("ship v1");
+        let rendered = memory::render(&mem.borrow());
+        let mut msgs = vec![ChatMessage::assistant(rendered.clone())];
+        assert!(!refresh_working_memory_in_place(&mut msgs, &mem.borrow()));
+        assert_eq!(
+            msgs[0].content.as_ref().and_then(Content::as_text),
+            Some(rendered.as_str())
+        );
     }
 
     /// Canonical tool schemas must serialize to identical bytes on every run

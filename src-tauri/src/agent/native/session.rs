@@ -213,6 +213,17 @@ pub async fn run_turn(
     messages: &mut Vec<ChatMessage>,
     content: Content,
 ) -> acp::StopReason {
+    // First real user text becomes the goal, replacing the boot placeholder.
+    if let Content::Text(text) = &content {
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            let first_line = trimmed.lines().next().unwrap_or(trimmed).trim();
+            let goal: String = first_line.chars().take(160).collect();
+            if !goal.is_empty() {
+                env.tool_ctx.memory.borrow_mut().set_goal_if_placeholder(goal);
+            }
+        }
+    }
     messages.push(ChatMessage::user_content(content));
 
     let mut steps = 0u32;

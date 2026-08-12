@@ -18,6 +18,9 @@ use serde::{Deserialize, Serialize};
 /// transcript-bloat problem we are trying to solve.
 pub const MEMORY_TOTAL_BYTES: usize = 8 * 1024;
 
+/// First-session placeholder goal. Replaced by the first real user prompt.
+pub const PLACEHOLDER_GOAL: &str = "理解用户的目标并开始工作";
+
 /// Soft cap per individual list field. Keeps the rendered block scannable.
 const MAX_LIST_ITEMS: usize = 16;
 const MAX_NOTES_BYTES: usize = 1024;
@@ -89,6 +92,17 @@ impl WorkingMemory {
         self.goal.push(goal.into());
     }
 
+    /// Replace the boot placeholder with the first real user request.
+    /// Returns true only when the goal changed.
+    pub fn set_goal_if_placeholder(&mut self, goal: impl Into<String>) -> bool {
+        let next = goal.into();
+        if self.goal.first().map(|s| s.as_str()) == Some(PLACEHOLDER_GOAL) || self.goal.is_empty() {
+            self.set_goal(next);
+            return true;
+        }
+        false
+    }
+
     /// Append to `state_notes`. Trims the oldest content if the cap is
     /// reached so we never grow the block unbounded.
     pub fn append_note(&mut self, note: impl AsRef<str>) {
@@ -110,6 +124,12 @@ impl WorkingMemory {
             self.state_notes = self.state_notes[cut..].to_string();
         }
     }
+}
+
+/// Stable fingerprint for a memory state. Used to avoid no-op transcript
+/// rewrites when the block didn't actually change.
+pub fn fingerprint(memory: &WorkingMemory) -> String {
+    render(memory)
 }
 
 fn push_unique(v: &mut Vec<String>, item: String) {
@@ -224,5 +244,16 @@ mod tests {
         let b = RenderedMemory::new(&m, MemoryTrigger::GoalUpdated);
         assert_ne!(a.trigger, b.trigger);
         assert_eq!(a.text, b.text); // content identical, trigger differs
+    }
+
+    #[test]
+    fn placeholder_goal_is_replaced_once() {
+        let mut m = WorkingMemory::new();
+        m.set_goal(PLACEHOLDER_GOAL);
+        assert!(m.set_goal_if_placeholder("真实任务目标"));
+        assert_eq!(m.goal, vec!["真实任务目标"]);
+        // Subsequent attempts do not overwrite the real goal.
+        assert!(!m.set_goal_if_placeholder("另一个目标"));
+        assert_eq!(m.goal, vec!["真实任务目标"]);
     }
 }

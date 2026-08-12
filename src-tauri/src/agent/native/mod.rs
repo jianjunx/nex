@@ -699,7 +699,7 @@ impl acp::Agent for NexNativeAgent {
             session
                 .memory
                 .borrow_mut()
-                .set_goal("理解用户的目标并开始工作");
+                .set_goal(memory::PLACEHOLDER_GOAL);
             session
                 .history
                 .push(ChatMessage::assistant(memory::render(

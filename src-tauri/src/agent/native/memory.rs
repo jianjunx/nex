@@ -68,6 +68,61 @@ impl WorkingMemory {
         }
     }
 
+    /// Best-effort parse from the rendered assistant memory block. Returns
+    /// `None` when the text is not a memory block or is obviously malformed.
+    pub fn parse_rendered(text: &str) -> Option<Self> {
+        if !text.starts_with("[nex:working-memory]") {
+            return None;
+        }
+        let mut memory = WorkingMemory::new();
+        let mut section: Option<&str> = None;
+        for raw in text.lines().skip(1) {
+            let line = raw.trim_end();
+            if line.is_empty() {
+                continue;
+            }
+            if line == "Goal:" {
+                section = Some("goal");
+                continue;
+            }
+            if line == "Changed files:" {
+                section = Some("changed");
+                continue;
+            }
+            if line == "Inspected files:" {
+                section = Some("inspected");
+                continue;
+            }
+            if line == "Open questions:" {
+                section = Some("open");
+                continue;
+            }
+            if line == "State notes:" {
+                section = Some("notes");
+                continue;
+            }
+            if line.starts_with("[memory updated") {
+                break;
+            }
+            match section {
+                Some("goal") if line.starts_with("- ") => memory.goal.push(line[2..].to_string()),
+                Some("changed") if line.starts_with("- ") => memory.files_changed.push(line[2..].to_string()),
+                Some("inspected") if line.starts_with("- ") => memory.files_inspected.push(line[2..].to_string()),
+                Some("open") if line.starts_with("- ") => memory.open_questions.push(line[2..].to_string()),
+                Some("notes") => {
+                    if memory.state_notes.is_empty() {
+                        memory.state_notes.push_str(line);
+                    } else {
+                        memory.state_notes.push('\n');
+                        memory.state_notes.push_str(line);
+                    }
+                }
+                _ => {}
+            }
+        }
+        Some(memory)
+    }
+
     /// Idempotent push: ignore duplicates, honour the per-field cap.
     pub fn record_file_inspected(&mut self, path: impl Into<String>) {
         push_unique(&mut self.files_inspected, path.into());
@@ -130,6 +185,27 @@ impl WorkingMemory {
 /// rewrites when the block didn't actually change.
 pub fn fingerprint(memory: &WorkingMemory) -> String {
     render(memory)
+}
+
+/// Recover memory from a stored transcript by scanning for the latest
+/// rendered working-memory assistant block.
+pub fn recover_from_history(history: &[crate::agent::native::provider::ChatMessage]) -> Option<WorkingMemory> {
+    for msg in history.iter().rev() {
+        if msg.role != "assistant" {
+            continue;
+        }
+        let Some(text) = msg
+            .content
+            .as_ref()
+            .and_then(crate::agent::native::provider::Content::as_text)
+        else {
+            continue;
+        };
+        if let Some(memory) = WorkingMemory::parse_rendered(text) {
+            return Some(memory);
+        }
+    }
+    None
 }
 
 fn push_unique(v: &mut Vec<String>, item: String) {
@@ -255,5 +331,30 @@ mod tests {
         // Subsequent attempts do not overwrite the real goal.
         assert!(!m.set_goal_if_placeholder("另一个目标"));
         assert_eq!(m.goal, vec!["真实任务目标"]);
+    }
+
+    #[test]
+    fn parse_and_recover_rendered_memory() {
+        let mut m = WorkingMemory::new();
+        m.set_goal("ship v1");
+        m.record_file_inspected("src/main.rs");
+        m.record_file_changed("src/app.rs");
+        m.record_open_question("verify cache ratio");
+        m.append_note("user prefers Chinese responses");
+        let rendered = render(&m);
+        let parsed = WorkingMemory::parse_rendered(&rendered).expect("memory block");
+        assert_eq!(parsed.goal, m.goal);
+        assert_eq!(parsed.files_inspected, m.files_inspected);
+        assert_eq!(parsed.files_changed, m.files_changed);
+        assert_eq!(parsed.open_questions, m.open_questions);
+        assert_eq!(parsed.state_notes, m.state_notes);
+
+        let history = vec![
+            crate::agent::native::provider::ChatMessage::system("sys"),
+            crate::agent::native::provider::ChatMessage::assistant(rendered),
+        ];
+        let recovered = recover_from_history(&history).expect("recovered memory");
+        assert_eq!(recovered.goal, m.goal);
+        assert_eq!(recovered.files_changed, m.files_changed);
     }
 }

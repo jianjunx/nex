@@ -10,6 +10,7 @@
 //! `reserved_response` once the trait exposes a hint.
 
 use crate::agent::native::provider::{Provider, ReasoningControl};
+use crate::agent::native::{compact, summary};
 
 /// Upper bound on the deliberate Snip -> Compact -> Force walk. Three
 /// passes is enough to apply every tier exactly once; the loop also bails
@@ -136,6 +137,8 @@ pub struct BudgetLoopOutcome {
     /// Archive files written by the loop, in order. Useful for debugging
     /// and for tying the transcript back to its full history via `history`.
     pub archive_files: Vec<std::path::PathBuf>,
+    /// Whether the final fallback summary splice was used.
+    pub used_summary_fallback: bool,
 }
 
 /// Drive [`crate::agent::native::compact::step`] until `messages` fits
@@ -150,7 +153,7 @@ pub fn enforce(
         return BudgetLoopOutcome::default();
     }
     let mut outcome = BudgetLoopOutcome::default();
-    let mut used = crate::agent::native::compact::estimate_tokens(messages);
+    let mut used = compact::estimate_tokens(messages);
     outcome.initial_tokens = used;
     if used <= budget.prompt_budget {
         outcome.final_tokens = used;
@@ -159,27 +162,39 @@ pub fn enforce(
     // Deliberate walk: Snip -> Compact -> Force. Each pass re-estimates; if
     // a pass made no progress we stop instead of burning budget cycles.
     let tier_plan = [
-        crate::agent::native::compact::StepTier::Snip,
-        crate::agent::native::compact::StepTier::Compact,
-        crate::agent::native::compact::StepTier::Force,
+        compact::StepTier::Snip,
+        compact::StepTier::Compact,
+        compact::StepTier::Force,
     ];
     for tier in tier_plan.iter().copied() {
         if used <= budget.prompt_budget {
             break;
         }
-        let step = crate::agent::native::compact::step(messages, budget.prompt_budget, tier, archive_dir);
+        let step = compact::step(messages, budget.prompt_budget, tier, archive_dir);
         outcome.passes += 1;
         outcome.total_snipped += step.snipped;
         outcome.total_folded += step.folded;
         if let Some(p) = step.archive_file {
             outcome.archive_files.push(p);
         }
-        let used_after = crate::agent::native::compact::estimate_tokens(messages);
+        let used_after = compact::estimate_tokens(messages);
         if used_after >= used {
             // A full tier pass saved nothing: bail before burning more.
             break;
         }
         used = used_after;
+    }
+    // Final fallback: if the transcript still exceeds budget, replace the
+    // old prefix with a single stable summary block pointing at the archive.
+    if used > budget.prompt_budget {
+        let body = summary::render_fallback_summary(messages);
+        let splice = compact::replace_prefix_with_summary(messages, body, archive_dir);
+        if let Some(p) = splice.archive_file {
+            outcome.archive_files.push(p);
+            outcome.used_summary_fallback = true;
+            outcome.total_folded += 1;
+            used = compact::estimate_tokens(messages);
+        }
     }
     outcome.final_tokens = used;
     outcome
@@ -256,6 +271,28 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let outcome = enforce(&mut msgs, budget, tmp.path());
         assert!(outcome.passes <= MAX_COMPACT_PASSES);
+    }
+
+    #[test]
+    fn enforce_uses_summary_fallback_when_tiers_cannot_fit() {
+        // User + tool-only transcript: Snip can shrink the tool bodies, but
+        // Compact / Force have no assistant prose to fold. The final summary
+        // fallback should therefore take over.
+        let mut msgs: Vec<ChatMessage> = vec![ChatMessage::system("sys")];
+        for i in 0..20 {
+            msgs.push(ChatMessage::user(format!("goal {i} {}", "u".repeat(200))));
+            msgs.push(ChatMessage::tool_result(&format!("t{i}"), &"x".repeat(6000)));
+        }
+        let budget = model_window(4_000);
+        let tmp = tempfile::tempdir().unwrap();
+        let outcome = enforce(&mut msgs, budget, tmp.path());
+        assert!(outcome.used_summary_fallback);
+        let summary_text = msgs[1]
+            .content
+            .as_ref()
+            .and_then(crate::agent::native::provider::Content::as_text)
+            .unwrap();
+        assert!(summary_text.starts_with(crate::agent::native::compact::SUMMARY_MARKER));
     }
 
     #[test]

@@ -10,6 +10,7 @@
 //! (system prompt, tool descriptions, errors).
 
 use crate::agent::native::compact::SUMMARY_MARKER;
+use crate::agent::native::provider::{ChatMessage, Content};
 
 /// Render the standard session summary block. Keep the field order stable.
 pub fn render_session_summary(
@@ -58,6 +59,55 @@ pub fn render_session_summary(
     s
 }
 
+/// Extremely conservative fallback summary for the *current* transcript.
+/// Used only when the budget loop exhausted Snip -> Compact -> Force and
+/// the prompt still does not fit. This is intentionally dumb but stable:
+/// it extracts just enough state to keep the session moving without trying
+/// to do semantic summarisation inside Rust.
+pub fn render_fallback_summary(messages: &[ChatMessage]) -> String {
+    let mut goal: Vec<String> = Vec::new();
+    let mut facts: Vec<String> = Vec::new();
+    let mut open: Vec<String> = Vec::new();
+
+    // Most recent user text becomes the provisional goal.
+    for msg in messages.iter().rev() {
+        if msg.role != "user" {
+            continue;
+        }
+        let Some(text) = msg.content.as_ref().and_then(Content::as_text) else {
+            continue;
+        };
+        let line = text.lines().find(|l| !l.trim().is_empty()).unwrap_or(text).trim();
+        if !line.is_empty() {
+            goal.push(line.chars().take(160).collect());
+            break;
+        }
+    }
+
+    // Detect whether tool errors or workspace writes happened at all in the
+    // prefix. We don't attempt a per-file delta here; that belongs to the
+    // higher-fidelity WorkingMemory path.
+    let mut saw_tool_error = false;
+    let mut saw_tool_call = false;
+    for msg in messages {
+        if msg.role == "tool" {
+            saw_tool_call = true;
+            let text = msg.content.as_ref().and_then(Content::as_text).unwrap_or("");
+            if text.starts_with("ERROR:") || text.contains("exit code:") {
+                saw_tool_error = true;
+            }
+        }
+    }
+    if saw_tool_call {
+        facts.push("Earlier tool results were archived to keep the prompt within budget".into());
+    }
+    if saw_tool_error {
+        open.push("At least one earlier tool result was an error; inspect archive/history before assuming success".into());
+    }
+
+    render_session_summary(&goal, &facts, &[], &[], &open, None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,5 +133,18 @@ mod tests {
         assert_eq!(a, b);
         assert!(a.contains(SUMMARY_MARKER));
         assert!(a.contains("archive ref 20260810-103045-abc.jsonl"));
+    }
+
+    #[test]
+    fn fallback_summary_extracts_user_goal_and_error_hint() {
+        let msgs = vec![
+            ChatMessage::system("sys"),
+            ChatMessage::user("修一下 cache 命中率"),
+            ChatMessage::tool_result("1", "ERROR: build failed"),
+        ];
+        let s = render_fallback_summary(&msgs);
+        assert!(s.contains(SUMMARY_MARKER));
+        assert!(s.contains("修一下 cache 命中率"));
+        assert!(s.contains("error".to_lowercase().as_str()) || s.contains("Earlier tool results"));
     }
 }

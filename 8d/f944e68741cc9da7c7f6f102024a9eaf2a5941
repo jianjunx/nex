@@ -1,0 +1,21 @@
+src-tauri/src/agent/native/budget.rs
+  s_f0a2e4b66fea8e::t_f2b9c978193869 13,140-141,156,165-167,173,180,187-198,276-297
+src-tauri/src/agent/native/summary.rs
+  s_f0a2e4b66fea8e::t_a0a5b0da6a5848 13,62-110,137-150
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "8df944e68741cc9da7c7f6f102024a9eaf2a5941",
+  "prompts": {},
+  "sessions": {
+    "s_f0a2e4b66fea8e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_f0a2e4b66fea8e",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+src/features/projects/ProjectSelector.tsx
+  s_81b2a624d05626::t_6422100a020e69 5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "c353dd9a341cda15a5f22290df11d307791fe1b1",
+  "prompts": {},
+  "sessions": {
+    "s_81b2a624d05626": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_81b2a624d05626",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

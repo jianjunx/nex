@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ChevronDown, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { errorMessage } from "@/lib/errors";
 import {
   DropdownMenu,

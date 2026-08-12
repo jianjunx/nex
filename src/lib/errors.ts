@@ -2,12 +2,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object";
 }
 
+const JSON_FALLBACK_LIMIT = 400;
+
 function fromKnownFields(value: Record<string, unknown>, seen: Set<unknown>): string | null {
-  const directKeys = ["message", "msg", "error", "details", "detail", "cause", "data"];
+  const directKeys = ["message", "msg", "err", "error", "details", "detail", "cause", "data"];
   for (const key of directKeys) {
+    if (!(key in value)) continue;
     const next = value[key];
+    if (next == null) continue;
     const msg = errorMessage(next, seen);
-    if (msg) return msg;
+    if (msg && msg !== "未知错误") return msg;
   }
   return null;
 }
@@ -39,7 +43,9 @@ export function errorMessage(err: unknown, seen: Set<unknown> = new Set()): stri
     const known = fromKnownFields(err, seen);
     if (known) return known;
     try {
-      return JSON.stringify(err);
+      const json = JSON.stringify(err);
+      if (json.length <= JSON_FALLBACK_LIMIT) return json;
+      return `${json.slice(0, JSON_FALLBACK_LIMIT)}… [error object truncated]`;
     } catch {
       return String(err);
     }

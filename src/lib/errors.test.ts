@@ -24,4 +24,12 @@ describe("errorMessage", () => {
     expect(errorMessage(null)).toBe("未知错误");
     expect(errorMessage(undefined)).toBe("未知错误");
   });
+
+  it("caps huge JSON fallbacks", () => {
+    const huge = { kind: "AgentError", payload: "x".repeat(2000) };
+    const msg = errorMessage(huge);
+    expect(msg).toContain("AgentError");
+    expect(msg).toContain("[error object truncated]");
+    expect(msg.length).toBeLessThan(460);
+  });
 });

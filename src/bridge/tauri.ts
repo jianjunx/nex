@@ -198,8 +198,22 @@ export interface NativeAgentConfig {
   disabledMcpServers?: string[];
 }
 
+export interface ContextStatsDto {
+  schemaVersion: number;
+  finalTokens: number;
+  compactionPasses: number;
+  snippedMessages: number;
+  foldedMessages: number;
+  archiveFilesWritten: number;
+  toolResults: number;
+  partialToolResults: number;
+  cacheHitTokens: number;
+  promptTokens: number;
+}
+
 export interface PromptResultDto {
   hadMutations: boolean;
+  contextStats?: ContextStatsDto | null;
 }
 
 export interface NativeMcpServerInfo {

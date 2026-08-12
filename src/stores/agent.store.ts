@@ -162,6 +162,8 @@ interface AgentStore {
   setAuthMode: (conversationId: string, authMode: AuthMode) => void;
   /** Cached from nex-agent.json; used to chain `/review` after mutating turns. */
   nativeAutoReview: boolean;
+  /** Latest backend context stats per conversation (debug/observability). */
+  contextStatsByConversation: Record<string, import("../bridge/tauri").ContextStatsDto>;
   /** Refresh `nativeAutoReview` from disk (call after settings save). */
   refreshNativeAutoReview: () => Promise<void>;
   /** Queue a message for later sending when the session is starting or busy. */
@@ -612,6 +614,7 @@ export const useAgentStore = create<AgentStore>()(
     serversLoadedAt: 0,
     error: null,
     nativeAutoReview: false,
+    contextStatsByConversation: {},
 
     createSession: async (conversationId, target, cwd) => {
       set((s) => {
@@ -796,6 +799,11 @@ export const useAgentStore = create<AgentStore>()(
       try {
         const result = await agentSendPrompt(sessionId, blocks);
         hadMutations = !!result?.hadMutations;
+        if (result?.contextStats) {
+          set((s) => {
+            s.contextStatsByConversation[session.conversationId] = result.contextStats!;
+          });
+        }
       } catch (err) {
         promptFailed = true;
         set((s) => {

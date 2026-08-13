@@ -22,7 +22,7 @@ export function ThreadImageThumb({ image }: { image: UserMessageImage }) {
           setOpen(true);
         }}
       >
-        <img src={src} alt="" className="h-16 w-16 object-cover" />
+        <img src={src} alt="" className="size-[30px] object-cover" />
       </button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent

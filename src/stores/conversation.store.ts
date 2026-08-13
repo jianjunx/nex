@@ -6,10 +6,20 @@ import {
   conversationList,
   conversationGetMessages,
   conversationUpdateTitle,
+  conversationAppendMessage,
   type Conversation,
-  type ConversationMessage,
+  type Message,
 } from "../bridge/tauri";
 import { errorMessage } from "../lib/errors";
+import { useProjectStore } from "./project.store";
+import { useAgentStore } from "./agent.store";
+import { clearComposerDraft } from "./composerDrafts";
+import {
+  DEFAULT_CONVERSATION_TITLE,
+  deriveConversationTitle,
+} from "../features/agent/deriveConversationTitle";
+
+export type LegacyTabsMigration = { tabs: string[]; activeId: string | null };
 
 interface ConversationStore {
   conversationsByProject: Record<string, Conversation[]>;

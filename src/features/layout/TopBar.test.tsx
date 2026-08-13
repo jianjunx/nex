@@ -167,6 +167,12 @@ describe("conversation tab outline (F5)", () => {
     expect(container.innerHTML).toContain("bg-gradient-to-l from-[var(--background)] to-transparent");
     expect(container.innerHTML).toContain("pointer-events-none");
   });
+
+  it("mousedown on an inactive tab switches the active conversation", () => {
+    render(<TopBar />);
+    fireEvent.mouseDown(screen.getByRole("tab", { name: /第二个会话/ }));
+    expect(useConversationStore.getState().activeTabByProject.p1).toBe("c2");
+  });
 });
 
 describe("new-conversation dropdown wiring (F6)", () => {

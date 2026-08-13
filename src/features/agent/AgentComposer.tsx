@@ -21,6 +21,7 @@ import { ComposerGroupedOptionMenu } from "./ComposerGroupedOptionMenu";
 import { ContextUsageRing, resolveContextRingUsage } from "./ContextUsageRing";
 import { BranchSelector } from "../git/BranchSelector";
 import { useGitStore } from "../../stores/git.store";
+import { useDragDropStore } from "../../stores/dragDrop.store";
 import { PlanBar } from "./thread/PlanBar";
 import { PendingMessagesBar } from "./thread/PendingMessagesBar";
 import { TextEditContextMenu } from "@/components/ui/TextEditContextMenu";
@@ -141,6 +142,8 @@ export function AgentComposer() {
   const [previewImage, setPreviewImage] = useState<PendingImage | null>(null);
   const [caretPos, setCaretPos] = useState<{ top: number; left: number; lineHeight: number } | null>(null);
   const [imeComposing, setImeComposing] = useState(false);
+  // A tree file is being pointer-dragged over the composer (drop = attach).
+  const composerDropHover = useDragDropStore((s) => s.overComposer);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const suggestListRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -747,7 +750,7 @@ export function AgentComposer() {
         previewFn={pendingMessagePreview}
       />
 
-      <div className="px-4 pb-3 relative">
+      <div className="px-4 pb-3 relative" data-composer-dropzone>
         {(isStarting || agentError) && (
           <div className="mb-2 text-xs px-1">
             {isStarting && <p className="text-[var(--text-tertiary)]">正在连接服务…</p>}
@@ -829,7 +832,11 @@ export function AgentComposer() {
         )}
 
         <div
-          className="flex flex-col gap-1 rounded-[var(--radius-lg)] bg-[var(--glass-3-surface)] border border-[color:var(--glass-border)] px-3 pt-2.5 pb-1.5 shadow-[inset_0_1px_0_0_var(--edge-highlight)] transition-[border-color,box-shadow] duration-150 focus-within:border-[color:var(--accent)] focus-within:shadow-[inset_0_1px_0_0_var(--edge-highlight),0_0_0_3px_var(--accent-glow)]"
+          className={`flex flex-col gap-1 rounded-[var(--radius-lg)] bg-[var(--glass-3-surface)] border border-[color:var(--glass-border)] px-3 pt-2.5 pb-1.5 shadow-[inset_0_1px_0_0_var(--edge-highlight)] transition-[border-color,box-shadow] duration-150 focus-within:border-[color:var(--accent)] focus-within:shadow-[inset_0_1px_0_0_var(--edge-highlight),0_0_0_3px_var(--accent-glow)]${
+            composerDropHover
+              ? " border-[color:var(--accent)] shadow-[inset_0_1px_0_0_var(--edge-highlight),0_0_0_3px_var(--accent-glow)]"
+              : ""
+          }`}
           onClick={() => textareaRef.current?.focus()}
         >
           {images.length > 0 && (

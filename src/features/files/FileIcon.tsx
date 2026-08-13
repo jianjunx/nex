@@ -5,6 +5,11 @@ import { resolveIcon } from "./resolveIcon";
 
 const ICON_BASE = `${import.meta.env.BASE_URL}file-icons/`;
 
+/** Icon URL for a filename — for imperative DOM (e.g. CM6 widgets). */
+export function fileIconUrl(filename: string): string {
+  return ICON_BASE + resolveIcon(filename) + ".svg";
+}
+
 export type FileIconProps = {
   filename: string;
   isFolder?: boolean;

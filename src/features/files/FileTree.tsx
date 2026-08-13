@@ -1,10 +1,13 @@
 import { ChevronRight, FilePlus, FolderPlus, RefreshCw, ChevronsDownUp } from "lucide-react";
 import { useFsStore } from "../../stores/fs.store";
 import { useProjectStore } from "../../stores/project.store";
+import { useDragDropStore } from "../../stores/dragDrop.store";
 import { useEffect, useState, useRef, useCallback, memo } from "react";
 import FileIcon from "./FileIcon";
 import { TreeContextMenu } from "./TreeContextMenu";
 import { GitConfirmDialog } from "../git/GitConfirmDialog";
+import { useOsDragDrop } from "../../lib/osDragDrop";
+import { resolveDirDropTarget } from "../../lib/dropTargets";
 
 // Stable action references (zustand actions never change identity): passing
 // these down instead of re-created closures lets memo() actually skip work.
@@ -159,6 +162,8 @@ function TreeNode({
   const isExpanded = useFsStore((s) => s.expandedDirs.has(node.path));
   const children = useFsStore((s) => s.nodesByDir[node.path]);
   const isSelected = useFsStore((s) => s.selectedPath === node.path);
+  // OS/pointer drag hover highlight — only the hovered row re-renders.
+  const isDropTarget = useDragDropStore((s) => s.overDir === node.path);
   const { expandDir, collapseDir, openFile, setSelectedPath, moveEntries, importFiles } = fsActions;
   const isCreatingHere = creatingIn === node.path;
   const isRenaming = renamingPath === node.path;
@@ -311,6 +316,9 @@ function TreeNode({
           role="treeitem"
           aria-expanded={isRoot || node.is_dir ? isExpanded : undefined}
           aria-selected={isSelected}
+          {...(isRoot || node.is_dir
+            ? { "data-dir-path": node.path }
+            : { "data-file-path": node.path })}
           onClick={handleClick}
           onDoubleClick={handleDoubleClick}
           onKeyDown={handleKeyDown}
@@ -330,7 +338,7 @@ function TreeNode({
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
           className={`flex items-center gap-1.5 px-2 py-[3px] text-sm cursor-pointer rounded-[var(--radius-sm)] transition-colors duration-100 outline-none group ${
-            isDragOver
+            isDragOver || isDropTarget
               ? "bg-[var(--accent)]/30 ring-1 ring-[var(--accent)]"
               : isSelected
               ? "bg-[var(--overlay-active)] text-[var(--text-primary)]"
@@ -410,7 +418,7 @@ function TreeNode({
 const MemoTreeNode = memo(TreeNode);
 
 export function FileTree() {
-  const { loadRoot, nodesByDir, expandDir, createFile, createDir, renameEntry, refreshDir, collapseAll, selectedPath, pendingRenamePath, consumePendingRename, importFiles, pendingDeletePath, cancelPendingDelete, confirmPendingDelete, openFiles } = useFsStore();
+  const { loadRoot, nodesByDir, expandDir, createFile, createDir, renameEntry, refreshDir, collapseAll, selectedPath, pendingRenamePath, consumePendingRename, pendingDeletePath, cancelPendingDelete, confirmPendingDelete, openFiles } = useFsStore();
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const projects = useProjectStore((s) => s.projects);
   const project = projects.find((p) => p.id === activeProjectId);
@@ -504,33 +512,36 @@ export function FileTree() {
     setCreatingType(null);
   }, [project, collapseAll]);
 
-  // --- External file drop on entire tree area (fallback) ---
-  const handleTreeDragOver = useCallback((e: React.DragEvent) => {
-    // Only handle if not already handled by a node
-    if (e.dataTransfer.types.includes('application/nex-tree-node')) return;
-    // Accept external file drops
-    if (e.dataTransfer.types.includes('Files')) {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'copy';
+  // --- OS file drop (Tauri onDragDropEvent) ---
+  // With `dragDropEnabled: true`, HTML5 file drops never reach the webview
+  // (and on Windows that setting disables HTML5 DnD altogether), so imports
+  // from Explorer/Finder are driven entirely by the native event stream.
+  const lastDropPosRef = useRef({ x: -1, y: -1 });
+  useOsDragDrop((e) => {
+    if (!project) return;
+    if (e.type === "leave") {
+      lastDropPosRef.current = { x: -1, y: -1 };
+      useDragDropStore.getState().clearHover();
+      return;
     }
-  }, []);
-
-  const handleTreeDrop = useCallback(async (e: React.DragEvent) => {
-    // Skip internal drags — handled by TreeNode
-    if (e.dataTransfer.getData('application/nex-tree-node')) return;
-    // External files dropped onto the tree background → import to project root
-    if (e.dataTransfer.files.length > 0 && project) {
-      e.preventDefault();
-      const paths: string[] = [];
-      for (let i = 0; i < e.dataTransfer.files.length; i++) {
-        const fp = (e.dataTransfer.files[i] as any).path as string | undefined;
-        if (fp) paths.push(fp);
+    if (e.type === "drop") {
+      lastDropPosRef.current = { x: -1, y: -1 };
+      useDragDropStore.getState().clearHover();
+      if (e.paths && e.paths.length > 0) {
+        const dir = resolveDirDropTarget(e, treeContainerRef.current, project.path) ?? project.path;
+        void fsActions.importFiles(e.paths, dir);
       }
-      if (paths.length > 0) {
-        void importFiles(paths, project.path);
-      }
+      return;
     }
-  }, [project, importFiles]);
+    // enter/over — hit-test at most once per >2px of pointer movement;
+    // setOsHoverDir itself only writes the store when the target changed.
+    const last = lastDropPosRef.current;
+    if (Math.abs(e.x - last.x) < 2 && Math.abs(e.y - last.y) < 2) return;
+    lastDropPosRef.current = { x: e.x, y: e.y };
+    useDragDropStore.getState().setOsHoverDir(
+      resolveDirDropTarget(e, treeContainerRef.current, project.path),
+    );
+  });
 
   useEffect(() => {
     if (project) loadRoot(project.path);
@@ -554,8 +565,6 @@ export function FileTree() {
         ref={treeContainerRef}
         data-file-tree
         className="py-0.5 overflow-y-auto h-full pr-1"
-        onDragOver={handleTreeDragOver}
-        onDrop={handleTreeDrop}
       >
         <MemoTreeNode
           node={rootNode}

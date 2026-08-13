@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { ChevronDown, X } from "lucide-react";
+import { Check, ChevronDown, FolderPlus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { errorMessage } from "@/lib/errors";
+import { cn } from "@/lib/utils";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -42,26 +43,31 @@ function onProjectActivated(projectId: string) {
 const ITEM_HIGHLIGHT =
   "focus:bg-[var(--overlay-hover)] focus:text-[var(--text-primary)] data-[highlighted]:bg-[var(--overlay-hover)]";
 
-function StatusDots({ projectId }: { projectId: string }) {
+function projectMonogram(name: string): string {
+  const first = Array.from(name.trim())[0];
+  return first ? first.toUpperCase() : "?";
+}
+
+function StatusDots({ projectId, className }: { projectId: string; className?: string }) {
   const sessions = useAgentStore((s) => s.sessions);
   const conversationsByProject = useConversationStore((s) => s.conversationsByProject);
   const ids = (conversationsByProject[projectId] ?? []).map((c) => c.id);
   const { hasRunning, hasWaiting } = projectSessionIndicators(ids, sessions);
   if (!hasRunning && !hasWaiting) return null;
   return (
-    <span className="inline-flex items-center gap-1 ml-2">
+    <span className={cn("inline-flex items-center gap-1", className)}>
       {hasRunning && (
         <span
-          className="w-2 h-2 rounded-full animate-pulse"
+          className="size-1.5 rounded-full animate-pulse"
           style={{ backgroundColor: "var(--accent)", boxShadow: "0 0 6px 1px color-mix(in srgb, var(--accent) 70%, transparent)" }}
-          title="Agent running"
+          title="Agent 运行中"
         />
       )}
       {hasWaiting && (
         <span
-          className="w-2 h-2 rounded-full"
+          className="size-1.5 rounded-full"
           style={{ backgroundColor: "var(--warning)", boxShadow: "0 0 6px 1px color-mix(in srgb, var(--warning) 70%, transparent)" }}
-          title="Agent waiting"
+          title="Agent 等待中"
         />
       )}
     </span>
@@ -82,7 +88,7 @@ function RunningCountBadge({ projectId }: { projectId: string }) {
   );
 }
 
-/** 项目下最近活跃的一条会话（按 updated_at 降序取首）。 */
+/** 项目下最近活跃的一条会话（按 updated_at 降序取首），作为行内说明而非嵌套卡片。 */
 function LatestConversationRow({ projectId }: { projectId: string }) {
   const conversations = useConversationStore((s) => s.conversationsByProject[projectId]);
   const sessions = useAgentStore((s) => s.sessions);
@@ -90,17 +96,11 @@ function LatestConversationRow({ projectId }: { projectId: string }) {
   const latest = [...conversations].sort((a, b) => b.updated_at - a.updated_at)[0];
   const status = sessions[latest.id]?.status ?? null;
   return (
-    <span className="mt-1 flex items-center gap-1.5 border-t border-[color:var(--border-subtle)] pt-1 pl-3 text-[11px] text-[var(--text-tertiary)]">
+    <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] leading-tight text-[var(--text-tertiary)]">
       {latest.agent_type && (
-        <AgentIcon agentType={latest.agent_type} status={status} size={11} />
+        <AgentIcon agentType={latest.agent_type} status={status} size={9} />
       )}
-      <span className="max-w-[160px] truncate">{latest.title}</span>
-      {status === "running" && (
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full animate-pulse" style={{ backgroundColor: "var(--accent)" }} />
-      )}
-      {status === "waiting" && (
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: "var(--warning)" }} />
-      )}
+      <span className="min-w-0 truncate">{latest.title}</span>
     </span>
   );
 }
@@ -183,12 +183,18 @@ export function ProjectSelector() {
         }}
       >
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="sm" className={`rounded-xl text-xs ${isMac ? "h-8" : ""}`}>
+          <Button variant="ghost" size="sm" className={`cursor-pointer rounded-xl text-xs ${isMac ? "h-8" : ""}`}>
             <span className="inline-flex items-center">
               {activeProjectId && <RunningCountBadge projectId={activeProjectId} />}
               <span className="font-semibold">{activeProject?.name || "打开项目"}</span>
-              {activeProjectId && <StatusDots projectId={activeProjectId} />}
-              <ChevronDown size={12} className="ml-1 opacity-60" />
+              {activeProjectId && <StatusDots projectId={activeProjectId} className="ml-2" />}
+              <ChevronDown
+                size={12}
+                className={cn(
+                  "ml-1 opacity-50 transition-transform duration-150",
+                  dropdownOpen && "rotate-180",
+                )}
+              />
             </span>
           </Button>
         </DropdownMenuTrigger>
@@ -197,17 +203,20 @@ export function ProjectSelector() {
         <DropdownMenuContent
           align="start"
           data-tauri-drag-region="false"
-          className="min-w-[200px] rounded-[var(--radius-md)] p-1.5"
+          className="w-[280px] rounded-[var(--radius-md)] p-1.5"
           onCloseAutoFocus={(e) => {
             // Keep focus from jumping back to the trigger before the folder
             // dialog opens — that restore is what loses the Windows foreground.
             if (pendingOpenFolder.current) e.preventDefault();
           }}
         >
-          {projects.map((p) => (
-            <DropdownMenuItem
-              key={p.id}
-              onSelect={() => {
+          {projects.map((p) => {
+            const isActive = p.id === activeProjectId;
+            return (
+              <DropdownMenuItem
+                key={p.id}
+                title={p.path}
+                onSelect={() => {
                 const oldId = useProjectStore.getState().activeProjectId;
                 void (async () => {
                   if (oldId && oldId !== p.id) {
@@ -235,23 +244,40 @@ export function ProjectSelector() {
                   }
                 })();
               }}
-              className={`px-3 transition-colors duration-100 ${ITEM_HIGHLIGHT} ${
-                p.id === activeProjectId
-                  ? "bg-[var(--overlay-active)] text-[var(--text-primary)]"
-                  : "text-[var(--text-secondary)]"
-              }`}
+              className={cn(
+                "group/proj cursor-pointer items-start gap-2.5 rounded-[var(--radius-sm)] px-2 py-2 transition-colors duration-100",
+                ITEM_HIGHLIGHT,
+                isActive
+                  ? "bg-[var(--overlay-ghost)] text-[var(--text-primary)]"
+                  : "text-[var(--text-secondary)]",
+              )}
             >
-              <span className="flex w-full flex-col">
-                <span className="flex items-center justify-between w-full gap-2">
-                  <span className="truncate">{p.name}</span>
-                  <span className="flex items-center gap-1.5">
-                    <StatusDots projectId={p.id} />
-                    {p.id !== activeProjectId && (
+              <span
+                aria-hidden
+                className={cn(
+                  "mt-px flex size-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[11px] font-semibold",
+                  isActive
+                    ? "bg-[color-mix(in_srgb,var(--accent)_18%,transparent)] text-[var(--accent)]"
+                    : "bg-[var(--glass-2-surface)] text-[var(--text-secondary)]",
+                )}
+              >
+                {projectMonogram(p.name)}
+              </span>
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className={cn("truncate text-[13px] leading-tight", isActive && "font-medium")}>
+                    {p.name}
+                  </span>
+                  <StatusDots projectId={p.id} />
+                  <span className="ml-auto flex size-5 shrink-0 items-center justify-center">
+                    {isActive ? (
+                      <Check size={14} className="text-[var(--accent)]" aria-hidden />
+                    ) : (
                       <button
                         type="button"
                         title={`从项目列表移除 ${p.name}`}
                         aria-label={`从项目列表移除 ${p.name}`}
-                        className="rounded p-0.5 text-[var(--text-tertiary)] opacity-60 transition-opacity hover:bg-[var(--overlay-hover)] hover:text-[var(--error)] hover:opacity-100"
+                        className="cursor-pointer rounded p-0.5 text-[var(--text-tertiary)] opacity-0 transition-opacity hover:bg-[var(--overlay-hover)] hover:text-[var(--error)] hover:opacity-100 group-hover/proj:opacity-70 group-data-[highlighted]/proj:opacity-70"
                         onClick={(e) => {
                           // 必须让 pointerdown 冒泡到 MenuItem（Radix 用它标记
                           // isPointerDown，否则 pointerup 会手动 click 整行触发
@@ -277,23 +303,29 @@ export function ProjectSelector() {
                 </span>
                 <LatestConversationRow projectId={p.id} />
               </span>
-            </DropdownMenuItem>
-          ))}
+              </DropdownMenuItem>
+            );
+          })}
           <DropdownMenuSeparator className="my-1.5" />
           <DropdownMenuItem
             onSelect={() => {
               pendingOpenFolder.current = true;
             }}
-            className={`px-3 text-[var(--accent)] transition-colors duration-100 ${ITEM_HIGHLIGHT} focus:text-[var(--accent)] data-[highlighted]:text-[var(--accent)]`}
+            className={cn(
+              "cursor-pointer gap-2 px-2 py-2 text-[13px] text-[var(--accent)] transition-colors duration-100",
+              ITEM_HIGHLIGHT,
+              "focus:text-[var(--accent)] data-[highlighted]:text-[var(--accent)]",
+            )}
           >
-            + Open Folder...
+            <FolderPlus size={14} className="text-[var(--accent)]" />
+            打开文件夹
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
       {openError && (
         <div
           role="alert"
-          className="absolute left-0 top-full z-50 mt-1 w-max max-w-[280px] rounded-md border border-[color:var(--border-subtle)] bg-[var(--glass-3-surface)] px-3 py-2 text-xs text-[var(--error)] shadow-md backdrop-blur-xl"
+          className="nex-elevated absolute left-0 top-full z-50 mt-1 w-max max-w-[280px] rounded-md border border-[color:var(--glass-border)] bg-[var(--card)] px-3 py-2 text-xs text-[var(--error)]"
         >
           打开文件夹失败：{openError}
         </div>

@@ -53,7 +53,7 @@ export function MessageContextMenu({ textContent, children }: MessageContextMenu
 
   return (
     <>
-      <div ref={containerRef} onContextMenu={onContextMenu}>
+      <div ref={containerRef} onContextMenu={onContextMenu} className="min-w-0 max-w-full">
         {children}
       </div>
       <PositionedDropdown open={open} setOpen={setOpen} pos={pos}>

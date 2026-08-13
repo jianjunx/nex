@@ -89,7 +89,12 @@ function openDropdown() {
   fireEvent.pointerDown(screen.getByRole("button", { name: /alpha/ }));
 }
 
-describe("ProjectSelector remove button", () => {
+describe("ProjectSelector dropdown", () => {
+  it("底部动作为打开文件夹", () => {
+    openDropdown();
+    expect(screen.getByRole("menuitem", { name: /打开文件夹/ })).toBeTruthy();
+  });
+
   it("非当前项目显示 X，点击后移除项目且不切换当前项目", async () => {
     openDropdown();
     // beta 行有 X 按钮

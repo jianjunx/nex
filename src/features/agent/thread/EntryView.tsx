@@ -27,10 +27,10 @@ export const EntryView = memo(function EntryView({ entry }: { entry: ThreadEntry
         // 百分比相对「内容撑开的外层 div」而非面板，中等长度消息会在
         // 80%×自身宽度处意外折行（气泡右侧留空）。
         // ml-auto 把气泡推到面板右侧（block 子元素默认靠左）。
-        <div className="ml-auto flex max-w-[80%] justify-end">
+        <div className="ml-auto flex min-w-0 max-w-[80%] justify-end">
           <MessageContextMenu textContent={entry.text ?? ""}>
-            <Card className="gap-0 px-3 py-1.5 text-sm shadow-none bg-[var(--accent)]/15 border-[color:var(--accent)]/25">
-              <CardContent className="px-0 space-y-2">
+            <Card className="min-w-0 max-w-full gap-0 px-3 py-1.5 text-sm shadow-none bg-[var(--accent)]/15 border-[color:var(--accent)]/25">
+              <CardContent className="min-w-0 px-0 space-y-2">
                 {entry.images && entry.images.length > 0 && (
                   <div className="flex flex-wrap gap-2">
                     {entry.images.map((img, i) => (
@@ -38,7 +38,11 @@ export const EntryView = memo(function EntryView({ entry }: { entry: ThreadEntry
                     ))}
                   </div>
                 )}
-                {entry.text ? <p className="whitespace-pre-wrap">{entry.text}</p> : null}
+                {entry.text ? (
+                  <p className="min-w-0 whitespace-pre-wrap wrap-anywhere">
+                    {entry.text}
+                  </p>
+                ) : null}
               </CardContent>
             </Card>
           </MessageContextMenu>

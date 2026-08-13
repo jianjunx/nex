@@ -6,7 +6,7 @@ import {
 } from "@/components/ui/dialog";
 import type { UserMessageImage } from "./types";
 
-/** Chat-bubble image: mid-size thumbnail; click opens a lightbox preview. */
+/** Chat-bubble image: compact thumbnail; click opens a lightbox preview. */
 export function ThreadImageThumb({ image }: { image: UserMessageImage }) {
   const [open, setOpen] = useState(false);
   const src = `data:${image.mimeType};base64,${image.data}`;
@@ -22,7 +22,7 @@ export function ThreadImageThumb({ image }: { image: UserMessageImage }) {
           setOpen(true);
         }}
       >
-        <img src={src} alt="" className="h-24 w-24 object-cover" />
+        <img src={src} alt="" className="h-16 w-16 object-cover" />
       </button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent

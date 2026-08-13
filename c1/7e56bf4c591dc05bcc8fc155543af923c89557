@@ -1,0 +1,46 @@
+src-tauri/src/agent/launch.rs
+  s_60eb0da9a2cce9::t_dadd0f3e6ac5ab 607,619
+src-tauri/src/agent/native/budget.rs
+  s_60eb0da9a2cce9::t_7300e63cc0f577 305
+  s_60eb0da9a2cce9::t_ebbbcaf6fe37a9 284
+  s_60eb0da9a2cce9::t_572976d92e03aa 59,63-64,68
+src-tauri/src/agent/native/session.rs
+  s_60eb0da9a2cce9::t_68859d53789609 1645-1646
+src/stores/agent.store.ts
+  s_60eb0da9a2cce9::t_47eb74a0d35f3c 18-21,28-29,38,41,43,47
+src/features/settings/sections/NexAgentSection.test.tsx
+  s_60eb0da9a2cce9::t_29dca0494d465e 101-105,111,135-136
+  s_60eb0da9a2cce9::t_78010b25853c8e 114
+  s_60eb0da9a2cce9::t_da5d9c92b775c3 116-117,120-126,128,133-134,139
+  s_60eb0da9a2cce9::t_507f16913b3c3c 119,129-132
+  s_60eb0da9a2cce9::t_e59ecbe833213f 153
+src/stores/agent.store.test.ts
+  s_60eb0da9a2cce9::t_fa5749bab093d2 40
+src/features/projects/NewConversationDropdown.tsx
+  s_60eb0da9a2cce9::t_7529c1949a97f6 16
+src-tauri/src/agent/native/mod.rs
+  s_60eb0da9a2cce9::t_78e703267b9328 585
+src-tauri/src/agent/native/compact.rs
+  s_60eb0da9a2cce9::t_114f5a46335cb6 364
+src-tauri/src/agent/native/memory.rs
+  s_60eb0da9a2cce9::t_15f9d2e6d043d0 40,60-63
+  s_60eb0da9a2cce9::t_bf5943bb00a3a5 268
+  s_60eb0da9a2cce9::t_2c9e68d9f59277 72-76
+  s_60eb0da9a2cce9::t_02ea036c9f61c0 64-65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "c17e56bf4c591dc05bcc8fc155543af923c89557",
+  "prompts": {},
+  "sessions": {
+    "s_60eb0da9a2cce9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "21ae8063-fa7a-4fbf-8f4d-2772a964984f",
+        "model": "grok-4.5"
+      },
+      "human_author": null
+    }
+  }
+}

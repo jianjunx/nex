@@ -1,0 +1,91 @@
+src-tauri/src/agent/native/budget.rs
+  s_60eb0da9a2cce9::t_814dbccf404d5d 231,378-403
+  s_60eb0da9a2cce9::t_80c375392211fa 142-144
+  s_60eb0da9a2cce9::t_6291e1b3cd1ad0 307
+  s_60eb0da9a2cce9::t_ecc54d25941b65 155-164
+  s_60eb0da9a2cce9::t_a1a1b435e43038 13
+  s_60eb0da9a2cce9::t_67a4f0ea197dce 204-207,216-230
+  s_60eb0da9a2cce9::t_9ab418394e09db 154
+src-tauri/src/agent/native/session.rs
+  s_60eb0da9a2cce9::t_888a5132e5ddde 593,598-604
+  s_60eb0da9a2cce9::t_9e5295e6c714b0 24
+  s_60eb0da9a2cce9::t_f26a8d82fac0f3 1172-1184,1191
+  s_60eb0da9a2cce9::t_d0a49833dfbdc4 246-254,262-264,268,275,279-281,286-293
+  s_60eb0da9a2cce9::t_52d9cd935d1295 1325-1327,1332
+  s_60eb0da9a2cce9::t_14c65475bbdd1d 1338
+  s_60eb0da9a2cce9::t_d3e9ddfedcf4ab 294
+  s_60eb0da9a2cce9::t_d9c0facf081c37 605-606
+src-tauri/src/agent/acp_adapter.rs
+  s_60eb0da9a2cce9::t_a7f6ceb71c7090 1396-1404
+src/features/agent/ContextUsageRing.tsx
+  s_60eb0da9a2cce9::t_658d93fce476f1 2
+  s_60eb0da9a2cce9::t_ad1f1a81a890ca 31
+  s_60eb0da9a2cce9::t_9aaf306a995d6a 35
+  s_60eb0da9a2cce9::t_d08465136f6d52 118-143
+src-tauri/src/agent/native/stats.rs
+  s_60eb0da9a2cce9::t_136c30195ee419 58
+  s_60eb0da9a2cce9::t_2e8899f3b5380d 149-150
+  s_60eb0da9a2cce9::t_daab1cdc6709f3 18,22-23,48-52
+src-tauri/src/agent/native/memory.rs
+  s_60eb0da9a2cce9::t_92970db2fa53c1 274-281
+  s_60eb0da9a2cce9::t_e91cad6e9ac0d2 88
+  s_60eb0da9a2cce9::t_2aa26769d2e9e7 337-338,344,351-352
+  s_60eb0da9a2cce9::t_1f969ca14c999b 339-343,345-350
+  s_60eb0da9a2cce9::t_873fe55aa53507 242-243
+  s_60eb0da9a2cce9::t_1b1e8fce2d59a6 21-24
+  s_60eb0da9a2cce9::t_cd49f7d22dd6e7 336
+src-tauri/src/agent/native/summary.rs
+  s_60eb0da9a2cce9::t_7537ab8d823e9e 192-204
+  s_60eb0da9a2cce9::t_bb6231ea895da1 70-103
+  s_60eb0da9a2cce9::t_49a56218b83d81 51-55
+  s_60eb0da9a2cce9::t_9c090188619c32 41-45
+src-tauri/src/agent/native/config.rs
+  s_60eb0da9a2cce9::t_c3a7696fb5cc9a 169-170
+  s_60eb0da9a2cce9::t_cde3bc20889da5 248-257
+  s_60eb0da9a2cce9::t_6f583a71f6094f 150-153
+  s_60eb0da9a2cce9::t_b9db14c5f9aa6c 453-484
+  s_60eb0da9a2cce9::t_1ac3d0766f11ff 430
+src/bridge/tauri.ts
+  s_60eb0da9a2cce9::t_f9bf654c766d95 192-193
+  s_60eb0da9a2cce9::t_848809f8ba5ef3 205,215-216
+src/features/settings/sections/NexAgentSection.tsx
+  s_60eb0da9a2cce9::t_1beea74b3e6a82 447
+src/features/editor/EditorPanel.line.test.tsx
+  s_60eb0da9a2cce9::t_2e9358c3da0e6f 66-67,71
+src-tauri/src/agent/types.rs
+  s_60eb0da9a2cce9::t_5956716617547f 187-190
+src/features/agent/AgentComposer.tsx
+  s_60eb0da9a2cce9::t_c418bb11980c29 1038-1039
+  s_60eb0da9a2cce9::t_0d2f2d70ee3370 184
+  s_60eb0da9a2cce9::t_4f6c3bdb54d727 187-192
+src-tauri/src/agent/native/tools/mod.rs
+  s_60eb0da9a2cce9::t_97d136e460a173 80-85,98,107-116
+  s_60eb0da9a2cce9::t_1aafa5c7d541ee 543,550-566
+  s_60eb0da9a2cce9::t_8d323bfadcceb1 567-568
+src-tauri/src/agent/native/compact.rs
+  s_60eb0da9a2cce9::t_400d2daae973b3 17
+  s_60eb0da9a2cce9::t_ac58cbe67e0143 751-797
+  s_60eb0da9a2cce9::t_821dcbab6b7085 161-162,170-174
+  s_60eb0da9a2cce9::t_50af9290a15741 293-302,309-316,337-340,342
+  s_60eb0da9a2cce9::t_1290167552e045 490-495
+  s_60eb0da9a2cce9::t_1f308a172b7d6f 33-34,36-87
+  s_60eb0da9a2cce9::t_2c58c9b7ccfe69 200
+  s_60eb0da9a2cce9::t_a9e7bd0cbccf78 489
+  s_60eb0da9a2cce9::t_24de641651eb9b 750
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "ef87fa063ae29d7427bfd4a1a7a91681be81a6fc",
+  "prompts": {},
+  "sessions": {
+    "s_60eb0da9a2cce9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "21ae8063-fa7a-4fbf-8f4d-2772a964984f",
+        "model": "grok-4.5"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

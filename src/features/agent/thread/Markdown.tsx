@@ -117,30 +117,24 @@ const components: Components = {
     );
   },
 
-  // GFM tables — surfaces, striped body rows, hover, header tint.
+  // GFM tables — rules live on cells (tr borders do not paint). Hairlines mix
+  // from --text-primary so they stay visible on both the dark card and light theme.
   table({ children, ...rest }) {
     return (
-      <div className="my-2.5 overflow-x-auto rounded-[var(--radius-md)] border border-[color:var(--border-subtle)] bg-[var(--glass-3-surface)]">
-        <table className="w-full text-sm border-collapse" {...rest}>
+      <div className="my-2.5 overflow-x-auto rounded-[var(--radius-md)] border border-[color-mix(in_srgb,var(--text-primary)_28%,transparent)] bg-transparent">
+        <table className="w-full border-separate border-spacing-0 text-sm" {...rest}>
           {children}
         </table>
       </div>
     );
   },
   thead({ children, ...rest }) {
-    return (
-      <thead
-        className="bg-[var(--glass-2-surface)] border-b border-[color:var(--border-default)]"
-        {...rest}
-      >
-        {children}
-      </thead>
-    );
+    return <thead {...rest}>{children}</thead>;
   },
   th({ children, ...rest }) {
     return (
       <th
-        className="text-left font-semibold py-1.5 px-2.5 whitespace-nowrap"
+        className="text-left font-semibold py-1.5 px-2.5 whitespace-nowrap border-b border-r last:border-r-0 border-[color-mix(in_srgb,var(--text-primary)_28%,transparent)]"
         {...rest}
       >
         {children}
@@ -148,21 +142,21 @@ const components: Components = {
     );
   },
   tbody({ children, ...rest }) {
-    return <tbody {...rest}>{children}</tbody>;
+    return <tbody className="[&_tr:last-child_td]:border-b-0" {...rest}>{children}</tbody>;
   },
   tr({ children, ...rest }) {
     return (
-      <tr
-        className="border-b border-[color:var(--border-subtle)] last:border-0 transition-colors hover:bg-[var(--overlay-hover)]"
-        {...rest}
-      >
+      <tr className="transition-colors hover:bg-[var(--overlay-hover)]" {...rest}>
         {children}
       </tr>
     );
   },
   td({ children, ...rest }) {
     return (
-      <td className="py-1.5 px-2.5 align-top" {...rest}>
+      <td
+        className="py-1.5 px-2.5 align-top border-b border-r last:border-r-0 border-[color-mix(in_srgb,var(--text-primary)_28%,transparent)]"
+        {...rest}
+      >
         {children}
       </td>
     );

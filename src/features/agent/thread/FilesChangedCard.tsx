@@ -1,10 +1,34 @@
 import FileIcon from "../../files/FileIcon";
-import { fileBasename } from "../../editor/pathUtils";
+import { fileBasename, relativeToProject } from "../../editor/pathUtils";
 import { openPathToken } from "./pathToken";
 import type { ChangedFile } from "./filesChanged";
+import { useProjectStore } from "../../../stores/project.store";
+import { selectProjectActiveTabId, useConversationStore } from "../../../stores/conversation.store";
+import { useAgentStore } from "../../../stores/agent.store";
+
+const ACTION_BTN =
+  "shrink-0 cursor-pointer text-xs text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-primary)] disabled:cursor-default disabled:opacity-40";
+
+function repoRelativePaths(files: ChangedFile[], projectPath: string | undefined): string[] {
+  if (!projectPath) return files.map((f) => f.path.replace(/\\/g, "/"));
+  return files.map((f) => relativeToProject(f.path, projectPath).replace(/\\/g, "/"));
+}
+
+function sendToSession(conversationId: string, sessionId: string, text: string) {
+  useAgentStore.getState().appendUserMessage(conversationId, text);
+  void useAgentStore.getState().sendPrompt(sessionId, [{ type: "text", text }]);
+}
 
 export function FilesChangedCard({ files }: { files: ChangedFile[] }) {
+  const activeProjectId = useProjectStore((s) => s.activeProjectId);
+  const projectPath = useProjectStore((s) => s.projects.find((p) => p.id === s.activeProjectId)?.path);
+  const activeTabId = useConversationStore((s) => selectProjectActiveTabId(s, activeProjectId));
+  const session = useAgentStore((s) => (activeTabId ? s.sessions[activeTabId] : undefined));
+  const canPrompt = !!session?.sessionId && session.status === "idle";
+
   if (files.length === 0) return null;
+
+  const rels = repoRelativePaths(files, projectPath);
 
   const reviewAll = () => {
     void (async () => {
@@ -13,19 +37,37 @@ export function FilesChangedCard({ files }: { files: ChangedFile[] }) {
     })();
   };
 
+  const commitFiles = () => {
+    if (!canPrompt || !activeTabId || !session?.sessionId) return;
+    sendToSession(
+      activeTabId,
+      session.sessionId,
+      `请提交这些文件，并写一条合适的 commit message：\n${rels.map((p) => `- ${p}`).join("\n")}`,
+    );
+  };
+
+  const reviewFiles = () => {
+    if (!canPrompt || !activeTabId || !session?.sessionId) return;
+    sendToSession(activeTabId, session.sessionId, `/review ${rels.join(" ")}`.trim());
+  };
+
   return (
     <div className="max-w-[96%] overflow-hidden rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--glass-3-surface)] shadow-[inset_0_1px_0_0_var(--edge-highlight)]">
       <div className="flex items-center justify-between gap-2 px-3 py-2">
         <span className="text-xs text-[var(--text-secondary)]">
           修改了 {files.length} 个文件
         </span>
-        <button
-          type="button"
-          className="shrink-0 cursor-pointer text-xs text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-primary)]"
-          onClick={reviewAll}
-        >
-          查看
-        </button>
+        <div className="flex shrink-0 items-center gap-2.5">
+          <button type="button" className={ACTION_BTN} disabled={!canPrompt} onClick={commitFiles}>
+            Commit
+          </button>
+          <button type="button" className={ACTION_BTN} disabled={!canPrompt} onClick={reviewFiles}>
+            Review
+          </button>
+          <button type="button" className={ACTION_BTN} onClick={reviewAll}>
+            查看
+          </button>
+        </div>
       </div>
       <ul>
         {files.map((f) => {

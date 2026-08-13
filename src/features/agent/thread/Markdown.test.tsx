@@ -59,7 +59,7 @@ describe("Markdown", () => {
     expect(container.textContent).not.toMatch(/\|\s*---/);
   });
 
-  it("wraps the table in a rounded surface and applies hover to body rows", () => {
+  it("wraps the table in a rounded frame without a filled surface", () => {
     const src = [
       "| a | b |",
       "| --- | --- |",
@@ -69,12 +69,20 @@ describe("Markdown", () => {
 
     const wrapper = container.querySelector("table")?.parentElement;
     expect(wrapper?.className).toMatch(/rounded-/);
-    expect(wrapper?.className).toMatch(/border-/);
+    expect(wrapper?.className).toMatch(/border/);
+    expect(wrapper?.className).toMatch(/bg-transparent/);
+    expect(wrapper?.className).not.toMatch(/glass-3-surface/);
 
-    // body rows should advertise a hover transition (transition-colors + hover:bg-*).
+    const th = container.querySelector("thead th");
+    expect(th?.className).toMatch(/border-b/);
+
+    const td = container.querySelector("tbody td");
+    expect(td?.className).toMatch(/border-b/);
+
     const row = container.querySelector("tbody tr");
     expect(row?.className).toMatch(/transition-colors/);
     expect(row?.className).toMatch(/hover:/);
+    expect(row?.className).not.toMatch(/bg-\[var\(--glass/);
   });
 
   it("renders fenced code blocks with rehype-highlight token classes", async () => {

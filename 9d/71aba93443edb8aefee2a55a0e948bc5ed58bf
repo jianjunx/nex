@@ -1,0 +1,32 @@
+src/features/settings/sections/mcpJson.ts
+  s_4913e163432732::t_c584fc089a1ef1 1-57,61-78
+  s_4913e163432732::t_bd8300a9ac6225 58-60
+src/features/settings/sections/mcpJson.test.ts
+  s_4913e163432732::t_e3ccdd9f11d218 26-36
+  s_4913e163432732::t_240c8e044481f3 1-25,37
+src/features/settings/sections/NexAgentSection.test.tsx
+  s_4913e163432732::t_1f78452f90f474 233-359
+src/features/settings/sections/NexAgentSection.tsx
+  s_4913e163432732::t_5d6999e58ec850 373-374,376,380-387,391-395,398
+  s_4913e163432732::t_d99864dfa91997 2,7
+  s_4913e163432732::t_43ee5eb17cc0fd 519,521-538
+  s_4913e163432732::t_4765940180822e 1058-1062,1093,1096,1100,1102-1106,1108-1109,1113,1119-1120,1122-1123,1125-1135,1137,1140,1143-1144,1147,1165,1167,1172,1175-1177,1179-1186,1193,1196-1197,1255-1261,1264,1267-1268,1271
+  s_4913e163432732::t_412ebb4bb02be7 39
+  s_4913e163432732::t_3ac04f097015f4 206,209-227,233,236,255-257,261
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "9d71aba93443edb8aefee2a55a0e948bc5ed58bf",
+  "prompts": {},
+  "sessions": {
+    "s_4913e163432732": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "3ec21ef1-4302-4b25-afd6-8a38cb04ad8b",
+        "model": "grok-4.6"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

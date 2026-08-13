@@ -230,3 +230,130 @@ describe("NexAgentSection auto-saving", () => {
     expect(refreshNativeAutoReview).toHaveBeenCalledTimes(1);
   });
 });
+
+const sampleMcp = {
+  name: "filesystem",
+  command: "npx",
+  args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+  env: {},
+  url: null,
+  headers: {},
+  enabled: true,
+  source: "user",
+};
+
+const sampleSkill = {
+  name: "my-skill",
+  description: "does things",
+  enabled: true,
+  source: "user" as const,
+};
+
+describe("NexAgentSection MCP and skills", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    nativeAgentGetConfig.mockResolvedValue(structuredClone(baseConfig));
+    nativeAgentSetConfig.mockResolvedValue(undefined);
+    nativeAgentListMcp.mockResolvedValue([]);
+    nativeAgentListSkills.mockResolvedValue([]);
+    nativeAgentProbeMcp.mockResolvedValue("connected:2 tools");
+    nativeAgentUpsertMcp.mockResolvedValue(undefined);
+    nativeAgentSetMcpEnabled.mockResolvedValue(undefined);
+    nativeAgentDeleteMcp.mockResolvedValue(undefined);
+    nativeAgentSetSkillEnabled.mockResolvedValue(undefined);
+    nativeAgentDeleteSkill.mockResolvedValue(undefined);
+    nativeAgentOpenSkillsDir.mockResolvedValue(undefined);
+    refreshNativeAutoReview.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("auto-probes enabled MCP servers and shows connected status in green", async () => {
+    nativeAgentListMcp.mockResolvedValue([sampleMcp]);
+    render(<NexAgentSection />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "MCP" }));
+    await waitFor(() => expect(nativeAgentProbeMcp).toHaveBeenCalledWith("filesystem"));
+    const status = await screen.findByText("connected:2 tools");
+    expect(status.className).toContain("text-[var(--success)]");
+    expect(screen.getByRole("button", { name: "探测 filesystem" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "删除 filesystem" })).toBeTruthy();
+    expect(screen.getByRole("switch", { name: "启用 filesystem" })).toBeTruthy();
+  });
+
+  it("adds MCP servers from JSON", async () => {
+    nativeAgentUpsertMcp.mockImplementation(async () => {
+      nativeAgentListMcp.mockResolvedValue([sampleMcp]);
+    });
+    render(<NexAgentSection />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "MCP" }));
+    fireEvent.click(await screen.findByRole("button", { name: /添加 MCP/ }));
+    const textarea = await screen.findByLabelText("MCP JSON");
+    fireEvent.change(textarea, {
+      target: {
+        value: JSON.stringify({
+          mcpServers: {
+            filesystem: { command: "npx", args: ["-y", "pkg"] },
+          },
+        }),
+      },
+    });
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "添加" }));
+
+    await waitFor(() => expect(nativeAgentUpsertMcp).toHaveBeenCalledTimes(1));
+    expect(nativeAgentUpsertMcp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "filesystem",
+        command: "npx",
+        args: ["-y", "pkg"],
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "添加 MCP 服务器" })).toBeNull());
+    await screen.findByText("filesystem");
+  });
+
+  it("toggles MCP with a switch and deletes with the icon button", async () => {
+    nativeAgentListMcp.mockResolvedValue([sampleMcp]);
+    nativeAgentSetMcpEnabled.mockImplementation(async (_name: unknown, enabled: unknown) => {
+      nativeAgentListMcp.mockResolvedValue([{ ...sampleMcp, enabled: Boolean(enabled) }]);
+    });
+    nativeAgentDeleteMcp.mockImplementation(async () => {
+      nativeAgentListMcp.mockResolvedValue([]);
+    });
+    render(<NexAgentSection />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "MCP" }));
+    await screen.findByText("filesystem");
+    fireEvent.click(screen.getByRole("switch", { name: "启用 filesystem" }));
+    await waitFor(() => expect(nativeAgentSetMcpEnabled).toHaveBeenCalledWith("filesystem", false));
+    await screen.findByText("已禁用");
+
+    fireEvent.click(screen.getByRole("button", { name: "删除 filesystem" }));
+    await waitFor(() => expect(nativeAgentDeleteMcp).toHaveBeenCalledWith("filesystem"));
+    await screen.findByText("尚未配置 MCP 服务器");
+  });
+
+  it("toggles skills with a switch and deletes user skills with an icon button", async () => {
+    nativeAgentListSkills.mockResolvedValue([sampleSkill]);
+    nativeAgentSetSkillEnabled.mockImplementation(async (_name: unknown, enabled: unknown) => {
+      nativeAgentListSkills.mockResolvedValue([{ ...sampleSkill, enabled: Boolean(enabled) }]);
+    });
+    nativeAgentDeleteSkill.mockImplementation(async () => {
+      nativeAgentListSkills.mockResolvedValue([]);
+    });
+    render(<NexAgentSection />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "技能" }));
+    await screen.findByText("my-skill");
+    expect(screen.queryByRole("button", { name: "删除" })).toBeNull();
+    fireEvent.click(screen.getByRole("switch", { name: "启用 my-skill" }));
+    await waitFor(() => expect(nativeAgentSetSkillEnabled).toHaveBeenCalledWith("my-skill", false));
+
+    fireEvent.click(screen.getByRole("button", { name: "删除 my-skill" }));
+    await waitFor(() => expect(nativeAgentDeleteSkill).toHaveBeenCalledWith("my-skill"));
+    await screen.findByText(/暂无技能/);
+  });
+});

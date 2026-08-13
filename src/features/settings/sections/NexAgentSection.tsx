@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { ChevronDown, ChevronRight, FolderOpen, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Activity, ChevronDown, ChevronRight, FolderOpen, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -35,6 +36,7 @@ import {
 } from "../../../bridge/tauri";
 import { useAgentStore } from "../../../stores/agent.store";
 import { SECTION_HEADER } from "./_shared";
+import { DEFAULT_MCP_JSON, parseMcpServersJson } from "./mcpJson";
 
 type SubTab = "providers" | "mcp" | "skills" | "advanced";
 
@@ -201,16 +203,37 @@ export function NexAgentSection() {
 
   const [mcpList, setMcpList] = useState<NativeMcpServerInfo[]>([]);
   const [mcpStatus, setMcpStatus] = useState<Record<string, string>>({});
-  const [mcpEditor, setMcpEditor] = useState<null | { name: string; command: string; args: string }>(null);
+  const [mcpEditorOpen, setMcpEditorOpen] = useState(false);
   const [skills, setSkills] = useState<NativeSkillInfo[]>([]);
+
+  const probeMcp = useCallback(async (name: string) => {
+    setMcpStatus((s) => ({ ...s, [name]: "探测中…" }));
+    try {
+      const r = await nativeAgentProbeMcp(name);
+      setMcpStatus((s) => ({ ...s, [name]: r }));
+    } catch (err) {
+      setMcpStatus((s) => ({ ...s, [name]: `error:${errorMessage(err)}` }));
+    }
+  }, []);
+
+  const probeEnabledMcps = useCallback(
+    (servers: NativeMcpServerInfo[]) => {
+      for (const server of servers) {
+        if (server.enabled) void probeMcp(server.name);
+      }
+    },
+    [probeMcp],
+  );
 
   const reloadExtras = useCallback(async () => {
     try {
       const [m, s] = await Promise.all([nativeAgentListMcp(), nativeAgentListSkills()]);
       setMcpList(m);
       setSkills(s);
+      return m;
     } catch (err) {
       setError(errorMessage(err));
+      return [] as NativeMcpServerInfo[];
     }
   }, []);
 
@@ -229,11 +252,13 @@ export function NexAgentSection() {
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
-    void reloadExtras();
+    void reloadExtras().then((m) => {
+      if (!cancelled) probeEnabledMcps(m);
+    });
     return () => {
       cancelled = true;
     };
-  }, [reloadExtras]);
+  }, [probeEnabledMcps, reloadExtras]);
 
   const persistConfig = async (configToSave: NativeAgentConfig, options?: { syncDraft?: boolean }) => {
     setSaving(true);
@@ -345,25 +370,32 @@ export function NexAgentSection() {
         <McpPane
           list={mcpList}
           status={mcpStatus}
-          onRefresh={() => void reloadExtras()}
-          onProbe={async (name) => {
-            setMcpStatus((s) => ({ ...s, [name]: "探测中…" }));
-            try {
-              const r = await nativeAgentProbeMcp(name);
-              setMcpStatus((s) => ({ ...s, [name]: r }));
-            } catch (err) {
-              setMcpStatus((s) => ({ ...s, [name]: `error:${errorMessage(err)}` }));
-            }
+          onRefresh={() => {
+            void reloadExtras().then((m) => probeEnabledMcps(m));
           }}
+          onProbe={(name) => void probeMcp(name)}
           onToggle={async (name, enabled) => {
             await nativeAgentSetMcpEnabled(name, enabled);
             await reloadExtras();
+            if (enabled) void probeMcp(name);
+            else {
+              setMcpStatus((s) => {
+                const next = { ...s };
+                delete next[name];
+                return next;
+              });
+            }
           }}
           onDelete={async (name) => {
             await nativeAgentDeleteMcp(name);
+            setMcpStatus((s) => {
+              const next = { ...s };
+              delete next[name];
+              return next;
+            });
             await reloadExtras();
           }}
-          onAdd={() => setMcpEditor({ name: "", command: "", args: "" })}
+          onAdd={() => setMcpEditorOpen(true)}
         />
       )}
 
@@ -484,19 +516,26 @@ export function NexAgentSection() {
         />
       )}
 
-      {mcpEditor && (
+      {mcpEditorOpen && (
         <McpEditorDialog
-          draft={mcpEditor}
-          onClose={() => setMcpEditor(null)}
-          onSave={async (d) => {
-            await nativeAgentUpsertMcp({
-              name: d.name.trim(),
-              command: d.command.trim() || null,
-              args: d.args.trim() ? d.args.trim().split(/\s+/) : [],
-              env: {},
-            });
-            setMcpEditor(null);
-            await reloadExtras();
+          onClose={() => setMcpEditorOpen(false)}
+          onSave={async (text) => {
+            const servers = parseMcpServersJson(text);
+            await Promise.all(
+              servers.map((s) =>
+                nativeAgentUpsertMcp({
+                  name: s.name,
+                  command: s.command,
+                  args: s.args,
+                  env: s.env,
+                  url: s.url,
+                  headers: s.headers,
+                }),
+              ),
+            );
+            setMcpEditorOpen(false);
+            const listed = await reloadExtras();
+            probeEnabledMcps(listed);
           }}
         />
       )}
@@ -1016,6 +1055,11 @@ function ProvidersModelTable({
   );
 }
 
+function mcpStatusLabel(raw: string): string {
+  if (raw.startsWith("error:")) return raw.slice(6);
+  return raw;
+}
+
 function McpPane({
   list,
   status,
@@ -1046,51 +1090,61 @@ function McpPane({
       )}
       {list.map((s) => {
         const st = status[s.name] ?? "";
+        const probing = st === "探测中…";
         const ok = st.startsWith("connected");
         const bad = st.startsWith("error");
+        const label = !s.enabled ? "已禁用" : mcpStatusLabel(st) || "未知";
         return (
           <div
             key={s.name}
-            className="space-y-1.5 rounded-[var(--radius-md)] border border-[color:var(--border-subtle)] px-3 py-2"
+            className="flex items-center justify-between gap-2 rounded-[var(--radius-md)] border border-[color:var(--border-subtle)] px-3 py-2"
           >
-            <div className="flex items-center justify-between gap-2">
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium">{s.name}</div>
-                <div className="truncate text-xs text-[var(--text-tertiary)]">
-                  {s.command ?? s.url ?? "—"}
-                  {s.args?.length ? ` ${s.args.join(" ")}` : ""}
-                </div>
+            <div className="min-w-0">
+              <div className="truncate text-sm font-medium">{s.name}</div>
+              <div className="truncate text-xs text-[var(--text-tertiary)]">
+                {s.command ?? s.url ?? "—"}
+                {s.args?.length ? ` ${s.args.join(" ")}` : ""}
               </div>
-              <span
-                className={`shrink-0 text-[10px] ${
+              <div
+                className={`mt-0.5 truncate text-[10px] ${
                   !s.enabled
                     ? "text-[var(--text-tertiary)]"
                     : ok
-                      ? "text-[var(--accent)]"
+                      ? "text-[var(--success)]"
                       : bad
                         ? "text-[var(--error)]"
                         : "text-[var(--text-tertiary)]"
                 }`}
               >
-                {!s.enabled ? "已禁用" : st || "未知"}
-              </span>
+                {label}
+              </div>
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              <Button size="sm" variant="outline" onClick={() => onProbe(s.name)}>探测</Button>
-              <Button
+            <div className="flex shrink-0 items-center gap-1">
+              <Switch
                 size="sm"
-                variant="outline"
-                onClick={() => void onToggle(s.name, !s.enabled)}
+                checked={s.enabled}
+                onCheckedChange={(v) => void onToggle(s.name, v)}
+                aria-label={`启用 ${s.name}`}
+              />
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                title="探测"
+                aria-label={`探测 ${s.name}`}
+                disabled={!s.enabled || probing}
+                onClick={() => onProbe(s.name)}
               >
-                {s.enabled ? "禁用" : "启用"}
+                {probing ? <Loader2 size={13} className="animate-spin" /> : <Activity size={13} />}
               </Button>
               <Button
-                size="sm"
+                size="icon-xs"
                 variant="ghost"
                 className="text-[var(--error)]"
+                title="删除"
+                aria-label={`删除 ${s.name}`}
                 onClick={() => void onDelete(s.name)}
               >
-                删除
+                <Trash2 size={13} />
               </Button>
             </div>
           </div>
@@ -1104,51 +1158,43 @@ function McpPane({
 }
 
 function McpEditorDialog({
-  draft,
   onClose,
   onSave,
 }: {
-  draft: { name: string; command: string; args: string };
   onClose: () => void;
-  onSave: (d: { name: string; command: string; args: string }) => Promise<void>;
+  onSave: (text: string) => Promise<void>;
 }) {
-  const [d, setD] = useState(draft);
+  const [text, setText] = useState(DEFAULT_MCP_JSON);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>添加 MCP 服务器</DialogTitle>
-          <DialogDescription>stdio 命令型服务器（写入 ~/.nex/mcp.json）。</DialogDescription>
+          <DialogDescription>
+            直接编辑 JSON（Claude 兼容的 mcpServers），写入 ~/.nex/mcp.json。
+          </DialogDescription>
         </DialogHeader>
-        <div className="space-y-3">
-          <div className="space-y-1">
-            <Label className="text-sm">名称</Label>
-            <Input value={d.name} onChange={(e) => setD({ ...d, name: e.target.value })} placeholder="filesystem" />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-sm">Command</Label>
-            <Input value={d.command} onChange={(e) => setD({ ...d, command: e.target.value })} placeholder="npx" />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-sm">Args（空格分隔）</Label>
-            <Input
-              value={d.args}
-              onChange={(e) => setD({ ...d, args: e.target.value })}
-              placeholder="-y @modelcontextprotocol/server-filesystem /tmp"
-            />
-          </div>
+        <div className="space-y-2">
+          <Textarea
+            aria-label="MCP JSON"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            spellCheck={false}
+            className="min-h-48 font-mono text-xs"
+          />
           {err && <p className="text-xs text-[var(--error)]">{err}</p>}
         </div>
         <DialogFooter>
           <Button size="sm" variant="outline" onClick={onClose}>取消</Button>
           <Button
             size="sm"
-            disabled={busy || !d.name.trim() || !d.command.trim()}
+            disabled={busy || !text.trim()}
             onClick={() => {
               setBusy(true);
-              void onSave(d)
+              setErr(null);
+              void onSave(text)
                 .catch((e) => setErr(errorMessage(e)))
                 .finally(() => setBusy(false));
             }}
@@ -1200,25 +1246,29 @@ function SkillsPane({
               <span className="truncate text-sm font-medium">{sk.name}</span>
               <span className="shrink-0 text-[10px] text-[var(--text-tertiary)]">
                 {sk.source === "builtin" ? "内置" : "用户"}
-                {!sk.enabled ? " · 已禁用" : ""}
               </span>
             </div>
             {sk.description && (
               <p className="mt-0.5 line-clamp-2 text-xs text-[var(--text-tertiary)]">{sk.description}</p>
             )}
           </div>
-          <div className="flex shrink-0 flex-col gap-1">
-            <Button size="sm" variant="outline" onClick={() => void onToggle(sk.name, !sk.enabled)}>
-              {sk.enabled ? "禁用" : "启用"}
-            </Button>
+          <div className="flex shrink-0 items-center gap-1">
+            <Switch
+              size="sm"
+              checked={sk.enabled}
+              onCheckedChange={(v) => void onToggle(sk.name, v)}
+              aria-label={`启用 ${sk.name}`}
+            />
             {sk.source !== "builtin" && (
               <Button
-                size="sm"
+                size="icon-xs"
                 variant="ghost"
                 className="text-[var(--error)]"
+                title="删除"
+                aria-label={`删除 ${sk.name}`}
                 onClick={() => void onDelete(sk.name)}
               >
-                删除
+                <Trash2 size={13} />
               </Button>
             )}
           </div>

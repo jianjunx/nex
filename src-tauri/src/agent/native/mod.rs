@@ -855,7 +855,9 @@ impl acp::Agent for NexNativeAgent {
                     },
                     context_window: cfg.context_window_for(&model_id),
                     usage: RefCell::new(provider::Usage::default()),
-                    stats: RefCell::new(stats::ContextStats::new()),
+                    stats: RefCell::new(stats::ContextStats::with_window(
+                        cfg.context_window_for(&model_id),
+                    )),
                 };
                 let stop = session::run_turn(&env, &mut session.history, content).await;
                 // Auto-review only cares about workspace file edits, not bash /

@@ -212,6 +212,8 @@ export interface ContextStatsDto {
   partialToolResults: number;
   cacheHitTokens: number;
   promptTokens: number;
+  /** Model context window; `0` / omitted when unknown. */
+  contextWindow?: number;
   usedSummaryFallback: boolean;
   overBudget: boolean;
 }

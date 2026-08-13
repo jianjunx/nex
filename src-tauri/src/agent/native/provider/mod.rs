@@ -117,7 +117,8 @@ pub struct NativeToolCall {
 pub struct Usage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
-    /// DeepSeek prefix-cache hit tokens (observability metric, Phase 2).
+    /// Prompt-cache hit tokens (DeepSeek / OpenAI `cached_tokens` /
+    /// Anthropic `cache_read_input_tokens`).
     pub cache_hit_tokens: u64,
 }
 

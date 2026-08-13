@@ -164,7 +164,14 @@ pub fn enforce_with_memory(
     working_memory: Option<&memory::WorkingMemory>,
 ) -> BudgetLoopOutcome {
     if budget.prompt_budget == 0 {
-        return BudgetLoopOutcome::default();
+        // Still report the current estimate so the composer can show
+        // `used / window` even when the user has disabled compression.
+        let used = compact::estimate_tokens(messages);
+        return BudgetLoopOutcome {
+            initial_tokens: used,
+            final_tokens: used,
+            ..Default::default()
+        };
     }
     let mut outcome = BudgetLoopOutcome::default();
     let mut used = compact::estimate_tokens(messages);
@@ -360,7 +367,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let outcome = enforce(&mut msgs, budget, tmp.path());
         assert_eq!(msgs.len(), before);
-        assert_eq!(outcome, BudgetLoopOutcome::default());
+        assert_eq!(outcome.passes, 0);
+        assert!(!outcome.over_budget);
+        assert!(outcome.final_tokens > 0);
+        assert_eq!(outcome.final_tokens, outcome.initial_tokens);
+        assert_eq!(outcome.final_tokens, compact::estimate_tokens(&msgs));
     }
 
     #[test]

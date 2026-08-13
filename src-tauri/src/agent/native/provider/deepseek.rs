@@ -228,8 +228,21 @@ async fn pump_sse(
             }
             match serde_json::from_str::<SseEvent>(data) {
                 Ok(event) => {
-                    if let Some(u) = event.usage {
-                        usage = Some(u.into());
+                    if let Some(raw) = event.usage {
+                        if let Some(parsed) = parse_usage_value(&raw) {
+                            usage = Some(match usage {
+                                Some(prev) => Usage {
+                                    prompt_tokens: parsed.prompt_tokens.max(prev.prompt_tokens),
+                                    completion_tokens: parsed
+                                        .completion_tokens
+                                        .max(prev.completion_tokens),
+                                    cache_hit_tokens: parsed
+                                        .cache_hit_tokens
+                                        .max(prev.cache_hit_tokens),
+                                },
+                                None => parsed,
+                            });
+                        }
                     }
                     if let Some(choice) = event.choices.and_then(|c| c.into_iter().next()) {
                         let delta = choice.delta.unwrap_or_default();
@@ -344,7 +357,7 @@ impl ToolAccumulator {
 #[derive(Deserialize)]
 struct SseEvent {
     choices: Option<Vec<SseChoice>>,
-    usage: Option<SseUsage>,
+    usage: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -374,24 +387,52 @@ struct SseFunctionDelta {
     arguments: String,
 }
 
-#[derive(Deserialize)]
-struct SseUsage {
-    #[serde(default)]
-    prompt_tokens: u64,
-    #[serde(default)]
-    completion_tokens: u64,
-    #[serde(default)]
-    prompt_cache_hit_tokens: u64,
+fn json_u64(v: &serde_json::Value) -> u64 {
+    match v {
+        serde_json::Value::Number(n) => n
+            .as_u64()
+            .or_else(|| n.as_f64().map(|f| f.max(0.0) as u64))
+            .unwrap_or(0),
+        serde_json::Value::String(s) => s.parse::<f64>().ok().map(|f| f.max(0.0) as u64).unwrap_or(0),
+        _ => 0,
+    }
 }
 
-impl From<SseUsage> for Usage {
-    fn from(u: SseUsage) -> Self {
-        Self {
-            prompt_tokens: u.prompt_tokens,
-            completion_tokens: u.completion_tokens,
-            cache_hit_tokens: u.prompt_cache_hit_tokens,
-        }
+/// Pull prompt / completion / cache-hit counts from a provider `usage` object.
+///
+/// Gateways disagree on field names:
+/// - DeepSeek: `prompt_cache_hit_tokens`
+/// - OpenAI / OpenRouter: `prompt_tokens_details.cached_tokens`
+/// - Anthropic-compat: `cache_read_input_tokens` / `input_tokens`
+///
+/// Empty objects (some streams attach `"usage": {}` on every chunk) return
+/// `None` so they do not wipe a previously parsed usage.
+fn parse_usage_value(u: &serde_json::Value) -> Option<Usage> {
+    if !u.is_object() {
+        return None;
     }
+    let prompt = json_u64(&u["prompt_tokens"]).max(json_u64(&u["input_tokens"]));
+    let completion = json_u64(&u["completion_tokens"]).max(json_u64(&u["output_tokens"]));
+    let cache = [
+        json_u64(&u["prompt_cache_hit_tokens"]),
+        json_u64(&u["cached_tokens"]),
+        json_u64(&u["cache_read_input_tokens"]),
+        json_u64(&u["cache_read_tokens"]),
+        json_u64(&u["prompt_tokens_details"]["cached_tokens"]),
+        json_u64(&u["input_tokens_details"]["cache_read"]),
+        json_u64(&u["input_tokens_details"]["cached_tokens"]),
+    ]
+    .into_iter()
+    .max()
+    .unwrap_or(0);
+    if prompt == 0 && completion == 0 && cache == 0 {
+        return None;
+    }
+    Some(Usage {
+        prompt_tokens: prompt,
+        completion_tokens: completion,
+        cache_hit_tokens: cache,
+    })
 }
 
 #[cfg(test)]
@@ -406,6 +447,58 @@ mod tests {
         assert_eq!(p.reserved_response_hint("deepseek-chat"), Some(4096));
         assert_eq!(p.reserved_response_hint("deepseek-reasoner"), Some(8192));
         assert_eq!(p.reserved_response_hint("kimi-thinking"), Some(8192));
+    }
+
+    #[test]
+    fn parse_usage_reads_deepseek_cache_hit() {
+        let u = serde_json::json!({
+            "prompt_tokens": 100,
+            "completion_tokens": 10,
+            "prompt_cache_hit_tokens": 80
+        });
+        let parsed = parse_usage_value(&u).expect("usage");
+        assert_eq!(parsed.prompt_tokens, 100);
+        assert_eq!(parsed.completion_tokens, 10);
+        assert_eq!(parsed.cache_hit_tokens, 80);
+    }
+
+    #[test]
+    fn parse_usage_reads_openai_cached_tokens() {
+        let u = serde_json::json!({
+            "prompt_tokens": 200,
+            "completion_tokens": 5,
+            "prompt_tokens_details": { "cached_tokens": 150 }
+        });
+        let parsed = parse_usage_value(&u).expect("usage");
+        assert_eq!(parsed.prompt_tokens, 200);
+        assert_eq!(parsed.cache_hit_tokens, 150);
+    }
+
+    #[test]
+    fn parse_usage_reads_anthropic_compat_fields() {
+        let u = serde_json::json!({
+            "input_tokens": 40,
+            "output_tokens": 6,
+            "cache_read_input_tokens": 32
+        });
+        let parsed = parse_usage_value(&u).expect("usage");
+        assert_eq!(parsed.prompt_tokens, 40);
+        assert_eq!(parsed.completion_tokens, 6);
+        assert_eq!(parsed.cache_hit_tokens, 32);
+    }
+
+    #[test]
+    fn parse_usage_ignores_empty_object() {
+        assert!(parse_usage_value(&serde_json::json!({})).is_none());
+        assert!(parse_usage_value(&serde_json::json!(null)).is_none());
+    }
+
+    #[test]
+    fn parse_usage_accepts_float_counts() {
+        let u = serde_json::json!({ "prompt_tokens": 12.0, "cached_tokens": 8.0 });
+        let parsed = parse_usage_value(&u).expect("usage");
+        assert_eq!(parsed.prompt_tokens, 12);
+        assert_eq!(parsed.cache_hit_tokens, 8);
     }
 
     #[tokio::test]

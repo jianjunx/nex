@@ -157,7 +157,7 @@ pub async fn run_subagent(harness: &SubagentHarness, task: &str) -> Result<Strin
         tool_ctx,
         context_window: harness.context_window,
         usage: RefCell::new(Usage::default()),
-        stats: RefCell::new(stats::ContextStats::new()),
+        stats: RefCell::new(stats::ContextStats::with_window(harness.context_window)),
     };
     let mut messages = vec![ChatMessage::system(context::subagent_prompt(
         &harness.cwd,
@@ -262,6 +262,7 @@ pub async fn run_turn(
             s.initial_tokens = outcome.initial_tokens;
             s.used_summary_fallback = outcome.used_summary_fallback;
             s.over_budget = outcome.over_budget;
+            s.context_window = env.context_window;
         }
         if outcome.passes > 0 {
             log::debug!(

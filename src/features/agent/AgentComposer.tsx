@@ -18,7 +18,7 @@ import {
 import { fsSearch, fsReadFile, type PromptBlock, type SearchMatch, type SessionTarget } from "../../bridge/tauri";
 import { ComposerOptionMenu } from "./ComposerOptionMenu";
 import { ComposerGroupedOptionMenu } from "./ComposerGroupedOptionMenu";
-import { ContextUsageRing } from "./ContextUsageRing";
+import { ContextUsageRing, resolveContextRingUsage } from "./ContextUsageRing";
 import { BranchSelector } from "../git/BranchSelector";
 import { useGitStore } from "../../stores/git.store";
 import { PlanBar } from "./thread/PlanBar";
@@ -185,11 +185,7 @@ export function AgentComposer() {
   const session = activeTabId ? sessions[activeTabId] : null;
   const meta = activeTabId ? metaByConversation[activeTabId] : null;
   const contextStats = activeTabId ? contextStatsByConversation[activeTabId] : undefined;
-  const contextRingUsage = meta?.contextUsage ?? (
-    contextStats
-      ? { used: contextStats.finalTokens, total: 0, tokens: [] }
-      : null
-  );
+  const contextRingUsage = resolveContextRingUsage(meta?.contextUsage, contextStats);
   const isStarting = session?.status === "starting";
   const isRunning = session?.status === "running" || session?.status === "waiting";
   const pendingMessages = activeTabId ? (pendingMessagesByConversation[activeTabId] ?? []) : [];
@@ -971,6 +967,9 @@ export function AgentComposer() {
                   onSelect={(id) => setAuthMode(activeTabId, id as "allow" | "menu")}
                 />
               )}
+              {session?.sessionId && contextRingUsage && (
+                <ContextUsageRing usage={contextRingUsage} stats={contextStats} />
+              )}
               {session?.sessionId && meta && (() => {
                 const configOpts = (meta.configOptions ?? []).filter((o) => o.options.length > 0);
                 const hasConfigMode = configOpts.some(
@@ -1033,10 +1032,6 @@ export function AgentComposer() {
                   </>
                 );
               })()}
-
-              {session?.sessionId && contextRingUsage && (
-                <ContextUsageRing usage={contextRingUsage} stats={contextStats} />
-              )}
 
               {isRunning ? (
                 <Button

@@ -1,0 +1,29 @@
+src/components/ui/alert-dialog.tsx
+  s_ebbc8cf7b3fff8::t_06bab00afaf646 33,51
+src/components/ui/dialog.tsx
+  s_ebbc8cf7b3fff8::t_e788f36f3f4134 40,62,71
+src/features/files/FileTree.tsx
+  s_ebbc8cf7b3fff8::t_8b45f47d656a0b 56,119,332,336-337,359,362,365,368,554
+src/features/git/GitPanel.tsx
+  s_ebbc8cf7b3fff8::t_039e6177f50552 43,45,70
+src/features/search/SearchPanel.tsx
+  s_ebbc8cf7b3fff8::t_f3e325d163ac92 54,56,255,265,290,417,423,443
+src/features/settings/SettingsDialog.tsx
+  s_ebbc8cf7b3fff8::t_760be8b395cdfa 52,58,63,68,70-71,78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "d474403aa75d448f12a1f04e021faf9a832d1ff7",
+  "prompts": {},
+  "sessions": {
+    "s_ebbc8cf7b3fff8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_ebbc8cf7b3fff8",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

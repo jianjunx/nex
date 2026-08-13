@@ -7,7 +7,7 @@ import { selectProjectActiveTabId, useConversationStore } from "../../../stores/
 import { useAgentStore } from "../../../stores/agent.store";
 
 const ACTION_BTN =
-  "shrink-0 cursor-pointer text-xs text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-primary)] disabled:cursor-default disabled:opacity-40";
+  "nex-interactive-chrome shrink-0 cursor-pointer rounded-[var(--radius-sm)] px-1 py-0.5 text-xs text-[var(--text-tertiary)] hover:bg-[var(--overlay-hover)] hover:text-[var(--text-primary)] disabled:cursor-default disabled:opacity-40";
 
 function repoRelativePaths(files: ChangedFile[], projectPath: string | undefined): string[] {
   if (!projectPath) return files.map((f) => f.path.replace(/\\/g, "/"));
@@ -52,7 +52,7 @@ export function FilesChangedCard({ files }: { files: ChangedFile[] }) {
   };
 
   return (
-    <div className="max-w-[96%] overflow-hidden rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--glass-3-surface)] shadow-[inset_0_1px_0_0_var(--edge-highlight)]">
+    <div className="max-w-[96%] overflow-hidden rounded-[calc(var(--radius-md)+2px)] border border-[color:var(--hairline-soft)] bg-[var(--material-floating)] shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)]">
       <div className="flex items-center justify-between gap-2 px-3 py-2">
         <span className="text-xs text-[var(--text-secondary)]">
           修改了 {files.length} 个文件
@@ -77,7 +77,7 @@ export function FilesChangedCard({ files }: { files: ChangedFile[] }) {
               <button
                 type="button"
                 title={f.path}
-                className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-[var(--overlay-hover)]"
+                className="nex-interactive-chrome flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left hover:bg-[color:color-mix(in_srgb,var(--material-elevated)_86%,transparent)]"
                 onClick={() => void openPathToken(f.path)}
               >
                 <FileIcon filename={name} size={14} className="shrink-0" />

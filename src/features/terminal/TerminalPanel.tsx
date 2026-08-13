@@ -223,19 +223,19 @@ export function TerminalPanel() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-[color:var(--border-subtle)]">
+      <div className="nex-material-toolbar flex items-center gap-1.5 border-b border-[color:var(--hairline-soft)] px-3 py-1.5">
         {sessions.map((s) => (
           <button
             key={s.id}
             type="button"
             onClick={() => setActive(s.id)}
-            className={`flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-[var(--radius-sm)] border transition-colors duration-150 ${s.id === activeSessionId ? "border-[color:var(--border-default)] bg-[var(--glass-2-surface)] text-[var(--text-primary)] shadow-[inset_0_1px_0_0_var(--edge-highlight)]" : "border-transparent text-[var(--text-tertiary)] hover:bg-[var(--overlay-ghost)] hover:text-[var(--text-secondary)]"}`}
+            className={`nex-interactive-chrome flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-[var(--radius-md)] border ${s.id === activeSessionId ? "border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-elevated)_88%,transparent)] text-[var(--text-primary)] shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)]" : "border-transparent text-[var(--text-tertiary)] hover:bg-[color:color-mix(in_srgb,var(--material-floating)_78%,transparent)] hover:text-[var(--text-secondary)]"}`}
           >
             <span className="truncate max-w-[120px]">{s.title}</span>
             <span
               role="button"
               title="关闭终端"
-              className="opacity-50 hover:opacity-100"
+              className="nex-interactive-chrome rounded-[var(--radius-sm)] p-0.5 opacity-50 hover:bg-[var(--overlay-hover)] hover:opacity-100"
               onMouseDown={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -254,7 +254,7 @@ export function TerminalPanel() {
         </Button>
       </div>
       {error && (
-        <div className="flex items-center gap-2 px-4 py-1.5 text-xs text-[var(--error)] bg-[var(--error)]/10">
+        <div className="flex items-center gap-2 bg-[var(--error)]/10 px-4 py-1.5 text-xs text-[var(--error)]">
           <span className="flex-1 truncate">{error}</span>
           <Button size="sm" variant="ghost" onClick={clearError}><X size={12} /></Button>
         </div>

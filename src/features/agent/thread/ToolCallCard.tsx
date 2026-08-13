@@ -35,8 +35,8 @@ export function ToolCallCard({
   }, [waiting, entry.toolCallId, setExpanded]);
 
   return (
-    <div className="rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--glass-3-surface)] overflow-hidden shadow-[inset_0_1px_0_0_var(--edge-highlight)]">
-      <div className="flex items-center gap-2 px-2.5 py-1.5 text-sm hover:bg-[var(--glass-2-surface)]">
+    <div className="rounded-[calc(var(--radius-md)+2px)] border border-[color:var(--hairline-soft)] bg-[var(--material-floating)] overflow-hidden shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)]">
+      <div className="nex-interactive-chrome flex items-center gap-2 px-2.5 py-1.5 text-sm hover:bg-[color:color-mix(in_srgb,var(--material-elevated)_86%,transparent)]">
         <button
           type="button"
           className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
@@ -62,7 +62,7 @@ export function ToolCallCard({
       {(open || waiting) && (
         <div
           className={cn(
-            "px-2.5 pb-2 space-y-1.5 border-t border-[color:var(--border-subtle)]",
+            "px-2.5 pb-2 space-y-1.5 border-t border-[color:var(--hairline-soft)]",
             isEdit && "max-h-[350px] overflow-y-auto",
           )}
         >
@@ -95,7 +95,7 @@ export function ToolCallCard({
                   <img
                     src={src}
                     alt={c.path || "generated"}
-                    className="max-h-64 max-w-full rounded border border-[color:var(--border-subtle)] object-contain"
+                    className="max-h-64 max-w-full rounded-[var(--radius-md)] border border-[color:var(--hairline-soft)] object-contain"
                   />
                 </a>
               );
@@ -104,7 +104,7 @@ export function ToolCallCard({
               return (
                 <pre
                   key={i}
-                  className="text-xs overflow-x-auto p-2 rounded bg-black/80 text-emerald-200/90 whitespace-pre-wrap font-mono"
+                  className="overflow-x-auto rounded-[var(--radius-md)] bg-black/80 p-2 text-xs font-mono whitespace-pre-wrap text-emerald-200/90"
                 >
                   {c.terminalId ? `$ terminal ${c.terminalId}\n` : ""}
                   {c.text}
@@ -114,7 +114,7 @@ export function ToolCallCard({
             return (
               <pre
                 key={i}
-                className="text-xs overflow-x-auto p-2 rounded bg-[var(--glass-2-surface)] text-[var(--text-secondary)] whitespace-pre-wrap"
+                className="overflow-x-auto rounded-[var(--radius-md)] border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_72%,transparent)] p-2 text-xs whitespace-pre-wrap text-[var(--text-secondary)]"
               >
                 {c.text}
               </pre>
@@ -122,7 +122,7 @@ export function ToolCallCard({
           })}
 
           {entry.content.length === 0 && rawInputText && (
-            <pre className="text-xs overflow-x-auto p-2 rounded bg-[var(--glass-2-surface)] text-[var(--text-secondary)] whitespace-pre-wrap">
+            <pre className="overflow-x-auto rounded-[var(--radius-md)] border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_72%,transparent)] p-2 text-xs whitespace-pre-wrap text-[var(--text-secondary)]">
               {rawInputText}
             </pre>
           )}

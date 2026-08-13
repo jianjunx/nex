@@ -85,7 +85,7 @@ export function ContextUsageRing({ usage, stats }: Props) {
           type="button"
           aria-label={`上下文用量 ${fraction}`}
           title={`上下文用量 ${fraction}`}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--text-secondary)] transition-colors hover:bg-[var(--glass-2-surface)]"
+          className="nex-interactive-chrome flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_78%,transparent)] text-[var(--text-secondary)] shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)] hover:bg-[color:color-mix(in_srgb,var(--material-floating)_78%,transparent)]"
         >
           <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden>
             <circle
@@ -114,7 +114,7 @@ export function ContextUsageRing({ usage, stats }: Props) {
         side="top"
         align="end"
         sideOffset={8}
-        className="z-[70] w-56 rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--glass-3-surface)] p-3 shadow-lg"
+        className="z-[70] w-56 rounded-[calc(var(--radius-md)+2px)] border border-[color:var(--hairline-soft)] bg-[var(--material-floating)] p-3 nex-material-floating"
       >
         <div className="text-xs font-semibold text-[var(--text-primary)]">上下文用量</div>
         {total > 0 ? (
@@ -127,7 +127,7 @@ export function ContextUsageRing({ usage, stats }: Props) {
                 {fmtTokens(used)} / {fmtTokens(total)}
               </span>
             </div>
-            <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-[var(--glass-2-surface)]">
+            <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-[color:color-mix(in_srgb,var(--material-panel)_72%,transparent)]">
               <div
                 className="h-full rounded-full"
                 style={{ width: `${ratio * 100}%`, backgroundColor: color }}
@@ -140,7 +140,7 @@ export function ContextUsageRing({ usage, stats }: Props) {
           </div>
         )}
         {tokens.length > 0 && (
-          <div className="mt-2 space-y-1 border-t border-[color:var(--glass-border)] pt-2">
+          <div className="mt-2 space-y-1 border-t border-[color:var(--hairline-soft)] pt-2">
             {tokens.map((t, i) => (
               <div key={`${t.type}-${i}`} className="flex items-center justify-between text-xs">
                 <span className="text-[var(--text-secondary)]">{tokenLabel(t.type, t.name)}</span>
@@ -150,7 +150,7 @@ export function ContextUsageRing({ usage, stats }: Props) {
           </div>
         )}
         {stats && (
-          <div className="mt-2 space-y-1 border-t border-[color:var(--glass-border)] pt-2">
+          <div className="mt-2 space-y-1 border-t border-[color:var(--hairline-soft)] pt-2">
             <div className="flex items-center justify-between text-xs">
               <span className="text-[var(--text-secondary)]">缓存命中</span>
               <span className="font-mono tabular-nums text-[var(--text-primary)]">

@@ -36,7 +36,7 @@ export function PermissionModal() {
     // onOpenChange(false) for Esc, outside click, and the X button — all
     // route here: dismissal means deny.
     <Dialog open={true} onOpenChange={(o) => { if (!o) dismiss(); }}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md border-[color:var(--hairline-soft)] bg-[var(--material-elevated)]">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
@@ -45,7 +45,7 @@ export function PermissionModal() {
             <p className="text-xs font-mono text-[var(--text-tertiary)]">{pendingPermission.toolKind}</p>
           )}
           {detail && (
-            <pre className="text-xs max-h-48 overflow-auto whitespace-pre-wrap rounded bg-[var(--glass-2-surface)] p-2 text-[var(--text-secondary)]">
+            <pre className="text-xs max-h-48 overflow-auto whitespace-pre-wrap rounded-[var(--radius-md)] border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_72%,transparent)] p-2 text-[var(--text-secondary)]">
               {detail}
             </pre>
           )}

@@ -19,7 +19,7 @@ export function CloseTabConfirmDialog({ open, busy, status, onCancel, onConfirm 
   const interrupting = status === "running" || status === "waiting";
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o && !busy) onCancel(); }}>
-      <DialogContent showCloseButton={false} className="sm:max-w-sm">
+      <DialogContent showCloseButton={false} className="sm:max-w-sm border-[color:var(--hairline-soft)] bg-[var(--material-elevated)]">
         <DialogHeader>
           <DialogTitle>关闭对话？</DialogTitle>
         </DialogHeader>

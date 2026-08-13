@@ -153,7 +153,7 @@ export function NewConversationDropdown({ triggerSize }: Props) {
           一次，按钮无法开关（Playwright 实测；jsdom fireEvent.click 暴露不了，
           故测试一律用 fireEvent.pointerDown，见技术背景实测条目）。 */}
       <DropdownMenuTrigger asChild>
-        <Button size={triggerSize} variant="ghost" aria-label="新建会话">
+        <Button size={triggerSize} variant="ghost" aria-label="新建会话" className="nex-interactive-chrome nex-pressable rounded-[var(--radius-md)] border border-transparent hover:border-[color:var(--hairline-soft)] hover:bg-[color:color-mix(in_srgb,var(--material-floating)_78%,transparent)]">
           <Plus size={14} />
         </Button>
       </DropdownMenuTrigger>
@@ -168,6 +168,7 @@ export function NewConversationDropdown({ triggerSize }: Props) {
             title="刷新智能体注册表"
             disabled={serversLoading}
             onClick={() => void refreshRegistry()}
+            className="nex-interactive-chrome nex-pressable rounded-[var(--radius-sm)] border border-transparent hover:border-[color:var(--hairline-soft)] hover:bg-[color:color-mix(in_srgb,var(--material-floating)_78%,transparent)]"
           >
             <RotateCw size={12} className={serversLoading ? "animate-spin" : ""} />
           </Button>
@@ -215,13 +216,13 @@ export function NewConversationDropdown({ triggerSize }: Props) {
                 {s.version && s.kind !== "native" && (
                   <span className="text-xs text-[var(--text-tertiary)]">v{s.version}</span>
                 )}
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--overlay-ghost)] text-[var(--text-tertiary)]">
+                <span className="text-[10px] rounded border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_72%,transparent)] px-1.5 py-0.5 text-[var(--text-tertiary)]">
                   {s.kind === "custom" ? "自定义" : s.kind === "native" ? "内置" : "注册表"}
                 </span>
                 {isUpdateAvailable(s) && (
                   <span
                     title={`当前 v${s.installedVersion}，可更新到 v${s.version}`}
-                    className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--warning)]/15 text-[var(--warning)] font-medium"
+                    className="text-[10px] rounded border border-[color:var(--warning)]/35 bg-[var(--warning)]/15 px-1.5 py-0.5 font-medium text-[var(--warning)]"
                   >
                     有更新
                   </span>

@@ -89,7 +89,7 @@ export function AskQuestionModal() {
 
   return (
     <Dialog open={true} onOpenChange={(o) => { if (!o) dismiss(); }}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg border-[color:var(--hairline-soft)] bg-[var(--material-elevated)]">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
@@ -109,7 +109,7 @@ export function AskQuestionModal() {
                       variant="outline"
                       className={cn(
                         "w-full justify-start",
-                        selected && "border-[var(--accent)] bg-[var(--glass-2-surface)]",
+                        selected && "border-[var(--accent)] bg-[color:color-mix(in_srgb,var(--material-elevated)_88%,transparent)] shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)]",
                       )}
                       onClick={() => onOptionClick(q.id, opt.id, q.allowMultiple)}
                     >

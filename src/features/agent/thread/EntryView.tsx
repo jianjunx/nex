@@ -48,7 +48,7 @@ export const EntryView = memo(function EntryView({
               <ThinkingBlock key={i} text={g.text} />
             ) : (
               <MessageContextMenu key={i} textContent={g.text}>
-                <Card className="gap-0 px-3 py-1.5 text-sm shadow-none bg-[var(--glass-2-surface)] border-[color:var(--border-subtle)]">
+                <Card className="gap-0 rounded-[calc(var(--radius-md)+2px)] border-[color:var(--hairline-soft)] bg-[var(--material-floating)] px-3 py-1.5 shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)]">
                   <CardContent className="px-0">
                     <Markdown>{g.text}</Markdown>
                   </CardContent>
@@ -66,7 +66,7 @@ export const EntryView = memo(function EntryView({
       );
     case "completed_plan":
       return (
-        <div className="max-w-[96%] rounded-[var(--radius-md)] border border-[color:var(--border-subtle)] bg-[var(--glass-2-surface)] px-2.5 py-1.5">
+        <div className="max-w-[96%] rounded-[calc(var(--radius-md)+2px)] border border-[color:var(--hairline-soft)] bg-[var(--material-floating)] px-2.5 py-1.5 shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)]">
           <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)] mb-1">
             <ListChecks size={14} />
             <span>Completed Plan — {entry.entries.length} steps</span>

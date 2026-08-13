@@ -18,10 +18,10 @@ export function PendingMessagesBar({
   if (messages.length === 0) return null;
 
   return (
-    <div className="mx-4 mb-1.5 rounded-[var(--radius-md)] border border-[color:var(--border-subtle)] bg-[var(--glass-2-surface)] px-2.5 py-1.5">
+    <div className="mx-4 mb-1.5 rounded-[calc(var(--radius-md)+2px)] border border-[color:var(--hairline-soft)] bg-[var(--material-floating)] px-2.5 py-1.5 shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)]">
       <button
         type="button"
-        className="w-full flex items-center gap-2 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+        className="flex w-full items-center gap-2 text-xs text-[var(--text-secondary)] nex-interactive-chrome hover:text-[var(--text-primary)]"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
       >
@@ -42,7 +42,7 @@ export function PendingMessagesBar({
               </span>
               <button
                 type="button"
-                className="shrink-0 p-0.5 rounded hover:bg-[var(--glass-3-surface)] text-[var(--text-tertiary)] hover:text-[var(--accent)] transition-colors"
+                className="nex-interactive-chrome shrink-0 rounded-[var(--radius-sm)] p-0.5 text-[var(--text-tertiary)] hover:bg-[var(--overlay-hover)] hover:text-[var(--accent)]"
                 onClick={(e) => {
                   e.stopPropagation();
                   onSendNow(m.id);
@@ -53,7 +53,7 @@ export function PendingMessagesBar({
               </button>
               <button
                 type="button"
-                className="shrink-0 p-0.5 rounded hover:bg-[var(--glass-3-surface)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors"
+                className="nex-interactive-chrome shrink-0 rounded-[var(--radius-sm)] p-0.5 text-[var(--text-tertiary)] hover:bg-[var(--overlay-hover)] hover:text-[var(--text-primary)]"
                 onClick={(e) => {
                   e.stopPropagation();
                   onRemove(m.id);

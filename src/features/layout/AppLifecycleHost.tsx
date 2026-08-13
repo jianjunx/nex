@@ -122,7 +122,7 @@ export function AppLifecycleHost() {
           if (!o && !quitting) setQuitOpen(false);
         }}
       >
-        <DialogContent showCloseButton={false} className="sm:max-w-sm" data-testid="quit-confirm-dialog">
+        <DialogContent showCloseButton={false} className="sm:max-w-sm border-[color:var(--hairline-soft)] bg-[var(--material-elevated)]" data-testid="quit-confirm-dialog">
           <DialogHeader>
             <DialogTitle>退出应用？</DialogTitle>
           </DialogHeader>

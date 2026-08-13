@@ -1700,6 +1700,7 @@ async fn run_session(
         stderr_tail,
     };
 
+    let api_key_available = launch_has_openai_api_key(&spec.env);
     run_acp_session(
         app,
         session_key,
@@ -1714,6 +1715,7 @@ async fn run_session(
         shutdown_rx,
         diag,
         None,
+        api_key_available,
     )
     .await;
 }
@@ -1787,6 +1789,7 @@ async fn run_session_native(
         shutdown_rx,
         diag,
         Some(conversation_id),
+        false,
     )
     .await;
 }
@@ -1813,6 +1816,10 @@ async fn run_acp_session<W, R>(
     // When `Some`, try `session/load` first (native resume). External agents
     // always pass `None` and go straight to `session/new`.
     resume_conversation_id: Option<String>,
+    // True when the launch env (or process env) has CODEX_API_KEY / OPENAI_API_KEY.
+    // Codex advertises `api-key` first; we only send that method when a key is
+    // actually present so stored `~/.codex/auth.json` credentials still work.
+    api_key_available: bool,
 ) where
     W: futures::io::AsyncWrite + Unpin + 'static,
     R: futures::io::AsyncRead + Unpin + 'static,
@@ -1853,28 +1860,12 @@ async fn run_acp_session<W, R>(
             .await
             .map_err(NexError::from)?;
 
-        // Cursor (and similar agents) advertise auth methods such as
-        // `cursor_login` and require `authenticate` before `session/new`.
-        // Skipping this step either errors with "Authentication required" or
-        // hangs until the handshake timeout.
-        if let Some(method) = pick_auth_method(&init.auth_methods) {
-            log::info!(
-                "authenticating ACP agent via method `{}` ({})",
-                method.id.0,
-                method.name
-            );
-            conn.authenticate(acp::AuthenticateRequest {
-                method_id: method.id.clone(),
-                meta: None,
-            })
-            .await
-            .map_err(|e| {
-                NexError::Agent(format!(
-                    "{e}\n\
-                     Tip: for Cursor, run `agent login` in a terminal first \
-                     (or set CURSOR_API_KEY), then retry creating the session."
-                ))
-            })?;
+        // Cursor advertises `cursor_login` and requires `authenticate` before
+        // `session/new`. Codex lists `api-key` first even when the user is
+        // already signed in via `codex login` / `~/.codex/auth.json`; only send
+        // that method when a key is actually in the env.
+        if let Some(method) = pick_auth_method(&init.auth_methods, api_key_available) {
+            authenticate_with(&conn, method).await?;
         }
 
         let mcp_servers = acp_mcp_servers_from_nex(std::path::Path::new(&cwd));
@@ -1900,17 +1891,16 @@ async fn run_acp_session<W, R>(
                     log::info!(
                         "session/load failed for `{id}` ({e}); falling back to session/new"
                     );
-                    let response = conn
-                        .request_raw(
-                            "session/new",
-                            serde_json::json!({
-                                "cwd": cwd,
-                                "mcpServers": mcp_servers,
-                                "_meta": { "nexConversationId": id },
-                            }),
-                        )
-                        .await
-                        .map_err(NexError::from)?;
+                    let response = session_new_maybe_auth(
+                        &conn,
+                        &init.auth_methods,
+                        serde_json::json!({
+                            "cwd": cwd,
+                            "mcpServers": mcp_servers,
+                            "_meta": { "nexConversationId": id },
+                        }),
+                    )
+                    .await?;
                     let session_id = response
                         .get("sessionId")
                         .or_else(|| response.get("session_id"))
@@ -1920,16 +1910,15 @@ async fn run_acp_session<W, R>(
                 }
             }
         } else {
-            let response = conn
-                .request_raw(
-                    "session/new",
-                    serde_json::json!({
-                        "cwd": cwd,
-                        "mcpServers": mcp_servers,
-                    }),
-                )
-                .await
-                .map_err(NexError::from)?;
+            let response = session_new_maybe_auth(
+                &conn,
+                &init.auth_methods,
+                serde_json::json!({
+                    "cwd": cwd,
+                    "mcpServers": mcp_servers,
+                }),
+            )
+            .await?;
             let session_id = response
                 .get("sessionId")
                 .or_else(|| response.get("session_id"))
@@ -1959,7 +1948,7 @@ async fn run_acp_session<W, R>(
         Ok(Ok(v)) => Ok(v),
         Ok(Err(e)) => Err(enrich(e, &mut diag)),
         Err(_) => {
-            let details = diag_details(&mut diag);
+            let details = diag_details(&mut diag, true);
             Err(NexError::Agent(format!(
                 "agent `{}` did not complete the ACP handshake within {}s{}",
                 diag.program,
@@ -2041,23 +2030,129 @@ async fn run_acp_session<W, R>(
     let _ = app.emit(AGENT_SESSION_TERMINATED_EVENT, AgentSessionTerminated { session_id: session_key });
 }
 
-/// Prefer a known interactive login method when present; otherwise take the
-/// first advertised method. Agents with an empty `authMethods` list (Claude
-/// via npx, etc.) skip authentication entirely.
-fn pick_auth_method(methods: &[acp::AuthMethod]) -> Option<&acp::AuthMethod> {
-    const PREFERRED: &[&str] = &["cursor_login"];
-    for id in PREFERRED {
-        if let Some(m) = methods.iter().find(|m| m.id.0.as_ref() == *id) {
+/// Choose an auth method to send *before* `session/new`.
+///
+/// Cursor advertises `cursor_login` and hangs unless we authenticate first.
+/// Codex ACP lists `api-key` first even when the user is already signed in via
+/// `codex login` / `~/.codex/auth.json`; calling that method without
+/// `CODEX_API_KEY` / `OPENAI_API_KEY` fails. Skip Codex methods unless a key
+/// is actually present and let `session/new` reuse stored credentials (or
+/// prompt ChatGPT login if the agent later returns `auth_required`).
+fn pick_auth_method(
+    methods: &[acp::AuthMethod],
+    api_key_available: bool,
+) -> Option<&acp::AuthMethod> {
+    if let Some(m) = find_auth_method(methods, "cursor_login") {
+        return Some(m);
+    }
+    if api_key_available {
+        if let Some(m) = find_auth_method(methods, "api-key") {
             return Some(m);
         }
     }
+    if methods.iter().any(|m| is_codex_auth_method(m.id.0.as_ref())) {
+        return None;
+    }
     methods.first()
+}
+
+fn is_codex_auth_method(id: &str) -> bool {
+    matches!(
+        id,
+        "api-key" | "chat-gpt" | "chat-gpt-device-code" | "gateway"
+    )
+}
+
+fn interactive_auth_method(methods: &[acp::AuthMethod]) -> Option<&acp::AuthMethod> {
+    find_auth_method(methods, "chat-gpt")
+        .or_else(|| find_auth_method(methods, "chat-gpt-device-code"))
+}
+
+fn find_auth_method<'a>(
+    methods: &'a [acp::AuthMethod],
+    id: &str,
+) -> Option<&'a acp::AuthMethod> {
+    methods.iter().find(|m| m.id.0.as_ref() == id)
+}
+
+fn launch_has_openai_api_key(spec_env: &HashMap<String, String>) -> bool {
+    ["CODEX_API_KEY", "OPENAI_API_KEY"].iter().any(|key| {
+        spec_env
+            .get(*key)
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false)
+            || std::env::var(key).map(|v| !v.trim().is_empty()).unwrap_or(false)
+    })
+}
+
+fn auth_failure_hint(method_id: &str, err: &dyn std::fmt::Display) -> String {
+    let tip = match method_id {
+        "cursor_login" => {
+            "Tip: run `agent login` in a terminal first (or set CURSOR_API_KEY), \
+             then retry creating the session."
+        }
+        "api-key" => {
+            "Tip: set CODEX_API_KEY or OPENAI_API_KEY in your shell, or run \
+             `codex login`, then restart Nex."
+        }
+        "chat-gpt" | "chat-gpt-device-code" => {
+            "Tip: run `codex login` in a terminal, then retry creating the session."
+        }
+        _ => "Tip: complete the agent's login flow, then retry creating the session.",
+    };
+    format!("{err}\n{tip}")
+}
+
+async fn authenticate_with(
+    conn: &acp::ClientSideConnection,
+    method: &acp::AuthMethod,
+) -> Result<(), NexError> {
+    log::info!(
+        "authenticating ACP agent via method `{}` ({})",
+        method.id.0,
+        method.name
+    );
+    conn.authenticate(acp::AuthenticateRequest {
+        method_id: method.id.clone(),
+        meta: None,
+    })
+    .await
+    .map_err(|e| NexError::Agent(auth_failure_hint(method.id.0.as_ref(), &e)))?;
+    Ok(())
+}
+
+/// `session/new`, retrying with ChatGPT login if the agent says auth is required.
+/// Codex does this when `~/.codex/auth.json` is missing and we skipped `api-key`.
+async fn session_new_maybe_auth(
+    conn: &acp::ClientSideConnection,
+    methods: &[acp::AuthMethod],
+    params: serde_json::Value,
+) -> Result<serde_json::Value, NexError> {
+    match conn.request_raw("session/new", params.clone()).await {
+        Ok(response) => Ok(response),
+        Err(e) if e.code == acp::ErrorCode::AUTH_REQUIRED.code => {
+            let Some(method) = interactive_auth_method(methods) else {
+                return Err(NexError::Agent(format!(
+                    "{e}\nTip: set CODEX_API_KEY or OPENAI_API_KEY, or run `codex login`, \
+                     then retry creating the session."
+                )));
+            };
+            authenticate_with(conn, method).await?;
+            conn.request_raw("session/new", params)
+                .await
+                .map_err(NexError::from)
+        }
+        Err(e) => Err(NexError::from(e)),
+    }
 }
 
 /// Builds a human-readable diagnostic tail for handshake failures. External
 /// agents contribute the command line, process state and stderr; the native
 /// agent (no child) contributes nothing extra.
-fn diag_details(diag: &mut DiagCtx) -> String {
+///
+/// `process_guess` is for handshake *timeouts* only. RPC errors mean the agent
+/// did respond — claiming it "may not support ACP v1" is misleading then.
+fn diag_details(diag: &mut DiagCtx, process_guess: bool) -> String {
     let mut out = String::new();
     let Some(child) = diag.child.as_mut() else {
         return out;
@@ -2065,11 +2160,12 @@ fn diag_details(diag: &mut DiagCtx) -> String {
     out.push_str(&format!("\ncommand: {} {}", diag.program, diag.args.join(" ")));
     match child.try_wait() {
         Ok(Some(status)) => out.push_str(&format!("\nagent process exited ({status})")),
-        Ok(None) => out.push_str(
+        Ok(None) if process_guess => out.push_str(
             "\nagent process still running but not responding on stdout \
              — the binary may not support ACP v1; try the agent CLI directly \
              to verify it accepts ACP-over-stdio protocol",
         ),
+        Ok(None) => {}
         Err(e) => out.push_str(&format!("\nfailed to query agent process status: {e}")),
     }
     let lines = diag.stderr_tail.lock().unwrap();
@@ -2084,7 +2180,7 @@ fn diag_details(diag: &mut DiagCtx) -> String {
 
 fn enrich(e: NexError, diag: &mut DiagCtx) -> NexError {
     match e {
-        NexError::Agent(msg) => NexError::Agent(format!("{msg}{}", diag_details(diag))),
+        NexError::Agent(msg) => NexError::Agent(format!("{msg}{}", diag_details(diag, false))),
         other => other,
     }
 }
@@ -2302,5 +2398,75 @@ mod tests {
         let p = PathBuf::from(&path);
         assert!(p.starts_with(tmp.path().join(".nex").join("generated")));
         assert_eq!(std::fs::read(&p).unwrap(), b"tiny");
+    }
+
+    fn auth_method(id: &str) -> acp::AuthMethod {
+        acp::AuthMethod {
+            id: id.to_string().into(),
+            name: id.to_string(),
+            description: None,
+            meta: None,
+        }
+    }
+
+    fn ids(methods: &[acp::AuthMethod]) -> Vec<&str> {
+        methods.iter().map(|m| m.id.0.as_ref()).collect()
+    }
+
+    #[test]
+    fn pick_auth_method_prefers_cursor_login() {
+        let methods = vec![
+            auth_method("api-key"),
+            auth_method("cursor_login"),
+            auth_method("chat-gpt"),
+        ];
+        let picked = pick_auth_method(&methods, false).expect("cursor");
+        assert_eq!(picked.id.0.as_ref(), "cursor_login");
+    }
+
+    #[test]
+    fn pick_auth_method_skips_codex_api_key_without_env() {
+        let methods = vec![auth_method("api-key"), auth_method("chat-gpt")];
+        assert!(pick_auth_method(&methods, false).is_none());
+        let picked = pick_auth_method(&methods, true).expect("api-key");
+        assert_eq!(picked.id.0.as_ref(), "api-key");
+    }
+
+    #[test]
+    fn pick_auth_method_falls_back_to_first_unknown_method() {
+        let methods = vec![auth_method("custom_oauth")];
+        let picked = pick_auth_method(&methods, false).expect("first");
+        assert_eq!(picked.id.0.as_ref(), "custom_oauth");
+        assert!(pick_auth_method(&[], false).is_none());
+    }
+
+    #[test]
+    fn interactive_auth_method_prefers_chatgpt() {
+        let methods = vec![
+            auth_method("api-key"),
+            auth_method("chat-gpt"),
+            auth_method("chat-gpt-device-code"),
+        ];
+        let picked = interactive_auth_method(&methods).expect("chat-gpt");
+        assert_eq!(picked.id.0.as_ref(), "chat-gpt");
+        assert_eq!(ids(&methods)[0], "api-key");
+    }
+
+    #[test]
+    fn auth_failure_hint_is_method_specific() {
+        let cursor = auth_failure_hint("cursor_login", &"boom");
+        assert!(cursor.contains("agent login"), "{cursor}");
+        assert!(!cursor.contains("CODEX_API_KEY"), "{cursor}");
+        let api = auth_failure_hint("api-key", &"boom");
+        assert!(api.contains("CODEX_API_KEY"), "{api}");
+        let gpt = auth_failure_hint("chat-gpt", &"boom");
+        assert!(gpt.contains("codex login"), "{gpt}");
+    }
+
+    #[test]
+    fn launch_has_openai_api_key_reads_spec_env() {
+        let mut env = HashMap::new();
+        env.insert("CODEX_API_KEY".to_string(), " sk-test ".to_string());
+        assert!(launch_has_openai_api_key(&env));
     }
 }

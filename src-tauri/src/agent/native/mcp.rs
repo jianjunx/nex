@@ -12,7 +12,8 @@
 //! stdio child process (`kill_on_drop`) when present; HTTP clients have no child.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -269,18 +270,51 @@ fn validate_mcp_url(raw: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn resolve_command(
+    command: &str,
+    config: &McpServerConfig,
+    base_env: &HashMap<String, String>,
+) -> OsString {
+    let candidate = PathBuf::from(command);
+    if candidate.components().count() > 1 || candidate.is_absolute() {
+        return candidate.into_os_string();
+    }
+
+    let path = config
+        .env
+        .get("PATH")
+        .or_else(|| config.env.get("Path"))
+        .cloned()
+        .or_else(|| base_env.get("PATH").cloned())
+        .or_else(|| base_env.get("Path").cloned())
+        .map(OsString::from)
+        .or_else(|| std::env::var_os("PATH"));
+
+    which::which_in(command, path, Path::new("/"))
+        .map(|p| p.into_os_string())
+        .unwrap_or_else(|_| OsString::from(command))
+}
+
 impl McpClient {
     /// Connects `config` and performs the handshake. Prefer Streamable HTTP
     /// when `url` is set; otherwise spawn the stdio `command`. On error nothing
     /// keeps running (stdio children are dropped and killed).
     pub async fn connect(name: &str, config: &McpServerConfig) -> Result<Self, String> {
+        Self::connect_with_base_env(name, config, &HashMap::new()).await
+    }
+
+    pub async fn connect_with_base_env(
+        name: &str,
+        config: &McpServerConfig,
+        base_env: &HashMap<String, String>,
+    ) -> Result<Self, String> {
         if let Some(url) = config.url.as_deref().filter(|u| !u.is_empty()) {
             return Self::connect_http(name, url, &config.headers).await;
         }
         let Some(command) = &config.command else {
             return Err(format!("MCP server `{name}` has no `command`"));
         };
-        Self::connect_stdio(name, command, config).await
+        Self::connect_stdio(name, command, config, base_env).await
     }
 
     async fn connect_http(
@@ -317,9 +351,12 @@ impl McpClient {
         name: &str,
         command: &str,
         config: &McpServerConfig,
+        base_env: &HashMap<String, String>,
     ) -> Result<Self, String> {
-        let mut cmd = tokio::process::Command::new(command);
+        let command = resolve_command(command, config, base_env);
+        let mut cmd = tokio::process::Command::new(&command);
         cmd.args(&config.args)
+            .envs(base_env)
             .envs(&config.env)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
@@ -514,15 +551,11 @@ impl Transport {
         let Self::Stdio { stdin, .. } = self else {
             return Err("not a stdio transport".into());
         };
-        let body = serde_json::to_vec(payload).map_err(|e| e.to_string())?;
-        let header = format!("Content-Length: {}\r\n\r\n", body.len());
+        let mut body = serde_json::to_vec(payload).map_err(|e| e.to_string())?;
+        body.push(b'\n');
         let stdin = stdin
             .as_mut()
             .ok_or_else(|| "MCP stdin closed".to_string())?;
-        stdin
-            .write_all(header.as_bytes())
-            .await
-            .map_err(|e| format!("MCP write failed: {e}"))?;
         stdin
             .write_all(&body)
             .await
@@ -534,7 +567,9 @@ impl Transport {
         Ok(())
     }
 
-    /// Reads one complete JSON-RPC message (Content-Length framed).
+    /// Reads one complete JSON-RPC message from stdio. Supports both
+    /// newline-delimited JSON (current MCP SDK stdio transport) and
+    /// legacy `Content-Length` framed messages.
     async fn stdio_read_message(&mut self) -> Result<serde_json::Value, String> {
         let Self::Stdio { stdout, .. } = self else {
             return Err("not a stdio transport".into());
@@ -542,7 +577,27 @@ impl Transport {
         let stdout = stdout
             .as_mut()
             .ok_or_else(|| "MCP stdout closed".to_string())?;
+        let mut first_line = String::new();
+        let n = stdout
+            .read_line(&mut first_line)
+            .await
+            .map_err(|e| format!("MCP read failed: {e}"))?;
+        if n == 0 {
+            return Err("MCP server closed the stream".to_string());
+        }
+
+        if let Some(msg) = parse_stdio_line_message(&first_line)? {
+            return Ok(msg);
+        }
+
         let mut content_length: Option<usize> = None;
+        if let Some(v) = first_line
+            .to_ascii_lowercase()
+            .trim()
+            .strip_prefix("content-length:")
+        {
+            content_length = v.trim().parse::<usize>().ok();
+        }
         loop {
             let mut line = String::new();
             let n = stdout
@@ -662,6 +717,19 @@ impl Transport {
     }
 }
 
+fn parse_stdio_line_message(line: &str) -> Result<Option<serde_json::Value>, String> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if trimmed.starts_with('{') {
+        return serde_json::from_str(trimmed)
+            .map(Some)
+            .map_err(|e| format!("bad MCP JSON: {e}"));
+    }
+    Ok(None)
+}
+
 /// Parse the first SSE event whose JSON-RPC `id` matches.
 ///
 /// Multi-line `data:` fields are concatenated (SSE spec) before JSON parse.
@@ -717,23 +785,19 @@ mod tests {
     use crate::agent::native::tools::mcp::McpProxy;
     use crate::agent::native::tools::{ToolCtx, ToolRegistry};
 
-    /// A JSON-RPC stdio server speaking MCP over Content-Length frames.
+    /// A JSON-RPC stdio server speaking MCP over newline-delimited JSON.
     const FAKE_SERVER: &str = r#"
 import json, sys
 
 def read_msg():
-    headers = {}
     line = sys.stdin.buffer.readline()
-    while line not in (b"\r\n", b"\n", b""):
-        k, _, v = line.decode(errors="replace").partition(":")
-        headers[k.strip().lower()] = v.strip()
-        line = sys.stdin.buffer.readline()
-    n = int(headers.get("content-length", "0") or 0)
-    return json.loads(sys.stdin.buffer.read(n)) if n else {}
+    if not line:
+        return {}
+    return json.loads(line)
 
 def write_msg(obj):
     body = json.dumps(obj).encode()
-    sys.stdout.buffer.write(("Content-Length: %d\r\n\r\n" % len(body)).encode() + body)
+    sys.stdout.buffer.write(body + b"\n")
     sys.stdout.buffer.flush()
 
 while True:
@@ -849,6 +913,15 @@ data: \"result\":{\"ok\":true}}\n\
 \n\
 ";
         let msg = parse_sse_jsonrpc(body, 1).expect("multiline");
+        assert_eq!(msg.pointer("/result/ok").and_then(|v| v.as_bool()), Some(true));
+    }
+
+    #[test]
+    fn parse_stdio_line_message_parses_newline_json() {
+        let msg = parse_stdio_line_message("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}\n")
+            .unwrap()
+            .expect("json line");
+        assert_eq!(msg.get("id").and_then(|v| v.as_u64()), Some(1));
         assert_eq!(msg.pointer("/result/ok").and_then(|v| v.as_bool()), Some(true));
     }
 
@@ -1018,5 +1091,30 @@ data: \"result\":{\"ok\":true}}\n\
         // Missing host.
         assert!(validate_mcp_url("http:///nohost").is_ok(), "parser normalizes to host=nohost");
         assert!(validate_mcp_url("http://:8080/x").is_err());
+    }
+
+    #[test]
+    fn resolve_command_uses_base_env_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("fake-mcp");
+        std::fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script, perms).unwrap();
+        }
+        let cfg = McpServerConfig {
+            command: Some("fake-mcp".to_string()),
+            args: vec![],
+            env: HashMap::new(),
+            url: None,
+            headers: HashMap::new(),
+        };
+        let mut base_env = HashMap::new();
+        base_env.insert("PATH".to_string(), dir.path().to_string_lossy().into_owned());
+        let resolved = resolve_command("fake-mcp", &cfg, &base_env);
+        assert_eq!(resolved, script.into_os_string());
     }
 }

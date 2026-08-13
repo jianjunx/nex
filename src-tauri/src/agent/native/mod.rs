@@ -361,7 +361,17 @@ impl NexNativeAgent {
             if cfg.disabled_mcp_servers.iter().any(|d| d == &name) {
                 continue;
             }
-            match mcp::McpClient::connect(&name, &server_cfg).await {
+            let mut base_env = HashMap::new();
+            if let Some(path) = self
+                .inner
+                .sessions
+                .borrow()
+                .get(session_id.0.as_ref())
+                .map(|s| s.path_env.to_string_lossy().into_owned())
+            {
+                base_env.insert("PATH".to_string(), path);
+            }
+            match mcp::McpClient::connect_with_base_env(&name, &server_cfg, &base_env).await {
                 Ok(client) => {
                     log::info!(
                         "MCP server `{name}` connected with {} tool(s)",

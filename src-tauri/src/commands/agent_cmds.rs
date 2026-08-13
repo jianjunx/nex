@@ -263,7 +263,11 @@ pub fn native_agent_set_mcp_enabled(
 
 /// Short handshake probe for the settings status badge.
 #[tauri::command]
-pub async fn native_agent_probe_mcp(name: String) -> Result<String, NexError> {
+pub async fn native_agent_probe_mcp(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<String, NexError> {
     let list = mcp::list_global(&[]);
     let Some(info) = list.into_iter().find(|s| s.name == name) else {
         return Err(NexError::Agent(format!("MCP server `{name}` not found")));
@@ -275,7 +279,10 @@ pub async fn native_agent_probe_mcp(name: String) -> Result<String, NexError> {
         url: info.url,
         headers: info.headers,
     };
-    match mcp::McpClient::connect(&name, &cfg).await {
+    let app_data_dir = app_data_dir(&app)?;
+    let _ = state.agent_manager.refresh_registry().await;
+    let shell_env = state.agent_manager.env_for_cwd(&app_data_dir.to_string_lossy()).await;
+    match mcp::McpClient::connect_with_base_env(&name, &cfg, &shell_env).await {
         Ok(client) => Ok(format!("connected:{} tools", client.tools.len())),
         Err(e) => Ok(format!("error:{e}")),
     }

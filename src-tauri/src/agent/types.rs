@@ -184,6 +184,10 @@ pub struct PromptResultDto {
     /// this turn (`write_file` / `edit_file` / `multi_edit`). Used to gate
     /// auto-`/review`; bash-only turns stay false.
     pub had_mutations: bool,
+    /// Per-turn context-engine telemetry. Present for the native agent;
+    /// omitted for external ACP agents that do not populate `_meta.contextStats`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_stats: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]

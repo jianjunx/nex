@@ -15,9 +15,12 @@ use serde::Serialize;
 /// names are the public contract — don't rename without bumping the
 /// `SCHEMA_VERSION`.
 #[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ContextStats {
     /// Bumped whenever the struct's serialised shape changes.
     pub schema_version: u32,
+    /// Token estimate *before* `budget::enforce` ran on this turn.
+    pub initial_tokens: u64,
     /// Token estimate *after* `budget::enforce` ran on this turn.
     pub final_tokens: u64,
     /// Number of compaction passes that actually ran.
@@ -42,12 +45,17 @@ pub struct ContextStats {
     /// Total prompt tokens reported by the provider on the last stream
     /// of this turn. Zero when the provider did not surface `usage`.
     pub prompt_tokens: u64,
+    /// Whether the summary-splice fallback ran on this turn.
+    pub used_summary_fallback: bool,
+    /// True when the harness refused to send because the prompt still
+    /// exceeded the budget after every compaction tier.
+    pub over_budget: bool,
 }
 
 impl ContextStats {
     /// Bump whenever the serialised shape changes; consumers can pin
     /// against this and warn when the schema drifts.
-    pub const SCHEMA_VERSION: u32 = 1;
+    pub const SCHEMA_VERSION: u32 = 2;
 
     pub fn new() -> Self {
         Self {
@@ -138,7 +146,7 @@ mod tests {
         let existing = serde_json::json!({"hadMutations": true});
         let merged = to_meta(&stats, Some(existing));
         assert_eq!(merged["hadMutations"], true);
-        assert_eq!(merged["contextStats"]["final_tokens"], 1234);
-        assert_eq!(merged["contextStats"]["schema_version"], 1);
+        assert_eq!(merged["contextStats"]["finalTokens"], 1234);
+        assert_eq!(merged["contextStats"]["schemaVersion"], 2);
     }
 }

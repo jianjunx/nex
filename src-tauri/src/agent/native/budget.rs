@@ -10,7 +10,7 @@
 //! `reserved_response` once the trait exposes a hint.
 
 use crate::agent::native::provider::{Provider, ReasoningControl};
-use crate::agent::native::{compact, summary};
+use crate::agent::native::{compact, memory, summary};
 
 /// Upper bound on the deliberate Snip -> Compact -> Force walk. Three
 /// passes is enough to apply every tier exactly once; the loop also bails
@@ -139,6 +139,9 @@ pub struct BudgetLoopOutcome {
     pub archive_files: Vec<std::path::PathBuf>,
     /// Whether the final fallback summary splice was used.
     pub used_summary_fallback: bool,
+    /// True when the transcript still exceeds `prompt_budget` after every
+    /// tier plus the summary fallback. The turn harness must not send.
+    pub over_budget: bool,
 }
 
 /// Drive [`crate::agent::native::compact::step`] until `messages` fits
@@ -148,6 +151,17 @@ pub fn enforce(
     messages: &mut Vec<crate::agent::native::provider::ChatMessage>,
     budget: ContextBudget,
     archive_dir: &std::path::Path,
+) -> BudgetLoopOutcome {
+    enforce_with_memory(messages, budget, archive_dir, None)
+}
+
+/// Like [`enforce`], but the fallback summary is filled from session working
+/// memory when provided instead of a mechanically extracted stub.
+pub fn enforce_with_memory(
+    messages: &mut Vec<crate::agent::native::provider::ChatMessage>,
+    budget: ContextBudget,
+    archive_dir: &std::path::Path,
+    working_memory: Option<&memory::WorkingMemory>,
 ) -> BudgetLoopOutcome {
     if budget.prompt_budget == 0 {
         return BudgetLoopOutcome::default();
@@ -187,7 +201,10 @@ pub fn enforce(
     // Final fallback: if the transcript still exceeds budget, replace the
     // old prefix with a single stable summary block pointing at the archive.
     if used > budget.prompt_budget {
-        let body = summary::render_fallback_summary(messages);
+        let body = match working_memory {
+            Some(m) => summary::render_from_memory(m),
+            None => summary::render_fallback_summary(messages),
+        };
         let splice = compact::replace_prefix_with_summary(messages, body, archive_dir);
         if let Some(p) = splice.archive_file {
             outcome.archive_files.push(p);
@@ -195,6 +212,22 @@ pub fn enforce(
             outcome.total_folded += 1;
             used = compact::estimate_tokens(messages);
         }
+    }
+    // Last resort: snip remaining tool bodies (including the protected tail)
+    // so a single oversized result cannot keep the request over budget.
+    if used > budget.prompt_budget {
+        let extra = compact::snip_tool_results(messages, true);
+        outcome.total_snipped += extra;
+        used = compact::estimate_tokens(messages);
+    }
+    outcome.over_budget = used > budget.prompt_budget;
+    if outcome.over_budget {
+        log::warn!(
+            "context budget exhausted: used={} budget={} window={}",
+            used,
+            budget.prompt_budget,
+            budget.model_window
+        );
     }
     outcome.final_tokens = used;
     outcome
@@ -271,6 +304,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let outcome = enforce(&mut msgs, budget, tmp.path());
         assert!(outcome.passes <= MAX_COMPACT_PASSES);
+        assert!(outcome.over_budget);
     }
 
     #[test]
@@ -340,5 +374,31 @@ mod tests {
         // model_window too small to admit reserved + safety -> clamp to fallback.
         let b = resolve(2048, 4096, 2048);
         assert_eq!(b.prompt_budget, SMALL_WINDOW_FALLBACK);
+    }
+
+    #[test]
+    fn enforce_fallback_summary_uses_working_memory() {
+        let mut memory = memory::WorkingMemory::new();
+        memory.set_goal("修 cache 命中率");
+        memory.record_file_changed("src/cache.rs");
+        memory.record_open_question("verify hit ratio");
+        let mut msgs: Vec<ChatMessage> = vec![ChatMessage::system("sys")];
+        for i in 0..20 {
+            msgs.push(ChatMessage::user(format!("goal {i} {}", "u".repeat(200))));
+            msgs.push(ChatMessage::tool_result(format!("t{i}"), "x".repeat(6000)));
+        }
+        let budget = model_window(4_000);
+        let tmp = tempfile::tempdir().unwrap();
+        let outcome = enforce_with_memory(&mut msgs, budget, tmp.path(), Some(&memory));
+        assert!(outcome.used_summary_fallback);
+        let summary_text = msgs
+            .iter()
+            .find(|m| compact::is_summary(m))
+            .and_then(|m| m.content.as_ref())
+            .and_then(crate::agent::native::provider::Content::as_text)
+            .unwrap();
+        assert!(summary_text.contains("修 cache 命中率"));
+        assert!(summary_text.contains("src/cache.rs"));
+        assert!(summary_text.contains("verify hit ratio"));
     }
 }

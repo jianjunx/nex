@@ -21,7 +21,7 @@ use super::provider::{
     Provider, ReasoningControl, ToolSpec, Usage,
 };
 use super::stats;
-use super::tools::todo::parse_todos;
+use super::tools::todo::{parse_todos, TodoStatus};
 use super::tools::{truncate_output, ToolCtx, ToolRegistry, PARTIAL_MARKER};
 use super::{budget, context};
 
@@ -243,7 +243,15 @@ pub async fn run_turn(
             env.reasoning,
             env.context_window,
         );
-        let outcome = budget::enforce(messages, budget, &env.tool_ctx.archive_dir);
+        let outcome = {
+            let mem = env.tool_ctx.memory.borrow();
+            budget::enforce_with_memory(
+                messages,
+                budget,
+                &env.tool_ctx.archive_dir,
+                Some(&mem),
+            )
+        };
         {
             let mut s = env.stats.borrow_mut();
             s.compaction_passes = outcome.passes as u32;
@@ -251,26 +259,38 @@ pub async fn run_turn(
             s.folded_messages = outcome.total_folded as u32;
             s.archive_files_written = outcome.archive_files.len() as u32;
             s.final_tokens = outcome.final_tokens;
+            s.initial_tokens = outcome.initial_tokens;
+            s.used_summary_fallback = outcome.used_summary_fallback;
+            s.over_budget = outcome.over_budget;
         }
         if outcome.passes > 0 {
             log::debug!(
-                "context budget: initial={} final={} budget={} passes={} snipped={} folded={}",
+                "context budget: initial={} final={} budget={} passes={} snipped={} folded={} over_budget={}",
                 outcome.initial_tokens,
                 outcome.final_tokens,
                 budget.prompt_budget,
                 outcome.passes,
                 outcome.total_snipped,
                 outcome.total_folded,
+                outcome.over_budget,
             );
         }
 
-        // Refresh the working-memory block in-place. The block is byte-stable
-        // when the memory state doesn't change, so this preserves prefix
-        // cache as long as nothing actually moved.
-        crate::agent::native::tools::refresh_working_memory_in_place(
+        // Refresh or re-insert the working-memory block. Byte-stable when
+        // the state didn't change, so prefix cache stays warm.
+        crate::agent::native::tools::ensure_working_memory(
             messages,
             &env.tool_ctx.memory.borrow(),
         );
+
+        if outcome.over_budget {
+            emit_text(
+                env,
+                "上下文超出模型窗口，压缩后仍无法放入本轮请求。请开新会话，或在设置里提高该模型的上下文窗口。",
+            )
+            .await;
+            return acp::StopReason::EndTurn;
+        }
 
         // Hit the optional step cap: one final text-only turn (OpenCode-style),
         // then stop. `max_steps == 0` means unlimited.
@@ -570,9 +590,18 @@ async fn execute_tool(env: &TurnEnv, call: &NativeToolCall) -> Result<String, St
                     mem.record_file_changed(path);
                 }
             }
-            Ok(_) if call.name == "read_file" => {
+            Ok(_) if matches!(call.name.as_str(), "read_file" | "grep" | "glob" | "ls") => {
                 if let Some(path) = call.arguments.get("path").and_then(|v| v.as_str()) {
                     mem.record_file_inspected(path);
+                }
+            }
+            Ok(_) if call.name == "todo_write" => {
+                if let Ok(entries) = parse_todos(&call.arguments) {
+                    for e in entries {
+                        if matches!(e.status, TodoStatus::Pending | TodoStatus::InProgress) {
+                            mem.record_open_question(e.content);
+                        }
+                    }
                 }
             }
             Err(e) => {
@@ -1140,20 +1169,26 @@ mod tests {
                     run_turn(&env, &mut messages, Content::Text("读一下 x.txt".into())).await;
                 assert!(matches!(stop, acp::StopReason::EndTurn));
 
-                // Transcript shape: system, user, assistant(tool_calls), tool, assistant.
-                assert_eq!(messages.len(), 5);
-                assert_eq!(messages[2].role, "assistant");
-                assert!(messages[2].tool_calls.is_some());
-                assert_eq!(messages[3].role, "tool");
-                assert_eq!(messages[3].tool_call_id.as_deref(), Some("call_1"));
-                assert!(messages[3]
+                // system, working-memory, user, assistant(tool_calls), tool, assistant.
+                assert_eq!(messages.len(), 6);
+                assert!(messages[1]
+                    .content
+                    .as_ref()
+                    .and_then(Content::as_text)
+                    .unwrap()
+                    .starts_with(crate::agent::native::memory::MARKER));
+                assert_eq!(messages[3].role, "assistant");
+                assert!(messages[3].tool_calls.is_some());
+                assert_eq!(messages[4].role, "tool");
+                assert_eq!(messages[4].tool_call_id.as_deref(), Some("call_1"));
+                assert!(messages[4]
                     .content
                     .as_ref()
                     .and_then(Content::as_text)
                     .unwrap()
                     .contains("hello"));
                 assert_eq!(
-                    messages[4].content.as_ref().and_then(Content::as_text),
+                    messages[5].content.as_ref().and_then(Content::as_text),
                     Some("文件内容是 hello")
                 );
 
@@ -1287,20 +1322,20 @@ mod tests {
                 assert!(matches!(stop, acp::StopReason::EndTurn));
                 assert_eq!(*perms.borrow(), 0, "read-only batch must not prompt");
 
-                // system, user, assistant(3 calls), 3 tool results, assistant.
-                assert_eq!(messages.len(), 7);
-                let ids: Vec<_> = messages[3..6]
+                // system, working-memory, user, assistant(3 calls), 3 tool results, assistant.
+                assert_eq!(messages.len(), 8);
+                let ids: Vec<_> = messages[4..7]
                     .iter()
                     .map(|m| m.tool_call_id.clone().unwrap())
                     .collect();
                 assert_eq!(ids, vec!["c_a", "c_b", "c_ls"]);
-                assert!(messages[3]
+                assert!(messages[4]
                     .content
                     .as_ref()
                     .and_then(Content::as_text)
                     .unwrap()
                     .contains('A'));
-                assert!(messages[4]
+                assert!(messages[5]
                     .content
                     .as_ref()
                     .and_then(Content::as_text)

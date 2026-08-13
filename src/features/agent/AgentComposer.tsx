@@ -181,8 +181,15 @@ export function AgentComposer() {
   const removePendingMessage = useAgentStore((s) => s.removePendingMessage);
   const sendPendingNow = useAgentStore((s) => s.sendPendingNow);
 
+  const contextStatsByConversation = useAgentStore((s) => s.contextStatsByConversation);
   const session = activeTabId ? sessions[activeTabId] : null;
   const meta = activeTabId ? metaByConversation[activeTabId] : null;
+  const contextStats = activeTabId ? contextStatsByConversation[activeTabId] : undefined;
+  const contextRingUsage = meta?.contextUsage ?? (
+    contextStats
+      ? { used: contextStats.finalTokens, total: 0, tokens: [] }
+      : null
+  );
   const isStarting = session?.status === "starting";
   const isRunning = session?.status === "running" || session?.status === "waiting";
   const pendingMessages = activeTabId ? (pendingMessagesByConversation[activeTabId] ?? []) : [];
@@ -1028,8 +1035,8 @@ export function AgentComposer() {
                 );
               })()}
 
-              {session?.sessionId && meta?.contextUsage && (
-                <ContextUsageRing usage={meta.contextUsage} />
+              {session?.sessionId && contextRingUsage && (
+                <ContextUsageRing usage={contextRingUsage} stats={contextStats} />
               )}
 
               {isRunning ? (

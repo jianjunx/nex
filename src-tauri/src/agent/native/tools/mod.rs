@@ -77,15 +77,14 @@ pub fn test_memory_handle() -> Rc<RefCell<WorkingMemory>> {
     Rc::new(RefCell::new(WorkingMemory::new()))
 }
 
-/// Refresh the working-memory block already spliced into `messages`.
-/// Looks for the first assistant message that starts with the
-/// `WORKING_MEMORY_MARKER` and rewrites its content in-place; a no-op when
-/// the marker isn't present (e.g. older transcripts loaded from archive).
-pub fn refresh_working_memory_in_place(
-    messages: &mut [super::provider::ChatMessage],
+/// Ensure the working-memory block is present after the system prompt and
+/// matches `memory`. Updates in-place when the marker is already there
+/// (byte-stable when unchanged). Re-inserts after compact/summary if the
+/// block was lost — older archived transcripts never had one.
+pub fn ensure_working_memory(
+    messages: &mut Vec<super::provider::ChatMessage>,
     memory: &WorkingMemory,
 ) -> bool {
-    const MARKER: &str = "[nex:working-memory]";
     let next = super::memory::render(memory);
     for msg in messages.iter_mut() {
         if msg.role != "assistant" {
@@ -96,7 +95,7 @@ pub fn refresh_working_memory_in_place(
             .as_ref()
             .and_then(super::provider::Content::as_text)
             .unwrap_or("");
-        if !current.starts_with(MARKER) {
+        if !current.starts_with(super::memory::MARKER) {
             continue;
         }
         if current == next {
@@ -105,7 +104,16 @@ pub fn refresh_working_memory_in_place(
         msg.content = Some(super::provider::Content::Text(next));
         return true;
     }
-    false
+    let insert_at = if messages.first().is_some_and(|m| m.role == "system") {
+        1
+    } else {
+        0
+    };
+    messages.insert(
+        insert_at.min(messages.len()),
+        super::provider::ChatMessage::assistant(next),
+    );
+    true
 }
 
 /// A builtin tool.
@@ -532,11 +540,30 @@ mod tests {
         mem.borrow_mut().set_goal("ship v1");
         let rendered = memory::render(&mem.borrow());
         let mut msgs = vec![ChatMessage::assistant(rendered.clone())];
-        assert!(!refresh_working_memory_in_place(&mut msgs, &mem.borrow()));
+        assert!(!ensure_working_memory(&mut msgs, &mem.borrow()));
         assert_eq!(
             msgs[0].content.as_ref().and_then(Content::as_text),
             Some(rendered.as_str())
         );
+    }
+
+    #[test]
+    fn ensure_working_memory_reinserts_after_system_prompt() {
+        let mem = test_memory_handle();
+        mem.borrow_mut().set_goal("ship v1");
+        let mut msgs = vec![
+            ChatMessage::system("sys"),
+            ChatMessage::user("hello"),
+        ];
+        assert!(ensure_working_memory(&mut msgs, &mem.borrow()));
+        assert_eq!(msgs[0].role, "system");
+        assert!(msgs[1]
+            .content
+            .as_ref()
+            .and_then(Content::as_text)
+            .unwrap()
+            .starts_with(memory::MARKER));
+        assert_eq!(msgs[2].role, "user");
     }
 
     /// Canonical tool schemas must serialize to identical bytes on every run

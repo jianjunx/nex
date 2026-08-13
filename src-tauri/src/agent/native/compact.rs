@@ -14,6 +14,7 @@
 
 use std::path::{Path, PathBuf};
 
+use super::memory;
 use super::provider::{ChatMessage, Content};
 
 pub const TOOL_RESULT_SNIP_RATIO: f64 = 0.6;
@@ -29,13 +30,61 @@ const KEEP_TAIL_MESSAGES: usize = 8;
 /// Marker prefix for tool errors (KeepErrors: never compact these).
 const ERROR_PREFIX: &str = "ERROR:";
 
-/// Rough token estimate: serialized bytes / 4.
+/// Rough token estimate: JSON bytes / 4, plus one extra token per non-ASCII
+/// character so CJK (3 UTF-8 bytes ≈ 1–2 tokens) is not under-counted.
 pub fn estimate_tokens(messages: &[ChatMessage]) -> u64 {
-    let bytes: usize = messages
-        .iter()
-        .map(|m| serde_json::to_vec(m).map(|v| v.len()).unwrap_or(0))
-        .sum();
-    (bytes as u64) / 4
+    messages.iter().map(estimate_one).sum()
+}
+
+fn estimate_one(msg: &ChatMessage) -> u64 {
+    let bytes = serde_json::to_vec(msg).map(|v| v.len()).unwrap_or(0) as u64;
+    let json_est = bytes / 4;
+    let extra = msg.content.as_ref().map(cjk_extra_tokens).unwrap_or(0);
+    json_est.saturating_add(extra)
+}
+
+fn cjk_extra_tokens(content: &Content) -> u64 {
+    match content {
+        Content::Text(s) => s.chars().filter(|c| !c.is_ascii()).count() as u64,
+        Content::Parts(parts) => parts
+            .iter()
+            .filter_map(|p| p.text.as_deref())
+            .map(|s| s.chars().filter(|c| !c.is_ascii()).count() as u64)
+            .sum(),
+    }
+}
+
+fn assistant_starts_with(msg: &ChatMessage, prefix: &str) -> bool {
+    msg.role == "assistant"
+        && msg
+            .content
+            .as_ref()
+            .and_then(Content::as_text)
+            .is_some_and(|t| t.starts_with(prefix))
+}
+
+pub fn is_working_memory(msg: &ChatMessage) -> bool {
+    assistant_starts_with(msg, memory::MARKER)
+}
+
+pub fn is_summary(msg: &ChatMessage) -> bool {
+    assistant_starts_with(msg, SUMMARY_MARKER)
+}
+
+/// Leading messages that must survive every compact / summary pass:
+/// system prompt, working-memory block, existing summary slot.
+pub fn protected_head_len(messages: &[ChatMessage]) -> usize {
+    let mut n = 0usize;
+    if messages.first().is_some_and(|m| m.role == "system") {
+        n = 1;
+    }
+    if messages.get(n).is_some_and(is_working_memory) {
+        n += 1;
+    }
+    if messages.get(n).is_some_and(is_summary) {
+        n += 1;
+    }
+    n.max(1.min(messages.len()))
 }
 
 /// Which compression tier the transcript currently needs.
@@ -109,7 +158,8 @@ fn snip_string(s: &mut String, keep_chars: usize) -> bool {
 /// stay in place, only their payloads shrink, so ids keep matching.
 pub fn compact(messages: &mut [ChatMessage], force: bool) -> Vec<ChatMessage> {
     let mut archived: Vec<ChatMessage> = Vec::new();
-    if messages.len() <= KEEP_TAIL_MESSAGES + 1 {
+    let head = protected_head_len(messages);
+    if messages.len() <= KEEP_TAIL_MESSAGES + head {
         return archived; // nothing outside the protected tail
     }
     let boundary = messages.len() - KEEP_TAIL_MESSAGES;
@@ -117,8 +167,11 @@ pub fn compact(messages: &mut [ChatMessage], force: bool) -> Vec<ChatMessage> {
     // First fold old assistant prose (force tier), then snip tool results
     // inside the rewritable region.
     for (idx, msg) in messages.iter_mut().enumerate() {
-        if idx == 0 || idx >= boundary {
-            continue; // system prompt + recent tail are untouchable
+        if idx < head || idx >= boundary {
+            continue; // system / memory / summary + recent tail are untouchable
+        }
+        if is_working_memory(msg) || is_summary(msg) {
+            continue;
         }
         if force && msg.role == "assistant" && msg.tool_calls.is_none() {
             let should_fold = msg
@@ -144,7 +197,7 @@ pub fn compact(messages: &mut [ChatMessage], force: bool) -> Vec<ChatMessage> {
         SNIP_KEEP_CHARS
     };
     for (idx, msg) in messages.iter_mut().enumerate() {
-        if idx == 0 || idx >= boundary || msg.role != "tool" {
+        if idx < head || idx >= boundary || msg.role != "tool" {
             continue;
         }
         let needs_snip = msg
@@ -237,29 +290,30 @@ pub fn replace_prefix_with_summary(
     summary_text: String,
     archive_dir: &Path,
 ) -> SummarySplice {
-    if messages.len() <= KEEP_TAIL_MESSAGES + 1 {
+    // Keep system + working-memory. The summary slot sits after those and is
+    // reused in place so we never grow summary-on-summary.
+    let mut keep = 0usize;
+    if messages.first().is_some_and(|m| m.role == "system") {
+        keep = 1;
+    }
+    if messages.get(keep).is_some_and(is_working_memory) {
+        keep += 1;
+    }
+    if messages.len() <= KEEP_TAIL_MESSAGES + keep {
         return SummarySplice {
             archive_file: None,
             archive_ref: None,
         };
     }
     let boundary = messages.len() - KEEP_TAIL_MESSAGES;
-    let existing_summary = messages
-        .get(1)
-        .and_then(|m| {
-            if m.role != "assistant" {
-                return None;
-            }
-            m.content
-                .as_ref()
-                .and_then(Content::as_text)
-                .filter(|t| t.starts_with(SUMMARY_MARKER))
-        })
-        .is_some();
-    // Snapshot the original prefix before splicing the summary in.
-    // If a summary already exists at index 1, reuse that slot and archive
-    // only the turns *after* it, preventing summary-on-summary growth.
-    let prefix_start = if existing_summary { 2 } else { 1 };
+    let existing_summary = messages.get(keep).is_some_and(is_summary);
+    let prefix_start = if existing_summary { keep + 1 } else { keep };
+    if prefix_start >= boundary {
+        return SummarySplice {
+            archive_file: None,
+            archive_ref: None,
+        };
+    }
     let prefix: Vec<ChatMessage> = messages[prefix_start..boundary].to_vec();
     let archive_file = archive(archive_dir, &prefix);
     let archive_ref = archive_file
@@ -280,12 +334,12 @@ pub fn replace_prefix_with_summary(
             r
         )));
     }
-    // Splice: keep system prompt (idx 0) + one summary + protected tail.
-    let tail_start = boundary;
-    let mut new_msgs: Vec<ChatMessage> = Vec::with_capacity(1 + 1 + KEEP_TAIL_MESSAGES);
-    new_msgs.push(messages[0].clone());
+    // Splice: protected head (system + memory) + one summary + protected tail.
+    let mut new_msgs: Vec<ChatMessage> =
+        Vec::with_capacity(keep + 1 + KEEP_TAIL_MESSAGES);
+    new_msgs.extend(messages[..keep].iter().cloned());
     new_msgs.push(summary_msg);
-    new_msgs.extend(messages[tail_start..].iter().cloned());
+    new_msgs.extend(messages[boundary..].iter().cloned());
     *messages = new_msgs;
     SummarySplice {
         archive_file,
@@ -430,6 +484,13 @@ mod tests {
         assert_eq!(decide(65, 100), CompactLevel::Snip);
         assert_eq!(decide(85, 100), CompactLevel::Compact);
         assert_eq!(decide(95, 100), CompactLevel::Force);
+    }
+
+    #[test]
+    fn token_estimate_adds_extra_for_cjk() {
+        let ascii = estimate_tokens(&[ChatMessage::user("abcd")]);
+        let cjk = estimate_tokens(&[ChatMessage::user("中文测试")]);
+        assert!(cjk > ascii);
     }
 
     #[test]
@@ -683,6 +744,54 @@ mod tests {
                 .as_ref()
                 .and_then(|m| m.content.as_ref())
                 .and_then(Content::as_text)
+        );
+    }
+
+    #[test]
+    fn compact_and_summary_preserve_working_memory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut memory = crate::agent::native::memory::WorkingMemory::new();
+        memory.set_goal("ship v1");
+        memory.record_file_changed("src/main.rs");
+        let rendered = crate::agent::native::memory::render(&memory);
+        let big = "z".repeat(8000);
+        let mut msgs: Vec<ChatMessage> = vec![
+            ChatMessage::system("sys"),
+            ChatMessage::assistant(rendered.clone()),
+        ];
+        for i in 0..12 {
+            msgs.push(assistant_calls(&[&format!("id{i}")]));
+            msgs.push(tool_msg(&format!("id{i}"), &big));
+            msgs.push(ChatMessage::assistant(format!("old prose {i} {}", "a".repeat(200))));
+        }
+        compact(&mut msgs, true);
+        assert!(
+            msgs.iter().any(is_working_memory),
+            "force compact must not fold the working-memory block"
+        );
+        assert_eq!(
+            msgs[1].content.as_ref().and_then(Content::as_text),
+            Some(rendered.as_str())
+        );
+
+        let splice = replace_prefix_with_summary(
+            &mut msgs,
+            crate::agent::native::summary::render_session_summary(
+                &["ship v1".into()],
+                &[],
+                &[],
+                &[],
+                &[],
+                None,
+            ),
+            tmp.path(),
+        );
+        assert!(splice.archive_file.is_some());
+        assert!(is_working_memory(&msgs[1]));
+        assert!(is_summary(&msgs[2]));
+        assert_eq!(
+            msgs[1].content.as_ref().and_then(Content::as_text),
+            Some(rendered.as_str())
         );
     }
 

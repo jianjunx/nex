@@ -1393,7 +1393,15 @@ impl AcpSessionManager {
             .and_then(|m| m.get("hadMutations"))
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        Ok(super::types::PromptResultDto { had_mutations })
+        let context_stats = resp
+            .meta
+            .as_ref()
+            .and_then(|m| m.get("contextStats"))
+            .cloned();
+        Ok(super::types::PromptResultDto {
+            had_mutations,
+            context_stats,
+        })
     }
 
     pub async fn set_session_mode(&self, session_id: &str, mode_id: &str) -> Result<(), NexError> {

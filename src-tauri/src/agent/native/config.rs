@@ -147,6 +147,10 @@ pub struct AgentParams {
     /// Global fallback context window in tokens when the selected model has no
     /// per-model `contextWindow`. `0` disables compression.
     pub context_window: u32,
+    /// Distinguishes "user set 0 to disable compression" from the old factory
+    /// default of 0. One-shot: load() lifts unmarked 0 → 200k.
+    #[serde(default)]
+    pub context_window_migrated: bool,
     /// Synchronous `bash` tool timeout in seconds.
     pub bash_timeout_secs: u64,
     /// Max concurrent subagents launched by the `fleet` tool.
@@ -162,7 +166,8 @@ impl Default for AgentParams {
             // Complex coding tasks routinely exceed dozens of tool rounds;
             // rely on the no-progress lease instead of a low hard cap.
             max_steps: 0,
-            context_window: 0,
+            context_window: 200_000,
+            context_window_migrated: true,
             bash_timeout_secs: 120,
             max_subagent_concurrency: 6,
             auto_review: false,
@@ -238,6 +243,16 @@ impl NativeAgentConfig {
         if cfg.agent.max_steps == 40 {
             log::info!("migrating native-agent maxSteps 40 → 0 (unlimited)");
             cfg.agent.max_steps = 0;
+            let _ = cfg.save(dir);
+        }
+        // Product default used to be 0 (compression off). Lift unmarked
+        // zeros to 200k once; a later explicit 0 (migrated=true) stays off.
+        if !cfg.agent.context_window_migrated {
+            if cfg.agent.context_window == 0 {
+                log::info!("migrating native-agent contextWindow 0 → 200000");
+                cfg.agent.context_window = 200_000;
+            }
+            cfg.agent.context_window_migrated = true;
             let _ = cfg.save(dir);
         }
         // Re-apply family heuristics on load for heuristic-sourced entries so
@@ -412,6 +427,7 @@ mod tests {
         assert_eq!(cfg.providers.len(), 1);
         assert_eq!(cfg.providers[0].models[0].id, "deepseek-chat");
         assert_eq!(cfg.agent.max_steps, 0);
+        assert_eq!(cfg.agent.context_window, 200_000);
         let json = serde_json::to_string(&cfg).unwrap();
         let back: NativeAgentConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(back.providers[0].base_url, cfg.providers[0].base_url);
@@ -431,6 +447,38 @@ mod tests {
         let disk: NativeAgentConfig =
             serde_json::from_slice(&std::fs::read(tmp.join(NATIVE_CONFIG_FILE)).unwrap()).unwrap();
         assert_eq!(disk.agent.max_steps, 0);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn load_migrates_old_zero_context_window_default() {
+        let tmp = std::env::temp_dir().join(format!("nex-cfg-ctxwin-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(
+            tmp.join(NATIVE_CONFIG_FILE),
+            r#"{"providers":[],"agent":{"maxSteps":0,"contextWindow":0,"bashTimeoutSecs":120,"maxSubagentConcurrency":6}}"#,
+        )
+        .unwrap();
+        let loaded = NativeAgentConfig::load(&tmp);
+        assert_eq!(loaded.agent.context_window, 200_000);
+        assert!(loaded.agent.context_window_migrated);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn load_preserves_explicit_zero_context_window_after_migration() {
+        let tmp = std::env::temp_dir().join(format!("nex-cfg-ctxwin-off-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(
+            tmp.join(NATIVE_CONFIG_FILE),
+            r#"{"providers":[],"agent":{"maxSteps":0,"contextWindow":0,"contextWindowMigrated":true,"bashTimeoutSecs":120,"maxSubagentConcurrency":6}}"#,
+        )
+        .unwrap();
+        let loaded = NativeAgentConfig::load(&tmp);
+        assert_eq!(loaded.agent.context_window, 0);
+        assert!(loaded.agent.context_window_migrated);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

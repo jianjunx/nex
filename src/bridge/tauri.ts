@@ -189,6 +189,8 @@ export interface NativeAgentConfig {
   agent: {
     maxSteps: number;
     contextWindow: number;
+    /** Set after the 0→200k factory-default lift; keep this when saving. */
+    contextWindowMigrated?: boolean;
     bashTimeoutSecs: number;
     maxSubagentConcurrency: number;
     /** After a mutating turn, automatically send `/review`. */
@@ -200,6 +202,7 @@ export interface NativeAgentConfig {
 
 export interface ContextStatsDto {
   schemaVersion: number;
+  initialTokens: number;
   finalTokens: number;
   compactionPasses: number;
   snippedMessages: number;
@@ -209,6 +212,8 @@ export interface ContextStatsDto {
   partialToolResults: number;
   cacheHitTokens: number;
   promptTokens: number;
+  usedSummaryFallback: boolean;
+  overBudget: boolean;
 }
 
 export interface PromptResultDto {

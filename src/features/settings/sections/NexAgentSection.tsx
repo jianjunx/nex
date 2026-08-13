@@ -444,7 +444,7 @@ export function NexAgentSection() {
               }}
             />
             <p className="text-xs text-[var(--text-tertiary)]">
-              仅当所选模型未设置上下文窗口时生效。0 表示不限制、关闭压缩。优先使用模型级窗口。
+              未设置模型级窗口时使用。默认 200000。0 表示关闭压缩（不限制）。优先使用模型级窗口。
             </p>
           </div>
           <div className="space-y-1">

@@ -63,9 +63,12 @@ import { EditorPanel } from "./EditorPanel";
 
 function makeFakeView(lines: number) {
   const dispatch = vi.fn();
+  const lineEl = document.createElement("div");
+  lineEl.className = "cm-line";
   const view = {
     dispatch,
     requestMeasure: vi.fn(),
+    domAtPos: () => ({ node: lineEl, offset: 0 }),
     state: { doc: { lines, line: (n: number) => ({ from: (n - 1) * 10 }) } },
   };
   return { view, dispatch };

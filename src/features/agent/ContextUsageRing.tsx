@@ -1,4 +1,5 @@
 import { Popover } from "radix-ui";
+import type { ContextStatsDto } from "../../bridge/tauri";
 import type { ContextUsage } from "./thread/types";
 
 /** 千分位缩写：1234 → 1.2k，1200000 → 1.2M。 */
@@ -27,10 +28,11 @@ function ringColor(ratio: number): string {
 
 interface Props {
   usage: ContextUsage;
+  stats?: ContextStatsDto | null;
 }
 
 /** Composer 模型选项旁的上下文用量环：环形显示占用比例，点击展开明细。 */
-export function ContextUsageRing({ usage }: Props) {
+export function ContextUsageRing({ usage, stats }: Props) {
   const { used, total, tokens } = usage;
   const ratio = total > 0 ? Math.min(1, used / total) : 0;
   const color = ringColor(ratio);
@@ -111,6 +113,32 @@ export function ContextUsageRing({ usage }: Props) {
                 <span className="font-mono text-[var(--text-primary)]">{fmtTokens(t.value)}</span>
               </div>
             ))}
+          </div>
+        )}
+        {stats && (
+          <div className="mt-2 space-y-1 border-t border-[color:var(--glass-border)] pt-2">
+            {stats.promptTokens > 0 && (
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-[var(--text-secondary)]">缓存命中</span>
+                <span className="font-mono text-[var(--text-primary)]">
+                  {stats.promptTokens > 0
+                    ? `${Math.round((stats.cacheHitTokens / stats.promptTokens) * 100)}%`
+                    : "—"}
+                </span>
+              </div>
+            )}
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-[var(--text-secondary)]">压缩</span>
+              <span className="font-mono text-[var(--text-primary)]">
+                {stats.compactionPasses} 轮 / 截断 {stats.snippedMessages} / 折叠 {stats.foldedMessages}
+              </span>
+            </div>
+            {stats.usedSummaryFallback && (
+              <div className="text-xs text-[var(--text-secondary)]">已使用摘要折叠</div>
+            )}
+            {stats.overBudget && (
+              <div className="text-xs text-[var(--error,#ef4444)]">超出窗口，本轮未发送</div>
+            )}
           </div>
         )}
       </Popover.Content>

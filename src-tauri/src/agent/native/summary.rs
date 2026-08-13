@@ -38,13 +38,21 @@ pub fn render_session_summary(
     if !files_inspected.is_empty() {
         s.push_str("Files inspected:\n");
         for (path, why) in files_inspected {
-            s.push_str(&format!("- {path}: {why}\n"));
+            if why.is_empty() {
+                s.push_str(&format!("- {path}\n"));
+            } else {
+                s.push_str(&format!("- {path}: {why}\n"));
+            }
         }
     }
     if !changes_made.is_empty() {
         s.push_str("Changes made:\n");
         for (path, change) in changes_made {
-            s.push_str(&format!("- {path} -> {change}\n"));
+            if change.is_empty() {
+                s.push_str(&format!("- {path}\n"));
+            } else {
+                s.push_str(&format!("- {path} -> {change}\n"));
+            }
         }
     }
     if !open_questions.is_empty() {
@@ -57,6 +65,40 @@ pub fn render_session_summary(
         s.push_str(&format!("Archived details: archive ref {r}; use `history` to search it.\n"));
     }
     s
+}
+
+/// Structured summary filled from session working memory. Used when the
+/// budget loop has to splice a prefix replacement and we already know the
+/// live task state — much higher fidelity than [`render_fallback_summary`].
+pub fn render_from_memory(memory: &crate::agent::native::memory::WorkingMemory) -> String {
+    let facts: Vec<String> = if memory.state_notes.is_empty() {
+        Vec::new()
+    } else {
+        memory
+            .state_notes
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| l.trim().to_string())
+            .collect()
+    };
+    let inspected: Vec<(String, String)> = memory
+        .files_inspected
+        .iter()
+        .map(|p| (p.clone(), String::new()))
+        .collect();
+    let changed: Vec<(String, String)> = memory
+        .files_changed
+        .iter()
+        .map(|p| (p.clone(), String::new()))
+        .collect();
+    render_session_summary(
+        &memory.goal,
+        &facts,
+        &inspected,
+        &changed,
+        &memory.open_questions,
+        None,
+    )
 }
 
 /// Extremely conservative fallback summary for the *current* transcript.
@@ -146,5 +188,18 @@ mod tests {
         assert!(s.contains(SUMMARY_MARKER));
         assert!(s.contains("修一下 cache 命中率"));
         assert!(s.contains("error".to_lowercase().as_str()) || s.contains("Earlier tool results"));
+    }
+
+    #[test]
+    fn render_from_memory_includes_goal_and_files() {
+        let mut m = crate::agent::native::memory::WorkingMemory::new();
+        m.set_goal("ship v1");
+        m.record_file_changed("src/main.rs");
+        m.record_open_question("verify cache");
+        let s = render_from_memory(&m);
+        assert!(s.contains(SUMMARY_MARKER));
+        assert!(s.contains("ship v1"));
+        assert!(s.contains("src/main.rs"));
+        assert!(s.contains("verify cache"));
     }
 }

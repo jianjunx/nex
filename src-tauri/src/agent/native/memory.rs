@@ -18,6 +18,10 @@ use serde::{Deserialize, Serialize};
 /// transcript-bloat problem we are trying to solve.
 pub const MEMORY_TOTAL_BYTES: usize = 8 * 1024;
 
+/// Marker prefix for the spliced assistant memory block. Compact / summary
+/// must never fold or replace a message that starts with this.
+pub const MARKER: &str = "[nex:working-memory]";
+
 /// First-session placeholder goal. Replaced by the first real user prompt.
 pub const PLACEHOLDER_GOAL: &str = "理解用户的目标并开始工作";
 
@@ -81,7 +85,7 @@ impl WorkingMemory {
     /// Best-effort parse from the rendered assistant memory block. Returns
     /// `None` when the text is not a memory block or is obviously malformed.
     pub fn parse_rendered(text: &str) -> Option<Self> {
-        if !text.starts_with("[nex:working-memory]") {
+        if !text.starts_with(MARKER) {
             return None;
         }
         let mut memory = WorkingMemory::new();
@@ -235,7 +239,8 @@ fn push_unique(v: &mut Vec<String>, item: String) {
 /// actually changed.
 pub fn render(memory: &WorkingMemory) -> String {
     let mut s = String::with_capacity(512);
-    s.push_str("[nex:working-memory]\n");
+    s.push_str(MARKER);
+    s.push('\n');
     if !memory.goal.is_empty() {
         s.push_str("Goal:\n");
         for g in &memory.goal {
@@ -266,6 +271,14 @@ pub fn render(memory: &WorkingMemory) -> String {
         s.push('\n');
     }
     s.push_str("[memory updated; do not re-render unless a hook updates this block]\n");
+    if s.len() > MEMORY_TOTAL_BYTES {
+        let mut cut = MEMORY_TOTAL_BYTES.saturating_sub(16);
+        while cut > 0 && !s.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        s.truncate(cut);
+        s.push_str("\n[truncated]\n");
+    }
     s
 }
 
@@ -318,6 +331,23 @@ mod tests {
         assert!(m.state_notes.len() <= MAX_NOTES_BYTES);
         // The truncation keeps the tail and slices on a char boundary.
         assert!(m.state_notes.ends_with(&"a".repeat(64)));
+    }
+
+    #[test]
+    fn render_caps_total_block_bytes() {
+        let mut m = WorkingMemory::new();
+        m.goal = vec!["g".repeat(4000)];
+        m.files_inspected = vec!["p".repeat(400); 16];
+        m.files_changed = vec!["c".repeat(400); 16];
+        m.open_questions = vec!["q".repeat(200); 16];
+        m.state_notes = "n".repeat(MAX_NOTES_BYTES);
+        let rendered = render(&m);
+        assert!(
+            rendered.len() <= MEMORY_TOTAL_BYTES + 32,
+            "rendered {} bytes",
+            rendered.len()
+        );
+        assert!(rendered.contains("[truncated]"));
     }
 
     #[test]

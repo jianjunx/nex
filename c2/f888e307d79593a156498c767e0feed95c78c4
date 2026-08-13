@@ -1,0 +1,52 @@
+src-tauri/src/agent/native/mod.rs
+  s_4913e163432732::t_a71d58447799c3 858-860
+src-tauri/src/agent/native/budget.rs
+  s_4913e163432732::t_fa4027f9c4cefd 167-174
+  s_4913e163432732::t_6ae584f678724e 370-374
+src-tauri/src/agent/native/provider/mod.rs
+  s_4913e163432732::t_25a5f43341c00f 120-121
+src-tauri/src/agent/native/provider/deepseek.rs
+  s_4913e163432732::t_a98ca744c542f7 390-398,401-412,414-435
+  s_4913e163432732::t_88e98627834a78 231-232,245
+  s_4913e163432732::t_705c4a6c8c75c3 233-244
+  s_4913e163432732::t_216aa57f2cc4a7 452-502
+  s_4913e163432732::t_4614ca9384b83c 360
+  s_4913e163432732::t_c9dc5f259d0131 503
+src/features/agent/ContextUsageRing.tsx
+  s_4913e163432732::t_f05f8c4dee4b23 69,87
+  s_4913e163432732::t_eec32b52e01037 5-17,37-63,79,86,122,126-127,138-139,147,155-160,162
+src/bridge/tauri.ts
+  s_4913e163432732::t_b3812e0d42e2bc 215-216
+src-tauri/src/agent/native/stats.rs
+  s_4913e163432732::t_cc8ae2f70b997f 49-52
+  s_4913e163432732::t_42476181355529 63,72-75
+  s_4913e163432732::t_20515060258dac 161-162
+  s_4913e163432732::t_aab394b33b2547 41-44
+  s_4913e163432732::t_daad02f64de6b3 76-77
+src-tauri/src/agent/native/session.rs
+  s_4913e163432732::t_d3a93cfe5fbf1b 160
+  s_4913e163432732::t_3dfed9b6bb2851 265
+src/features/agent/ContextUsageRing.test.ts
+  s_4913e163432732::t_a47202c89b3dae 1-71
+src/features/agent/AgentComposer.tsx
+  s_4913e163432732::t_3cdb5d95ab2c97 21
+  s_4913e163432732::t_10b0a7aecf276f 970-971
+  s_4913e163432732::t_72f86de247bbde 188
+  s_4913e163432732::t_aa1442bb269114 972
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "c2f888e307d79593a156498c767e0feed95c78c4",
+  "prompts": {},
+  "sessions": {
+    "s_4913e163432732": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "3ec21ef1-4302-4b25-afd6-8a38cb04ad8b",
+        "model": "grok-4.6"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

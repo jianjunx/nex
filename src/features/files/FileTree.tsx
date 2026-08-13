@@ -53,7 +53,7 @@ function CreatingInput({ type, depth, onDone }: {
         onChange={(e) => setName(e.target.value)}
         onKeyDown={handleKeyDown}
         onBlur={() => onDone(name.trim())}
-        className="bg-[var(--glass-2-surface)] border border-[var(--border-subtle)] rounded-[var(--radius-sm)] px-1 py-px text-sm text-[var(--text-primary)] outline-none flex-1 min-w-0"
+        className="nex-material-panel border border-[color:var(--hairline-soft)] rounded-[var(--radius-md)] px-1 py-px text-sm text-[var(--text-primary)] outline-none flex-1 min-w-0"
         placeholder={type === 'file' ? 'new file' : 'new folder'}
       />
     </div>
@@ -116,7 +116,7 @@ function RenameInput({ name, depth, isFolder, onDone }: {
           if (trimmed && trimmed !== name) onDone(trimmed);
           else onDone('');
         }}
-        className="bg-[var(--glass-2-surface)] border border-[var(--accent)] rounded-[var(--radius-sm)] px-1 py-px text-sm text-[var(--text-primary)] outline-none flex-1 min-w-0"
+        className="nex-material-panel border border-[var(--accent)] rounded-[var(--radius-md)] px-1 py-px text-sm text-[var(--text-primary)] outline-none flex-1 min-w-0"
       />
     </div>
   );
@@ -329,12 +329,12 @@ function TreeNode({
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
-          className={`flex items-center gap-1.5 px-2 py-[3px] text-sm cursor-pointer rounded-[var(--radius-sm)] transition-colors duration-100 outline-none group ${
+          className={`nex-interactive-chrome flex items-center gap-1.5 px-2 py-[3px] text-sm cursor-pointer rounded-[var(--radius-md)] outline-none group ${
             isDragOver
               ? "bg-[var(--accent)]/30 ring-1 ring-[var(--accent)]"
               : isSelected
-              ? "bg-[var(--overlay-active)] text-[var(--text-primary)]"
-              : "hover:bg-[var(--overlay-hover)]"
+              ? "border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-elevated)_88%,transparent)] text-[var(--text-primary)] shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)]"
+              : "hover:bg-[color:color-mix(in_srgb,var(--material-floating)_78%,transparent)]"
           }`}
           style={{ paddingLeft: depth * 10 + 6 }}
         >
@@ -356,16 +356,16 @@ function TreeNode({
             <>
               <div className="flex-1" />
               <div className="flex items-center gap-0.5">
-                <span role="button" title="新建文件" className="p-0.5 rounded-[var(--radius-sm)] transition-colors duration-100 hover:bg-[var(--overlay-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onNewFile(); }}>
+                <span role="button" title="新建文件" className="nex-interactive-chrome p-0.5 rounded-[var(--radius-sm)] text-[var(--text-tertiary)] hover:bg-[var(--overlay-hover)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onNewFile(); }}>
                   <FilePlus size={14} />
                 </span>
-                <span role="button" title="新建目录" className="p-0.5 rounded-[var(--radius-sm)] transition-colors duration-100 hover:bg-[var(--overlay-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onNewFolder(); }}>
+                <span role="button" title="新建目录" className="nex-interactive-chrome p-0.5 rounded-[var(--radius-sm)] text-[var(--text-tertiary)] hover:bg-[var(--overlay-hover)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onNewFolder(); }}>
                   <FolderPlus size={14} />
                 </span>
-                <span role="button" title="刷新" className="p-0.5 rounded-[var(--radius-sm)] transition-colors duration-100 hover:bg-[var(--overlay-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onRefresh(); }}>
+                <span role="button" title="刷新" className="nex-interactive-chrome p-0.5 rounded-[var(--radius-sm)] text-[var(--text-tertiary)] hover:bg-[var(--overlay-hover)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onRefresh(); }}>
                   <RefreshCw size={14} />
                 </span>
-                <span role="button" title="全部折叠" className="p-0.5 rounded-[var(--radius-sm)] transition-colors duration-100 hover:bg-[var(--overlay-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onCollapseAll(); }}>
+                <span role="button" title="全部折叠" className="nex-interactive-chrome p-0.5 rounded-[var(--radius-sm)] text-[var(--text-tertiary)] hover:bg-[var(--overlay-hover)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onCollapseAll(); }}>
                   <ChevronsDownUp size={14} />
                 </span>
               </div>
@@ -551,7 +551,7 @@ export function FileTree() {
       <div
         ref={treeContainerRef}
         data-file-tree
-        className="py-0.5 overflow-y-auto h-full pr-1"
+        className="h-full overflow-y-auto pr-1 py-0.5"
         onDragOver={handleTreeDragOver}
         onDrop={handleTreeDrop}
       >

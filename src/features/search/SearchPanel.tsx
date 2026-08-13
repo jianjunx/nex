@@ -51,9 +51,9 @@ function FlagToggle({ pressed, title, onClick, children }: {
       aria-pressed={pressed}
       title={title}
       onClick={onClick}
-      className={`h-7 min-w-7 px-1 rounded-[var(--radius-sm)] text-xs font-mono transition-colors ${
+      className={`nex-interactive-chrome h-7 min-w-7 px-1 rounded-[var(--radius-sm)] text-xs font-mono ${
         pressed
-          ? "bg-[var(--overlay-active)] text-[var(--text-primary)]"
+          ? "border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-elevated)_88%,transparent)] text-[var(--text-primary)] shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)]"
           : "text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--overlay-hover)]"
       }`}
     >
@@ -252,7 +252,7 @@ export function SearchPanel() {
 
   return (
     <div
-      className="flex flex-col h-full"
+      className="flex h-full flex-col"
       onKeyDown={(e) => {
         // 面板作用域：替换全部快捷键不进全局注册表
         if (e.key === "Enter" && e.ctrlKey && e.altKey) {
@@ -262,7 +262,7 @@ export function SearchPanel() {
       }}
     >
       {/* 顶工具条 */}
-      <div className="flex items-center gap-1 px-2 pt-1.5">
+      <div className="nex-material-toolbar flex items-center gap-1 border-b border-[color:var(--hairline-soft)] px-2 pt-1.5 pb-1.5">
         <span className="flex-1 text-xs font-medium text-[var(--text-secondary)]">搜索</span>
         <Button
           variant="ghost"
@@ -287,7 +287,7 @@ export function SearchPanel() {
       </div>
 
       {/* 搜索行 + 展开替换 + 三枚匹配规则开关 */}
-      <div className="py-2 px-1">
+      <div className="border-b border-[color:var(--hairline-soft)] px-1 py-2">
         <div className="flex items-center gap-1">
           <Button
             variant="ghost"
@@ -414,13 +414,13 @@ export function SearchPanel() {
                     type="button"
                     aria-expanded={!isCollapsed}
                     onClick={() => toggleGroup(g.path)}
-                    className="flex w-full items-center gap-1.5 px-2 py-1 rounded-[var(--radius-sm)] hover:bg-[var(--overlay-hover)] text-left"
+                    className="nex-interactive-chrome flex w-full items-center gap-1.5 rounded-[var(--radius-md)] px-2 py-1 text-left hover:bg-[color:color-mix(in_srgb,var(--material-floating)_78%,transparent)]"
                   >
                     <ChevronRight size={12} className={`flex-none text-[var(--text-tertiary)] transition-transform ${isCollapsed ? "" : "rotate-90"}`} />
                     <FileIcon filename={g.name} size={13} className="flex-none" />
                     <span className="flex-none max-w-[40%] truncate text-sm text-[var(--text-primary)]">{g.name}</span>
                     <span className="truncate text-xs text-[var(--text-tertiary)]">{relativeToProject(g.path, project?.path)}</span>
-                    <span data-count-badge className="ml-auto flex-none rounded-full bg-[var(--overlay-ghost)] px-1.5 text-xs text-[var(--text-secondary)]">{g.matches.length}</span>
+                    <span data-count-badge className="ml-auto flex-none rounded-full border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_72%,transparent)] px-1.5 text-xs text-[var(--text-secondary)]">{g.matches.length}</span>
                   </button>
                   {/* 整文件替换：悬浮显示，直写该文件全部匹配 */}
                   <Button
@@ -440,7 +440,7 @@ export function SearchPanel() {
                         <button
                           key={`${m.path}:${m.line ?? 0}:${i}`}
                           onClick={() => void openFile(m.path, m.line != null ? { line: m.line } : undefined)}
-                          className={`group/row search-stagger relative w-full text-left pl-7 pr-7 py-1 rounded-[var(--radius-sm)] hover:bg-[var(--glass-2-surface)] transition-colors ${rowOffset + i === activeIndex ? "bg-[var(--overlay-ghost)]" : ""}`}
+                          className={`group/row search-stagger nex-interactive-chrome relative w-full rounded-[var(--radius-md)] py-1 pl-7 pr-7 text-left hover:bg-[color:color-mix(in_srgb,var(--material-floating)_78%,transparent)] ${rowOffset + i === activeIndex ? "border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-elevated)_88%,transparent)] shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)]" : ""}`}
                           style={{ animationDelay: `${Math.min(rowOffset + i, 19) * 25}ms` }}
                         >
                           {m.line != null ? (

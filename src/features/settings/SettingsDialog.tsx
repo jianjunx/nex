@@ -49,33 +49,33 @@ export function SettingsDialog() {
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) close(); }}>
       <DialogContent
-        className="sm:max-w-3xl h-[70vh] flex flex-col p-0 gap-0 overflow-hidden"
+        className="sm:max-w-3xl h-[70vh] flex flex-col p-0 gap-0 overflow-hidden border-[color:var(--hairline-soft)] bg-[var(--material-elevated)]"
         onEscapeKeyDown={(e) => {
           // 录制快捷键期间挂起 Esc 关窗——这一记 Esc 属于录制器（取消录制）
           if (isRecordingActive()) e.preventDefault();
         }}
       >
-        <DialogHeader className="px-6 pt-5 pb-3.5 border-b border-[color:var(--border-subtle)]">
+        <DialogHeader className="nex-material-toolbar px-6 pt-5 pb-3.5 border-b border-[color:var(--hairline-soft)]">
           <DialogTitle className="text-base tracking-tight">设置</DialogTitle>
           <DialogDescription className="sr-only">应用设置</DialogDescription>
         </DialogHeader>
         <div className="flex flex-1 min-h-0">
-          <nav className="w-40 shrink-0 border-r border-[color:var(--border-subtle)] p-2 space-y-0.5 overflow-y-auto">
+          <nav className="w-40 shrink-0 border-r border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_84%,transparent)] p-2 space-y-0.5 overflow-y-auto">
             {TABS.map((t) => (
               <button
                 key={t.id}
                 onClick={() => setTab(t.id)}
-                className={`w-full text-left px-3 py-1.5 rounded-[var(--radius-sm)] text-sm transition-colors duration-150 ${
+                className={`nex-interactive-chrome w-full text-left px-3 py-1.5 rounded-[var(--radius-md)] text-sm ${
                   tab === t.id
-                    ? "bg-[var(--accent)]/12 text-[var(--accent)]"
-                    : "text-[var(--text-secondary)] hover:bg-[var(--overlay-hover)] hover:text-[var(--text-primary)]"
+                    ? "border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-elevated)_88%,transparent)] text-[var(--text-primary)] shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)]"
+                    : "text-[var(--text-secondary)] hover:bg-[color:color-mix(in_srgb,var(--material-floating)_78%,transparent)] hover:text-[var(--text-primary)]"
                 }`}
               >
                 {t.label}
               </button>
             ))}
           </nav>
-          <div className="flex-1 min-w-0 overflow-y-auto p-6">
+          <div className="flex-1 min-w-0 overflow-y-auto bg-[color:color-mix(in_srgb,var(--material-elevated)_82%,transparent)] p-6">
             {tab === "appearance" && <AppearanceSection />}
             {tab === "editor" && <EditorSection />}
             {tab === "terminal" && <TerminalSection />}

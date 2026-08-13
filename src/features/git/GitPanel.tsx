@@ -40,9 +40,9 @@ export function GitPanel() {
   const busy = statusLoading || !!opRunning;
 
   return (
-    <div className="flex flex-col h-full overflow-hidden text-sm">
+    <div className="flex flex-col h-full text-sm overflow-hidden">
       {/* Header */}
-      <div className="nex-material-toolbar flex items-center gap-1.5 border-b border-[color:var(--hairline-soft)] px-3 py-2.5">
+      <div className="flex items-center gap-1.5 px-3 py-2.5 border-b border-[color:var(--border-subtle)]">
         {/* 分支切换下拉面板（触发器在内） */}
         <BranchSelector projectPath={project.path} open={branchSelectorOpen} onOpenChange={setBranchSelectorOpen} />
         {status && (ahead > 0 || behind > 0) && (
@@ -67,7 +67,7 @@ export function GitPanel() {
             data-testid="git-push-button"
             title="推送"
             disabled={busy}
-            className="gap-1 border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_78%,transparent)] shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)]"
+            className="gap-1"
             onClick={() => void push(project.path)}
           >
             {pushing ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}

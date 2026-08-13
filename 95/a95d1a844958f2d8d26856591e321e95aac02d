@@ -1,0 +1,23 @@
+src-tauri/src/agent/native/mcp.rs
+  s_d0f82bbca6947f::t_6d0d5e35b12c1c 15-16,273-297,303-310,317,354,356-357,359,554-555,570-572,580-592,594-600,720-732,788,794-796,800,919-927,1095-1119
+src-tauri/src/agent/native/mod.rs
+  s_d0f82bbca6947f::t_9153cab665cb31 364-374
+src-tauri/src/commands/agent_cmds.rs
+  s_d0f82bbca6947f::t_7430684c73befc 266-270,282-285
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "95a95d1a844958f2d8d26856591e321e95aac02d",
+  "prompts": {},
+  "sessions": {
+    "s_d0f82bbca6947f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_d0f82bbca6947f",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

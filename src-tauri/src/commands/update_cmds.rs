@@ -15,7 +15,9 @@
 //! results are cached in-process for a few minutes.
 
 use serde::Serialize;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(any(target_os = "macos", test))]
+use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
@@ -101,12 +103,14 @@ fn pick_asset_pair(assets: &[(String, String)]) -> Option<(String, String)> {
 }
 
 /// POSIX single-quote a path for embedding in a `/bin/bash` script.
+#[cfg(any(target_os = "macos", test))]
 fn shell_single_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 /// `/Applications/Nex.app/Contents/MacOS/nex` → `/Applications/Nex.app`.
 /// Plain `target/debug/nex` (dev) returns `None` so we don't overwrite a random folder.
+#[cfg(any(target_os = "macos", test))]
 fn macos_bundle_from_exe(exe: &Path) -> Option<PathBuf> {
     let macos_dir = exe.parent()?;
     if macos_dir.file_name()?.to_str() != Some("MacOS") {
@@ -125,6 +129,7 @@ fn macos_bundle_from_exe(exe: &Path) -> Option<PathBuf> {
 
 /// Helper script: wait for `pid` to die, then ditto the `.app` out of the dmg
 /// onto `dest` and `open` it. Paths are quoted; the script lives next to the dmg.
+#[cfg(any(target_os = "macos", test))]
 fn macos_relaunch_script(pid: u32, dmg: &Path, dest: &Path, log: &Path, mnt: &Path) -> String {
     let dmg_q = shell_single_quote(&dmg.to_string_lossy());
     let dest_q = shell_single_quote(&dest.to_string_lossy());
@@ -201,6 +206,7 @@ echo "nex update done $(date)"
 }
 
 /// PowerShell: wait until this pid exits, then start the NSIS installer.
+#[cfg(any(target_os = "windows", test))]
 fn windows_wait_and_start_ps(pid: u32, installer: &Path) -> String {
     let path = installer.to_string_lossy().replace('\'', "''");
     format!(

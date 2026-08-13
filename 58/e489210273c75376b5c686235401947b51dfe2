@@ -1,0 +1,45 @@
+src/components/ui/context-menu.tsx
+  s_e875173dcbba69::t_6579f43c3d0fbf 38,67,85,121,148,163,204,223
+src/features/agent/AskQuestionModal.tsx
+  s_e875173dcbba69::t_0de9f0125d232a 92,112
+src/features/agent/CloseTabConfirmDialog.tsx
+  s_e875173dcbba69::t_30bac54044c7a3 22
+src/features/agent/ContextUsageRing.tsx
+  s_e875173dcbba69::t_c6b17f9762a44b 88,117,130,143,153
+src/features/agent/PermissionModal.tsx
+  s_e875173dcbba69::t_41ffd6510e8697 39,48
+src/features/agent/thread/EntryView.tsx
+  s_e875173dcbba69::t_9cd3429dc6d110 51,69
+src/features/agent/thread/FilesChangedCard.tsx
+  s_e875173dcbba69::t_2f5131ff92944f 10,55,80
+src/features/agent/thread/PendingMessagesBar.tsx
+  s_e875173dcbba69::t_95f5bf95e0f2b2 21,24,45,56
+src/features/agent/thread/PlanBar.tsx
+  s_e875173dcbba69::t_ee4dacf9dd9f17 14,17
+src/features/agent/thread/ToolCallCard.tsx
+  s_e875173dcbba69::t_0ebc15c47fd3ab 38-39,65,98,107,117,125
+src/features/layout/AppLifecycleHost.tsx
+  s_e875173dcbba69::t_c7b2d99a9faba9 125
+src/features/projects/NewConversationDropdown.tsx
+  s_e875173dcbba69::t_62c1fbc897a54f 156,171,219,225
+src/features/projects/ProjectSelector.tsx
+  s_e875173dcbba69::t_abf9b851a009a8 186,248,251,261,280,315,328
+src/features/terminal/TerminalPanel.tsx
+  s_e875173dcbba69::t_e937fcbf478449 226,232,238,257
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "58e489210273c75376b5c686235401947b51dfe2",
+  "prompts": {},
+  "sessions": {
+    "s_e875173dcbba69": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_e875173dcbba69",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

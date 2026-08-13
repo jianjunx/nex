@@ -180,10 +180,6 @@ function freshProvider(): NativeAgentProvider {
   };
 }
 
-function configsEqual(a: NativeAgentConfig, b: NativeAgentConfig): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
-}
-
 const SUB_TABS: { id: SubTab; label: string }[] = [
   { id: "providers", label: "模型供应商" },
   { id: "mcp", label: "MCP" },
@@ -200,7 +196,6 @@ export function NexAgentSection() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
   const [tab, setTab] = useState<SubTab>("providers");
   const [editor, setEditor] = useState<{ mode: "add" | "edit"; provider: NativeAgentProvider } | null>(null);
 
@@ -243,13 +238,11 @@ export function NexAgentSection() {
   const persistConfig = async (configToSave: NativeAgentConfig, options?: { syncDraft?: boolean }) => {
     setSaving(true);
     setError(null);
-    setSaved(false);
     try {
       await nativeAgentSetConfig(configToSave);
       setSavedConfig(configToSave);
       if (options?.syncDraft) setConfig(configToSave);
       await useAgentStore.getState().refreshNativeAutoReview();
-      setSaved(true);
     } catch (err) {
       setError(errorMessage(err));
       throw err;
@@ -267,7 +260,6 @@ export function NexAgentSection() {
     try {
       await persistConfig(nextSavedConfig);
       setConfig(nextDraftConfig);
-      setSaved(configsEqual(nextDraftConfig, nextSavedConfig));
     } catch {
       setConfig(currentConfig);
     }
@@ -290,7 +282,6 @@ export function NexAgentSection() {
     };
     await persistConfig(nextSavedConfig);
     setConfig(nextDraftConfig);
-    setSaved(configsEqual(nextDraftConfig, nextSavedConfig));
     setEditor(null);
   };
 
@@ -308,7 +299,6 @@ export function NexAgentSection() {
     };
     await persistConfig(nextSavedConfig);
     setConfig(nextDraftConfig);
-    setSaved(configsEqual(nextDraftConfig, nextSavedConfig));
     setEditor(null);
   };
 

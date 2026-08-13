@@ -1642,8 +1642,8 @@ mod tests {
         for i in 0..30 {
             msgs.push(ChatMessage::user(format!("user {i} {}", "u".repeat(200))));
             msgs.push(ChatMessage::tool_result(
-                &format!("id{i}"),
-                &format!("payload-{i}-{}", "z".repeat(8000)),
+                format!("id{i}"),
+                format!("payload-{i}-{}", "z".repeat(8000)),
             ));
         }
         let tmp = tempfile::tempdir().unwrap();

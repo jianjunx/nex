@@ -15,17 +15,18 @@ import {
   agentRefreshRegistry,
   agentCustomUpsert,
   agentCustomDelete,
+  agentSetSessionMode,
+  agentSetSessionModel,
+  agentSetSessionConfigOption,
+  conversationReplaceThreadEntries,
   nativeAgentGetConfig,
   onAgentNotification,
   onAgentPermissionRequest,
   onAgentPlanApprovalRequest,
   onAgentAskQuestionRequest,
   onAgentSessionTerminated,
-  type AgentConfigOptionDto,
-  type AgentPromptBlock,
-  type AgentSessionTerminatedPayload,
-  type AgentServerDescriptor,
-  type AgentSessionDescriptor,
+  type PromptBlock,
+  type ServerDescriptor,
   type SessionTarget,
   type CustomServer,
   type CreateSessionResult,
@@ -34,14 +35,16 @@ import type {
   AgentAskQuestionRequestPayload,
   AgentPermissionRequestPayload,
   AgentPlanApprovalRequestPayload,
-  AgentNotificationPayload,
+  AskQuestionAnswerPayload,
 } from "../bridge/events";
 import { errorMessage } from "../lib/errors";
+import { pickAllowOptionId } from "../features/agent/pickAllowOptionId";
 import {
+  applyPermissionRequestToEntries,
   applySessionUpdate,
   emptySessionMeta,
 } from "../features/agent/thread/applySessionUpdate";
-import type { ThreadEntry } from "../features/agent/thread/types";
+import type { SessionMeta, ThreadEntry } from "../features/agent/thread/types";
 import { assistantTextAfterLastUser } from "../features/agent/thread/messagesToThreadEntries";
 import { useConversationStore } from "./conversation.store";
 import { useNotificationStore } from "./notification.store";

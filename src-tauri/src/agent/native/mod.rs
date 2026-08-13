@@ -582,7 +582,7 @@ impl acp::Agent for NexNativeAgent {
             ))
         })?;
         let restored_memory = memory::recover_from_history(&arch.history)
-            .unwrap_or_else(memory::WorkingMemory::new);
+            .unwrap_or_default();
         let session = NativeSession {
             cwd: cwd.clone(),
             path_env: self.inner.default_path_env.clone(),

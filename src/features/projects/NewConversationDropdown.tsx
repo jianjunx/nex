@@ -13,6 +13,7 @@ import { useAgentStore } from "../../stores/agent.store";
 import { useConversationStore } from "../../stores/conversation.store";
 import { useProjectStore } from "../../stores/project.store";
 import { useUiStore } from "../../stores/ui.store";
+import type { Conversation, ServerDescriptor, SessionTarget } from "../../bridge/tauri";
 import { errorMessage } from "@/lib/errors";
 
 /**

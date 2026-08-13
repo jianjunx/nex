@@ -37,6 +37,7 @@ vi.mock("../bridge/tauri", () => ({
   agentCustomUpsert: vi.fn(),
   agentCustomDelete: vi.fn(),
   conversationReplaceThreadEntries: (...args: unknown[]) => conversationReplaceThreadEntries(...args),
+  conversationAppendMessage: vi.fn(),
   nativeAgentGetConfig: (...args: unknown[]) => nativeAgentGetConfig(...args),
   onAgentNotification: (cb: (payload: { sessionId: string; update: unknown }) => void) => {
     notificationHandler = cb;

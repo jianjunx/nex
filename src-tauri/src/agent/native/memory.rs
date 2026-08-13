@@ -37,7 +37,7 @@ pub enum MemoryTrigger {
 
 /// Structured memory state for one session. All fields are append-only-ish:
 /// the harness merges into them; no field ever grows unbounded.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkingMemory {
     /// Highest-priority slot: what the session is trying to accomplish.
     /// One short sentence is enough; we don't restate the user prompt.
@@ -57,14 +57,24 @@ pub struct WorkingMemory {
     pub version: u32,
 }
 
+impl Default for WorkingMemory {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WorkingMemory {
     /// Bump the schema version when changing the serialised layout.
     pub const VERSION: u32 = 1;
 
     pub fn new() -> Self {
         Self {
+            goal: Vec::new(),
+            files_inspected: Vec::new(),
+            files_changed: Vec::new(),
+            open_questions: Vec::new(),
+            state_notes: String::new(),
             version: Self::VERSION,
-            ..Default::default()
         }
     }
 
@@ -255,9 +265,7 @@ pub fn render(memory: &WorkingMemory) -> String {
         s.push_str(memory.state_notes.trim_end());
         s.push('\n');
     }
-    s.push_str(&format!(
-        "[memory updated; do not re-render unless a hook updates this block]\n"
-    ));
+    s.push_str("[memory updated; do not re-render unless a hook updates this block]\n");
     s
 }
 

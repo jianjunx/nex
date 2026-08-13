@@ -56,16 +56,16 @@ pub fn default_reserved_response(model_id: &str, reasoning: ReasoningControl) ->
                 || lower.contains("thinking")
         })
         .unwrap_or(false);
-    let per_call_budget = if family_is_reasoning
+    if family_is_reasoning
         || matches!(
             reasoning,
             ReasoningControl::High | ReasoningControl::XHigh
-        ) {
+        )
+    {
         8192
     } else {
         4096
-    };
-    per_call_budget
+    }
 }
 
 /// Conservative default for tokenizer uncertainty margin.
@@ -281,7 +281,7 @@ mod tests {
         let mut msgs: Vec<ChatMessage> = vec![ChatMessage::system("sys")];
         for i in 0..20 {
             msgs.push(ChatMessage::user(format!("goal {i} {}", "u".repeat(200))));
-            msgs.push(ChatMessage::tool_result(&format!("t{i}"), &"x".repeat(6000)));
+            msgs.push(ChatMessage::tool_result(format!("t{i}"), "x".repeat(6000)));
         }
         let budget = model_window(4_000);
         let tmp = tempfile::tempdir().unwrap();
@@ -302,7 +302,7 @@ mod tests {
         let mut msgs: Vec<ChatMessage> = vec![ChatMessage::system("sys")];
         for i in 0..6 {
             msgs.push(ChatMessage::user(format!("u{i}")));
-            msgs.push(ChatMessage::tool_result(&format!("t{i}"), &big));
+            msgs.push(ChatMessage::tool_result(format!("t{i}"), &big));
         }
         let budget = model_window(16_000);
         let tmp = tempfile::tempdir().unwrap();

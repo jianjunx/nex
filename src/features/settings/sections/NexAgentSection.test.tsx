@@ -98,22 +98,45 @@ describe("NexAgentSection auto-saving", () => {
   });
 
   it("keeps advanced draft changes out of provider auto-save", async () => {
+    let releaseFirstSave: () => void = () => {};
+    nativeAgentSetConfig.mockImplementationOnce(
+      () => new Promise<void>((resolve) => { releaseFirstSave = resolve; }),
+    );
+
     render(<NexAgentSection />);
 
     await screen.findByText("尚未配置供应商");
     fireEvent.click(screen.getByRole("button", { name: "高级" }));
     fireEvent.change(screen.getByLabelText("最大步数"), { target: { value: "9" } });
+    await waitFor(() => expect(nativeAgentSetConfig).toHaveBeenCalledTimes(1));
 
     fireEvent.click(screen.getByRole("button", { name: "模型供应商" }));
+    await screen.findByRole("button", { name: "添加供应商" });
     fireEvent.click(screen.getByRole("button", { name: "添加供应商" }));
-    fireEvent.change(screen.getByPlaceholderText("如 DeepSeek"), { target: { value: "OpenAI" } });
-    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "添加供应商" }));
 
-    await waitFor(() => expect(nativeAgentSetConfig).toHaveBeenCalledTimes(1));
-    expect(nativeAgentSetConfig).toHaveBeenCalledWith(
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(screen.getByPlaceholderText("如 DeepSeek"), { target: { value: "OpenAI" } });
+    expect((within(dialog).getByRole("button", { name: "保存中…" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(nativeAgentSetConfig).toHaveBeenCalledTimes(1);
+    expect(nativeAgentSetConfig.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        providers: [],
+        agent: expect.objectContaining({ maxSteps: 9 }),
+      }),
+    );
+
+    releaseFirstSave();
+    await waitFor(() => {
+      const submit = within(dialog).getByRole("button", { name: "添加供应商" }) as HTMLButtonElement;
+      expect(submit.disabled).toBe(false);
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "添加供应商" }));
+
+    await waitFor(() => expect(nativeAgentSetConfig).toHaveBeenCalledTimes(2));
+    expect(nativeAgentSetConfig).toHaveBeenLastCalledWith(
       expect.objectContaining({
         providers: [expect.objectContaining({ name: "OpenAI" })],
-        agent: expect.objectContaining({ maxSteps: 0 }),
+        agent: expect.objectContaining({ maxSteps: 9 }),
       }),
     );
   });
@@ -127,7 +150,7 @@ describe("NexAgentSection auto-saving", () => {
     fireEvent.change(screen.getByPlaceholderText("如 DeepSeek"), { target: { value: "OpenAI" } });
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "添加供应商" }));
 
-    await screen.findByText("save failed");
+    await within(screen.getByRole("dialog")).findByText("save failed");
     expect(screen.getByRole("heading", { name: "添加供应商" })).toBeTruthy();
     expect(nativeAgentSetConfig).toHaveBeenCalledTimes(1);
   });

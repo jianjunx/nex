@@ -361,7 +361,7 @@ pub struct StepOutcome {
 ///
 /// Idempotent: a no-op when `prompt_budget` is already satisfied.
 pub fn step(
-    messages: &mut Vec<ChatMessage>,
+    messages: &mut [ChatMessage],
     prompt_budget: u64,
     tier: StepTier,
     archive_dir: &Path,

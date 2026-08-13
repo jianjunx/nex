@@ -604,7 +604,7 @@ mod tests {
     fn resolve_custom_inherits_shell_credentials() {
         let spec = resolve_custom("my-agent --acp", HashMap::new(), "/w", &test_shell_env()).unwrap();
         assert_eq!(spec.env.get("CODEX_API_KEY").map(String::as_str), Some("test-key"));
-        assert!(spec.env.get("PATH").is_some());
+        assert!(spec.env.contains_key("PATH"));
     }
 
     #[tokio::test]
@@ -616,7 +616,7 @@ mod tests {
         ));
         let spec = resolve_registry(&e, "/work", &test_cache(), &resolver, &test_shell_env()).await.unwrap();
         assert_eq!(spec.env.get("CODEX_API_KEY").map(String::as_str), Some("test-key"));
-        assert!(spec.env.get("PATH").is_some());
+        assert!(spec.env.contains_key("PATH"));
     }
 
     #[test]

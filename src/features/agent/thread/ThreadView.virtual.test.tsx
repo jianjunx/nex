@@ -181,4 +181,36 @@ describe("ThreadView 虚拟化", () => {
 
     expect(scroller.scrollTop).toBeGreaterThan(0); // B:50×60−600=2400
   });
+
+  it("滚动后只吸顶一条已滚过顶部的用户消息", async () => {
+    setupThreadStores("A", { A: makeEntries(40) });
+    const { container } = render(<ThreadView />);
+    const scroller = getScroller(container);
+    setMockScrollHeight(scroller, 40 * 60);
+    await act(async () => {});
+
+    scroller.scrollTop = 200;
+    act(() => {
+      scroller.dispatchEvent(new Event("scroll"));
+    });
+
+    const pinned = container.querySelectorAll("[data-sticky-user-message]");
+    expect(pinned).toHaveLength(1);
+    expect(pinned[0].getAttribute("data-sticky-user-message")).toBe("e2");
+  });
+
+  it("在列表顶部时不吸顶", async () => {
+    setupThreadStores("A", { A: makeEntries(40) });
+    const { container } = render(<ThreadView />);
+    const scroller = getScroller(container);
+    setMockScrollHeight(scroller, 40 * 60);
+    await act(async () => {});
+
+    scroller.scrollTop = 0;
+    act(() => {
+      scroller.dispatchEvent(new Event("scroll"));
+    });
+
+    expect(container.querySelector("[data-sticky-user-message]")).toBeNull();
+  });
 });

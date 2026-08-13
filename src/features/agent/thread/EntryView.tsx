@@ -7,14 +7,24 @@ import { PlanApprovalCard } from "./PlanApprovalCard";
 import { MessageContextMenu } from "./MessageContextMenu";
 import { Markdown } from "./Markdown";
 import { groupChunks } from "./groupChunks";
-import { ThreadImageThumb } from "./ThreadImageThumb";
+import { UserMessageBubble } from "./UserMessageBubble";
 import type { ThreadEntry } from "./types";
 
 /**
  * 单条线程条目渲染。memo 化依赖 entry 引用稳定(immer 结构共享):
  * 流式更新只改末尾 entry,历史条目不重渲染。
  */
-export const EntryView = memo(function EntryView({ entry }: { entry: ThreadEntry }) {
+export const EntryView = memo(function EntryView({
+  entry,
+  userExpanded = false,
+  onToggleUserExpand,
+  floating = false,
+}: {
+  entry: ThreadEntry;
+  userExpanded?: boolean;
+  onToggleUserExpand?: (id: string) => void;
+  floating?: boolean;
+}) {
   const groupedChunks = useMemo(
     () => (entry.kind === "assistant_message" ? groupChunks(entry.chunks) : []),
     [entry],
@@ -23,30 +33,12 @@ export const EntryView = memo(function EntryView({ entry }: { entry: ThreadEntry
   switch (entry.kind) {
     case "user_message":
       return (
-        // max-w 必须在外层 div 上（与 assistant 一致）：放 Card 上时
-        // 百分比相对「内容撑开的外层 div」而非面板，中等长度消息会在
-        // 80%×自身宽度处意外折行（气泡右侧留空）。
-        // ml-auto 把气泡推到面板右侧（block 子元素默认靠左）。
-        <div className="ml-auto flex min-w-0 max-w-[80%] justify-end">
-          <MessageContextMenu textContent={entry.text ?? ""}>
-            <Card className="min-w-0 max-w-full gap-0 px-3 py-1.5 text-sm shadow-none bg-[var(--accent)]/15 border-[color:var(--accent)]/25">
-              <CardContent className="min-w-0 px-0 space-y-2">
-                {entry.images && entry.images.length > 0 && (
-                  <div className="flex flex-wrap gap-2">
-                    {entry.images.map((img, i) => (
-                      <ThreadImageThumb key={i} image={img} />
-                    ))}
-                  </div>
-                )}
-                {entry.text ? (
-                  <p className="min-w-0 whitespace-pre-wrap wrap-anywhere">
-                    {entry.text}
-                  </p>
-                ) : null}
-              </CardContent>
-            </Card>
-          </MessageContextMenu>
-        </div>
+        <UserMessageBubble
+          entry={entry}
+          expanded={userExpanded}
+          onToggleExpand={() => onToggleUserExpand?.(entry.id)}
+          floating={floating}
+        />
       );
     case "assistant_message":
       return (

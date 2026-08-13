@@ -1,5 +1,5 @@
-import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import { Loader2 } from "lucide-react";
 import { useAgentStore } from "../../../stores/agent.store";
 import { useProjectStore } from "../../../stores/project.store";
@@ -8,9 +8,15 @@ import { EntryView } from "./EntryView";
 import { ToolCallGroup } from "./ToolCallCard";
 import { FilesChangedCard } from "./FilesChangedCard";
 import { groupThreadEntries, type ThreadRenderItem } from "./groupThreadEntries";
+import {
+  pickStickyUserMessage,
+  type StickyUserMessage,
+  type UserStickyCandidate,
+} from "./stickyUserMessage";
 import type { ThreadEntry } from "./types";
 
 const EMPTY_ENTRIES: ThreadEntry[] = [];
+const EMPTY_EXPANDED = new Set<string>();
 
 /** 距底部小于此阈值视为「仍在底部」,恢复自动跟随。 */
 const NEAR_BOTTOM_PX = 80;
@@ -51,6 +57,20 @@ function lastUserMessageId(entries: ThreadEntry[]): string | null {
     if (entries[i].kind === "user_message") return entries[i].id;
   }
   return null;
+}
+
+function collectUserStickyCandidates(items: ThreadRenderItem[]): UserStickyCandidate[] {
+  const out: UserStickyCandidate[] = [];
+  let y = 0;
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const h = measuredHeights.get(rowKey(item)) ?? estimateRowHeight(item);
+    if (item.type === "entry" && item.entry.kind === "user_message") {
+      out.push({ index: i, id: item.entry.id, start: y, height: h });
+    }
+    y += h;
+  }
+  return out;
 }
 
 /**
@@ -95,6 +115,9 @@ export function ThreadView() {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
   const lastUserMsgIdRef = useRef<string | null>(null);
+  const stickyIndexRef = useRef<number | null>(null);
+  const [sticky, setSticky] = useState<StickyUserMessage | null>(null);
+  const [expandedUserIds, setExpandedUserIds] = useState<Set<string>>(EMPTY_EXPANDED);
 
   const count = renderItems.length + (showLoading ? 1 : 0);
 
@@ -107,6 +130,14 @@ export function ThreadView() {
       return measuredHeights.get(rowKey(item)) ?? estimateRowHeight(item);
     },
     overscan: 5,
+    rangeExtractor: (range) => {
+      const indexes = defaultRangeExtractor(range);
+      const pinned = stickyIndexRef.current;
+      if (pinned != null && (pinned < range.startIndex || pinned > range.endIndex)) {
+        return [pinned, ...indexes];
+      }
+      return indexes;
+    },
     // 显式用 getBoundingClientRect:兼容小数高度,且是测试 mock 的确定接缝。
     // 测量后把高度写入模块级缓存:卸载再滚回的行可复现真实高度,不再估值跳变。
     measureElement: (el) => {
@@ -122,11 +153,35 @@ export function ThreadView() {
   const totalSize = virtualizer.getTotalSize();
   const virtualItems = virtualizer.getVirtualItems();
 
+  const syncSticky = useCallback(
+    (scrollTop: number) => {
+      const next = pickStickyUserMessage(collectUserStickyCandidates(renderItems), scrollTop);
+      stickyIndexRef.current = next?.index ?? null;
+      setSticky((prev) => {
+        if (prev?.id === next?.id && prev?.translateY === next?.translateY && prev?.index === next?.index) {
+          return prev;
+        }
+        return next;
+      });
+    },
+    [renderItems],
+  );
+
   const onScroll = useCallback(() => {
     const el = scrollerRef.current;
     if (!el) return;
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
     stickToBottomRef.current = distance <= NEAR_BOTTOM_PX;
+    syncSticky(el.scrollTop);
+  }, [syncSticky]);
+
+  const toggleUserExpand = useCallback((id: string) => {
+    setExpandedUserIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   }, []);
 
   // 跟随态下:条目数/总高度变化(含流式撑高末尾条目)→ 贴底。
@@ -134,7 +189,8 @@ export function ThreadView() {
     if (stickToBottomRef.current && count > 0) {
       virtualizer.scrollToIndex(count - 1, { align: "end" });
     }
-  }, [count, totalSize, virtualizer]);
+    syncSticky(scrollerRef.current?.scrollTop ?? 0);
+  }, [count, totalSize, virtualizer, syncSticky]);
 
   // 用户发送新消息:强制恢复跟随,并在本 effect 内同步回底。
   // 不能只置 stickToBottomRef 再等上方 follow effect:同一提交里 follow effect 先跑
@@ -147,6 +203,7 @@ export function ThreadView() {
       lastUserMsgIdRef.current = userId;
       stickToBottomRef.current = true;
       if (count > 0) virtualizer.scrollToIndex(count - 1, { align: "end" });
+      syncSticky(scrollerRef.current?.scrollTop ?? 0);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entries]);
@@ -156,56 +213,89 @@ export function ThreadView() {
     measuredHeights.clear();
     stickToBottomRef.current = true;
     lastUserMsgIdRef.current = lastUserMessageId(entries);
+    setExpandedUserIds(EMPTY_EXPANDED);
+    setSticky(null);
+    stickyIndexRef.current = null;
     if (count > 0) virtualizer.scrollToIndex(count - 1, { align: "end" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTabId]);
 
+  const stickyEntry = useMemo(() => {
+    if (!sticky) return null;
+    const item = renderItems[sticky.index];
+    if (item?.type === "entry" && item.entry.kind === "user_message") return item.entry;
+    return null;
+  }, [sticky, renderItems]);
+
   return (
-    <div
-      ref={scrollerRef}
-      onScroll={onScroll}
-      className="flex-1 min-h-0 overflow-y-auto px-4 py-3"
-    >
-      {entries.length === 0 ? (
-        <div className="flex h-full flex-col items-center justify-center gap-1.5 px-6 text-center">
-          <p className="text-sm text-[var(--text-secondary)]">工作台已就绪</p>
-          <p className="text-xs text-[var(--text-tertiary)]">
-            描述任务，<span className="font-mono text-[var(--text-secondary)]">@</span> 引用文件，
-            <span className="font-mono text-[var(--text-secondary)]">/</span> 使用命令
-          </p>
-        </div>
-      ) : (
-        <div style={{ height: totalSize, position: "relative" }}>
-          {virtualItems.map((vi) => {
-            const item = renderItems[vi.index];
-            return (
-              <div
-                key={rowKey(item)}
-                data-index={vi.index}
-                ref={virtualizer.measureElement}
-                className="pb-3"
-                style={{
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  width: "100%",
-                  transform: `translateY(${vi.start}px)`,
-                }}
-              >
-                {item ? (
-                  item.type === "tool_group" ? (
-                    <ToolCallGroup entries={item.entries} />
-                  ) : item.type === "files_changed" ? (
-                    <FilesChangedCard files={item.files} />
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <div
+        ref={scrollerRef}
+        onScroll={onScroll}
+        className="min-h-0 flex-1 overflow-y-auto px-4 py-3"
+      >
+        {entries.length === 0 ? (
+          <div className="flex h-full flex-col items-center justify-center gap-1.5 px-6 text-center">
+            <p className="text-sm text-[var(--text-secondary)]">工作台已就绪</p>
+            <p className="text-xs text-[var(--text-tertiary)]">
+              描述任务，<span className="font-mono text-[var(--text-secondary)]">@</span> 引用文件，
+              <span className="font-mono text-[var(--text-secondary)]">/</span> 使用命令
+            </p>
+          </div>
+        ) : (
+          <div style={{ height: totalSize, position: "relative" }}>
+            {virtualItems.map((vi) => {
+              const item = renderItems[vi.index];
+              const isPinnedOriginal = sticky != null && sticky.id === rowKey(item);
+              return (
+                <div
+                  key={rowKey(item)}
+                  data-index={vi.index}
+                  ref={virtualizer.measureElement}
+                  className={`pb-3${isPinnedOriginal ? " invisible" : ""}`}
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    transform: `translateY(${vi.start}px)`,
+                  }}
+                >
+                  {item ? (
+                    item.type === "tool_group" ? (
+                      <ToolCallGroup entries={item.entries} />
+                    ) : item.type === "files_changed" ? (
+                      <FilesChangedCard files={item.files} />
+                    ) : (
+                      <EntryView
+                        entry={item.entry}
+                        userExpanded={expandedUserIds.has(item.entry.id)}
+                        onToggleUserExpand={toggleUserExpand}
+                      />
+                    )
                   ) : (
-                    <EntryView entry={item.entry} />
-                  )
-                ) : (
-                  <AgentLoadingIndicator />
-                )}
-              </div>
-            );
-          })}
+                    <AgentLoadingIndicator />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      {stickyEntry && sticky && (
+        <div
+          data-sticky-user-message={stickyEntry.id}
+          className="pointer-events-none absolute inset-x-0 top-0 z-20 px-4 pt-3"
+          style={{ transform: `translateY(${sticky.translateY}px)` }}
+        >
+          <div className="pointer-events-auto">
+            <EntryView
+              entry={stickyEntry}
+              userExpanded={expandedUserIds.has(stickyEntry.id)}
+              onToggleUserExpand={toggleUserExpand}
+              floating
+            />
+          </div>
         </div>
       )}
     </div>

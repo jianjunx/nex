@@ -198,6 +198,7 @@ impl PackageCache {
         let mut cmd = tokio::process::Command::new(node_binary);
         cmd.arg(&npm_cli).args(&sub_args);
         cmd.envs(&runtime.npm_command_env());
+        super::node_runtime::strip_inherited_npm_config_env(&mut cmd);
         cmd.current_dir(install_dir);
         cmd.stdin(std::process::Stdio::null());
         cmd.stdout(std::process::Stdio::piped());

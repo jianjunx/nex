@@ -542,6 +542,24 @@ pub fn npm_command_env_with_base(
     env_map
 }
 
+/// Host tools (Cursor, corepack, a newer npm) inject `npm_config_*` into the
+/// process environment. Nex's bundled npm does not recognize every key and
+/// prints `Unknown env config` on each install. `--userconfig` / `--globalconfig`
+/// already isolate `.npmrc` files; these env vars still leak through.
+pub fn is_npm_config_env_key(key: &str) -> bool {
+    key.len() >= 11 && key[..11].eq_ignore_ascii_case("npm_config_")
+}
+
+/// Drop inherited `npm_config_*` from a child Command. Call after `envs(...)`
+/// so PATH / NODE_EXTRA_CA_CERTS we set ourselves are kept.
+pub fn strip_inherited_npm_config_env(cmd: &mut tokio::process::Command) {
+    for (key, _) in env::vars() {
+        if is_npm_config_env_key(&key) {
+            cmd.env_remove(&key);
+        }
+    }
+}
+
 fn path_with_node_binary_prepended(
     node_binary: &Path,
     base_path: Option<&std::ffi::OsStr>,
@@ -1174,6 +1192,7 @@ async fn run_npm_subcommand_with(
     let mut cmd = tokio::process::Command::new(node_binary);
     cmd.arg(&npm_cli).arg(subcommand).args(args);
     cmd.envs(env_map);
+    strip_inherited_npm_config_env(&mut cmd);
     if let Some(d) = dir {
         cmd.current_dir(d);
     }
@@ -1253,6 +1272,17 @@ mod tests {
             path_str.starts_with(prefix),
             "PATH should start with node dir, got: {path_str}"
         );
+    }
+
+    #[test]
+    fn npm_config_env_keys_match_cursor_leaks() {
+        assert!(is_npm_config_env_key("npm_config__jsr-registry"));
+        assert!(is_npm_config_env_key("npm_config_npm-globalconfig"));
+        assert!(is_npm_config_env_key("npm_config_verify-deps-before-run"));
+        assert!(is_npm_config_env_key("NPM_CONFIG_CACHE"));
+        assert!(!is_npm_config_env_key("npm_package_name"));
+        assert!(!is_npm_config_env_key("PATH"));
+        assert!(!is_npm_config_env_key("npm_config"));
     }
 
     #[test]

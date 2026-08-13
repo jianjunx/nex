@@ -1,0 +1,24 @@
+src/stores/conversation.store.ts
+  s_60eb0da9a2cce9::t_9e7996e562b2c9 9,11,14-22
+src/features/layout/TopBar.test.tsx
+  s_60eb0da9a2cce9::t_532118043934d1 171,173
+  s_60eb0da9a2cce9::t_322e7f3a6b4df5 172,174
+  s_60eb0da9a2cce9::t_bec20bbce870d7 170
+  s_60eb0da9a2cce9::t_7bc04bfe15e67f 175
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "74f1d6e9cfaf10a31e817a8b1cc70f629d20d001",
+  "prompts": {},
+  "sessions": {
+    "s_60eb0da9a2cce9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "21ae8063-fa7a-4fbf-8f4d-2772a964984f",
+        "model": "grok-4.5"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

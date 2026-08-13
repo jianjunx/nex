@@ -15,6 +15,7 @@ import { editorSearchExtensions } from "./editorSearch";
 import { DiffView } from "./DiffView";
 import { useTabReorder } from "../layout/useTabReorder";
 import { EditorContextMenu } from "./EditorContextMenu";
+import FileIcon from "../files/FileIcon";
 
 /** Shared layout chrome (height / panels / fonts). Colors come from oneDark or lightTheme. */
 const editorLayoutTheme = EditorView.theme({
@@ -183,6 +184,7 @@ export function EditorPanel() {
               title={f.diff ? f.diff.title : relativeToProject(f.path, projectPath)}
               onClick={() => void switchFile(f.path)}
             >
+              <FileIcon filename={f.diff ? "" : fileBasename(f.path)} size={14} className="shrink-0" />
               <span className={`truncate ${!f.pinned ? "italic" : ""}`}>{f.diff ? f.diff.title : fileBasename(f.path)}</span>
               {f.dirty && <span className="text-[var(--accent)]" title="未保存的修改">●</span>}
               <span

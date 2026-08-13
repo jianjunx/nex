@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "dev:app": "tauri dev",
-    "build": "tsc -b && vite build",
+    "gen:icons": "node scripts/gen-file-icons.mjs",
+    "build": "pnpm gen:icons && tsc -b && vite build",
     "build:installer": "tauri build",
     "lint": "oxlint",
     "preview": "vite preview",
@@ -66,6 +67,7 @@
     "@vitejs/plugin-react": "^6.0.3",
     "esbuild": "^0.28.1",
     "jsdom": "^30.0.1",
+    "material-icon-theme": "^5.37.0",
     "oxlint": "^1.71.0",
     "shadcn": "^4.17.0",
     "tailwindcss": "^4.3.3",

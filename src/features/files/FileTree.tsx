@@ -346,6 +346,8 @@ function TreeNode({
           <FileIcon
             filename={isRoot ? "" : node.name}
             isFolder={isRoot || node.is_dir}
+            isOpen={isRoot || node.is_dir ? isExpanded : false}
+            isRoot={!!isRoot}
             size={14}
             className="shrink-0"
           />

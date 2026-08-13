@@ -27,7 +27,7 @@ interface UpdateStore {
   /** Query the latest GitHub release. silent=true (startup auto-check) only
    * surfaces the "available" state; manual checks also report up-to-date. */
   check: (silent?: boolean) => Promise<void>;
-  /** Download the installer asset and run it (exits the app on Windows). */
+  /** Download the installer, quit, replace the app, and relaunch. */
   downloadAndInstall: () => Promise<void>;
   dismissBanner: () => void;
 }
@@ -86,7 +86,7 @@ export const useUpdateStore = create<UpdateStore>()((set, get) => ({
     }).catch(() => null);
     try {
       await updateDownloadAndInstall(info.asset_url, info.asset_name);
-      // Windows exits here; macOS keeps running with the .dmg mounted.
+      // Process should be exiting so the helper can replace the bundle.
     } catch (err) {
       set({ status: "error", error: errorMessage(err) });
     } finally {

@@ -2,8 +2,11 @@
 //!
 //! The app has no updater signing infrastructure, so this is a lightweight
 //! flow: query the latest published GitHub release, compare semver, download
-//! the platform installer asset with progress events, then run it (Windows
-//! NSIS installs over the current app; macOS opens the .dmg for drag-install).
+//! the platform installer asset with progress events, then replace the running
+//! app. Windows waits for this process to exit, then launches NSIS. macOS
+//! waits, copies the `.app` out of the `.dmg` over the running bundle, and
+//! relaunches — Finder drag-install is only a fallback when not running from
+//! a bundle (e.g. `tauri dev`).
 //!
 //! Unauthenticated clients share a 60 req/h IP quota on `api.github.com`
 //! (easy to exhaust on a NAT). We query REST `/releases?per_page=N` first
@@ -12,6 +15,7 @@
 //! results are cached in-process for a few minutes.
 
 use serde::Serialize;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
@@ -94,6 +98,114 @@ fn pick_asset_pair(assets: &[(String, String)]) -> Option<(String, String)> {
         let _ = (name, url);
     }
     None
+}
+
+/// POSIX single-quote a path for embedding in a `/bin/bash` script.
+fn shell_single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// `/Applications/Nex.app/Contents/MacOS/nex` → `/Applications/Nex.app`.
+/// Plain `target/debug/nex` (dev) returns `None` so we don't overwrite a random folder.
+fn macos_bundle_from_exe(exe: &Path) -> Option<PathBuf> {
+    let macos_dir = exe.parent()?;
+    if macos_dir.file_name()?.to_str() != Some("MacOS") {
+        return None;
+    }
+    let contents = macos_dir.parent()?;
+    if contents.file_name()?.to_str() != Some("Contents") {
+        return None;
+    }
+    let app = contents.parent()?;
+    if app.extension()?.to_str() != Some("app") {
+        return None;
+    }
+    Some(app.to_path_buf())
+}
+
+/// Helper script: wait for `pid` to die, then ditto the `.app` out of the dmg
+/// onto `dest` and `open` it. Paths are quoted; the script lives next to the dmg.
+fn macos_relaunch_script(pid: u32, dmg: &Path, dest: &Path, log: &Path, mnt: &Path) -> String {
+    let dmg_q = shell_single_quote(&dmg.to_string_lossy());
+    let dest_q = shell_single_quote(&dest.to_string_lossy());
+    let log_q = shell_single_quote(&log.to_string_lossy());
+    let mnt_q = shell_single_quote(&mnt.to_string_lossy());
+    format!(
+        r#"#!/bin/bash
+set -u
+PID={pid}
+DMG={dmg_q}
+DEST={dest_q}
+MNT={mnt_q}
+BACKUP="${{DEST}}.nex-update-bak"
+exec >>{log_q} 2>&1
+echo "nex update start $(date) pid=$PID"
+
+n=0
+while /bin/kill -0 "$PID" 2>/dev/null; do
+  n=$((n + 1))
+  if [ "$n" -gt 150 ]; then
+    echo "timeout waiting for pid $PID"
+    break
+  fi
+  /bin/sleep 0.2
+done
+/bin/sleep 0.5
+
+cleanup() {{
+  /usr/bin/hdiutil detach "$MNT" -force -quiet 2>/dev/null || true
+  /bin/rmdir "$MNT" 2>/dev/null || true
+}}
+trap cleanup EXIT
+
+/bin/mkdir -p "$MNT"
+if ! /usr/bin/hdiutil attach -nobrowse -readonly -mountpoint "$MNT" "$DMG"; then
+  echo "hdiutil attach failed"
+  /usr/bin/open "$DEST" 2>/dev/null || true
+  exit 1
+fi
+
+SRC=$(/usr/bin/find "$MNT" -maxdepth 1 -name '*.app' -print | /usr/bin/head -n 1)
+if [ -z "${{SRC:-}}" ] || [ ! -d "$SRC" ]; then
+  echo "no .app in dmg"
+  /usr/bin/open "$DEST" 2>/dev/null || true
+  exit 1
+fi
+src_base=$(/usr/bin/basename "$SRC")
+dst_base=$(/usr/bin/basename "$DEST")
+if [ "$src_base" != "$dst_base" ]; then
+  echo "app name mismatch $src_base vs $dst_base"
+  /usr/bin/open "$DEST" 2>/dev/null || true
+  exit 1
+fi
+
+/bin/rm -rf "$BACKUP"
+if ! /bin/mv "$DEST" "$BACKUP"; then
+  echo "could not move running bundle aside"
+  /usr/bin/open "$DEST" 2>/dev/null || true
+  exit 1
+fi
+if ! /usr/bin/ditto "$SRC" "$DEST"; then
+  echo "ditto failed, restoring"
+  /bin/rm -rf "$DEST"
+  /bin/mv "$BACKUP" "$DEST"
+  /usr/bin/open "$DEST" 2>/dev/null || true
+  exit 1
+fi
+/bin/rm -rf "$BACKUP"
+/usr/bin/xattr -cr "$DEST" 2>/dev/null || true
+/usr/bin/open "$DEST"
+echo "nex update done $(date)"
+"#
+    )
+}
+
+/// PowerShell: wait until this pid exits, then start the NSIS installer.
+fn windows_wait_and_start_ps(pid: u32, installer: &Path) -> String {
+    let path = installer.to_string_lossy().replace('\'', "''");
+    format!(
+        "Wait-Process -Id {pid} -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 800; $p = '{path}'; for ($i = 0; $i -lt 5; $i++) {{ try {{ Start-Process -LiteralPath $p; exit 0 }} catch {{ Start-Sleep -Milliseconds (500 * ($i + 1)) }} }}"
+    )
 }
 
 /// Strip a release tag down to a bare semver for comparison. Published tags
@@ -385,8 +497,10 @@ pub async fn update_check_latest(app: AppHandle) -> Result<UpdateInfo, NexError>
 }
 
 /// Download the installer asset to the app-data dir (with progress events),
-/// then launch it. Windows: runs the NSIS installer and exits so files can be
-/// replaced. macOS: opens the .dmg for the user to drag-install.
+/// then replace the running app. Windows/macOS both wait for this process to
+/// exit so the installer can overwrite files; macOS copies the bundle from
+/// the dmg and relaunches. Finder drag-install is only used when we are not
+/// running from a `.app` (dev builds).
 #[tauri::command]
 pub async fn update_download_and_install(
     app: AppHandle,
@@ -469,45 +583,93 @@ pub async fn update_download_and_install(
     // installer from opening it — os error 32 (sharing violation).
     drop(file);
 
-    #[cfg(target_os = "windows")]
+    launch_downloaded_installer(&app, &dest)
+}
+
+#[cfg(target_os = "windows")]
+fn spawn_windows_installer(dest: &Path) -> Result<(), NexError> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    let ps = windows_wait_and_start_ps(std::process::id(), dest);
+    std::process::Command::new("powershell")
+        .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &ps])
+        .creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS)
+        .spawn()
+        .map_err(|e| NexError::Internal(format!("启动安装程序失败: {e}")))?;
+    Ok(())
+}
+
+/// Returns true when a helper was spawned and the app should exit.
+#[cfg(target_os = "macos")]
+fn spawn_macos_bundle_replace(dmg: &Path) -> Result<bool, NexError> {
+    let Some(dest) = std::env::current_exe()
+        .ok()
+        .as_deref()
+        .and_then(macos_bundle_from_exe)
+    else {
+        return Ok(false);
+    };
+
+    let dir = dmg
+        .parent()
+        .ok_or_else(|| NexError::Internal("更新目录无效".into()))?;
+    let script_path = dir.join("install-and-relaunch.sh");
+    let log_path = dir.join("install-and-relaunch.log");
+    let mnt = std::env::temp_dir().join(format!("nex-update-mnt-{}", std::process::id()));
+    let script = macos_relaunch_script(std::process::id(), dmg, &dest, &log_path, &mnt);
+    std::fs::write(&script_path, script)
+        .map_err(|e| NexError::Internal(format!("写入更新脚本失败: {e}")))?;
     {
-        // Windows Defender / other AVs briefly lock newly-downloaded
-        // executables, and a lingering installer from a previous attempt
-        // holds the same path. Retry with short backoff before failing.
-        let mut last_err: Option<std::io::Error> = None;
-        for attempt in 0..5u32 {
-            match std::process::Command::new(&dest).spawn() {
-                Ok(_) => {
-                    // Exit so the NSIS installer can replace the running
-                    // binaries.
-                    app.exit(0);
-                    return Ok(());
-                }
-                Err(e) => last_err = Some(e),
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(
-                500 * (attempt as u64 + 1),
-            ))
-            .await;
-        }
-        let detail = last_err
-            .map(|e| e.to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-        Err(NexError::Internal(format!(
-            "启动安装程序失败: {detail}。若杀毒软件正在扫描安装包，请稍后重试或暂时关闭实时防护；也可手动运行安装包: {}",
-            dest.display()
-        )))
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&script_path)
+            .map_err(|e| NexError::Internal(format!("读取更新脚本权限失败: {e}")))?
+            .permissions();
+        perms.set_mode(0o700);
+        std::fs::set_permissions(&script_path, perms)
+            .map_err(|e| NexError::Internal(format!("设置更新脚本权限失败: {e}")))?;
     }
 
-    #[cfg(not(target_os = "windows"))]
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+    std::process::Command::new("/bin/bash")
+        .arg(&script_path)
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn()
+        .map_err(|e| NexError::Internal(format!("启动更新程序失败: {e}")))?;
+    Ok(true)
+}
+
+fn launch_downloaded_installer(app: &AppHandle, dest: &Path) -> Result<(), NexError> {
+    #[cfg(target_os = "windows")]
     {
-        #[cfg(target_os = "macos")]
-        {
-            std::process::Command::new("open")
-                .arg(&dest)
-                .spawn()
-                .map_err(|e| NexError::Internal(format!("打开安装镜像失败: {e}")))?;
+        spawn_windows_installer(dest)?;
+        app.exit(0);
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if spawn_macos_bundle_replace(dest)? {
+            app.exit(0);
+            return Ok(());
         }
+        // Dev / unpackaged: fall back to opening the dmg.
+        std::process::Command::new("open")
+            .arg(dest)
+            .spawn()
+            .map_err(|e| NexError::Internal(format!("打开安装镜像失败: {e}")))?;
+        return Ok(());
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let _ = (app, dest);
         Ok(())
     }
 }
@@ -627,6 +789,49 @@ mod tests {
         assert_eq!(strip_v("release-v1.0.0-beta8"), "1.0.0-beta8");
         assert_eq!(strip_v("v1.2.3+build.5"), "1.2.3+build.5");
         assert_eq!(strip_v("  release-v2.0.0  "), "2.0.0");
+    }
+
+    #[test]
+    fn macos_bundle_from_standard_layout() {
+        let exe = PathBuf::from("/Applications/Nex.app/Contents/MacOS/nex");
+        assert_eq!(
+            macos_bundle_from_exe(&exe),
+            Some(PathBuf::from("/Applications/Nex.app"))
+        );
+        assert!(macos_bundle_from_exe(Path::new("/Users/jj/nex/target/debug/nex")).is_none());
+        assert!(macos_bundle_from_exe(Path::new("/Applications/Nex.app/Contents/MacOS")).is_none());
+    }
+
+    #[test]
+    fn shell_single_quote_escapes_apostrophe() {
+        assert_eq!(shell_single_quote("it's"), "'it'\\''s'");
+        assert_eq!(shell_single_quote("/tmp/Nex 1.dmg"), "'/tmp/Nex 1.dmg'");
+    }
+
+    #[test]
+    fn macos_script_waits_then_replaces_quoted_paths() {
+        let script = macos_relaunch_script(
+            42,
+            Path::new("/tmp/Nex 1.dmg"),
+            Path::new("/Applications/Nex.app"),
+            Path::new("/tmp/log"),
+            Path::new("/tmp/mnt"),
+        );
+        assert!(script.contains("PID=42"));
+        assert!(script.contains("'/tmp/Nex 1.dmg'"));
+        assert!(script.contains("'/Applications/Nex.app'"));
+        assert!(script.contains("while /bin/kill -0 \"$PID\""));
+        assert!(script.contains("/usr/bin/ditto"));
+        assert!(script.contains("/usr/bin/open"));
+        assert!(script.contains("nex-update-bak"));
+    }
+
+    #[test]
+    fn windows_ps_waits_for_pid_and_escapes_quotes() {
+        let ps = windows_wait_and_start_ps(7, Path::new(r"C:\Users\O'Brien\Nex-setup.exe"));
+        assert!(ps.contains("Wait-Process -Id 7"));
+        assert!(ps.contains("Start-Process -LiteralPath"));
+        assert!(ps.contains(r"C:\Users\O''Brien\Nex-setup.exe"));
     }
 
     #[test]

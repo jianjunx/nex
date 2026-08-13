@@ -329,11 +329,11 @@ function TreeNode({
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
-          className={`flex items-center gap-1.5 px-2 py-px text-sm cursor-pointer rounded-[var(--radius-sm)] transition-colors duration-100 outline-none group ${
+          className={`flex items-center gap-1.5 px-2 py-[3px] text-sm cursor-pointer rounded-[var(--radius-sm)] transition-colors duration-100 outline-none group ${
             isDragOver
               ? "bg-[var(--accent)]/30 ring-1 ring-[var(--accent)]"
               : isSelected
-              ? "bg-[var(--accent)]/20"
+              ? "bg-[var(--overlay-active)] text-[var(--text-primary)]"
               : "hover:bg-[var(--overlay-hover)]"
           }`}
           style={{ paddingLeft: depth * 10 + 6 }}
@@ -356,16 +356,16 @@ function TreeNode({
             <>
               <div className="flex-1" />
               <div className="flex items-center gap-0.5">
-                <span role="button" title="新建文件" className="p-0.5 rounded transition-colors duration-100 hover:bg-[var(--overlay-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onNewFile(); }}>
+                <span role="button" title="新建文件" className="p-0.5 rounded-[var(--radius-sm)] transition-colors duration-100 hover:bg-[var(--overlay-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onNewFile(); }}>
                   <FilePlus size={14} />
                 </span>
-                <span role="button" title="新建目录" className="p-0.5 rounded transition-colors duration-100 hover:bg-[var(--overlay-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onNewFolder(); }}>
+                <span role="button" title="新建目录" className="p-0.5 rounded-[var(--radius-sm)] transition-colors duration-100 hover:bg-[var(--overlay-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onNewFolder(); }}>
                   <FolderPlus size={14} />
                 </span>
-                <span role="button" title="刷新" className="p-0.5 rounded transition-colors duration-100 hover:bg-[var(--overlay-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onRefresh(); }}>
+                <span role="button" title="刷新" className="p-0.5 rounded-[var(--radius-sm)] transition-colors duration-100 hover:bg-[var(--overlay-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onRefresh(); }}>
                   <RefreshCw size={14} />
                 </span>
-                <span role="button" title="全部折叠" className="p-0.5 rounded transition-colors duration-100 hover:bg-[var(--overlay-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onCollapseAll(); }}>
+                <span role="button" title="全部折叠" className="p-0.5 rounded-[var(--radius-sm)] transition-colors duration-100 hover:bg-[var(--overlay-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" onClick={(e) => { e.stopPropagation(); rootActions.onCollapseAll(); }}>
                   <ChevronsDownUp size={14} />
                 </span>
               </div>
@@ -534,7 +534,7 @@ export function FileTree() {
     if (project) loadRoot(project.path);
   }, [project?.path]);
 
-  if (!project) return <div className="p-4 text-sm text-[var(--text-tertiary)]">No project open</div>;
+  if (!project) return <div className="px-3 py-4 text-sm text-[var(--text-tertiary)]">还没有打开项目</div>;
 
   const rootActions = {
     projectName: project.name,

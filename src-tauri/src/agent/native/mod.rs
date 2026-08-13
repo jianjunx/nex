@@ -311,18 +311,6 @@ impl NexNativeAgent {
             current_mode_id: acp::SessionModeId(Arc::from(current_mode_id)),
             available_modes: vec![
                 acp::SessionMode {
-                    id: acp::SessionModeId(Arc::from("code")),
-                    name: "Code".to_string(),
-                    description: Some("Edit files and run tools".to_string()),
-                    meta: None,
-                },
-                acp::SessionMode {
-                    id: acp::SessionModeId(Arc::from("ask")),
-                    name: "Ask".to_string(),
-                    description: Some("Read-only questions and analysis".to_string()),
-                    meta: None,
-                },
-                acp::SessionMode {
                     id: acp::SessionModeId(Arc::from("plan")),
                     name: "Plan".to_string(),
                     description: Some(
@@ -334,6 +322,18 @@ impl NexNativeAgent {
                     id: acp::SessionModeId(Arc::from("auto")),
                     name: "Auto".to_string(),
                     description: Some("Run without per-tool approval prompts".to_string()),
+                    meta: None,
+                },
+                acp::SessionMode {
+                    id: acp::SessionModeId(Arc::from("code")),
+                    name: "Code".to_string(),
+                    description: Some("Edit files and run tools".to_string()),
+                    meta: None,
+                },
+                acp::SessionMode {
+                    id: acp::SessionModeId(Arc::from("ask")),
+                    name: "Ask".to_string(),
+                    description: Some("Read-only questions and analysis".to_string()),
                     meta: None,
                 },
             ],
@@ -1282,7 +1282,7 @@ mod tests {
                     .iter()
                     .map(|m| m.id.0.as_ref())
                     .collect();
-                assert_eq!(ids, vec!["code", "ask", "plan", "auto"]);
+                assert_eq!(ids, vec!["plan", "auto", "code", "ask"]);
                 assert!(session.models.is_some());
 
                 let response = conn

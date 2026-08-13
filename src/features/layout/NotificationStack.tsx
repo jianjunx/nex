@@ -22,7 +22,7 @@ function NotificationCard({ n }: { n: AppNotification }) {
       onKeyDown={(e) => {
         if (e.key === "Enter") activate(n.id);
       }}
-      className="animate-in fade-in slide-in-from-left-2 duration-200 group cursor-pointer rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--glass-3-surface)] px-3 py-2.5 shadow-lg transition-colors hover:bg-[var(--glass-2-surface)]"
+      className="animate-in fade-in slide-in-from-left-2 duration-200 group cursor-pointer rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--card)] px-3 py-2.5 nex-elevated transition-colors hover:bg-[var(--glass-2-surface)]"
       title="点击跳转到对应会话"
     >
       <div className="flex items-center gap-2">

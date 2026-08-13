@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { Brain } from "lucide-react";
+import { Brain, ChevronDown, ChevronRight } from "lucide-react";
 import { Markdown } from "./Markdown";
 
 export function ThinkingBlock({ text, defaultOpen = true }: { text: string; defaultOpen?: boolean }) {
@@ -18,12 +18,17 @@ export function ThinkingBlock({ text, defaultOpen = true }: { text: string; defa
     <div className="rounded-[var(--radius-md)] border border-[color:var(--border-subtle)] bg-[var(--glass-2-surface)] overflow-hidden">
       <button
         type="button"
-        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-[var(--text-primary)] hover:bg-[var(--glass-3-surface)]"
+        className="flex w-full cursor-pointer items-center gap-2 px-2.5 py-1.5 text-xs text-[var(--text-primary)] hover:bg-[var(--glass-3-surface)]"
+        title={open ? "收起" : "展开"}
         onClick={() => setOpen((v) => !v)}
       >
         <Brain size={14} />
         <span className="font-medium">Thinking</span>
-        <span className="ml-auto opacity-60">{open ? "Hide" : "Show"}</span>
+        {open ? (
+          <ChevronDown size={14} className="ml-auto opacity-60" />
+        ) : (
+          <ChevronRight size={14} className="ml-auto opacity-60" />
+        )}
       </button>
       {open && (
         <div

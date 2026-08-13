@@ -6,8 +6,8 @@ import { useProjectStore } from "../../../stores/project.store";
 import { selectProjectActiveTabId, useConversationStore } from "../../../stores/conversation.store";
 import { EntryView } from "./EntryView";
 import { ToolCallGroup } from "./ToolCallCard";
+import { FilesChangedCard } from "./FilesChangedCard";
 import { groupThreadEntries, type ThreadRenderItem } from "./groupThreadEntries";
-import { isEditTool } from "./toolCallUtils";
 import type { ThreadEntry } from "./types";
 
 const EMPTY_ENTRIES: ThreadEntry[] = [];
@@ -27,9 +27,11 @@ const measuredHeights = new Map<string, number>();
 function estimateRowHeight(item: ThreadRenderItem | undefined): number {
   if (!item) return 40; // 加载指示器行
   if (item.type === "tool_group") return 40;
+  if (item.type === "files_changed") return 44 + item.files.length * 28;
   const e = item.entry;
-  // edit 卡行高估值贴近「内容区封顶 350 + 头/边距」实测(~386),首帧布局即准,减小上滚首测 delta。
-  if (e.kind === "tool_call") return isEditTool(e) ? 386 : 48;
+  if (e.kind === "tool_call") {
+    return e.status === "waiting_for_confirmation" ? 96 : 48;
+  }
   if (e.kind === "plan_approval") return 220;
   // 120: 贴近含代码块/表格/Mermaid 的助手消息实测高度（多在 80~500px）。
   // 上调首帧估值以减小「首次上滚未见行」的首滚 delta；measureElement
@@ -39,7 +41,9 @@ function estimateRowHeight(item: ThreadRenderItem | undefined): number {
 
 function rowKey(item: ThreadRenderItem | undefined): string {
   if (!item) return "agent-loading";
-  return item.type === "tool_group" ? `g:${item.key}` : item.entry.id;
+  if (item.type === "tool_group") return `g:${item.key}`;
+  if (item.type === "files_changed") return `fc:${item.key}`;
+  return item.entry.id;
 }
 
 function lastUserMessageId(entries: ThreadEntry[]): string | null {
@@ -82,7 +86,11 @@ export function ThreadView() {
     activeTabId ? s.sessions[activeTabId]?.status : undefined,
   );
   const showLoading = shouldShowAgentLoading(sessionStatus, entries);
-  const renderItems = useMemo(() => groupThreadEntries(entries), [entries]);
+  const lastTurnComplete = sessionStatus !== "running" && sessionStatus !== "starting" && sessionStatus !== "waiting";
+  const renderItems = useMemo(
+    () => groupThreadEntries(entries, { lastTurnComplete }),
+    [entries, lastTurnComplete],
+  );
 
   const scrollerRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
@@ -159,8 +167,12 @@ export function ThreadView() {
       className="flex-1 min-h-0 overflow-y-auto px-4 py-3"
     >
       {entries.length === 0 ? (
-        <div className="flex items-center justify-center h-full text-[var(--text-tertiary)] text-sm">
-          工作台已就绪，请开始吧牛马！
+        <div className="flex h-full flex-col items-center justify-center gap-1.5 px-6 text-center">
+          <p className="text-sm text-[var(--text-secondary)]">工作台已就绪</p>
+          <p className="text-xs text-[var(--text-tertiary)]">
+            描述任务，<span className="font-mono text-[var(--text-secondary)]">@</span> 引用文件，
+            <span className="font-mono text-[var(--text-secondary)]">/</span> 使用命令
+          </p>
         </div>
       ) : (
         <div style={{ height: totalSize, position: "relative" }}>
@@ -183,6 +195,8 @@ export function ThreadView() {
                 {item ? (
                   item.type === "tool_group" ? (
                     <ToolCallGroup entries={item.entries} />
+                  ) : item.type === "files_changed" ? (
+                    <FilesChangedCard files={item.files} />
                   ) : (
                     <EntryView entry={item.entry} />
                   )

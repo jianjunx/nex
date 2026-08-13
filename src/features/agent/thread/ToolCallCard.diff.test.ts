@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ToolCallEntry } from "./types";
-import { entryDiffs } from "./ToolCallCard";
+import { entryDiffs } from "./toolCallUtils";
 
 function entry(partial: Partial<ToolCallEntry> & { rawInput?: unknown }): ToolCallEntry {
   return {

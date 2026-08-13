@@ -32,7 +32,7 @@ export function GitPanel() {
     if (project) refresh(project.path);
   }, [project?.path]);
 
-  if (!project) return <div className="p-3 text-sm text-[var(--text-tertiary)]">No project</div>;
+  if (!project) return <div className="px-3 py-4 text-sm text-[var(--text-tertiary)]">还没有打开项目</div>;
 
   const ahead = status?.ahead ?? 0;
   const behind = status?.behind ?? 0;

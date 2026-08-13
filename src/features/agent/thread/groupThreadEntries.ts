@@ -1,18 +1,36 @@
 import type { ThreadEntry, ToolCallEntry } from "./types";
+import { collectChangedFiles, type ChangedFile } from "./filesChanged";
 import { isEditTool } from "./toolCallUtils";
 
 export type ThreadRenderItem =
   | { type: "entry"; entry: ThreadEntry }
-  | { type: "tool_group"; entries: ToolCallEntry[]; key: string };
+  | { type: "tool_group"; entries: ToolCallEntry[]; key: string }
+  | { type: "files_changed"; files: ChangedFile[]; key: string };
+
+export type GroupThreadEntriesOptions = {
+  /**
+   * When true, append a files-changed summary after the last turn if it
+   * contains completed edits. Historical turns (closed by a later user
+   * message) always get a summary. Pass false while the current turn is
+   * still running so the card only appears after the task ends.
+   */
+  lastTurnComplete?: boolean;
+};
 
 /**
- * Collapse adjacent non-edit tool_call entries into a single group item.
- * Edit tools, permission-waiting tools, and all other entry kinds stay standalone
- * so AskUserQuestion / permission prompts remain visible.
+ * Collapse adjacent tool_call entries into a single group item.
+ * Permission-waiting tools stay standalone so prompts remain visible.
+ * After each completed turn that edited files, insert a files_changed card.
  */
-export function groupThreadEntries(entries: ThreadEntry[]): ThreadRenderItem[] {
+export function groupThreadEntries(
+  entries: ThreadEntry[],
+  opts: GroupThreadEntriesOptions = {},
+): ThreadRenderItem[] {
+  const lastTurnComplete = opts.lastTurnComplete ?? true;
   const items: ThreadRenderItem[] = [];
   let toolBuf: ToolCallEntry[] = [];
+  let turnEdits: ToolCallEntry[] = [];
+  let turn = 0;
 
   const flushTools = () => {
     if (toolBuf.length === 0) return;
@@ -25,16 +43,40 @@ export function groupThreadEntries(entries: ThreadEntry[]): ThreadRenderItem[] {
     toolBuf = [];
   };
 
+  const flushTurnSummary = (complete: boolean) => {
+    flushTools();
+    if (complete && turnEdits.length > 0) {
+      const files = collectChangedFiles(turnEdits);
+      if (files.length > 0) {
+        items.push({
+          type: "files_changed",
+          files,
+          key: `${turn}:${turnEdits[0].id}`,
+        });
+      }
+    }
+    turnEdits = [];
+    turn += 1;
+  };
+
   for (const entry of entries) {
+    if (entry.kind === "user_message") {
+      flushTurnSummary(true);
+      items.push({ type: "entry", entry });
+      continue;
+    }
     const waiting =
       entry.kind === "tool_call" && entry.status === "waiting_for_confirmation";
-    if (entry.kind === "tool_call" && !isEditTool(entry) && !waiting) {
+    if (entry.kind === "tool_call" && !waiting) {
+      if (isEditTool(entry) && entry.status === "completed") {
+        turnEdits.push(entry);
+      }
       toolBuf.push(entry);
       continue;
     }
     flushTools();
     items.push({ type: "entry", entry });
   }
-  flushTools();
+  flushTurnSummary(lastTurnComplete);
   return items;
 }

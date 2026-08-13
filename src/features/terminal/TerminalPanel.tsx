@@ -229,7 +229,7 @@ export function TerminalPanel() {
             key={s.id}
             type="button"
             onClick={() => setActive(s.id)}
-            className={`flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-[var(--radius-sm)] transition-colors ${s.id === activeSessionId ? "bg-[var(--overlay-active)] text-[var(--text-primary)]" : "text-[var(--text-tertiary)] hover:bg-[var(--overlay-ghost)]"}`}
+            className={`flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-[var(--radius-sm)] border transition-colors duration-150 ${s.id === activeSessionId ? "border-[color:var(--border-default)] bg-[var(--glass-2-surface)] text-[var(--text-primary)] shadow-[inset_0_1px_0_0_var(--edge-highlight)]" : "border-transparent text-[var(--text-tertiary)] hover:bg-[var(--overlay-ghost)] hover:text-[var(--text-secondary)]"}`}
           >
             <span className="truncate max-w-[120px]">{s.title}</span>
             <span

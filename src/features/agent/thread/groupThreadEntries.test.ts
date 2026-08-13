@@ -13,8 +13,17 @@ function tool(partial: Partial<ToolCallEntry> & Pick<ToolCallEntry, "id" | "tool
   };
 }
 
+function edit(id: string, path: string, oldText = "a", newText = "b"): ToolCallEntry {
+  return tool({
+    id,
+    toolKind: "edit",
+    title: `Edit ${path}`,
+    content: [{ type: "diff", path, oldText, newText }],
+  });
+}
+
 describe("groupThreadEntries", () => {
-  it("collapses adjacent non-edit tools and leaves edit tools standalone", () => {
+  it("collapses adjacent tools including edits into one group", () => {
     const entries: ThreadEntry[] = [
       { id: "u1", kind: "user_message", text: "hi", timestamp: 1 },
       tool({ id: "t1", toolKind: "search", title: "grep" }),
@@ -26,18 +35,13 @@ describe("groupThreadEntries", () => {
     ];
 
     const items = groupThreadEntries(entries);
-    expect(items).toHaveLength(5);
+    expect(items).toHaveLength(3);
     expect(items[0]).toMatchObject({ type: "entry", entry: { id: "u1" } });
     expect(items[1]).toMatchObject({ type: "tool_group" });
     if (items[1].type === "tool_group") {
-      expect(items[1].entries.map((e) => e.id)).toEqual(["t1", "t2", "t3"]);
+      expect(items[1].entries.map((e) => e.id)).toEqual(["t1", "t2", "t3", "t4", "t5"]);
     }
-    expect(items[2]).toMatchObject({ type: "entry", entry: { id: "t4", toolKind: "edit" } });
-    expect(items[3]).toMatchObject({ type: "tool_group" });
-    if (items[3].type === "tool_group") {
-      expect(items[3].entries.map((e) => e.id)).toEqual(["t5"]);
-    }
-    expect(items[4]).toMatchObject({ type: "entry", entry: { id: "a1" } });
+    expect(items[2]).toMatchObject({ type: "entry", entry: { id: "a1" } });
   });
 
   it("keeps permission-waiting tools standalone so questions stay visible", () => {
@@ -75,6 +79,63 @@ describe("groupThreadEntries", () => {
     expect(items3[0]?.type).toBe("tool_group");
     if (items2[0].type === "tool_group" && items3[0].type === "tool_group") {
       expect(items3[0].key).toBe(items2[0].key);
+    }
+  });
+
+  it("appends a files_changed card after a completed turn with edits", () => {
+    const entries: ThreadEntry[] = [
+      { id: "u1", kind: "user_message", text: "fix", timestamp: 1 },
+      edit("e1", "src/IconBar.tsx", "aaa", "bbb"),
+      edit("e2", "src/SettingsDialog.tsx", "x", "yy"),
+      { id: "a1", kind: "assistant_message", chunks: [{ type: "message", text: "done" }], timestamp: 2 },
+    ];
+
+    const items = groupThreadEntries(entries, { lastTurnComplete: true });
+    expect(items.map((i) => i.type)).toEqual(["entry", "tool_group", "entry", "files_changed"]);
+    const card = items[3];
+    expect(card.type).toBe("files_changed");
+    if (card.type === "files_changed") {
+      expect(card.files.map((f) => f.path)).toEqual([
+        "src/IconBar.tsx",
+        "src/SettingsDialog.tsx",
+      ]);
+    }
+  });
+
+  it("does not show files_changed for the in-flight last turn", () => {
+    const entries: ThreadEntry[] = [
+      { id: "u1", kind: "user_message", text: "fix", timestamp: 1 },
+      edit("e1", "src/a.ts"),
+    ];
+    const items = groupThreadEntries(entries, { lastTurnComplete: false });
+    expect(items.map((i) => i.type)).toEqual(["entry", "tool_group"]);
+  });
+
+  it("still summarizes a previous turn while the next turn is running", () => {
+    const entries: ThreadEntry[] = [
+      { id: "u1", kind: "user_message", text: "one", timestamp: 1 },
+      edit("e1", "src/a.ts"),
+      { id: "a1", kind: "assistant_message", chunks: [{ type: "message", text: "ok" }], timestamp: 2 },
+      { id: "u2", kind: "user_message", text: "two", timestamp: 3 },
+      tool({ id: "t1", toolKind: "read", title: "Read" }),
+    ];
+    const items = groupThreadEntries(entries, { lastTurnComplete: false });
+    const types = items.map((i) => i.type);
+    expect(types).toEqual(["entry", "tool_group", "entry", "files_changed", "entry", "tool_group"]);
+  });
+
+  it("aggregates multiple edits of the same file", () => {
+    const entries: ThreadEntry[] = [
+      { id: "u1", kind: "user_message", text: "fix", timestamp: 1 },
+      edit("e1", "src/a.ts", "a", "b"),
+      edit("e2", "src/a.ts", "b", "c"),
+    ];
+    const items = groupThreadEntries(entries, { lastTurnComplete: true });
+    const card = items.find((i) => i.type === "files_changed");
+    expect(card?.type).toBe("files_changed");
+    if (card?.type === "files_changed") {
+      expect(card.files).toHaveLength(1);
+      expect(card.files[0].path).toBe("src/a.ts");
     }
   });
 });

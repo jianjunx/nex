@@ -55,8 +55,8 @@ export function SettingsDialog() {
           if (isRecordingActive()) e.preventDefault();
         }}
       >
-        <DialogHeader className="px-6 pt-5 pb-3 border-b border-[color:var(--border-subtle)]">
-          <DialogTitle>设置</DialogTitle>
+        <DialogHeader className="px-6 pt-5 pb-3.5 border-b border-[color:var(--border-subtle)]">
+          <DialogTitle className="text-base tracking-tight">设置</DialogTitle>
           <DialogDescription className="sr-only">应用设置</DialogDescription>
         </DialogHeader>
         <div className="flex flex-1 min-h-0">
@@ -65,10 +65,10 @@ export function SettingsDialog() {
               <button
                 key={t.id}
                 onClick={() => setTab(t.id)}
-                className={`w-full text-left px-3 py-1.5 rounded-[var(--radius-sm)] text-sm transition-colors ${
+                className={`w-full text-left px-3 py-1.5 rounded-[var(--radius-sm)] text-sm transition-colors duration-150 ${
                   tab === t.id
-                    ? "bg-[var(--accent)]/15 text-[var(--accent)]"
-                    : "text-[var(--text-secondary)] hover:bg-[var(--overlay-hover)]"
+                    ? "bg-[var(--accent)]/12 text-[var(--accent)]"
+                    : "text-[var(--text-secondary)] hover:bg-[var(--overlay-hover)] hover:text-[var(--text-primary)]"
                 }`}
               >
                 {t.label}

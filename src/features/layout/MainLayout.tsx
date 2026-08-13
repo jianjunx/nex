@@ -133,10 +133,10 @@ export function MainLayout({ mainContent, editorPanel, sidePanel }: MainLayoutPr
           <>
             <div
               onPointerDown={startEditorDrag}
-              className="w-1 flex-none cursor-col-resize hover:bg-[var(--accent)]/40 active:bg-[var(--accent)]/60 transition-colors duration-100"
+              className="nex-handle-col"
             />
             <div
-              className="flex min-h-0 shrink-0 flex-col self-stretch border-l border-[color:var(--border-subtle)] bg-[var(--background)] overflow-hidden rounded-l-[var(--radius-md)] animate-in fade-in slide-in-from-right-2"
+              className="flex min-h-0 shrink-0 flex-col self-stretch border-l border-[color:var(--border-subtle)] bg-[var(--background)] overflow-hidden animate-in fade-in duration-150"
               style={{ width: liveEditorWidth ?? editorEffective }}
             >
               <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -151,10 +151,10 @@ export function MainLayout({ mainContent, editorPanel, sidePanel }: MainLayoutPr
           <>
             <div
               onPointerDown={startDrag}
-              className="w-1 flex-none cursor-col-resize hover:bg-[var(--accent)]/40 active:bg-[var(--accent)]/60 transition-colors duration-100"
+              className="nex-handle-col"
             />
             <div
-              className="flex shrink-0 flex-col border-l border-[color:var(--border-subtle)] bg-[var(--surface-sidebar)] overflow-hidden rounded-l-[var(--radius-md)] animate-in fade-in slide-in-from-right-2"
+              className="flex shrink-0 flex-col border-l border-[color:var(--border-subtle)] bg-[var(--surface-sidebar)] overflow-hidden animate-in fade-in duration-150"
               style={{ width: liveSideWidth ?? sideEffective }}
             >
               <div className="flex-1 overflow-hidden">

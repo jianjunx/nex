@@ -186,7 +186,7 @@ export function ProjectSelector() {
           <Button variant="ghost" size="sm" className={`rounded-xl text-xs ${isMac ? "h-8" : ""}`}>
             <span className="inline-flex items-center">
               {activeProjectId && <RunningCountBadge projectId={activeProjectId} />}
-              <span className="font-semibold">{activeProject?.name || "Open Project"}</span>
+              <span className="font-semibold">{activeProject?.name || "打开项目"}</span>
               {activeProjectId && <StatusDots projectId={activeProjectId} />}
               <ChevronDown size={12} className="ml-1 opacity-60" />
             </span>

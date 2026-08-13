@@ -175,10 +175,10 @@ export function EditorPanel() {
               key={f.path}
               data-tab-index={drag["data-tab-index"]}
               onPointerDown={drag.onPointerDown}
-              className={`flex items-center gap-1 max-w-[160px] rounded-[var(--radius-sm)] px-2 py-1 text-xs cursor-pointer shrink-0 select-none ${
+              className={`group/tab flex items-center gap-1 max-w-[160px] rounded-[var(--radius-sm)] border px-2 py-1 text-xs cursor-pointer shrink-0 select-none transition-colors duration-150 ${
                 active
-                  ? "bg-[var(--glass-2-surface)] text-[var(--text-primary)]"
-                  : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                  ? "border-[color:var(--border-default)] bg-[var(--glass-2-surface)] text-[var(--text-primary)] shadow-[inset_0_1px_0_0_var(--edge-highlight)]"
+                  : "border-transparent text-[var(--text-secondary)] hover:bg-[var(--overlay-hover)] hover:text-[var(--text-primary)]"
               } ${draggingIndex === index ? "opacity-50" : ""}`}
               title={f.diff ? f.diff.title : relativeToProject(f.path, projectPath)}
               onClick={() => void switchFile(f.path)}
@@ -188,7 +188,7 @@ export function EditorPanel() {
               <span
                 role="button"
                 data-tab-close
-                className="opacity-50 hover:opacity-100"
+                className="ml-0.5 flex size-4 shrink-0 items-center justify-center rounded-sm opacity-0 transition-opacity group-hover/tab:opacity-70 hover:!opacity-100"
                 onMouseDown={(e) => {
                   e.preventDefault();
                   e.stopPropagation();

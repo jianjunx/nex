@@ -321,7 +321,7 @@ export function SearchPanel() {
             onKeyDown={handleSearchKeyDown}
             placeholder="输入关键词搜索文件名与内容。"
             aria-label="搜索"
-            className={inlineError ? "border-[var(--error)] focus-visible:ring-[var(--error)]" : ""}
+            className={`h-8 ${inlineError ? "border-[var(--error)] focus-visible:ring-[var(--error)]" : ""}`}
           />
           <FlagToggle
             pressed={searchOptions.caseSensitive}
@@ -363,8 +363,9 @@ export function SearchPanel() {
                   replaceUiByProject.set(activeProjectId, { showReplace, replacement: v });
                 }
               }}
-              placeholder="替换…"
+              placeholder="替换为…"
               aria-label="替换"
+              className="h-8"
             />
             <Button
               size="sm"
@@ -400,7 +401,7 @@ export function SearchPanel() {
         {!project ? (
           <p className="text-sm text-[var(--text-tertiary)] px-2 py-1">打开项目后即可搜索。</p>
         ) : !query.trim() ? null : searchResults.length === 0 && !searching ? (
-          <p className="text-sm text-[var(--text-tertiary)] px-2 py-1">无结果。</p>
+          <p className="text-sm text-[var(--text-tertiary)] px-2 py-1">没有匹配的结果</p>
         ) : (
           <div data-testid="search-result-list">
             {groups.map((g, gi) => {

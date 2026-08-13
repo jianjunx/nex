@@ -4,58 +4,12 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { ToolCallEntry } from "./types";
 import { formatToolRawInput } from "./applySessionUpdate";
-import { isEditTool } from "./toolCallUtils";
+import { entryDiffs, isEditTool, toolEntryFilePath } from "./toolCallUtils";
 import { ThreadDiffBlock } from "./ThreadDiffBlock";
 import { useToolCardExpansionStore } from "./toolCardExpansion";
 import { useAgentStore } from "../../../stores/agent.store";
 import { fileBasename } from "../../editor/pathUtils";
-import { looksLikeFilePath, openPathToken, pathFromToolRawInput } from "./pathToken";
-
-/**
- * NexAgent 走标准 ACP，工具通知不带 diff content 块（只有 raw_input）。
- * 对 edit 类工具（edit_file / multi_edit），从 raw_input 的
- * old_string → new_string 构造伪 diff，让 ThreadDiffBlock 能以
- * 语言高亮渲染「修改的文件」。multi_edit 取首个 edit 作为代表。
- */
-function syntheticDiffFromRawInput(raw: unknown): { path?: string; oldText: string; newText: string } | null {
-  if (!raw || typeof raw !== "object") return null;
-  const o = raw as Record<string, unknown>;
-  const path = typeof o.path === "string" && o.path.trim() ? o.path.trim() : undefined;
-  if (Array.isArray(o.edits) && o.edits.length > 0) {
-    const first = o.edits[0] as Record<string, unknown> | undefined;
-    if (first && typeof first.old_string === "string" && typeof first.new_string === "string") {
-      return { path, oldText: first.old_string, newText: first.new_string };
-    }
-    return null;
-  }
-  if (typeof o.old_string === "string" && typeof o.new_string === "string") {
-    return { path, oldText: o.old_string, newText: o.new_string };
-  }
-  return null;
-}
-
-/** 工具卡内嵌 diff：优先 content 里的 diff 块；否则从 rawInput 合成。 */
-// oxlint-disable-next-line react/only-export-components
-export function entryDiffs(entry: ToolCallEntry): { path?: string; oldText: string; newText: string }[] {
-  const fromContent = entry.content.filter((c) => c.type === "diff");
-  if (fromContent.length > 0) {
-    return fromContent.map((c) => ({
-      path: c.path,
-      oldText: c.oldText ?? "",
-      newText: c.newText ?? "",
-    }));
-  }
-  const synthetic = syntheticDiffFromRawInput(entry.rawInput);
-  return synthetic ? [synthetic] : [];
-}
-
-/** Prefer diff path, then rawInput, then a path-like title. */
-function toolEntryFilePath(entry: ToolCallEntry): string | null {
-  for (const c of entry.content) {
-    if (c.type === "diff" && c.path) return c.path;
-  }
-  return pathFromToolRawInput(entry.rawInput) ?? (looksLikeFilePath(entry.title) ? entry.title : null);
-}
+import { looksLikeFilePath, openPathToken } from "./pathToken";
 
 export function ToolCallCard({
   entry,
@@ -81,11 +35,11 @@ export function ToolCallCard({
   }, [waiting, entry.toolCallId, setExpanded]);
 
   return (
-    <div className="rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--glass-3-surface)] overflow-hidden">
+    <div className="rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--glass-3-surface)] overflow-hidden shadow-[inset_0_1px_0_0_var(--edge-highlight)]">
       <div className="flex items-center gap-2 px-2.5 py-1.5 text-sm hover:bg-[var(--glass-2-surface)]">
         <button
           type="button"
-          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
           onClick={() => setExpanded(entry.toolCallId, !open)}
         >
           <Icon size={14} className="text-[var(--text-tertiary)] shrink-0" />
@@ -97,7 +51,7 @@ export function ToolCallCard({
           <button
             type="button"
             title="在编辑器中打开"
-            className="max-w-[60%] shrink truncate font-mono text-xs text-[var(--accent)] underline decoration-[color:var(--accent)]/30 underline-offset-2 hover:decoration-[color:var(--accent)]"
+            className="max-w-[60%] shrink cursor-pointer truncate font-mono text-xs text-[var(--accent)] underline decoration-[color:var(--accent)]/30 underline-offset-2 hover:decoration-[color:var(--accent)]"
             onClick={() => void openPathToken(filePath)}
           >
             {titleIsPath ? entry.title : fileBasename(filePath)}
@@ -200,7 +154,7 @@ export function ToolCallCard({
   );
 }
 
-/** Collapsed run of adjacent non-edit tool calls. */
+/** Collapsed run of adjacent tool calls (edits included; permission prompts stay standalone). */
 export function ToolCallGroup({ entries }: { entries: ToolCallEntry[] }) {
   const groupKey = `group:${entries[0]?.id}`;
   const needsPermission = entries.some((e) => e.status === "waiting_for_confirmation");
@@ -223,7 +177,7 @@ export function ToolCallGroup({ entries }: { entries: ToolCallEntry[] }) {
     <div className="max-w-[96%]">
       <button
         type="button"
-        className="inline-flex items-center gap-1 text-xs text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] transition-colors"
+        className="inline-flex cursor-pointer items-center gap-1 text-xs text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-secondary)]"
         onClick={() => setExpanded(groupKey, !open)}
       >
         <span>查看工具调用（{entries.length}）</span>

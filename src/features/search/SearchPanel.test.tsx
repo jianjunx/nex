@@ -161,7 +161,7 @@ describe("stats bar & toolbar", () => {
     expect(screen.queryByLabelText("替换")).toBeNull();
     fireEvent.click(screen.getByLabelText("展开替换"));
     expect(screen.getByLabelText("替换")).toBeTruthy();
-    expect(screen.getByPlaceholderText("替换…")).toBeTruthy();
+    expect(screen.getByPlaceholderText("替换为…")).toBeTruthy();
     fireEvent.click(screen.getByLabelText("折叠替换"));
     expect(screen.queryByLabelText("替换")).toBeNull();
   });

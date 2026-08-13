@@ -72,7 +72,7 @@ export function SidePanel() {
         <>
           <div
             onPointerDown={startTerminalDrag}
-            className="h-1 flex-none cursor-row-resize hover:bg-[var(--accent)]/40 active:bg-[var(--accent)]/60 transition-colors duration-100"
+            className="nex-handle-row"
           />
           <div
             className="border-t border-[color:var(--border-subtle)] bg-[var(--surface-sidebar)] shrink-0 overflow-hidden"

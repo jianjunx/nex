@@ -32,14 +32,15 @@
   --destructive: #e06c75;
   --destructive-foreground: #f8fafd;
 
-  --border: #181a1f;
+  --border: #2e323a;
   --input: #1d1f23;
-  --ring: #3e4452;
+  --ring: #61afef;
 
   --radius: 0.625rem;
 
   /* ─── App semantic tokens (One Dark Pro) ───────────────────────────── */
-  --border-subtle: #181a1f;
+  /* Hairlines sit between surfaces — not a black trench. */
+  --border-subtle: #2e323a;
   --border-default: #3e4452;
 
   --overlay-hover: #2c313a;
@@ -79,8 +80,13 @@
   --glass-1-surface: #21252b;
   --glass-2-surface: #2c313a;
   --glass-3-surface: #1d1f23;
-  --glass-border: #181a1f;
+  --glass-border: #32363e;
   --color-border: #3e4452;
+
+  /* Phosphor edge + quiet elevation (menus, composer, dialogs). */
+  --edge-highlight: rgba(255, 255, 255, 0.07);
+  --shadow-elevated: inset 0 1px 0 0 var(--edge-highlight), 0 10px 28px -12px rgba(0, 0, 0, 0.55);
+  --shadow-dialog: inset 0 1px 0 0 var(--edge-highlight), 0 24px 48px -16px rgba(0, 0, 0, 0.58);
 }
 
 /* Light mode override */
@@ -141,6 +147,10 @@
   --glass-3-surface: rgba(0, 0, 0, 0.06);
   --glass-border: rgba(0, 0, 0, 0.08);
   --color-border: rgba(0, 0, 0, 0.08);
+
+  --edge-highlight: rgba(255, 255, 255, 0.55);
+  --shadow-elevated: inset 0 1px 0 0 var(--edge-highlight), 0 10px 28px -14px rgba(15, 18, 32, 0.14);
+  --shadow-dialog: inset 0 1px 0 0 var(--edge-highlight), 0 24px 48px -18px rgba(15, 18, 32, 0.18);
 }
 
 /* ─── Tailwind v4 theme mapping ─────────────────────────────────────────
@@ -198,7 +208,14 @@ html, body {
      surface hurt readability). var(--background) follows the light/dark
      theme via the token overrides above. */
   background: var(--background) !important;
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  color: var(--text-primary);
+  letter-spacing: -0.006em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+::selection {
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
   color: var(--text-primary);
 }
 #root {
@@ -221,6 +238,73 @@ html, body {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--scrollbar-thumb-hover);
+}
+
+/* ─── Elevation + resize handles ──────────────────────────────────────── */
+@layer components {
+  .nex-elevated {
+    box-shadow: var(--shadow-elevated);
+  }
+  .nex-dialog {
+    box-shadow: var(--shadow-dialog);
+  }
+
+  /* 4px hit target, 1px seam that lights up on hover. Width stays 4px so
+     MainLayout's HANDLE_W budget does not shift. */
+  .nex-handle-col,
+  .nex-handle-row {
+    position: relative;
+    flex: none;
+    background: transparent;
+    z-index: 2;
+  }
+  .nex-handle-col {
+    width: 4px;
+    cursor: col-resize;
+  }
+  .nex-handle-row {
+    height: 4px;
+    cursor: row-resize;
+  }
+  .nex-handle-col::after,
+  .nex-handle-row::after {
+    content: "";
+    position: absolute;
+    background: transparent;
+    transition: background-color 120ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 120ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .nex-handle-col::after {
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 1px;
+    transform: translateX(-50%);
+  }
+  .nex-handle-row::after {
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 1px;
+    transform: translateY(-50%);
+  }
+  .nex-handle-col:hover::after,
+  .nex-handle-col:active::after,
+  .nex-handle-row:hover::after,
+  .nex-handle-row:active::after {
+    background: color-mix(in srgb, var(--accent) 75%, transparent);
+    box-shadow: 0 0 8px var(--accent-glow);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nex-handle-col::after,
+  .nex-handle-row::after {
+    transition: none;
+  }
+  .search-stagger,
+  .nex-jump-highlight {
+    animation: none !important;
+  }
 }
 
 /* xterm.js overrides — replace the default opaque black background with a

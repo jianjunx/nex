@@ -1,4 +1,4 @@
-//! `switch_mode`: let the model change the session mode (code/ask/plan/auto).
+//! `switch_mode`: let the model change the session mode (plan/auto/code/ask).
 //!
 //! Marked read-only so it still runs under Ask/Plan (otherwise the model could
 //! never leave those modes). The harness emits ACP `CurrentModeUpdate` after a
@@ -7,7 +7,7 @@
 use super::{Tool, ToolCtx};
 use agent_client_protocol as acp;
 
-const MODES: &[&str] = &["code", "ask", "plan", "auto"];
+const MODES: &[&str] = &["plan", "auto", "code", "ask"];
 
 /// Validates and normalizes a mode id.
 pub fn parse_mode(raw: &str) -> Option<&'static str> {
@@ -25,9 +25,9 @@ impl Tool for SwitchMode {
 
     fn description(&self) -> &'static str {
         "Switch the session mode for subsequent tool calls. \
-         Modes: `code` (edit + run with approval), `ask` (read-only Q&A), \
-         `plan` (read-only research then a concrete plan), \
-         `auto` (edit + run without per-step approval). \
+         Modes: `plan` (read-only research then a concrete plan), \
+         `auto` (edit + run without per-step approval), \
+         `code` (edit + run with approval), `ask` (read-only Q&A). \
          Use `plan` for large/ambiguous work and only switch to `code`/`auto` \
          after the user confirms the plan. Do not flip modes unnecessarily."
     }
@@ -38,7 +38,7 @@ impl Tool for SwitchMode {
             "properties": {
                 "mode": {
                     "type": "string",
-                    "enum": ["code", "ask", "plan", "auto"],
+                    "enum": ["plan", "auto", "code", "ask"],
                     "description": "Target session mode"
                 },
                 "reason": {
@@ -65,7 +65,7 @@ impl Tool for SwitchMode {
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing required argument `mode`".to_string())?;
         let mode = parse_mode(mode_raw).ok_or_else(|| {
-            format!("invalid mode `{mode_raw}`; expected one of code/ask/plan/auto")
+            format!("invalid mode `{mode_raw}`; expected one of plan/auto/code/ask")
         })?;
         let reason = args
             .get("reason")

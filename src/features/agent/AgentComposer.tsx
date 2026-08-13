@@ -200,10 +200,9 @@ export function AgentComposer() {
   );
   const activeConversation = conversations.find((c) => c.id === activeTabId) ?? null;
   const canSend = (!!text.trim() || images.length > 0) && !!activeTabId;
-  // External ACP agents use session/request_permission; show Authorization for
-  // all of them (not only Cursor). Native NexAgent has its own auto mode.
-  const showAuthMode =
-    !!activeConversation && activeConversation.agent_type !== "nex" && activeConversation.agent_type !== "native";
+  // Allow/Menu is Cursor-only: other ACP agents use session/request_permission
+  // without this composer toggle. Native NexAgent has its own auto mode.
+  const showAuthMode = activeConversation?.agent_type === "cursor";
   const authMode =
     (activeTabId ? sessionPrefsByConversation[activeTabId]?.authMode : undefined) ?? "menu";
   // NexAgent advertises vision per model; unknown (external agents) stays allowed.
@@ -766,7 +765,7 @@ export function AgentComposer() {
           <div style={popoverStyle} className="flex items-start gap-0 max-w-[min(92vw,640px)] pointer-events-auto">
             <div
               ref={suggestListRef}
-              className="min-w-[150px] max-w-[min(92vw,480px)] w-max max-h-56 overflow-y-auto overflow-x-hidden rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--glass-3-surface)] shadow-lg [scrollbar-width:none] [&::-webkit-scrollbar]:w-0 [&::-webkit-scrollbar]:h-0"
+              className="min-w-[150px] max-w-[min(92vw,480px)] w-max max-h-56 overflow-y-auto overflow-x-hidden rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--card)] nex-elevated [scrollbar-width:none] [&::-webkit-scrollbar]:w-0 [&::-webkit-scrollbar]:h-0"
             >
               {slashOpen && filteredCommands.length === 0 && (
                 <div className="px-2 py-1 text-[12px] leading-4 text-[var(--text-tertiary)] whitespace-nowrap">
@@ -820,7 +819,7 @@ export function AgentComposer() {
                 })}
             </div>
             {activeSlashCmd && (
-              <div className="ml-1 min-w-[150px] w-[200px] max-h-56 overflow-y-auto overflow-x-hidden rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--glass-2-surface)] shadow-lg px-2 py-1.5 text-[12px] leading-4 text-[var(--text-secondary)] [scrollbar-width:none] [&::-webkit-scrollbar]:w-0 [&::-webkit-scrollbar]:h-0">
+              <div className="ml-1 min-w-[150px] w-[200px] max-h-56 overflow-y-auto overflow-x-hidden rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--glass-2-surface)] nex-elevated px-2 py-1.5 text-[12px] leading-4 text-[var(--text-secondary)] [scrollbar-width:none] [&::-webkit-scrollbar]:w-0 [&::-webkit-scrollbar]:h-0">
                 <div className="font-mono text-[var(--accent)] mb-1">/{activeSlashCmd.name}</div>
                 <p className="leading-relaxed whitespace-pre-wrap">
                   {activeSlashCmd.description || "无描述"}
@@ -834,7 +833,7 @@ export function AgentComposer() {
         )}
 
         <div
-          className="flex flex-col gap-1 rounded-[var(--radius-md)] bg-[var(--glass-3-surface)] border border-[color:var(--glass-border)] px-2.5 pt-2 pb-1.5 shadow-xs transition-[border-color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50"
+          className="flex flex-col gap-1 rounded-[var(--radius-lg)] bg-[var(--glass-3-surface)] border border-[color:var(--glass-border)] px-3 pt-2.5 pb-1.5 shadow-[inset_0_1px_0_0_var(--edge-highlight)] transition-[border-color,box-shadow] duration-150 focus-within:border-[color:var(--accent)] focus-within:shadow-[inset_0_1px_0_0_var(--edge-highlight),0_0_0_3px_var(--accent-glow)]"
           onClick={() => textareaRef.current?.focus()}
         >
           {images.length > 0 && (
@@ -888,8 +887,8 @@ export function AgentComposer() {
                 isStarting
                   ? "Agent 启动中…"
                   : activeTabId
-                    ? "描述计划,@引用上下文,/使用命"
-                    : "开始您的对话"
+                    ? "描述任务，@ 引用文件，/ 使用命令"
+                    : "先新建或选择一个会话"
               }
               className="flex-1 min-h-0 border-0 bg-transparent p-1 shadow-none rounded-none text-sm font-normal leading-[21px] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] resize-none overflow-y-auto focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
               style={{ minHeight: MIN_HEIGHT, maxHeight: MAX_HEIGHT }}
@@ -913,7 +912,7 @@ export function AgentComposer() {
                 <Plus size={16} />
               </Button>
               {plusOpen && (
-                <div className="absolute bottom-full left-0 mb-1 min-w-[140px] rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--glass-3-surface)] shadow-lg py-1 z-30">
+                <div className="absolute bottom-full left-0 mb-1 min-w-[140px] rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--card)] nex-elevated py-1 z-30">
                   <button
                     type="button"
                     className="flex w-full items-center gap-2 px-2.5 py-1.5 text-sm hover:bg-[var(--overlay-hover)] disabled:opacity-40"
@@ -1056,7 +1055,7 @@ export function AgentComposer() {
                   disabled={!canSend}
                   onClick={() => void handleSend()}
                   title="Send"
-                  className="rounded-full shrink-0"
+                  className="rounded-full shrink-0 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.18)]"
                 >
                   <Send size={14} />
                 </Button>

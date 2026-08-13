@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 const ITEM_HIGHLIGHT =
-  "focus:bg-[var(--overlay-hover)] focus:text-[var(--text-primary)] data-[highlighted]:bg-[var(--overlay-hover)]";
+  "focus:bg-[color:color-mix(in_srgb,var(--material-elevated)_86%,transparent)] focus:text-[var(--text-primary)] data-[highlighted]:bg-[color:color-mix(in_srgb,var(--material-elevated)_86%,transparent)] data-[highlighted]:text-[var(--text-primary)]";
 
 export interface ComposerOptionItem {
   id: string;
@@ -47,7 +47,7 @@ export function ComposerOptionMenu({
           disabled={disabled || options.length === 0}
           aria-label={ariaLabel}
           title={ariaLabel}
-          className="h-7 max-w-[12rem] shrink-0 gap-0.5 rounded-md px-0.5 text-xs font-normal text-[var(--text-secondary)] hover:bg-[var(--glass-2-surface)]"
+          className="nex-interactive-chrome nex-pressable h-7 max-w-[12rem] shrink-0 gap-1 rounded-[var(--radius-md)] border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_78%,transparent)] px-2.5 text-xs font-medium tracking-[-0.01em] text-[var(--text-secondary)] shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)] hover:bg-[color:color-mix(in_srgb,var(--material-floating)_78%,transparent)] hover:text-[var(--text-primary)] data-[state=open]:bg-[color:color-mix(in_srgb,var(--material-elevated)_88%,transparent)] data-[state=open]:text-[var(--text-primary)]"
         >
           <span className="truncate">{label}</span>
           <ChevronDown size={12} className="shrink-0 opacity-50" />
@@ -55,15 +55,15 @@ export function ComposerOptionMenu({
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
-        className="min-w-[10rem] max-w-[18rem] max-h-[350px] overflow-y-auto rounded-[var(--radius-md)] p-1.5"
+        className="min-w-[10rem] max-w-[18rem] max-h-[350px] overflow-y-auto rounded-[calc(var(--radius-md)+2px)] p-1.5"
       >
         {options.map((o) => (
           <DropdownMenuItem
             key={o.id}
             onSelect={() => onSelect(o.id)}
-            className={`px-3 text-xs transition-colors duration-100 ${ITEM_HIGHLIGHT} ${
+            className={`px-3 text-xs nex-interactive-chrome ${ITEM_HIGHLIGHT} ${
               o.id === value
-                ? "bg-[var(--overlay-active)] text-[var(--text-primary)]"
+                ? "bg-[color:color-mix(in_srgb,var(--material-elevated)_86%,transparent)] text-[var(--text-primary)]"
                 : "text-[var(--text-secondary)]"
             }`}
           >

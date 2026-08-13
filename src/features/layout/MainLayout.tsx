@@ -120,11 +120,11 @@ export function MainLayout({ mainContent, editorPanel, sidePanel }: MainLayoutPr
   };
 
   return (
-    <div className="flex flex-col h-full w-full">
+    <div className="flex flex-col h-full w-full bg-[var(--material-canvas)]">
       <TopBar />
       <div className="flex flex-1 overflow-hidden">
         {/* Main content area */}
-        <div className="flex-1 flex flex-col overflow-hidden min-w-[280px]">
+        <div className="flex-1 flex flex-col overflow-hidden min-w-[280px] bg-transparent">
           {mainContent}
         </div>
 
@@ -136,7 +136,7 @@ export function MainLayout({ mainContent, editorPanel, sidePanel }: MainLayoutPr
               className="nex-handle-col"
             />
             <div
-              className="flex min-h-0 shrink-0 flex-col self-stretch border-l border-[color:var(--border-subtle)] bg-[var(--background)] overflow-hidden animate-in fade-in duration-150"
+              className="flex min-h-0 shrink-0 flex-col self-stretch border-l border-[color:var(--hairline-soft)] nex-material-panel overflow-hidden animate-in fade-in duration-150"
               style={{ width: liveEditorWidth ?? editorEffective }}
             >
               <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -154,7 +154,7 @@ export function MainLayout({ mainContent, editorPanel, sidePanel }: MainLayoutPr
               className="nex-handle-col"
             />
             <div
-              className="flex shrink-0 flex-col border-l border-[color:var(--border-subtle)] bg-[var(--surface-sidebar)] overflow-hidden animate-in fade-in duration-150"
+              className="flex shrink-0 flex-col border-l border-[color:var(--hairline-soft)] nex-material-sidebar overflow-hidden animate-in fade-in duration-150"
               style={{ width: liveSideWidth ?? sideEffective }}
             >
               <div className="flex-1 overflow-hidden">

@@ -19,7 +19,7 @@ export function UpdateBanner() {
   return (
     <div
       data-testid="update-banner"
-      className="fixed bottom-4 right-4 z-50 flex items-center gap-3 rounded-[var(--radius-md)] border border-[color:var(--border-subtle)] bg-[var(--glass-1-surface)] px-4 py-3 shadow-lg backdrop-blur"
+      className="fixed bottom-4 right-4 z-50 flex items-center gap-3 rounded-[calc(var(--radius-md)+2px)] border border-[color:var(--hairline-soft)] nex-material-floating px-4 py-3"
     >
       <div className="text-sm">
         <div className="font-medium text-[var(--text-primary)]">发现新版本 v{info.latest_version}</div>
@@ -39,7 +39,7 @@ export function UpdateBanner() {
       <button
         type="button"
         aria-label="忽略"
-        className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)]"
+        className="nex-interactive-chrome rounded-[var(--radius-sm)] p-1 text-[var(--text-tertiary)] hover:bg-[var(--overlay-hover)] hover:text-[var(--text-primary)]"
         onClick={dismissBanner}
       >
         <X size={14} />

@@ -59,7 +59,7 @@ export function SidePanel() {
   };
 
   return (
-    <div ref={panelRef} className="flex flex-col h-full">
+    <div ref={panelRef} className="nex-material-sidebar flex h-full flex-col">
       {/* Upper: active tab content */}
       <div className="flex-1 overflow-hidden min-h-0">
         {sidePanelTab === "files" && <FileTree />}
@@ -75,7 +75,7 @@ export function SidePanel() {
             className="nex-handle-row"
           />
           <div
-            className="border-t border-[color:var(--border-subtle)] bg-[var(--surface-sidebar)] shrink-0 overflow-hidden"
+            className="border-t border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-floating)_92%,transparent)] shrink-0 overflow-hidden"
             style={{ height: liveHeight ?? terminalHeight }}
           >
             <TerminalPanel key={activeProjectId ?? "none"} />

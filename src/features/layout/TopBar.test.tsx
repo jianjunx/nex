@@ -105,30 +105,30 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("conversation tab outline (F5)", () => {
-  it("active trigger carries capsule outline classes (glass bg, border, top highlight)", () => {
+  it("active trigger carries macOS Pro capsule classes (material bg, soft border, bright top highlight)", () => {
     render(<TopBar />);
     const active = screen.getByRole("tab", { name: /第一个会话/ });
     expect(active.className).toContain(
-      "group-data-[variant=line]/tabs-list:data-[state=active]:bg-[var(--glass-2-surface)]"
+      "group-data-[variant=line]/tabs-list:data-[state=active]:bg-[color:color-mix(in_srgb,var(--material-elevated)_88%,transparent)]"
     );
     expect(active.className).toContain(
-      "group-data-[variant=line]/tabs-list:data-[state=active]:border-[color:var(--border-default)]"
+      "group-data-[variant=line]/tabs-list:data-[state=active]:border-[color:var(--hairline-strong)]"
     );
     expect(active.className).toContain(
-      "group-data-[variant=line]/tabs-list:data-[state=active]:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]"
+      "group-data-[variant=line]/tabs-list:data-[state=active]:shadow-[inset_0_1px_0_0_var(--edge-highlight-bright),0_10px_24px_-18px_rgba(0,0,0,0.8)]"
     );
     expect(active.className).not.toContain("before:bg-[var(--accent)]");
-    expect(active.className).toContain("rounded-[var(--radius-sm)]");
+    expect(active.className).toContain("rounded-[calc(var(--radius-sm)+2px)]");
     expect(active.className).not.toContain("rounded-[var(--radius-md)]");
     expect(active.className).toContain(
       "group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-0"
     );
     // dark 对偶类必须在场（R1：顶掉 ui/tabs.tsx 内置 dark:bg-transparent/border-transparent）
     expect(active.className).toContain(
-      "dark:group-data-[variant=line]/tabs-list:data-[state=active]:bg-[var(--glass-2-surface)]"
+      "dark:group-data-[variant=line]/tabs-list:data-[state=active]:bg-[color:color-mix(in_srgb,var(--material-elevated)_88%,transparent)]"
     );
     expect(active.className).toContain(
-      "dark:group-data-[variant=line]/tabs-list:data-[state=active]:border-[color:var(--border-default)]"
+      "dark:group-data-[variant=line]/tabs-list:data-[state=active]:border-[color:var(--hairline-strong)]"
     );
   });
 
@@ -139,16 +139,12 @@ describe("conversation tab outline (F5)", () => {
     expect(active.className).not.toContain("rounded-[var(--radius-md)]");
   });
 
-  it("inactive triggers keep a light outline + hover lift/bg/stronger border", () => {
+  it("inactive triggers keep a soft outline + material hover tint", () => {
     render(<TopBar />);
     const inactive = screen.getByRole("tab", { name: /第二个会话/ });
-    expect(inactive.className).toContain("border-[color:var(--border-subtle)]");
-    expect(inactive.className).toContain("hover:-translate-y-px");
-    expect(inactive.className).toContain(
-      "group-data-[variant=line]/tabs-list:hover:bg-[var(--overlay-hover)]"
-    );
-    expect(inactive.className).toContain("hover:border-[color:var(--border-default)]");
-    expect(inactive.className).toContain("data-[state=active]:hover:translate-y-0");
+    expect(inactive.className).toContain("hover:bg-[color:color-mix(in_srgb,var(--material-floating)_72%,transparent)]");
+    expect(inactive.className).toContain("hover:border-[color:var(--hairline-soft)]");
+    expect(inactive.className).not.toContain("hover:-translate-y-px");
   });
 
   it("hides the close icon until the tab is hovered", () => {
@@ -163,8 +159,8 @@ describe("conversation tab outline (F5)", () => {
   it("renders scrollbar-hidden overflow with left/right fade masks", () => {
     const { container } = render(<TopBar />);
     expect(container.innerHTML).toContain("overflow-x-auto scrollbar-none");
-    expect(container.innerHTML).toContain("bg-gradient-to-r from-[var(--background)] to-transparent");
-    expect(container.innerHTML).toContain("bg-gradient-to-l from-[var(--background)] to-transparent");
+    expect(container.innerHTML).toContain("nex-scroll-edge-mask-left");
+    expect(container.innerHTML).toContain("nex-scroll-edge-mask-right");
     expect(container.innerHTML).toContain("pointer-events-none");
   });
 

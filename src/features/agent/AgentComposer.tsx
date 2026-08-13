@@ -902,16 +902,16 @@ export function AgentComposer() {
                 size="icon-sm"
                 disabled={!activeTabId}
                 title="添加图片或文件"
-                className="rounded-full shrink-0"
+                className="nex-interactive-chrome nex-pressable rounded-full shrink-0 border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_78%,transparent)] shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)] hover:bg-[color:color-mix(in_srgb,var(--material-floating)_78%,transparent)]"
                 onClick={() => setPlusOpen((v) => !v)}
               >
                 <Plus size={16} />
               </Button>
               {plusOpen && (
-                <div className="absolute bottom-full left-0 mb-1 min-w-[140px] rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--card)] nex-elevated py-1 z-30">
+                <div className="absolute bottom-full left-0 z-30 mb-1.5 min-w-[156px] rounded-[calc(var(--radius-md)+2px)] border border-[color:var(--hairline-soft)] nex-material-floating py-1.5">
                   <button
                     type="button"
-                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-sm hover:bg-[var(--overlay-hover)] disabled:opacity-40"
+                    className="nex-interactive-chrome flex w-full items-center gap-2 px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:bg-[color:color-mix(in_srgb,var(--material-elevated)_86%,transparent)] hover:text-[var(--text-primary)] disabled:opacity-40"
                     disabled={!modelSupportsVision}
                     title={modelSupportsVision ? undefined : "当前模型不支持图片"}
                     onClick={() => {
@@ -925,7 +925,7 @@ export function AgentComposer() {
                   </button>
                   <button
                     type="button"
-                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-sm hover:bg-[var(--overlay-hover)]"
+                    className="nex-interactive-chrome flex w-full items-center gap-2 px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:bg-[color:color-mix(in_srgb,var(--material-elevated)_86%,transparent)] hover:text-[var(--text-primary)]"
                     onClick={() => void attachFilesFromDialog()}
                   >
                     <FilePlus size={14} />
@@ -1039,7 +1039,7 @@ export function AgentComposer() {
                   size="icon-sm"
                   onClick={() => session?.sessionId && void cancel(session.sessionId)}
                   title="Stop"
-                  className="rounded-full shrink-0"
+                  className="nex-interactive-chrome nex-pressable rounded-full shrink-0 border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_78%,transparent)] shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)] hover:bg-[color:color-mix(in_srgb,var(--material-floating)_78%,transparent)]"
                 >
                   <Square size={14} />
                 </Button>
@@ -1050,7 +1050,7 @@ export function AgentComposer() {
                   disabled={!canSend}
                   onClick={() => void handleSend()}
                   title="Send"
-                  className="rounded-full shrink-0 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.18)]"
+                  className="rounded-full shrink-0 border border-[color:var(--hairline-soft)] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.18)]"
                 >
                   <Send size={14} />
                 </Button>

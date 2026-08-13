@@ -105,7 +105,7 @@ export function TopBar() {
     <div
       onMouseDown={handleMouseDown}
       onDoubleClick={handleDoubleClick}
-      className={`flex items-center border-b border-[color:var(--border-subtle)] bg-[var(--background)] ${sizing} ${pad}`}
+      className={`nex-material-toolbar nex-chrome-edge flex items-center border-b border-[color:var(--hairline-soft)] ${sizing} ${pad}`}
     >
       {/* Project selector */}
       <ProjectSelector />
@@ -120,7 +120,7 @@ export function TopBar() {
           <span className="text-xs text-[var(--text-tertiary)] px-2">暂无会话</span>
         ) : (
           <Tabs value={activeTabId ?? ""} onValueChange={switchTab} className="min-w-0">
-            <TabsList variant="line" className="h-7 gap-1">
+            <TabsList variant="line" className="h-7 gap-1 rounded-[calc(var(--radius-lg)+2px)] border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-floating)_70%,transparent)] px-1 shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)]">
               {openTabs.map((tabId, index) => {
                 const status = sessions[tabId]?.status ?? null;
                 const conv = projectConversations.find((c) => c.id === tabId);
@@ -132,7 +132,7 @@ export function TopBar() {
                     value={tabId}
                     data-tab-index={drag["data-tab-index"]}
                     onPointerDown={drag.onPointerDown}
-                    className={`group/tab h-[26px] text-xs flex-none gap-1.5 rounded-[var(--radius-sm)] border border-[color:var(--border-subtle)] px-2 font-normal text-[var(--text-secondary)] transition-all duration-150 hover:-translate-y-px hover:border-[color:var(--border-default)] group-data-[variant=line]/tabs-list:hover:bg-[var(--overlay-hover)] hover:text-[var(--text-primary)] data-[state=active]:hover:translate-y-0 group-data-[variant=line]/tabs-list:data-[state=active]:bg-[var(--glass-2-surface)] group-data-[variant=line]/tabs-list:data-[state=active]:border-[color:var(--border-default)] dark:group-data-[variant=line]/tabs-list:data-[state=active]:bg-[var(--glass-2-surface)] dark:group-data-[variant=line]/tabs-list:data-[state=active]:border-[color:var(--border-default)] group-data-[variant=line]/tabs-list:data-[state=active]:text-[var(--text-primary)] group-data-[variant=line]/tabs-list:data-[state=active]:font-semibold group-data-[variant=line]/tabs-list:data-[state=active]:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-0 select-none ${draggingIndex === index ? "opacity-50" : ""}`}
+                    className={`nex-interactive-chrome nex-pressable group/tab h-[26px] text-[12px] flex-none gap-1.5 rounded-[calc(var(--radius-sm)+2px)] border border-transparent px-2.5 font-medium tracking-[-0.012em] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[color:color-mix(in_srgb,var(--material-floating)_72%,transparent)] hover:border-[color:var(--hairline-soft)] group-data-[variant=line]/tabs-list:data-[state=active]:bg-[color:color-mix(in_srgb,var(--material-elevated)_88%,transparent)] group-data-[variant=line]/tabs-list:data-[state=active]:border-[color:var(--hairline-strong)] group-data-[variant=line]/tabs-list:data-[state=active]:text-[var(--text-primary)] group-data-[variant=line]/tabs-list:data-[state=active]:shadow-[inset_0_1px_0_0_var(--edge-highlight-bright),0_10px_24px_-18px_rgba(0,0,0,0.8)] dark:group-data-[variant=line]/tabs-list:data-[state=active]:bg-[color:color-mix(in_srgb,var(--material-elevated)_88%,transparent)] dark:group-data-[variant=line]/tabs-list:data-[state=active]:border-[color:var(--hairline-strong)] group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-0 select-none ${draggingIndex === index ? "opacity-50" : ""}`}
                   >
                     {agentType && (
                       <AgentIcon agentType={agentType} status={status} size={12} />
@@ -152,7 +152,7 @@ export function TopBar() {
                       role="button"
                       data-tab-close
                       title="关闭会话"
-                      className="ml-0.5 translate-x-[4px] flex size-4 shrink-0 items-center justify-center rounded-sm opacity-0 transition-opacity group-hover/tab:opacity-70 hover:!opacity-100"
+                      className="nex-interactive-chrome ml-0.5 translate-x-[4px] flex size-4 shrink-0 items-center justify-center rounded-sm opacity-0 group-hover/tab:opacity-70 hover:!opacity-100 hover:bg-[var(--overlay-hover)]"
                       onMouseDown={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
@@ -172,8 +172,8 @@ export function TopBar() {
         )}
         </div>
         {/* 溢出渐隐遮罩：常驻（v1 不做滚动位置感知，YAGNI）。起始色＝TopBar 底色。 */}
-        <div className="pointer-events-none absolute inset-y-0 left-0 w-6 bg-gradient-to-r from-[var(--background)] to-transparent" />
-        <div className="pointer-events-none absolute inset-y-0 right-0 w-6 bg-gradient-to-l from-[var(--background)] to-transparent" />
+        <div className="pointer-events-none absolute inset-y-0 left-0 w-6 nex-scroll-edge-mask-left" />
+        <div className="pointer-events-none absolute inset-y-0 right-0 w-6 nex-scroll-edge-mask-right" />
       </div>
 
       {/* Panel toggle */}

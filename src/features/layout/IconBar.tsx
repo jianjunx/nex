@@ -23,7 +23,7 @@ export function IconBar() {
   const gitChangesCount = useGitStore((s) => s.status?.files.length ?? 0);
 
   return (
-    <div className="flex w-10 flex-col items-center border-l border-[color:var(--border-subtle)] bg-[var(--background)] py-2">
+    <div className="nex-material-panel flex w-11 flex-col items-center border-l border-[color:var(--hairline-soft)] py-2.5">
       <div className="flex flex-col items-center gap-2">
         {tabs.map(({ id, icon: Icon, label }) => {
           const active = sidePanelVisible && sidePanelTab === id;
@@ -35,10 +35,10 @@ export function IconBar() {
               size="icon-sm"
               title={label}
               onClick={() => toggleSidePanelTab(id)}
-              className={`relative transition-colors duration-150 ${
+              className={`nex-interactive-chrome nex-pressable relative rounded-[var(--radius-md)] border border-transparent ${
                 active
-                  ? "bg-[var(--accent)]/12 text-[var(--accent)]"
-                  : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+                  ? "bg-[color:color-mix(in_srgb,var(--material-elevated)_88%,transparent)] text-[var(--accent)] shadow-[inset_0_1px_0_0_var(--edge-highlight-bright),0_10px_24px_-18px_rgba(0,0,0,0.78)] border-[color:var(--hairline-soft)]"
+                  : "text-[var(--text-tertiary)] hover:bg-[color:color-mix(in_srgb,var(--material-floating)_72%,transparent)] hover:text-[var(--text-secondary)] hover:border-[color:var(--hairline-soft)]"
               }`}
             >
               <Icon size={16} />
@@ -55,16 +55,16 @@ export function IconBar() {
         })}
       </div>
       <div className="flex-1" />
-      <div className="mx-2 mb-1 h-px w-4 bg-[var(--border-subtle)]" />
+      <div className="mx-2 mb-1.5 h-px w-4 bg-[color:var(--hairline-soft)]" />
       <Button
         variant="ghost"
         size="icon-sm"
         title="终端"
         onClick={toggleTerminal}
-        className={`relative transition-colors duration-150 ${
+        className={`nex-interactive-chrome nex-pressable relative rounded-[var(--radius-md)] border border-transparent ${
           terminalVisible
-            ? "bg-[var(--accent)]/12 text-[var(--accent)]"
-            : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+            ? "bg-[color:color-mix(in_srgb,var(--material-elevated)_88%,transparent)] text-[var(--accent)] shadow-[inset_0_1px_0_0_var(--edge-highlight-bright),0_10px_24px_-18px_rgba(0,0,0,0.78)] border-[color:var(--hairline-soft)]"
+            : "text-[var(--text-tertiary)] hover:bg-[color:color-mix(in_srgb,var(--material-floating)_72%,transparent)] hover:text-[var(--text-secondary)] hover:border-[color:var(--hairline-soft)]"
         }`}
       >
         <Terminal size={16} />
@@ -74,10 +74,10 @@ export function IconBar() {
         size="icon-sm"
         title="设置"
         onClick={() => openSettings()}
-        className={`relative transition-colors duration-150 ${
+        className={`nex-interactive-chrome nex-pressable relative rounded-[var(--radius-md)] border border-transparent ${
           settingsOpen
-            ? "bg-[var(--accent)]/12 text-[var(--accent)]"
-            : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+            ? "bg-[color:color-mix(in_srgb,var(--material-elevated)_88%,transparent)] text-[var(--accent)] shadow-[inset_0_1px_0_0_var(--edge-highlight-bright),0_10px_24px_-18px_rgba(0,0,0,0.78)] border-[color:var(--hairline-soft)]"
+            : "text-[var(--text-tertiary)] hover:bg-[color:color-mix(in_srgb,var(--material-floating)_72%,transparent)] hover:text-[var(--text-secondary)] hover:border-[color:var(--hairline-soft)]"
         }`}
       >
         <Settings size={16} />

@@ -22,7 +22,7 @@ function NotificationCard({ n }: { n: AppNotification }) {
       onKeyDown={(e) => {
         if (e.key === "Enter") activate(n.id);
       }}
-      className="animate-in fade-in slide-in-from-left-2 duration-200 group cursor-pointer rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--card)] px-3 py-2.5 nex-elevated transition-colors hover:bg-[var(--glass-2-surface)]"
+      className="animate-in fade-in slide-in-from-left-2 duration-200 group nex-material-floating nex-interactive-chrome cursor-pointer rounded-[calc(var(--radius-md)+2px)] border border-[color:var(--hairline-soft)] px-3 py-2.5 hover:border-[color:var(--hairline-strong)] hover:bg-[color:color-mix(in_srgb,var(--material-elevated)_82%,transparent)]"
       title="点击跳转到对应会话"
     >
       <div className="flex items-center gap-2">
@@ -32,7 +32,7 @@ function NotificationCard({ n }: { n: AppNotification }) {
         </span>
         <span
           role="button"
-          className="shrink-0 text-[var(--text-tertiary)] opacity-0 transition-opacity hover:text-[var(--text-primary)] group-hover:opacity-100"
+          className="nex-interactive-chrome shrink-0 rounded-[var(--radius-sm)] p-1 text-[var(--text-tertiary)] opacity-0 hover:bg-[var(--overlay-hover)] hover:text-[var(--text-primary)] group-hover:opacity-100"
           onClick={(e) => {
             e.stopPropagation();
             dismiss(n.id);
@@ -53,7 +53,7 @@ export function NotificationStack() {
   const items = useNotificationStore((s) => s.items);
   if (items.length === 0) return null;
   return (
-    <div className="fixed left-3 top-12 z-[80] flex w-80 flex-col gap-2">
+    <div className="fixed left-3 top-12 z-[80] flex w-80 flex-col gap-2.5">
       {items.map((n) => (
         <NotificationCard key={n.id} n={n} />
       ))}

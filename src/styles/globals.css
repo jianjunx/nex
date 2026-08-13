@@ -8,60 +8,60 @@
    Dark defaults to One Dark Pro (Binaryify / Atom One Dark); light values
    live under [data-theme="light"] for the app theme-switch mechanism. */
 :root {
-  /* One Dark Pro workbench */
-  --background: #282c34;
-  --foreground: #abb2bf;
+  /* macOS Pro dark workbench */
+  --background: #0f1115;
+  --foreground: #d7dbe3;
 
-  --card: #21252b;
-  --card-foreground: #abb2bf;
+  --card: rgba(26, 29, 36, 0.88);
+  --card-foreground: #d7dbe3;
 
-  --popover: #21252b;
-  --popover-foreground: #abb2bf;
+  --popover: rgba(21, 24, 30, 0.92);
+  --popover-foreground: #d7dbe3;
 
   --primary: #61afef;
   --primary-foreground: #f8fafd;
 
-  --secondary: #2c313a;
-  --secondary-foreground: #abb2bf;
+  --secondary: rgba(255, 255, 255, 0.08);
+  --secondary-foreground: #c8ced8;
 
-  --muted: #2c313a;
-  --muted-foreground: #5c6370;
+  --muted: rgba(255, 255, 255, 0.06);
+  --muted-foreground: #7d8696;
 
-  --accent-foreground: #d7dae0;
+  --accent-foreground: #eef3ff;
 
   --destructive: #e06c75;
   --destructive-foreground: #f8fafd;
 
-  --border: #2e323a;
-  --input: #1d1f23;
-  --ring: #61afef;
+  --border: rgba(255, 255, 255, 0.08);
+  --input: rgba(255, 255, 255, 0.08);
+  --ring: #7ab7ff;
 
   --radius: 0.625rem;
 
   /* ─── App semantic tokens (One Dark Pro) ───────────────────────────── */
   /* Hairlines sit between surfaces — not a black trench. */
-  --border-subtle: #2e323a;
-  --border-default: #3e4452;
+  --border-subtle: rgba(255, 255, 255, 0.07);
+  --border-default: rgba(255, 255, 255, 0.12);
 
-  --overlay-hover: #2c313a;
-  --overlay-ghost: #2c313c;
-  --overlay-active: #67769660;
+  --overlay-hover: rgba(255, 255, 255, 0.06);
+  --overlay-ghost: rgba(255, 255, 255, 0.045);
+  --overlay-active: rgba(122, 183, 255, 0.16);
 
-  --scrollbar-thumb: #4e566680;
-  --scrollbar-thumb-hover: #5a6375a0;
+  --scrollbar-thumb: rgba(157, 168, 184, 0.28);
+  --scrollbar-thumb-hover: rgba(185, 196, 212, 0.42);
 
-  --text-primary: #abb2bf;
-  --text-secondary: #9da5b4;
-  --text-tertiary: #5c6370;
+  --text-primary: #d7dbe3;
+  --text-secondary: #a5aebb;
+  --text-tertiary: #7d8696;
 
   /* malibu / cursor blue — ODP accent */
-  --accent: #61afef;
-  --accent-hover: #528bff;
-  --accent-glow: rgba(97, 175, 239, 0.22);
+  --accent: #7ab7ff;
+  --accent-hover: #98c8ff;
+  --accent-glow: rgba(122, 183, 255, 0.24);
   /* Subtle surface used by shadcn hover/focus states (bg-accent utility).
      Kept separate from the brand --accent so ghost buttons don't turn solid
      blue on hover. */
-  --accent-surface: #2c313a;
+  --accent-surface: rgba(255, 255, 255, 0.07);
 
   --success: #98c379;
   --warning: #d19a66;
@@ -72,27 +72,50 @@
   --radius-lg: 14px;
   --radius-xl: 20px;
 
-  /* Surfaces: editor/title/activity = --background; sidebar/widgets darker */
-  --surface-sidebar: #21252b;
-  --surface-highlight: #2c313c;
+  /* Surfaces and materials */
+  --surface-sidebar: rgba(23, 27, 34, 0.74);
+  --surface-highlight: rgba(255, 255, 255, 0.08);
+  --material-canvas: linear-gradient(180deg, #151821 0%, #101217 100%);
+  --material-toolbar: rgba(25, 28, 35, 0.7);
+  --material-sidebar: rgba(23, 27, 34, 0.76);
+  --material-panel: rgba(20, 23, 30, 0.72);
+  --material-floating: rgba(27, 31, 39, 0.82);
+  --material-elevated: rgba(30, 34, 43, 0.9);
+  --hairline-soft: rgba(255, 255, 255, 0.045);
+  --hairline-strong: rgba(255, 255, 255, 0.09);
+  --edge-highlight-soft: rgba(255, 255, 255, 0.08);
+  --edge-highlight-bright: rgba(255, 255, 255, 0.18);
+  --blur-toolbar: 20px;
+  --blur-sidebar: 26px;
+  --blur-floating: 32px;
+  --material-saturation: 165%;
 
-  /* Elevated panels / cards (solid ODP layers, not translucent glass) */
-  --glass-1-surface: #21252b;
-  --glass-2-surface: #2c313a;
-  --glass-3-surface: #1d1f23;
-  --glass-border: #32363e;
-  --color-border: #3e4452;
+  /* Legacy glass aliases mapped onto the new material system. */
+  --glass-1-surface: var(--material-sidebar);
+  --glass-2-surface: var(--material-panel);
+  --glass-3-surface: var(--material-floating);
+  --glass-border: var(--hairline-strong);
+  --color-border: var(--border-default);
 
   /* Phosphor edge + quiet elevation (menus, composer, dialogs). */
-  --edge-highlight: rgba(255, 255, 255, 0.07);
-  --shadow-elevated: inset 0 1px 0 0 var(--edge-highlight), 0 10px 28px -12px rgba(0, 0, 0, 0.55);
-  --shadow-dialog: inset 0 1px 0 0 var(--edge-highlight), 0 24px 48px -16px rgba(0, 0, 0, 0.58);
+  --edge-highlight: var(--edge-highlight-soft);
+  --shadow-toolbar: inset 0 1px 0 0 var(--edge-highlight-soft), 0 14px 30px -24px rgba(0, 0, 0, 0.9);
+  --shadow-floating: inset 0 1px 0 0 var(--edge-highlight-soft), 0 18px 45px -26px rgba(0, 0, 0, 0.72);
+  --shadow-elevated: inset 0 1px 0 0 var(--edge-highlight-soft), 0 18px 40px -22px rgba(0, 0, 0, 0.66);
+  --shadow-dialog: inset 0 1px 0 0 var(--edge-highlight-bright), 0 30px 60px -24px rgba(0, 0, 0, 0.7);
+  --shadow-sheet: inset 0 1px 0 0 var(--edge-highlight-soft), 0 24px 56px -28px rgba(0, 0, 0, 0.72);
+
+  /* Motion + interaction */
+  --press-scale: 0.985;
+  --duration-instant: 90ms;
+  --duration-fast: 140ms;
+  --duration-medium: 220ms;
 }
 
 /* Light mode override */
 [data-theme="light"] {
   --background: oklch(0.98 0.002 260);
-  --foreground: oklch(0.20 0.01 260);
+  --foreground: oklch(0.2 0.01 260);
 
   --card: oklch(0.99 0.002 260);
   --card-foreground: oklch(0.20 0.01 260);
@@ -138,19 +161,36 @@
   --accent-glow: rgba(91, 103, 232, 0.18);
   --accent-surface: rgba(0, 0, 0, 0.06);
 
-  --surface-sidebar: oklch(0.96 0.002 260);
-  --surface-highlight: oklch(0.94 0.005 260);
+  --surface-sidebar: rgba(255, 255, 255, 0.72);
+  --surface-highlight: rgba(255, 255, 255, 0.7);
+  --material-canvas: linear-gradient(180deg, oklch(0.985 0.002 260) 0%, oklch(0.965 0.004 260) 100%);
+  --material-toolbar: rgba(255, 255, 255, 0.66);
+  --material-sidebar: rgba(250, 251, 255, 0.78);
+  --material-panel: rgba(255, 255, 255, 0.7);
+  --material-floating: rgba(255, 255, 255, 0.86);
+  --material-elevated: rgba(255, 255, 255, 0.94);
+  --hairline-soft: rgba(255, 255, 255, 0.46);
+  --hairline-strong: rgba(0, 0, 0, 0.08);
+  --edge-highlight-soft: rgba(255, 255, 255, 0.72);
+  --edge-highlight-bright: rgba(255, 255, 255, 0.92);
+  --blur-toolbar: 18px;
+  --blur-sidebar: 22px;
+  --blur-floating: 28px;
+  --material-saturation: 150%;
 
   /* Glass surfaces – light */
-  --glass-1-surface: rgba(0, 0, 0, 0.02);
-  --glass-2-surface: rgba(0, 0, 0, 0.04);
-  --glass-3-surface: rgba(0, 0, 0, 0.06);
-  --glass-border: rgba(0, 0, 0, 0.08);
+  --glass-1-surface: var(--material-sidebar);
+  --glass-2-surface: var(--material-panel);
+  --glass-3-surface: var(--material-floating);
+  --glass-border: var(--hairline-strong);
   --color-border: rgba(0, 0, 0, 0.08);
 
-  --edge-highlight: rgba(255, 255, 255, 0.55);
-  --shadow-elevated: inset 0 1px 0 0 var(--edge-highlight), 0 10px 28px -14px rgba(15, 18, 32, 0.14);
-  --shadow-dialog: inset 0 1px 0 0 var(--edge-highlight), 0 24px 48px -18px rgba(15, 18, 32, 0.18);
+  --edge-highlight: var(--edge-highlight-soft);
+  --shadow-toolbar: inset 0 1px 0 0 var(--edge-highlight-soft), 0 14px 28px -22px rgba(15, 18, 32, 0.12);
+  --shadow-floating: inset 0 1px 0 0 var(--edge-highlight-soft), 0 18px 42px -24px rgba(15, 18, 32, 0.18);
+  --shadow-elevated: inset 0 1px 0 0 var(--edge-highlight-soft), 0 10px 28px -14px rgba(15, 18, 32, 0.14);
+  --shadow-dialog: inset 0 1px 0 0 var(--edge-highlight-soft), 0 24px 48px -18px rgba(15, 18, 32, 0.18);
+  --shadow-sheet: inset 0 1px 0 0 var(--edge-highlight-soft), 0 22px 48px -24px rgba(15, 18, 32, 0.16);
 }
 
 /* ─── Tailwind v4 theme mapping ─────────────────────────────────────────
@@ -191,6 +231,8 @@
      driven by these tokens also time the animate-in/out keyframes. */
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --ease-smooth: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-fluid: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-decelerate: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* NOTE: do not add an unlayered universal reset here. Tailwind v4 emits its
@@ -207,7 +249,7 @@ html, body {
   /* Opaque app background (no window transparency — the former see-through
      surface hurt readability). var(--background) follows the light/dark
      theme via the token overrides above. */
-  background: var(--background) !important;
+  background: var(--material-canvas) !important;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
   color: var(--text-primary);
   letter-spacing: -0.006em;
@@ -248,6 +290,51 @@ html, body {
   .nex-dialog {
     box-shadow: var(--shadow-dialog);
   }
+  .nex-material-toolbar {
+    background: var(--material-toolbar);
+    backdrop-filter: blur(var(--blur-toolbar)) saturate(var(--material-saturation));
+    -webkit-backdrop-filter: blur(var(--blur-toolbar)) saturate(var(--material-saturation));
+    box-shadow: var(--shadow-toolbar);
+  }
+  .nex-material-sidebar {
+    background: var(--material-sidebar);
+    backdrop-filter: blur(var(--blur-sidebar)) saturate(var(--material-saturation));
+    -webkit-backdrop-filter: blur(var(--blur-sidebar)) saturate(var(--material-saturation));
+    box-shadow: var(--shadow-sheet);
+  }
+  .nex-material-panel {
+    background: var(--material-panel);
+    backdrop-filter: blur(var(--blur-sidebar)) saturate(var(--material-saturation));
+    -webkit-backdrop-filter: blur(var(--blur-sidebar)) saturate(var(--material-saturation));
+    box-shadow: inset 0 1px 0 0 var(--edge-highlight-soft), inset 1px 0 0 0 var(--hairline-soft);
+  }
+  .nex-material-floating {
+    background: var(--material-floating);
+    backdrop-filter: blur(var(--blur-floating)) saturate(var(--material-saturation));
+    -webkit-backdrop-filter: blur(var(--blur-floating)) saturate(var(--material-saturation));
+    box-shadow: var(--shadow-floating);
+  }
+  .nex-chrome-edge {
+    box-shadow: inset 0 1px 0 0 var(--edge-highlight-soft);
+  }
+  .nex-interactive-chrome {
+    transition:
+      background-color var(--duration-fast) var(--ease-fluid),
+      border-color var(--duration-fast) var(--ease-fluid),
+      color var(--duration-fast) var(--ease-fluid),
+      box-shadow var(--duration-medium) var(--ease-fluid),
+      transform var(--duration-fast) var(--ease-fluid),
+      opacity var(--duration-fast) var(--ease-fluid);
+  }
+  .nex-pressable:active {
+    transform: scale(var(--press-scale));
+  }
+  .nex-scroll-edge-mask-left {
+    background: linear-gradient(to right, var(--material-toolbar), transparent);
+  }
+  .nex-scroll-edge-mask-right {
+    background: linear-gradient(to left, var(--material-toolbar), transparent);
+  }
 
   /* 4px hit target, 1px seam that lights up on hover. Width stays 4px so
      MainLayout's HANDLE_W budget does not shift. */
@@ -271,7 +358,7 @@ html, body {
     content: "";
     position: absolute;
     background: transparent;
-    transition: background-color 120ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 120ms cubic-bezier(0.16, 1, 0.3, 1);
+    transition: background-color var(--duration-fast) var(--ease-fluid), box-shadow var(--duration-fast) var(--ease-fluid);
   }
   .nex-handle-col::after {
     top: 0;
@@ -291,19 +378,58 @@ html, body {
   .nex-handle-col:active::after,
   .nex-handle-row:hover::after,
   .nex-handle-row:active::after {
-    background: color-mix(in srgb, var(--accent) 75%, transparent);
-    box-shadow: 0 0 8px var(--accent-glow);
+    background: color-mix(in srgb, var(--accent) 78%, transparent);
+    box-shadow: 0 0 10px var(--accent-glow);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .nex-handle-col::after,
-  .nex-handle-row::after {
+  .nex-handle-row::after,
+  .nex-interactive-chrome {
     transition: none;
+  }
+  .nex-pressable:active {
+    transform: none;
   }
   .search-stagger,
   .nex-jump-highlight {
     animation: none !important;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --material-toolbar: rgba(25, 28, 35, 0.96);
+    --material-sidebar: rgba(23, 27, 34, 0.98);
+    --material-panel: rgba(20, 23, 30, 0.96);
+    --material-floating: rgba(27, 31, 39, 0.98);
+  }
+  [data-theme="light"] {
+    --material-toolbar: rgba(255, 255, 255, 0.94);
+    --material-sidebar: rgba(255, 255, 255, 0.96);
+    --material-panel: rgba(255, 255, 255, 0.94);
+    --material-floating: rgba(255, 255, 255, 0.98);
+  }
+  .nex-material-toolbar,
+  .nex-material-sidebar,
+  .nex-material-panel,
+  .nex-material-floating {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --hairline-soft: rgba(255, 255, 255, 0.12);
+    --hairline-strong: rgba(255, 255, 255, 0.2);
+    --border-default: rgba(255, 255, 255, 0.18);
+  }
+  [data-theme="light"] {
+    --hairline-soft: rgba(0, 0, 0, 0.12);
+    --hairline-strong: rgba(0, 0, 0, 0.18);
+    --border-default: rgba(0, 0, 0, 0.16);
   }
 }
 

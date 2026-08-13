@@ -1,0 +1,31 @@
+src-tauri/src/agent/acp_adapter.rs
+  s_60eb0da9a2cce9::t_9fa45e9319a9d9 2457,2460,2462
+  s_60eb0da9a2cce9::t_a7bff27e57ef26 1819-1822
+  s_60eb0da9a2cce9::t_7702ad8b865b58 2183
+  s_60eb0da9a2cce9::t_56aa0e39becddb 2405
+  s_60eb0da9a2cce9::t_957b070c2d61c1 1792
+  s_60eb0da9a2cce9::t_f3a71d80408fdd 1863-1868,1894-1903,1913-1921
+  s_60eb0da9a2cce9::t_80b0c94b9561a5 2088
+  s_60eb0da9a2cce9::t_b6899fedded934 2152-2155,2163,2168
+  s_60eb0da9a2cce9::t_bad90f2b41ee50 2033-2049,2053-2055,2059-2087,2089-2147
+  s_60eb0da9a2cce9::t_adf65530eefa8c 1703,1718
+  s_60eb0da9a2cce9::t_05ff0728d8d5a7 2402-2404,2406-2456,2458-2459,2461,2463-2471
+  s_60eb0da9a2cce9::t_e1af62d823ba6c 1951
+  s_60eb0da9a2cce9::t_e10d38f2472d6f 2148
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "479207c2c1c3aff8c7d536196d9827cb272dc128",
+  "prompts": {},
+  "sessions": {
+    "s_60eb0da9a2cce9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "21ae8063-fa7a-4fbf-8f4d-2772a964984f",
+        "model": "grok-4.5"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

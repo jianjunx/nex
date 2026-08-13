@@ -112,6 +112,25 @@ function followThreadEnd(
   virtualizer.scrollToIndex(itemCount - 1, { align: "end" });
 }
 
+type VirtualRange = {
+  startIndex: number;
+  endIndex: number;
+  overscan: number;
+  count: number;
+};
+
+/**
+ * 吸顶行要进虚拟窗口,但 defaultRangeExtractor 已含 overscan。
+ * 若按 start/end(不含 overscan)判断再 prepend,会把 overscan 里的同一 index 加两次:
+ * React 重复 key,且 index >= count 时 measurements[i] 为 undefined,读 vi.index 整页崩溃。
+ */
+export function extractPinnedRange(range: VirtualRange, pinned: number | null): number[] {
+  const indexes = defaultRangeExtractor(range);
+  if (pinned == null || pinned < 0 || pinned >= range.count) return indexes;
+  if (indexes.includes(pinned)) return indexes;
+  return [pinned, ...indexes];
+}
+
 export function ThreadView() {
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const activeTabId = useConversationStore((s) => selectProjectActiveTabId(s, activeProjectId));
@@ -137,6 +156,14 @@ export function ThreadView() {
 
   const count = renderItems.length + (showLoading ? 1 : 0);
 
+  // 切页签的首帧就要丢掉上一会话的吸顶 index:useLayoutEffect 太晚,
+  // rangeExtractor 会先用旧 index 取出 measurements 空洞,读 vi.index 崩溃。
+  const pinnedTabRef = useRef(activeTabId);
+  if (pinnedTabRef.current !== activeTabId) {
+    pinnedTabRef.current = activeTabId;
+    stickyIndexRef.current = null;
+  }
+
   const virtualizer = useVirtualizer({
     count,
     getScrollElement: () => scrollerRef.current,
@@ -147,14 +174,7 @@ export function ThreadView() {
       return measuredHeights.get(rowKey(item)) ?? estimateRowHeight(item);
     },
     overscan: 5,
-    rangeExtractor: (range) => {
-      const indexes = defaultRangeExtractor(range);
-      const pinned = stickyIndexRef.current;
-      if (pinned != null && (pinned < range.startIndex || pinned > range.endIndex)) {
-        return [pinned, ...indexes];
-      }
-      return indexes;
-    },
+    rangeExtractor: (range) => extractPinnedRange(range, stickyIndexRef.current),
     // 显式用 getBoundingClientRect:兼容小数高度,且是测试 mock 的确定接缝。
     // 测量后把高度写入模块级缓存:卸载再滚回的行可复现真实高度,不再估值跳变。
     measureElement: (el) => {
@@ -263,11 +283,12 @@ export function ThreadView() {
         ) : (
           <div style={{ height: totalSize, position: "relative" }}>
             {virtualItems.map((vi) => {
+              if (!vi) return null;
               const item = renderItems[vi.index];
               const isPinnedOriginal = sticky != null && sticky.id === rowKey(item);
               return (
                 <div
-                  key={rowKey(item)}
+                  key={vi.key}
                   data-index={vi.index}
                   ref={virtualizer.measureElement}
                   className={`pb-3${isPinnedOriginal ? " invisible" : ""}`}

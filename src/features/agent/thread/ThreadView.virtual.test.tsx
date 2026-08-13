@@ -39,7 +39,7 @@ vi.mock("../../../bridge/tauri", () => ({
   projectList: vi.fn().mockResolvedValue([]),
 }));
 
-import { ThreadView } from "./ThreadView";
+import { extractPinnedRange, ThreadView } from "./ThreadView";
 import { useAgentStore } from "../../../stores/agent.store";
 import { useConversationStore } from "../../../stores/conversation.store";
 import {
@@ -255,5 +255,60 @@ describe("ThreadView 虚拟化", () => {
     const rows = [...scroller.querySelectorAll<HTMLElement>("[data-index]")];
     const y = Number(/translateY\(([-\d.]+)px\)/.exec(rows[0]!.style.transform)?.[1] ?? 0);
     expect(y).toBeLessThan(8);
+  });
+
+  it("从已吸顶的长会话切到短会话时不崩溃且行 key 唯一", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    setupThreadStores("A", {
+      A: makeEntries(40),
+      B: [{ id: "u1", kind: "user_message", text: "git status", timestamp: 1 }],
+    });
+    const { container } = render(<ThreadView />);
+    const scroller = getScroller(container);
+    setMockScrollHeight(scroller, 40 * 60);
+    await act(async () => {});
+
+    scroller.scrollTop = 200;
+    act(() => {
+      scroller.dispatchEvent(new Event("scroll"));
+    });
+    expect(container.querySelector("[data-sticky-user-message]")).not.toBeNull();
+
+    expect(() => {
+      act(() => {
+        useConversationStore.setState((s) => {
+          s.activeTabByProject = { p1: "B" };
+        });
+      });
+    }).not.toThrow();
+    await act(async () => {});
+
+    const indexes = [...container.querySelectorAll("[data-index]")].map((el) =>
+      el.getAttribute("data-index"),
+    );
+    expect(new Set(indexes).size).toBe(indexes.length);
+    expect(consoleError.mock.calls.some((c) => String(c[0]).includes("same key"))).toBe(false);
+    consoleError.mockRestore();
+  });
+});
+
+describe("extractPinnedRange", () => {
+  const range = { startIndex: 10, endIndex: 20, overscan: 5, count: 40 };
+
+  it("吸顶行已在 overscan 窗口内时不重复 prepend", () => {
+    const indexes = extractPinnedRange(range, 7);
+    expect(indexes.filter((i) => i === 7)).toHaveLength(1);
+    expect(indexes[0]).toBe(5);
+  });
+
+  it("吸顶行超出 count 时忽略,避免 measurements 空洞", () => {
+    expect(extractPinnedRange(range, 80)).toEqual(extractPinnedRange(range, null));
+    expect(extractPinnedRange({ ...range, count: 8 }, 20).every((i) => i < 8)).toBe(true);
+  });
+
+  it("吸顶行在窗口外时只 prepend 一次", () => {
+    const indexes = extractPinnedRange(range, 2);
+    expect(indexes[0]).toBe(2);
+    expect(indexes.filter((i) => i === 2)).toHaveLength(1);
   });
 });

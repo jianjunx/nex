@@ -35,6 +35,7 @@ function estimateRowHeight(item: ThreadRenderItem | undefined): number {
   if (item.type === "tool_group") return 40;
   if (item.type === "files_changed") return 44 + item.files.length * 28;
   const e = item.entry;
+  if (e.kind === "user_message") return 48;
   if (e.kind === "tool_call") {
     return e.status === "waiting_for_confirmation" ? 96 : 48;
   }
@@ -96,6 +97,21 @@ function shouldShowAgentLoading(
   return false;
 }
 
+function followThreadEnd(
+  virtualizer: { getTotalSize: () => number; scrollToIndex: (index: number, opts: { align: "end" }) => void },
+  scroller: HTMLDivElement | null,
+  itemCount: number,
+) {
+  if (itemCount <= 0) return;
+  const viewport = scroller?.clientHeight ?? 0;
+  // 内容不足一屏:钉在顶部,不要用 padding 把消息推下去,也不要滚出空白滚动条。
+  if (viewport > 0 && virtualizer.getTotalSize() <= viewport) {
+    if (scroller && scroller.scrollTop !== 0) scroller.scrollTop = 0;
+    return;
+  }
+  virtualizer.scrollToIndex(itemCount - 1, { align: "end" });
+}
+
 export function ThreadView() {
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const activeTabId = useConversationStore((s) => selectProjectActiveTabId(s, activeProjectId));
@@ -124,6 +140,7 @@ export function ThreadView() {
   const virtualizer = useVirtualizer({
     count,
     getScrollElement: () => scrollerRef.current,
+    getItemKey: (i) => rowKey(renderItems[i]),
     estimateSize: (i) => {
       const item = renderItems[i];
       // 命中实测缓存用真实高度,否则回退估值。
@@ -186,8 +203,8 @@ export function ThreadView() {
 
   // 跟随态下:条目数/总高度变化(含流式撑高末尾条目)→ 贴底。
   useLayoutEffect(() => {
-    if (stickToBottomRef.current && count > 0) {
-      virtualizer.scrollToIndex(count - 1, { align: "end" });
+    if (stickToBottomRef.current) {
+      followThreadEnd(virtualizer, scrollerRef.current, count);
     }
     syncSticky(scrollerRef.current?.scrollTop ?? 0);
   }, [count, totalSize, virtualizer, syncSticky]);
@@ -202,7 +219,7 @@ export function ThreadView() {
     if (userId && userId !== lastUserMsgIdRef.current) {
       lastUserMsgIdRef.current = userId;
       stickToBottomRef.current = true;
-      if (count > 0) virtualizer.scrollToIndex(count - 1, { align: "end" });
+      followThreadEnd(virtualizer, scrollerRef.current, count);
       syncSticky(scrollerRef.current?.scrollTop ?? 0);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -211,12 +228,13 @@ export function ThreadView() {
   // 切换对话:清行高缓存、恢复跟随并滚到底(两个会话 count 可能相同,不能只靠 count 依赖)。
   useLayoutEffect(() => {
     measuredHeights.clear();
+    virtualizer.measure();
     stickToBottomRef.current = true;
     lastUserMsgIdRef.current = lastUserMessageId(entries);
     setExpandedUserIds(EMPTY_EXPANDED);
     setSticky(null);
     stickyIndexRef.current = null;
-    if (count > 0) virtualizer.scrollToIndex(count - 1, { align: "end" });
+    followThreadEnd(virtualizer, scrollerRef.current, count);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTabId]);
 

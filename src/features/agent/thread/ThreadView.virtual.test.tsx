@@ -213,4 +213,47 @@ describe("ThreadView 虚拟化", () => {
 
     expect(container.querySelector("[data-sticky-user-message]")).toBeNull();
   });
+
+  it("第一条短消息从顶部开始且列表高度不超过视口", async () => {
+    setupThreadStores("A", {
+      A: [{ id: "u1", kind: "user_message", text: "git status", timestamp: 1 }],
+    });
+    const { container } = render(<ThreadView />);
+    await act(async () => {});
+    const scroller = getScroller(container);
+    const inner = scroller.firstElementChild as HTMLElement;
+    const h = parseFloat(inner.style.height || "0");
+    expect(h).toBeGreaterThan(0);
+    expect(h).toBeLessThan(600);
+    const rows = [...scroller.querySelectorAll<HTMLElement>("[data-index]")];
+    expect(rows.length).toBeGreaterThan(0);
+    const y = Number(/translateY\(([-\d.]+)px\)/.exec(rows[0]!.style.transform)?.[1] ?? 0);
+    expect(y).toBeLessThan(8);
+  });
+
+  it("从长会话切到只有一条消息的会话时列表高度回落到视口内", async () => {
+    setupThreadStores("A", {
+      A: makeEntries(80),
+      B: [{ id: "u1", kind: "user_message", text: "git status", timestamp: 1 }],
+    });
+    const { container } = render(<ThreadView />);
+    const scroller = getScroller(container);
+    setMockScrollHeight(scroller, 80 * 60);
+    await act(async () => {});
+
+    act(() => {
+      useConversationStore.setState((s) => {
+        s.activeTabByProject = { p1: "B" };
+      });
+    });
+    await act(async () => {});
+
+    const inner = scroller.firstElementChild as HTMLElement;
+    const h = parseFloat(inner.style.height || "0");
+    expect(h).toBeGreaterThan(0);
+    expect(h).toBeLessThan(600);
+    const rows = [...scroller.querySelectorAll<HTMLElement>("[data-index]")];
+    const y = Number(/translateY\(([-\d.]+)px\)/.exec(rows[0]!.style.transform)?.[1] ?? 0);
+    expect(y).toBeLessThan(8);
+  });
 });

@@ -98,6 +98,34 @@ describe("ThreadView 虚拟化", () => {
     expect(scroller.scrollTop).toBeGreaterThan(4000);
   });
 
+  it("跟随态会滚到实际滚动容器底部，包含上下内边距", async () => {
+    setupThreadStores("A", { A: makeEntries(100) });
+    const { container } = render(<ThreadView />);
+    const scroller = getScroller(container);
+    // ThreadView 的滚动容器有 py-3，真实 scrollHeight 比虚拟列表高 24px。
+    setMockScrollHeight(scroller, 100 * 60 + 24);
+    await act(async () => {});
+
+    // 在条目追加前同步浏览器会在下一帧报告的实际滚动高度。
+    setMockScrollHeight(scroller, 101 * 60 + 24);
+    act(() => {
+      useAgentStore.setState((s) => {
+        s.entriesByConversation["A"] = [
+          ...(s.entriesByConversation["A"] ?? []),
+          {
+            id: "new-tail",
+            kind: "assistant_message",
+            chunks: [{ type: "message", text: "新回复" }],
+            timestamp: 999,
+          },
+        ];
+      });
+    });
+    await act(async () => {});
+
+    expect(scroller.scrollTop).toBe(scroller.scrollHeight - scroller.clientHeight);
+  });
+
   it("上滚超过 80px 后取消跟随,新条目不再拉回底部", async () => {
     setupThreadStores("A", { A: makeEntries(100) });
     const { container } = render(<ThreadView />);

@@ -103,21 +103,26 @@ function followThreadEnd(
   itemCount: number,
 ) {
   if (itemCount <= 0) return;
-  const viewport = scroller?.clientHeight ?? 0;
+  if (!scroller) return;
+  const viewport = scroller.clientHeight;
+  // The DOM scroll height includes the scroller's own vertical padding. The
+  // virtualizer total only covers the inner positioned list, so it is a
+  // little short of the physical bottom for this `py-3` container. Prefer
+  // the DOM value and retain the virtual total as a jsdom/no-layout fallback.
+  const scrollHeight = scroller.scrollHeight || virtualizer.getTotalSize();
   // 内容不足一屏:钉在顶部,不要用 padding 把消息推下去,也不要滚出空白滚动条。
-  if (viewport > 0 && virtualizer.getTotalSize() <= viewport) {
-    if (scroller && scroller.scrollTop !== 0) scroller.scrollTop = 0;
+  if (viewport > 0 && scrollHeight <= viewport) {
+    if (scroller.scrollTop !== 0) scroller.scrollTop = 0;
     return;
   }
-  if (!scroller) return;
 
   // Do not use virtualizer.scrollToIndex here. It keeps an animation-frame
   // reconciliation alive after the initial scroll; if the user takes over
   // before it settles, a later append can replay that stale scroll and pull
   // the viewport back to the bottom. `totalSize` already re-triggers this
-  // effect as measurements change, so a direct end offset keeps follow logic
-  // deterministic while giving a manual scroll immediate precedence.
-  const target = Math.max(virtualizer.getTotalSize() - viewport, 0);
+  // effect as measurements change, so a direct DOM end offset keeps follow
+  // logic deterministic while giving a manual scroll immediate precedence.
+  const target = Math.max(scrollHeight - viewport, 0);
   if (scroller.scrollTop !== target) scroller.scrollTop = target;
 }
 

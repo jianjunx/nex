@@ -38,7 +38,7 @@ describe("UserMessageBubble", () => {
     expect(screen.queryByRole("button", { name: "展开" })).toBeNull();
   });
 
-  it("内容超过 230px 时折叠并显示展开", () => {
+  it("内容超过 170px 时折叠并显示展开", () => {
     vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(400);
     const { container } = render(
       <UserMessageBubble entry={ENTRY} expanded={false} onToggleExpand={() => {}} />,

@@ -1,4 +1,4 @@
-export const USER_MESSAGE_COLLAPSE_HEIGHT = 230;
+export const USER_MESSAGE_COLLAPSE_HEIGHT = 170;
 
 export type UserStickyCandidate = {
   index: number;

@@ -8,7 +8,7 @@ import { USER_MESSAGE_COLLAPSE_HEIGHT } from "./stickyUserMessage";
 import type { UserMessageEntry } from "./types";
 
 /**
- * 用户气泡：超长内容折叠到 230px，由父级控制展开态以便列表实例与吸顶克隆共用。
+ * 用户气泡：超长内容折叠到 170px，由父级控制展开态以便列表实例与吸顶克隆共用。
  */
 export function UserMessageBubble({
   entry,
@@ -41,10 +41,10 @@ export function UserMessageBubble({
       <MessageContextMenu textContent={entry.text ?? ""}>
         <Card
           className={cn(
-            "relative min-w-0 max-w-full gap-0 overflow-hidden px-3 py-1.5 text-sm border-[color:var(--accent)]/25",
+            "relative min-w-0 max-w-full gap-0 overflow-hidden rounded-[calc(var(--radius-lg)+2px)] border px-3 py-1.5 text-sm shadow-[inset_0_1px_0_0_rgba(255,255,255,0.1)] backdrop-blur-[calc(var(--blur-floating)*0.35)]",
             floating
-              ? "bg-[color-mix(in_srgb,var(--accent)_18%,var(--background))] shadow-[0_8px_20px_-6px_rgba(0,0,0,0.45)]"
-              : "bg-[var(--accent)]/15 shadow-none",
+              ? "border-[color:var(--accent)]/24 bg-[color:color-mix(in_srgb,var(--accent)_10%,var(--material-floating))] shadow-[0_12px_28px_-12px_rgba(0,0,0,0.42),inset_0_1px_0_0_rgba(255,255,255,0.12)]"
+              : "border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--accent)_8%,var(--material-floating))]",
           )}
         >
           <CardContent className="min-w-0 px-0">
@@ -69,13 +69,13 @@ export function UserMessageBubble({
               <div
                 className={
                   collapsed
-                    ? "pointer-events-none absolute inset-x-0 bottom-0 flex justify-center bg-gradient-to-t from-[color-mix(in_srgb,var(--accent)_15%,var(--background))] from-40% to-transparent pt-10 pb-1"
+                    ? "pointer-events-none absolute inset-x-0 bottom-0 flex justify-center bg-gradient-to-t from-[color:color-mix(in_srgb,var(--accent)_8%,var(--material-floating))] from-35% via-[color:color-mix(in_srgb,var(--accent)_5%,var(--material-floating))] via-65% to-transparent pt-9 pb-1"
                     : "flex justify-center pt-1"
                 }
               >
                 <button
                   type="button"
-                  className="pointer-events-auto inline-flex cursor-pointer items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                  className="pointer-events-auto inline-flex cursor-pointer items-center gap-0.5 rounded-[var(--radius-sm)] border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-floating)_78%,transparent)] px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)] shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)] hover:text-[var(--text-primary)]"
                   aria-expanded={expanded}
                   onClick={(e) => {
                     e.stopPropagation();

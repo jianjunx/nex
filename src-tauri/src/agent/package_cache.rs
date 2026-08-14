@@ -18,7 +18,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use serde_json::Value as JsonValue;
@@ -28,9 +28,15 @@ use super::node_runtime::{NodeRuntime, NodeRuntimeHandle};
 use super::registry::{RegistryEntry, RegistryNpxDistribution};
 use crate::error::NexError;
 
-/// Hard cap on a single `npm install`. Most installs complete in 5-15s;
-/// 120s gives headroom for slow networks without hanging the GUI.
-const INSTALL_TIMEOUT: Duration = Duration::from_secs(120);
+/// Total hard cap for one package install, including registry fallback.
+const INSTALL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// Leave half of the total budget for npmjs if the mirror stalls completely.
+const MIRROR_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
+/// Prefer the China-friendly mirror. npmjs remains the automatic fallback
+/// when the mirror is unreachable or has not synced a new package yet.
+const NPM_MIRROR_REGISTRY: &str = "https://registry.npmmirror.com";
+const NPM_OFFICIAL_REGISTRY: &str = "https://registry.npmjs.org";
 
 /// Keep this many recent spec versions per agent id when sweeping old
 /// caches. The newest is always the live install; older ones are kept just
@@ -91,6 +97,7 @@ type Inflight = Arc<OnceCell<Result<ResolvedNpx, NexError>>>;
 /// Production resolver. Constructs an install root per (sanitized id +
 /// sanitized package spec) so the same registry entry with a bumped version
 /// doesn't collide with a previous install.
+#[derive(Clone)]
 pub struct PackageCache {
     root: PathBuf,
     /// Lazily-resolved Node runtime. We hold the *handle* (not a resolved
@@ -123,8 +130,72 @@ impl PackageCache {
             .join(format!("node-{node_version}", node_version = node_version.version())))
     }
 
-    /// Actually perform the install. Wipes any prior `install_dir` first
-    /// to avoid stale `node_modules` colliding.
+    /// Installs exactly the registry version, deduplicating concurrent work.
+    /// Failed attempts are evicted from the inflight map so retrying does not
+    /// require restarting Nex.
+    async fn ensure_current_install(
+        &self,
+        agent_id: &str,
+        spec: &str,
+        runtime: &Arc<dyn NodeRuntime>,
+    ) -> Result<ResolvedNpx, NexError> {
+        let install_dir = self.install_dir(agent_id, spec).await?;
+        let marker = install_dir.join(".nex-install-ok");
+        let version_file = install_dir.join(".nex-version");
+        let key = format!("{}/{}", sanitize(agent_id), sanitize(spec));
+        let cell = {
+            let mut map = self.inflight.lock().await;
+            map.entry(key.clone())
+                .or_insert_with(|| Arc::new(OnceCell::new()))
+                .clone()
+        };
+
+        let result = cell
+            .get_or_init(|| async {
+                self.do_install(&install_dir, spec, &InstallOptions::default(), runtime)
+                    .await
+            })
+            .await
+            .clone();
+
+        if result.is_ok() {
+            let _ = std::fs::write(&marker, "");
+            if let Some(ver) = version_from_spec(spec) {
+                let _ = std::fs::write(&version_file, ver);
+            }
+            let root = self.root.clone();
+            tokio::spawn(async move {
+                if let Err(e) = sweep_lru(&root, KEEP_RECENT_VERSIONS).await {
+                    log::warn!("agent cache LRU sweep failed: {e}");
+                }
+            });
+        } else {
+            let mut map = self.inflight.lock().await;
+            if map
+                .get(&key)
+                .map(|current| Arc::ptr_eq(current, &cell))
+                .unwrap_or(false)
+            {
+                map.remove(&key);
+            }
+        }
+        result
+    }
+
+    fn prefetch_current(&self, agent_id: String, spec: String, runtime: Arc<dyn NodeRuntime>) {
+        let cache = self.clone();
+        tokio::spawn(async move {
+            match cache.ensure_current_install(&agent_id, &spec, &runtime).await {
+                Ok(_) => log::info!("silently installed agent update `{agent_id}` ({spec})"),
+                Err(e) => log::warn!(
+                    "silent agent update failed for `{agent_id}` ({spec}); keeping cached version: {e}"
+                ),
+            }
+        });
+    }
+
+    /// Installs through npmmirror first and retries eligible registry/network
+    /// failures through npmjs. Both attempts share the ten-minute deadline.
     async fn do_install(
         &self,
         install_dir: &Path,
@@ -132,16 +203,6 @@ impl PackageCache {
         options: &InstallOptions,
         runtime: &Arc<dyn NodeRuntime>,
     ) -> Result<ResolvedNpx, NexError> {
-        // Wipe + recreate.
-        if install_dir.exists() {
-            std::fs::remove_dir_all(install_dir).map_err(|e| NexError::Agent(format!(
-                "failed to wipe prior install dir: {e}"
-            )))?;
-        }
-        std::fs::create_dir_all(install_dir).map_err(|e| NexError::Agent(format!(
-            "failed to create install dir: {e}"
-        )))?;
-
         let node_binary = runtime.binary_path();
         if node_binary.as_os_str().is_empty() {
             return Err(NexError::AgentNotInstalled {
@@ -156,14 +217,6 @@ impl PackageCache {
         let install_root = super::node_runtime::install_root_from_node(node_binary)?;
         let npm_cli = super::node_runtime::resolve_npm_cli(&install_root)?;
 
-        // npm install flags:
-        //   --prefix <install_dir>           install target = cache
-        //   --cache  <app_data_dir>/npm-cache
-        //   --userconfig / --globalconfig    empty files (see write_empty_npmrc_pair)
-        //   --save-exact                    lock the version
-        //   --no-audit --no-fund            skip network probes
-        //   [--ignore-scripts]              gated by options
-        //   <package>
         let cache_dir = install_dir
             .parent() // .../<spec>
             .and_then(|p| p.parent()) // .../<id>
@@ -172,71 +225,56 @@ impl PackageCache {
             .ok_or_else(|| NexError::Agent("could not derive npm cache dir".into()))?
             .join("npm-cache");
 
-        let (user_rc, global_rc) = write_empty_npmrc_pair(install_dir)?;
-
-        let mut npm_args: Vec<String> = vec![
-            "install".to_string(),
-            "--prefix".to_string(),
-            install_dir.to_string_lossy().into_owned(),
-            "--cache".to_string(),
-            cache_dir.to_string_lossy().into_owned(),
-            "--userconfig".to_string(),
-            user_rc.to_string_lossy().into_owned(),
-            "--globalconfig".to_string(),
-            global_rc.to_string_lossy().into_owned(),
-            "--save-exact".to_string(),
-            "--no-audit".to_string(),
-            "--no-fund".to_string(),
-        ];
-        if options.ignore_install_scripts {
-            npm_args.push("--ignore-scripts".to_string());
-        }
-        npm_args.push(spec.to_string());
-
-        let sub_args: Vec<&str> = npm_args.iter().map(String::as_str).collect();
-
-        let mut cmd = tokio::process::Command::new(node_binary);
-        cmd.arg(&npm_cli).args(&sub_args);
-        cmd.envs(&runtime.npm_command_env());
-        super::node_runtime::strip_inherited_npm_config_env(&mut cmd);
-        cmd.current_dir(install_dir);
-        cmd.stdin(std::process::Stdio::null());
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
-        crate::win_process::no_window_tokio(&mut cmd);
-        // On INSTALL_TIMEOUT the output() future is dropped; without
-        // kill_on_drop the npm/node process would keep running forever.
-        cmd.kill_on_drop(true);
-
+        let deadline = Instant::now() + INSTALL_TIMEOUT;
         let node_path = node_binary.to_path_buf();
-        let output = match tokio::time::timeout(INSTALL_TIMEOUT, cmd.output()).await {
-            Ok(Ok(o)) => o,
-            Ok(Err(e)) => {
-                return Err(NexError::Agent(format!(
-                    "failed to spawn npm install: {e}"
-                )));
+        let registries = [NPM_MIRROR_REGISTRY, NPM_OFFICIAL_REGISTRY];
+        let mut mirror_failure: Option<String> = None;
+        for (index, registry) in registries.iter().enumerate() {
+            prepare_install_dir(install_dir)?;
+            let (user_rc, global_rc) = write_empty_npmrc_pair(install_dir)?;
+            let npm_args = npm_install_args(
+                install_dir,
+                &cache_dir,
+                &user_rc,
+                &global_rc,
+                spec,
+                registry,
+                options,
+            );
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(install_timeout_error(spec));
             }
-            Err(_) => {
-                return Err(NexError::AgentNotInstalled {
-                    what: "npm package",
-                    hint: format!(
-                        "`npm install {spec}` did not complete within {}s. \
-                         Check your network connection and try again.",
-                        INSTALL_TIMEOUT.as_secs()
-                    ),
-                });
-            }
-        };
+            let attempt_timeout = if index == 0 {
+                remaining.min(MIRROR_ATTEMPT_TIMEOUT)
+            } else {
+                remaining
+            };
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            return Err(NexError::Agent(format!(
-                "`npm install {spec}` failed (exit {}):\n  stderr: {}\n  stdout: {}",
-                output.status,
-                stderr.trim(),
-                stdout.trim()
-            )));
+            match run_npm_install(
+                node_binary,
+                &npm_cli,
+                &npm_args,
+                install_dir,
+                runtime,
+                attempt_timeout,
+            ).await {
+                Ok(()) => break,
+                Err(failure)
+                    if index == 0
+                        && failure.should_fallback_to_official()
+                        && Instant::now() < deadline =>
+                {
+                    let detail = failure.summary();
+                    log::warn!(
+                        "npm mirror install failed for `{spec}` ({detail}); retrying via {NPM_OFFICIAL_REGISTRY}"
+                    );
+                    mirror_failure = Some(detail);
+                }
+                Err(failure) => {
+                    return Err(failure.into_nex_error(spec, registry, mirror_failure.as_deref()));
+                }
+            }
         }
 
         // Read the bin from the freshly-installed package.json.
@@ -247,6 +285,164 @@ impl PackageCache {
             first_install: true,
         })
     }
+}
+
+fn prepare_install_dir(install_dir: &Path) -> Result<(), NexError> {
+    if install_dir.exists() {
+        std::fs::remove_dir_all(install_dir).map_err(|e| NexError::Agent(format!(
+            "failed to wipe prior install dir: {e}"
+        )))?;
+    }
+    std::fs::create_dir_all(install_dir).map_err(|e| NexError::Agent(format!(
+        "failed to create install dir: {e}"
+    )))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn npm_install_args(
+    install_dir: &Path,
+    cache_dir: &Path,
+    user_rc: &Path,
+    global_rc: &Path,
+    spec: &str,
+    registry: &str,
+    options: &InstallOptions,
+) -> Vec<String> {
+    let mut args = vec![
+        "install".to_string(),
+        "--prefix".to_string(),
+        install_dir.to_string_lossy().into_owned(),
+        "--cache".to_string(),
+        cache_dir.to_string_lossy().into_owned(),
+        "--userconfig".to_string(),
+        user_rc.to_string_lossy().into_owned(),
+        "--globalconfig".to_string(),
+        global_rc.to_string_lossy().into_owned(),
+        "--registry".to_string(),
+        registry.to_string(),
+        "--save-exact".to_string(),
+        "--no-audit".to_string(),
+        "--no-fund".to_string(),
+    ];
+    if options.ignore_install_scripts {
+        args.push("--ignore-scripts".to_string());
+    }
+    args.push(spec.to_string());
+    args
+}
+
+#[derive(Debug)]
+enum NpmInstallFailure {
+    Spawn(std::io::Error),
+    Timeout,
+    Exit {
+        status: std::process::ExitStatus,
+        stdout: String,
+        stderr: String,
+    },
+}
+
+impl NpmInstallFailure {
+    fn should_fallback_to_official(&self) -> bool {
+        match self {
+            Self::Timeout => true,
+            Self::Spawn(_) => false,
+            Self::Exit { stdout, stderr, .. } => {
+                is_registry_failure_output(&format!("{stdout}\n{stderr}"))
+            }
+        }
+    }
+
+    fn summary(&self) -> String {
+        match self {
+            Self::Spawn(e) => format!("spawn error: {e}"),
+            Self::Timeout => "timed out".to_string(),
+            Self::Exit { status, stderr, stdout } => {
+                let detail = if stderr.trim().is_empty() { stdout } else { stderr };
+                format!("exit {status}: {}", detail.trim())
+            }
+        }
+    }
+
+    fn into_nex_error(
+        self,
+        spec: &str,
+        registry: &str,
+        mirror_failure: Option<&str>,
+    ) -> NexError {
+        match self {
+            Self::Spawn(e) => NexError::Agent(format!("failed to spawn npm install: {e}")),
+            Self::Timeout => install_timeout_error(spec),
+            Self::Exit { status, stdout, stderr } => {
+                let fallback = mirror_failure
+                    .map(|detail| format!("\n  mirror failure: {detail}"))
+                    .unwrap_or_default();
+                NexError::Agent(format!(
+                    "`npm install {spec}` via {registry} failed (exit {status}):\n  stderr: {}\n  stdout: {}{fallback}",
+                    stderr.trim(),
+                    stdout.trim(),
+                ))
+            }
+        }
+    }
+}
+
+fn is_registry_failure_output(output: &str) -> bool {
+    let text = output.to_ascii_lowercase();
+    [
+        "eai_again", "enotfound", "econnreset", "econnrefused", "etimedout",
+        "econnaborted", "err_socket", "err_ssl", "err_tls", "certificate",
+        "self signed", "unable_to_verify", "socket hang up", "fetch failed",
+        "network request", "network error", "e403", "403 forbidden", "e404",
+        "404 not found", "e429", "429 too many requests", "e502", "e503",
+        "e504", "bad gateway", "service unavailable", "gateway timeout",
+        "eintegrity", "etarget", "no matching version",
+    ]
+    .iter()
+    .any(|needle| text.contains(needle))
+}
+
+fn install_timeout_error(spec: &str) -> NexError {
+    NexError::AgentNotInstalled {
+        what: "npm package",
+        hint: format!(
+            "`npm install {spec}` did not complete within {}s. Check your network connection and try again.",
+            INSTALL_TIMEOUT.as_secs()
+        ),
+    }
+}
+
+async fn run_npm_install(
+    node_binary: &Path,
+    npm_cli: &Path,
+    npm_args: &[String],
+    install_dir: &Path,
+    runtime: &Arc<dyn NodeRuntime>,
+    timeout: Duration,
+) -> Result<(), NpmInstallFailure> {
+    let mut cmd = tokio::process::Command::new(node_binary);
+    cmd.arg(npm_cli).args(npm_args);
+    cmd.envs(&runtime.npm_command_env());
+    super::node_runtime::strip_inherited_npm_config_env(&mut cmd);
+    cmd.current_dir(install_dir);
+    cmd.stdin(std::process::Stdio::null());
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    crate::win_process::no_window_tokio(&mut cmd);
+    cmd.kill_on_drop(true);
+
+    let output = tokio::time::timeout(timeout, cmd.output())
+        .await
+        .map_err(|_| NpmInstallFailure::Timeout)?
+        .map_err(NpmInstallFailure::Spawn)?;
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(NpmInstallFailure::Exit {
+        status: output.status,
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    })
 }
 
 #[derive(Default, Clone)]
@@ -267,62 +463,29 @@ impl PackageResolver for PackageCache {
         // remediation.
         let runtime = self.node_runtime.get().await;
         let install_dir = self.install_dir(&entry.id, &npx.package).await?;
-        let marker = install_dir.join(".nex-install-ok");
-        let version_file = install_dir.join(".nex-version");
 
         // Fast path: marker present and the bin file still exists.
-        if marker.exists() {
-            if let Ok(exec) = read_package_executable_path(&install_dir, &npx.package) {
-                if exec.exists() {
-                    // Touch the marker so its mtime reflects the most recent
-                    // use. The LRU sweeper (see `evict_old_versions`) uses this
-                    // mtime to decide which versions to keep.
-                    let _ = touch_marker(&marker);
-                    return Ok(ResolvedNpx {
-                        node_path: runtime.binary_path().to_path_buf(),
-                        executable_path: exec,
-                        first_install: false,
-                    });
-                }
-            }
+        if let Some(cached) = resolved_npx_at(&install_dir, &npx.package, runtime.binary_path()) {
+            let _ = touch_marker(&install_dir.join(".nex-install-ok"));
+            return Ok(cached);
         }
 
-        // Inflight dedup key: id + spec (both sanitized).
-        let key = format!("{}/{}", sanitize(&entry.id), sanitize(&npx.package));
-        let cell = {
-            let mut map = self.inflight.lock().await;
-            map.entry(key.clone())
-                .or_insert_with(|| Arc::new(OnceCell::new()))
-                .clone()
-        };
-
-        let result = cell
-            .get_or_init(|| async {
-                self.do_install(&install_dir, &npx.package, &InstallOptions::default(), &runtime)
-                    .await
-            })
-            .await;
-
-        // Persist the marker + version sidecar only on success, and only
-        // after we've actually written the bin (the read above guarantees
-        // it does). Writing the version sidecar separately keeps the empty
-        // marker file compatible with older caches.
-        if result.is_ok() {
-            let _ = std::fs::write(&marker, "");
-            if let Some(ver) = version_from_spec(&npx.package) {
-                let _ = std::fs::write(&version_file, ver);
-            }
-            // Sweep old versions in the background. Best-effort: a failure
-            // here only means the next sweep will retry; the install itself
-            // already succeeded.
-            let root = self.root.clone();
-            tokio::spawn(async move {
-                if let Err(e) = sweep_lru(&root, KEEP_RECENT_VERSIONS).await {
-                    log::warn!("agent cache LRU sweep failed: {e}");
-                }
-            });
+        // Registry updates never block a working cached agent. Install the
+        // latest version silently; the exact-version fast path above switches
+        // future sessions only after its success marker has been written.
+        if let Some((cached, marker)) = newest_usable_npx_install(
+            &self.root,
+            &entry.id,
+            &npx.package,
+            runtime.binary_path(),
+        ) {
+            let _ = touch_marker(&marker);
+            self.prefetch_current(entry.id.clone(), npx.package.clone(), runtime);
+            return Ok(cached);
         }
-        result.clone()
+
+        // Cold install: no usable version exists, so wait for installation.
+        self.ensure_current_install(&entry.id, &npx.package, &runtime).await
     }
 
     fn newest_installed_version(&self, agent_id: &str) -> Option<String> {
@@ -340,31 +503,95 @@ pub fn newest_installed_version(root: &Path, agent_id: &str) -> Option<String> {
     if !agent_dir.is_dir() {
         return None;
     }
-    // Find the spec dir with the newest `.nex-install-ok` mtime; that
-    // corresponds to the most-recently-used install. Then read its
-    // `.nex-version` sidecar.
+    // Current caches place markers in a `node-<version>/` child. Accept the
+    // legacy direct layout too.
     let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
     if let Ok(entries) = std::fs::read_dir(&agent_dir) {
         for entry in entries.flatten() {
             if !entry.path().is_dir() {
                 continue;
             }
-            let marker = entry.path().join(".nex-install-ok");
-            let Ok(mtime) = std::fs::metadata(&marker).and_then(|m| m.modified()) else {
-                continue;
-            };
-            match &newest {
-                Some((prev, _)) if *prev >= mtime => {}
-                _ => newest = Some((mtime, entry.path())),
+            for install_dir in install_dirs_for_spec(&entry.path()) {
+                let marker = install_dir.join(".nex-install-ok");
+                let Ok(mtime) = std::fs::metadata(&marker).and_then(|m| m.modified()) else {
+                    continue;
+                };
+                match &newest {
+                    Some((prev, _)) if *prev >= mtime => {}
+                    _ => newest = Some((mtime, install_dir)),
+                }
             }
         }
     }
-    let (_, spec_dir) = newest?;
-    let version_path = spec_dir.join(".nex-version");
+    let (_, install_dir) = newest?;
+    let version_path = install_dir.join(".nex-version");
     std::fs::read_to_string(&version_path)
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+}
+
+fn resolved_npx_at(
+    install_dir: &Path,
+    package_spec: &str,
+    node_binary: &Path,
+) -> Option<ResolvedNpx> {
+    if !install_dir.join(".nex-install-ok").is_file() {
+        return None;
+    }
+    let executable_path = read_package_executable_path(install_dir, package_spec).ok()?;
+    if !executable_path.is_file() {
+        return None;
+    }
+    Some(ResolvedNpx {
+        node_path: node_binary.to_path_buf(),
+        executable_path,
+        first_install: false,
+    })
+}
+
+fn newest_usable_npx_install(
+    root: &Path,
+    agent_id: &str,
+    package_spec: &str,
+    node_binary: &Path,
+) -> Option<(ResolvedNpx, PathBuf)> {
+    let entries = std::fs::read_dir(root.join(sanitize(agent_id))).ok()?;
+    let mut newest: Option<(std::time::SystemTime, ResolvedNpx, PathBuf)> = None;
+    for spec_entry in entries.flatten() {
+        if !spec_entry.path().is_dir() {
+            continue;
+        }
+        for install_dir in install_dirs_for_spec(&spec_entry.path()) {
+            let marker = install_dir.join(".nex-install-ok");
+            let Ok(mtime) = std::fs::metadata(&marker).and_then(|m| m.modified()) else {
+                continue;
+            };
+            let Some(resolved) = resolved_npx_at(&install_dir, package_spec, node_binary) else {
+                continue;
+            };
+            match &newest {
+                Some((previous, _, _)) if *previous >= mtime => {}
+                _ => newest = Some((mtime, resolved, marker)),
+            }
+        }
+    }
+    newest.map(|(_, resolved, marker)| (resolved, marker))
+}
+
+fn install_dirs_for_spec(spec_dir: &Path) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if spec_dir.join(".nex-install-ok").is_file() {
+        dirs.push(spec_dir.to_path_buf());
+    }
+    if let Ok(entries) = std::fs::read_dir(spec_dir) {
+        dirs.extend(entries.flatten().filter_map(|entry| {
+            let path = entry.path();
+            let is_node_dir = entry.file_name().to_string_lossy().starts_with("node-");
+            (is_node_dir && path.is_dir()).then_some(path)
+        }));
+    }
+    dirs
 }
 
 /// Replaces characters that are trouble in filesystem paths. Mirrors
@@ -463,9 +690,8 @@ async fn sweep_lru(root: &Path, keep_recent: usize) -> std::io::Result<usize> {
             if !agent_path.is_dir() {
                 continue;
             }
-            // Each spec dir is `<agent>/<sanitize(spec)>/`. Sort by mtime of
-            // `.nex-install-ok` (touched on every use) descending; keep the
-            // newest `keep_recent`, drop the rest.
+            // Markers live inside `node-<version>/` for current caches (or
+            // directly in the spec dir for legacy caches).
             let mut specs: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
             for spec_entry in std::fs::read_dir(&agent_path)? {
                 let spec_entry = spec_entry?;
@@ -473,12 +699,17 @@ async fn sweep_lru(root: &Path, keep_recent: usize) -> std::io::Result<usize> {
                 if !spec_path.is_dir() {
                     continue;
                 }
-                let marker = spec_path.join(".nex-install-ok");
-                let mtime = match std::fs::metadata(&marker).and_then(|m| m.modified()) {
-                    Ok(t) => t,
-                    Err(_) => continue, // broken cache dir; leave alone for now
-                };
-                specs.push((mtime, spec_path));
+                let newest_marker = install_dirs_for_spec(&spec_path)
+                    .into_iter()
+                    .filter_map(|dir| {
+                        std::fs::metadata(dir.join(".nex-install-ok"))
+                            .and_then(|m| m.modified())
+                            .ok()
+                    })
+                    .max();
+                if let Some(mtime) = newest_marker {
+                    specs.push((mtime, spec_path));
+                }
             }
             // Newest first.
             specs.sort_by_key(|(mtime, _)| std::cmp::Reverse(*mtime));
@@ -704,6 +935,40 @@ mod tests {
         assert_eq!(global_rc.parent(), Some(dir.path()));
     }
 
+    #[test]
+    fn npm_install_args_pin_requested_registry() {
+        let dir = tempfile::tempdir().unwrap();
+        let user_rc = dir.path().join("user.npmrc");
+        let global_rc = dir.path().join("global.npmrc");
+        let args = npm_install_args(
+            dir.path(),
+            &dir.path().join("cache"),
+            &user_rc,
+            &global_rc,
+            "@scope/agent@1.2.3",
+            NPM_MIRROR_REGISTRY,
+            &InstallOptions::default(),
+        );
+        let registry_index = args.iter().position(|arg| arg == "--registry").unwrap();
+        assert_eq!(args[registry_index + 1], NPM_MIRROR_REGISTRY);
+        assert_eq!(args.last().map(String::as_str), Some("@scope/agent@1.2.3"));
+    }
+
+    #[test]
+    fn registry_failures_trigger_official_fallback() {
+        assert!(is_registry_failure_output("npm error code ENOTFOUND"));
+        assert!(is_registry_failure_output("404 Not Found - package not synced"));
+        assert!(is_registry_failure_output("504 Gateway Timeout"));
+        assert!(is_registry_failure_output("ETARGET No matching version found"));
+        assert!(!is_registry_failure_output("postinstall script exited with code 1"));
+    }
+
+    #[test]
+    fn install_timeout_is_ten_minutes_with_mirror_budget() {
+        assert_eq!(INSTALL_TIMEOUT, Duration::from_secs(600));
+        assert_eq!(MIRROR_ATTEMPT_TIMEOUT, Duration::from_secs(300));
+    }
+
     // ---- read_package_executable_path --------------------------------
     //
     // These tests mirror npm's actual layout: package.json goes under
@@ -817,8 +1082,8 @@ mod tests {
 
     // ---- newest_installed_version -------------------------------------
 
-    /// Helper: create a fake installed spec under `agent_packages_root/<id>/<spec>`,
-    /// with `.nex-install-ok` (empty) and `.nex-version` sidecar.
+    /// Helper: create a fake current-layout install under
+    /// `agent_packages_root/<id>/<spec>/node-test/`.
     fn make_fake_install(
         root: &Path,
         id: &str,
@@ -826,7 +1091,7 @@ mod tests {
         version: &str,
         marker_mtime_offset_secs: i64,
     ) -> PathBuf {
-        let dir = root.join(sanitize(id)).join(sanitize(spec));
+        let dir = root.join(sanitize(id)).join(sanitize(spec)).join("node-test");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(".nex-install-ok"), "").unwrap();
         std::fs::write(dir.join(".nex-version"), version).unwrap();
@@ -841,6 +1106,19 @@ mod tests {
         };
         let _ = filetime_set(&dir.join(".nex-install-ok"), mtime);
         dir
+    }
+
+    fn make_fake_executable(install_dir: &Path, package_name: &str) -> PathBuf {
+        let package_dir = install_dir.join("node_modules").join(package_name);
+        let executable = package_dir.join("dist/cli.js");
+        std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        std::fs::write(
+            package_dir.join("package.json"),
+            format!(r#"{{"name":"{package_name}","bin":"dist/cli.js"}}"#),
+        )
+        .unwrap();
+        std::fs::write(&executable, "#!/usr/bin/env node").unwrap();
+        executable
     }
 
     /// Set a file's mtime to `t`. Uses `std::fs::File::set_modified` (stable
@@ -881,6 +1159,43 @@ mod tests {
         make_fake_install(&cache.root, "claude-acp", "@scope/claude@0.66.0", "0.66.0", 0);
         make_fake_install(&cache.root, "claude-acp", "@scope/claude@0.65.0", "0.65.0", -60);
         assert_eq!(cache.newest_installed_version("claude-acp").as_deref(), Some("0.66.0"));
+    }
+
+    #[test]
+    fn cached_fallback_ignores_partial_new_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("agent-packages");
+        let old = make_fake_install(
+            &root,
+            "claude-acp",
+            "@agentclientprotocol/claude-agent-acp@0.66.0",
+            "0.66.0",
+            0,
+        );
+        let old_executable = make_fake_executable(
+            &old,
+            "@agentclientprotocol/claude-agent-acp",
+        );
+
+        let partial = root
+            .join("claude-acp")
+            .join("_agentclientprotocol_claude-agent-acp_0.67.0")
+            .join("node-test");
+        let _ = make_fake_executable(
+            &partial,
+            "@agentclientprotocol/claude-agent-acp",
+        );
+        // No success marker on the new version: it must never be selected.
+        let (resolved, _) = newest_usable_npx_install(
+            &root,
+            "claude-acp",
+            "@agentclientprotocol/claude-agent-acp@0.67.0",
+            Path::new("/usr/bin/node"),
+        )
+        .expect("old complete cache should remain usable");
+        assert_eq!(resolved.executable_path, old_executable);
+        assert_eq!(resolved.node_path, PathBuf::from("/usr/bin/node"));
+        assert!(!resolved.first_install);
     }
 
     #[tokio::test]

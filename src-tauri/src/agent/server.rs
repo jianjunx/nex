@@ -332,12 +332,19 @@ impl AgentSessionManager {
     }
 
     /// Build a `ServerDescriptor` from a `RegistryEntry`, filling the cached
-    /// `installed_version` by inspecting `PackageCache`.
+    /// `installed_version` from the matching npm or binary cache.
     fn registry_entry_to_descriptor(
         &self,
         e: &super::registry::RegistryEntry,
     ) -> ServerDescriptor {
-        let installed_version = self.package_cache.newest_installed_version(&e.id);
+        let installed_version = if e.distribution.npx.is_some() {
+            self.package_cache.newest_installed_version(&e.id)
+        } else if e.distribution.binary.is_some() {
+            self.binary_cache
+                .newest_installed_version(&e.id, &launch::registry_platform_key())
+        } else {
+            None
+        };
         ServerDescriptor {
             id: e.id.clone(),
             name: e.name.clone(),

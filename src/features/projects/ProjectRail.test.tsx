@@ -79,6 +79,9 @@ describe("ProjectRail", () => {
     const tooltip = container.querySelector<HTMLElement>("[role=tooltip]");
     expect(tooltip?.className).toContain("group-hover/project:visible");
     expect(tooltip?.className).toContain("group-focus-within/project:visible");
+    expect(tooltip?.className).toContain("text-right");
+    expect(tooltip?.querySelector(".text-\\[14px\\]")).toBeTruthy();
+    expect(tooltip?.querySelector(".text-\\[13px\\]")).toBeTruthy();
   });
 
   it("uses the shared project activation flow when a shortcut is clicked", () => {

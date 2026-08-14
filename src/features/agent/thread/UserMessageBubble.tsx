@@ -9,7 +9,7 @@ import { USER_MESSAGE_COLLAPSE_HEIGHT } from "./stickyUserMessage";
 import type { UserMessageEntry } from "./types";
 
 /**
- * 用户气泡：超长内容折叠到 170px，由父级控制展开态以便列表实例与吸顶克隆共用。
+ * 用户气泡：超长内容折叠到 150px，由父级控制展开态以便列表实例与吸顶克隆共用。
  */
 export function UserMessageBubble({
   entry,
@@ -64,7 +64,7 @@ export function UserMessageBubble({
               )}
               {!entry.images?.length && entry.imageCount && entry.imageCount > 0 && (
                 <p className="mb-1 text-xs text-[var(--text-tertiary)]">
-                  图片 ×{entry.imageCount}（仅用于当轮请求，未保留原始附件）
+                  图片 ×{entry.imageCount}
                 </p>
               )}
               {entry.text ? (

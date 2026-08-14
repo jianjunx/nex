@@ -50,7 +50,7 @@ describe("UserMessageBubble", () => {
     expect(screen.getByText("请看 @ComposerEditor.tsx")).toBeTruthy();
   });
 
-  it("内容超过 170px 时折叠并显示展开", () => {
+  it("内容超过 150px 时折叠并显示展开", () => {
     vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(400);
     const { container } = render(
       <UserMessageBubble entry={ENTRY} expanded={false} onToggleExpand={() => {}} />,

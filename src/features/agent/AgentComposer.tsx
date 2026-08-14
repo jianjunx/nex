@@ -1,8 +1,7 @@
-import { useState, useRef, useEffect, useCallback, useMemo, type ClipboardEvent, type CSSProperties, type KeyboardEvent } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo, type CSSProperties } from "react";
 import { Send, Square, X, Plus, ImagePlus, FilePlus } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -21,9 +20,9 @@ import { ComposerGroupedOptionMenu } from "./ComposerGroupedOptionMenu";
 import { ContextUsageRing, resolveContextRingUsage } from "./ContextUsageRing";
 import { BranchSelector } from "../git/BranchSelector";
 import { useGitStore } from "../../stores/git.store";
+import { useDragDropStore } from "../../stores/dragDrop.store";
 import { PlanBar } from "./thread/PlanBar";
 import { PendingMessagesBar } from "./thread/PendingMessagesBar";
-import { TextEditContextMenu } from "@/components/ui/TextEditContextMenu";
 import {
   clearComposerDraft,
   loadComposerDraft,
@@ -31,20 +30,20 @@ import {
 } from "../../stores/composerDrafts";
 import { fuzzyFilter } from "./composerFuzzy";
 import { setComposerSuggestOpen } from "./composerPanelState";
-import { measureCaretInTextarea } from "./composerCaret";
 import { fileBasename, relativeToProject } from "../editor/pathUtils";
 import FileIcon from "../files/FileIcon";
 import type { AvailableCommand } from "./thread/types";
-
-// Compact default; grows with content / attached images inside the chrome.
-const MIN_HEIGHT = 36;
-const MAX_HEIGHT = 200;
-
-interface FileMention {
-  path: string;
-  /** Token inserted after `@` in the textarea (basename or project-relative). */
-  name: string;
-}
+import { ComposerEditor, type ComposerEditorHandle } from "./ComposerEditor";
+import {
+  appendToken,
+  hasToken,
+  parseTokens,
+  resolveTokenPath,
+  tokenFor,
+} from "./composerTokens";
+import { registerComposerAttach } from "../../lib/composerAttach";
+import { useOsDragDrop } from "../../lib/osDragDrop";
+import { isOverComposer } from "../../lib/dropTargets";
 
 interface PendingImage {
   id: string;
@@ -63,30 +62,10 @@ function matchSlashTrigger(value: string): { query: string; start: number } | nu
 }
 
 function matchAtTrigger(value: string): { query: string } | null {
-  const m = value.match(/(?:^|\s)@([^\s@]*)$/);
+  // `[` is excluded: `@[` starts a literal file token, not a picker trigger.
+  const m = value.match(/(?:^|\s)@([^\s@[]*)$/);
   if (!m) return null;
   return { query: m[1] ?? "" };
-}
-
-/** Prefer a short project-relative path for the inline `@token`. */
-function mentionTokenFor(path: string, projectPath: string | undefined): string {
-  const rel = relativeToProject(path, projectPath);
-  if (rel !== path && !rel.startsWith("..") && rel.length > 0 && rel.length < 96) {
-    return rel.replace(/\\/g, "/");
-  }
-  return fileBasename(path);
-}
-
-/** Replace trailing `@query` or append `@token ` at the end. */
-function insertAtToken(text: string, token: string): string {
-  if (/(?:^|\s)@[^\s@]*$/.test(text)) {
-    return text.replace(/(?:^|\s)@[^\s@]*$/, (m) => {
-      const lead = /^\s/.test(m) ? m[0]! : "";
-      return `${lead}@${token} `;
-    });
-  }
-  const needsSpace = text.length > 0 && !/\s$/.test(text);
-  return `${text}${needsSpace ? " " : ""}@${token} `;
 }
 
 /** Filename + parent dir (with trailing `/`) for the @ picker row. */
@@ -121,14 +100,13 @@ function dedupeMentionHits(hits: SearchMatch[]): SearchMatch[] {
   return out;
 }
 
-function isImeKeyEvent(e: KeyboardEvent<HTMLTextAreaElement>): boolean {
+function isImeKeyEvent(e: globalThis.KeyboardEvent): boolean {
   // keyCode 229 = browser still composing (common on macOS Chinese IME).
-  return e.nativeEvent.isComposing || e.keyCode === 229;
+  return e.isComposing || e.keyCode === 229;
 }
 
 export function AgentComposer() {
   const [text, setText] = useState("");
-  const [mentions, setMentions] = useState<FileMention[]>([]);
   const [images, setImages] = useState<PendingImage[]>([]);
   const [slashOpen, setSlashOpen] = useState(false);
   const [atOpen, setAtOpen] = useState(false);
@@ -141,7 +119,11 @@ export function AgentComposer() {
   const [previewImage, setPreviewImage] = useState<PendingImage | null>(null);
   const [caretPos, setCaretPos] = useState<{ top: number; left: number; lineHeight: number } | null>(null);
   const [imeComposing, setImeComposing] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // A tree file is being pointer-dragged over the composer (drop = attach).
+  const composerDropHover = useDragDropStore((s) => s.overComposer);
+  // An OS file drag is hovering the composer (drop = attach as token).
+  const [osDropHover, setOsDropHover] = useState(false);
+  const editorRef = useRef<ComposerEditorHandle>(null);
   const suggestListRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const plusMenuRef = useRef<HTMLDivElement>(null);
@@ -157,8 +139,6 @@ export function AgentComposer() {
   imagesRef.current = images;
   const textRef = useRef(text);
   textRef.current = text;
-  const mentionsRef = useRef(mentions);
-  mentionsRef.current = mentions;
   const draftTabRef = useRef<string | null>(null);
 
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
@@ -259,7 +239,7 @@ export function AgentComposer() {
       if (tab) {
         saveComposerDraft(tab, {
           text: textRef.current,
-          mentions: mentionsRef.current,
+          mentions: [],
           images: imagesRef.current.map(toDraftImage),
         });
       }
@@ -272,14 +252,15 @@ export function AgentComposer() {
     if (prev && prev !== activeTabId) {
       saveComposerDraft(prev, {
         text: textRef.current,
-        mentions: mentionsRef.current,
+        mentions: [],
         images: imagesRef.current.map(toDraftImage),
       });
     }
     draftTabRef.current = activeTabId;
     const draft = activeTabId ? loadComposerDraft(activeTabId) : null;
-    setText(draft?.text ?? "");
-    setMentions(draft?.mentions ?? []);
+    const draftText = draft?.text ?? "";
+    setText(draftText);
+    editorRef.current?.setText(draftText);
     setSlashOpen(false);
     setAtOpen(false);
     setSlashQuery("");
@@ -292,12 +273,6 @@ export function AgentComposer() {
     setImages((prevImgs) => {
       for (const img of prevImgs) URL.revokeObjectURL(img.previewUrl);
       return (draft?.images ?? []).map(fromDraftImage);
-    });
-    requestAnimationFrame(() => {
-      const el = textareaRef.current;
-      if (!el) return;
-      el.style.height = "auto";
-      el.style.height = `${Math.min(Math.max(el.scrollHeight, MIN_HEIGHT), MAX_HEIGHT)}px`;
     });
   }, [activeTabId]);
 
@@ -405,17 +380,6 @@ export function AgentComposer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTabId, project?.path, activeConversation?.id]);
 
-  const adjustHeight = useCallback(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(Math.max(el.scrollHeight, MIN_HEIGHT), MAX_HEIGHT)}px`;
-  }, []);
-
-  useEffect(() => {
-    adjustHeight();
-  }, [adjustHeight, images.length]);
-
   useEffect(() => {
     if (!atOpen || !project) {
       setAtResults([]);
@@ -434,27 +398,62 @@ export function AgentComposer() {
   }, [atOpen, atQuery, project]);
 
   const updateCaretAnchor = useCallback(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    const pt = measureCaretInTextarea(el);
-    setCaretPos(pt);
+    setCaretPos(editorRef.current?.coordsAtCursor() ?? null);
   }, []);
+
+  /** Append file tokens (tree drag / OS drop / dialog) — dedupes by path. */
+  const insertFilePaths = useCallback((paths: string[]) => {
+    const ed = editorRef.current;
+    if (!ed) return;
+    const projPath = useProjectStore.getState().projects.find(
+      (p) => p.id === useProjectStore.getState().activeProjectId,
+    )?.path;
+    let next = ed.getText();
+    for (const p of paths) {
+      if (typeof p === "string" && p.length > 0) next = appendToken(next, p, projPath);
+    }
+    ed.setText(next);
+    ed.selectEnd();
+    ed.focus();
+  }, []);
+
+  // Tree pointer-drags call attachToComposer(paths) → lands here as tokens.
+  useEffect(() => {
+    registerComposerAttach(insertFilePaths);
+    return () => registerComposerAttach(null);
+  }, [insertFilePaths]);
+
+  // OS file drag into the composer (Tauri event stream; HTML5 drops are dead
+  // with dragDropEnabled on Windows).
+  useOsDragDrop((e) => {
+    if (e.type === "leave") {
+      setOsDropHover(false);
+      return;
+    }
+    const over = isOverComposer(e);
+    if (e.type === "drop") {
+      setOsDropHover(false);
+      if (over && e.paths && e.paths.length > 0) insertFilePaths(e.paths);
+      return;
+    }
+    setOsDropHover((v) => (v === over ? v : over));
+  });
 
   const handleSend = async () => {
     if ((!text.trim() && images.length === 0) || !activeTabId) return;
+    // Raw document text (with `@[path]` tokens) is what the bubble shows and
+    // the agent receives; attachments are parsed from the same tokens.
     const content = text;
-    // Only attach files still referenced by an `@token` in the text.
-    const fileMentions = mentions.filter((m) => content.includes(`@${m.name}`));
+    const fileMentions = parseTokens(content);
     const pendingImages = [...images];
     setText("");
-    setMentions([]);
+    editorRef.current?.setText("");
     setImages([]);
     setPreviewImage(null);
     clearComposerDraft(activeTabId);
     for (const img of pendingImages) URL.revokeObjectURL(img.previewUrl);
     setSlashOpen(false);
     setAtOpen(false);
-    requestAnimationFrame(adjustHeight);
 
     const threadImages = pendingImages.map((img) => ({
       mimeType: img.mimeType,
@@ -467,20 +466,23 @@ export function AgentComposer() {
       blocks.push({ type: "image", data: img.data, mime_type: img.mimeType });
     }
     for (const m of fileMentions) {
+      // Tokens store project-relative paths when possible — resolve to
+      // absolute for the backend read / file URI.
+      const absPath = resolveTokenPath(m.path, project?.path);
       try {
-        const file = await fsReadFile(m.path);
+        const file = await fsReadFile(absPath);
         if (file.is_text && file.content != null) {
           blocks.push({
             type: "resource",
-            uri: pathToFileUri(m.path),
+            uri: pathToFileUri(absPath),
             mime_type: "text/plain",
             text: file.content,
           });
         } else {
-          blocks.push({ type: "resource_link", uri: pathToFileUri(m.path), name: m.name });
+          blocks.push({ type: "resource_link", uri: pathToFileUri(absPath), name: m.name });
         }
       } catch {
-        blocks.push({ type: "resource_link", uri: pathToFileUri(m.path), name: m.name });
+        blocks.push({ type: "resource_link", uri: pathToFileUri(absPath), name: m.name });
       }
     }
     if (blocks.length === 0) {
@@ -527,7 +529,7 @@ export function AgentComposer() {
     await sendPrompt(sessionId, blocks);
   };
 
-  const handlePaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+  const handlePaste = (e: globalThis.ClipboardEvent) => {
     const dt = e.clipboardData;
     if (!dt) return;
     const imageFiles: File[] = [];
@@ -547,44 +549,29 @@ export function AgentComposer() {
   };
 
   const pickCommand = (name: string) => {
-    const el = textareaRef.current;
-    const slash = matchSlashTrigger(text);
-    let next: string;
-    if (slash) {
-      next = `${text.slice(0, slash.start)}/${name} `;
-    } else {
-      next = `/${name} `;
-    }
-    setText(next);
+    const ed = editorRef.current;
+    if (!ed) return;
+    const current = ed.getText();
+    const slash = matchSlashTrigger(current);
+    const next = slash ? `${current.slice(0, slash.start)}/${name} ` : `/${name} `;
+    ed.setText(next);
+    ed.focus();
     setSlashOpen(false);
     setSlashQuery("");
-    requestAnimationFrame(() => {
-      el?.focus();
-      if (el) {
-        el.selectionStart = el.selectionEnd = next.length;
-        adjustHeight();
-      }
-    });
   };
 
   const pickFile = (hit: SearchMatch) => {
-    const token = mentionTokenFor(hit.path, project?.path);
-    setMentions((prev) => {
-      const withoutDup = prev.filter((m) => m.path !== hit.path && m.name !== token);
-      return [...withoutDup, { path: hit.path, name: token }];
-    });
-    const next = insertAtToken(text, token);
-    setText(next);
+    const ed = editorRef.current;
+    if (!ed) return;
+    if (hasToken(ed.getText(), hit.path, project?.path)) {
+      // Already referenced — just erase the typed `@query`.
+      ed.replaceAtTrigger("");
+    } else {
+      // Replace the typed `@query` with the inline token (`@[path] `).
+      ed.replaceAtTrigger(`${tokenFor(hit.path, project?.path)} `);
+    }
     setAtOpen(false);
     setAtQuery("");
-    requestAnimationFrame(() => {
-      const el = textareaRef.current;
-      el?.focus();
-      if (el) {
-        el.selectionStart = el.selectionEnd = next.length;
-        adjustHeight();
-      }
-    });
   };
 
   const applySuggest = () => {
@@ -606,10 +593,12 @@ export function AgentComposer() {
     return false;
   };
 
-  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+  // Runs from CM6 domEventHandlers BEFORE keymaps: return true when consumed
+  // (stops the editor); false lets CM6 apply its default (caret, newline…).
+  const handleEditorKeyDown = (e: globalThis.KeyboardEvent): boolean => {
     // Let the IME consume keys while composing (Enter confirms pinyin, arrows
     // move IME candidates). Sending / picking here would truncate Chinese input.
-    if (imeComposing || isImeKeyEvent(e)) return;
+    if (imeComposing || isImeKeyEvent(e)) return false;
 
     const nav = suggestNavRef.current;
     const menuActive = nav.slashOpen || nav.atOpen;
@@ -617,41 +606,44 @@ export function AgentComposer() {
 
     if (menuActive && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
       e.preventDefault();
-      if (count === 0) return;
+      if (count === 0) return true;
       setSuggestIndex((i) => {
         if (e.key === "ArrowDown") return (i + 1) % count;
         return (i - 1 + count) % count;
       });
-      return;
+      return true;
     }
     if (menuActive && (e.key === "Enter" || e.key === "Tab")) {
       if (count > 0) {
         e.preventDefault();
         applySuggest();
-        return;
+        return true;
       }
       if (e.key === "Enter" && !e.shiftKey) {
         // Empty menu: don't send either while trigger is open with zero hits.
         e.preventDefault();
-        return;
+        return true;
       }
+      return false;
     }
     if (e.key === "Enter" && !e.shiftKey && !nav.slashOpen && !nav.atOpen) {
       e.preventDefault();
       void handleSend();
+      return true;
     }
     if (e.key === "Escape") {
       setSlashOpen(false);
       setAtOpen(false);
       setPlusOpen(false);
+      return true;
     }
+    return false;
   };
 
-  const onChange = (value: string) => {
+  // CM6 → React mirror. File mentions live in the text itself as `@[path]`
+  // tokens, so there is no separate mention state to keep in sync.
+  const handleEditorChange = (value: string) => {
     setText(value);
-    adjustHeight();
-    // Drop mentions whose `@token` was deleted from the text.
-    setMentions((prev) => prev.filter((m) => value.includes(`@${m.name}`)));
     const slash = matchSlashTrigger(value);
     const at = matchAtTrigger(value);
     // Prefer @ over / when both could match (shouldn't normally).
@@ -683,6 +675,12 @@ export function AgentComposer() {
     }
   };
 
+  // Caret moved without a doc change — keep an open popover anchored.
+  const handleEditorSelectionChange = () => {
+    const nav = suggestNavRef.current;
+    if (nav.slashOpen || nav.atOpen) updateCaretAnchor();
+  };
+
   const attachFilesFromDialog = async () => {
     setPlusOpen(false);
     try {
@@ -692,28 +690,7 @@ export function AgentComposer() {
       });
       if (!selected) return;
       const paths = Array.isArray(selected) ? selected : [selected];
-      let nextText = text;
-      setMentions((prev) => {
-        const next = [...prev];
-        for (const p of paths) {
-          if (typeof p !== "string") continue;
-          const token = mentionTokenFor(p, project?.path);
-          const existing = next.findIndex((m) => m.path === p || m.name === token);
-          if (existing >= 0) next[existing] = { path: p, name: token };
-          else next.push({ path: p, name: token });
-          nextText = insertAtToken(nextText, token);
-        }
-        return next;
-      });
-      setText(nextText);
-      requestAnimationFrame(() => {
-        const el = textareaRef.current;
-        el?.focus();
-        if (el) {
-          el.selectionStart = el.selectionEnd = nextText.length;
-          adjustHeight();
-        }
-      });
+      insertFilePaths(paths.filter((p): p is string => typeof p === "string"));
     } catch {
       /* cancelled / dialog error */
     }
@@ -747,7 +724,7 @@ export function AgentComposer() {
         previewFn={pendingMessagePreview}
       />
 
-      <div className="px-4 pb-3 relative">
+      <div className="px-4 pb-3 relative" data-composer-dropzone>
         {(isStarting || agentError) && (
           <div className="mb-2 text-xs px-1">
             {isStarting && <p className="text-[var(--text-tertiary)]">正在连接服务…</p>}
@@ -829,8 +806,12 @@ export function AgentComposer() {
         )}
 
         <div
-          className="flex flex-col gap-1 rounded-[var(--radius-lg)] bg-[var(--glass-3-surface)] border border-[color:var(--glass-border)] px-3 pt-2.5 pb-1.5 shadow-[inset_0_1px_0_0_var(--edge-highlight)] transition-[border-color,box-shadow] duration-150 focus-within:border-[color:var(--accent)] focus-within:shadow-[inset_0_1px_0_0_var(--edge-highlight),0_0_0_3px_var(--accent-glow)]"
-          onClick={() => textareaRef.current?.focus()}
+          className={`flex flex-col gap-1 rounded-[var(--radius-lg)] bg-[var(--glass-3-surface)] border border-[color:var(--glass-border)] px-3 pt-2.5 pb-1.5 shadow-[inset_0_1px_0_0_var(--edge-highlight)] transition-[border-color,box-shadow] duration-150 focus-within:border-[color:var(--accent)] focus-within:shadow-[inset_0_1px_0_0_var(--edge-highlight),0_0_0_3px_var(--accent-glow)]${
+            composerDropHover || osDropHover
+              ? " border-[color:var(--accent)] shadow-[inset_0_1px_0_0_var(--edge-highlight),0_0_0_3px_var(--accent-glow)]"
+              : ""
+          }`}
+          onClick={() => editorRef.current?.focus()}
         >
           {images.length > 0 && (
             <div className="flex flex-wrap gap-1.5 px-0.5">
@@ -867,30 +848,24 @@ export function AgentComposer() {
             </div>
           )}
 
-          <TextEditContextMenu getTarget={() => textareaRef.current}>
-            <Textarea
-              ref={textareaRef}
-              data-composer-input
-              value={text}
-              onChange={(e) => onChange(e.target.value)}
-              onKeyDown={handleKeyDown}
-              onCompositionStart={() => setImeComposing(true)}
-              onCompositionEnd={() => setImeComposing(false)}
-              onKeyUp={() => { if (slashOpen || atOpen) updateCaretAnchor(); }}
-              onClick={() => { if (slashOpen || atOpen) updateCaretAnchor(); }}
-              onPaste={handlePaste}
-              placeholder={
-                isStarting
-                  ? "Agent 启动中…"
-                  : activeTabId
-                    ? "描述任务，@ 引用文件，/ 使用命令"
-                    : "先新建或选择一个会话"
-              }
-              className="flex-1 min-h-0 border-0 bg-transparent p-1 shadow-none rounded-none text-sm font-normal leading-[21px] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] resize-none overflow-y-auto focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
-              style={{ minHeight: MIN_HEIGHT, maxHeight: MAX_HEIGHT }}
-              disabled={!activeTabId}
-            />
-          </TextEditContextMenu>
+          <ComposerEditor
+            ref={editorRef}
+            initialText={text}
+            placeholder={
+              isStarting
+                ? "Agent 启动中…"
+                : activeTabId
+                  ? "描述任务，@ 引用文件，/ 使用命令"
+                  : "先新建或选择一个会话"
+            }
+            disabled={!activeTabId}
+            onChange={handleEditorChange}
+            onKeyDown={handleEditorKeyDown}
+            onPaste={handlePaste}
+            onCompositionStart={() => setImeComposing(true)}
+            onCompositionEnd={() => setImeComposing(false)}
+            onSelectionChange={handleEditorSelectionChange}
+          />
 
           <div
             className="flex items-center gap-1 pt-0.5"

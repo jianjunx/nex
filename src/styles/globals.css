@@ -642,3 +642,56 @@ html, body {
     background: transparent;
   }
 }
+
+/* ─── Composer(CodeMirror)— 内联文件 tag chip + 编辑器高度上限 ─────────
+   chip 是 CM6 replace decoration widget(.composer-token),原位替换
+   `@[path]` 文本的视觉呈现;样式走主题变量,深浅色自动跟随。 */
+@layer components {
+  .composer-editor-host .cm-editor {
+    max-height: 200px;
+  }
+
+  .composer-token {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    max-width: 220px;
+    padding: 0 4px 0 5px;
+    margin: 0 1px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background: var(--glass-2-surface);
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 18px;
+    vertical-align: middle;
+    white-space: nowrap;
+    cursor: default;
+  }
+  .composer-token-icon {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+  }
+  .composer-token-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .composer-token-x {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    margin-left: 1px;
+    border-radius: 3px;
+    color: var(--text-tertiary);
+    font-size: 13px;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+  .composer-token-x:hover {
+    background: var(--overlay-hover);
+    color: var(--text-primary);
+  }
+}

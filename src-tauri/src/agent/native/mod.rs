@@ -909,12 +909,17 @@ impl acp::Agent for NexNativeAgent {
 
         // Persist history so `session/load` can resume after app restart.
         // Strip multimodal image payloads — archives must stay small/safe.
+        // Clone RefCell-backed fields before the fallible save path: reporting
+        // an error below awaits, so a RefCell borrow must not outlive this
+        // construction.
+        let archived_model_id = session.handles.model_id.borrow().clone();
+        let archived_mode_id = session.handles.mode_id.borrow().clone();
         if let Err(e) = archive::save(
             &session_key,
             &archive::SessionArchive {
                 cwd: session.cwd.clone(),
-                model_id: session.handles.model_id.borrow().clone(),
-                mode_id: session.handles.mode_id.borrow().clone(),
+                model_id: archived_model_id,
+                mode_id: archived_mode_id,
                 history: archive::history_without_images(&session.history),
             },
         ) {

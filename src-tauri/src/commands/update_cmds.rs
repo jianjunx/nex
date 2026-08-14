@@ -670,7 +670,7 @@ fn launch_downloaded_installer(app: &AppHandle, dest: &Path) -> Result<(), NexEr
             .arg(dest)
             .spawn()
             .map_err(|e| NexError::Internal(format!("打开安装镜像失败: {e}")))?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]

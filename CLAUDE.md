@@ -68,6 +68,106 @@ pnpm tauri build
 - `commands/` — TS 侧命令调用。
 - `components/ui/` — shadcn 风格原语组件。
 
+### 前端界面风格（Apple / macOS Pro，后续默认按此实现）
+
+Nex 的界面标准是 **macOS Pro 风格的深色材质工作台**，不是 VS Code
+式纯平工具壳，也不是 iOS / iPadOS 式夸张液态玻璃。目标是：
+**高信息密度 + 清晰层级 + 即时反馈 + 克制动效**。
+
+#### 1. 先用共享 seam，不要散落写样式
+
+- **优先复用 `src/styles/globals.css` 里的语义 token / recipe class**，不要
+  在业务组件里重复发明一套新的玻璃、阴影、边框、hover 规则。
+- 优先用这些共享层：
+  - `--material-toolbar` / `--material-sidebar` / `--material-panel` /
+    `--material-floating` / `--material-elevated`
+  - `--hairline-soft` / `--hairline-strong`
+  - `--edge-highlight-soft` / `--edge-highlight-bright`
+  - `nex-material-toolbar` / `nex-material-sidebar` /
+    `nex-material-panel` / `nex-material-floating`
+  - `nex-interactive-chrome` / `nex-pressable`
+- **新 UI 先想 seam 再想 caller**：共享原语（dialog / dropdown / context menu /
+  shell recipe）能改的，就不要只在单个 feature 上打补丁。
+
+#### 2. 材质层级
+
+- **Toolbar / 顶部 chrome** 用 `nex-material-toolbar`。
+- **Sidebar / 辅助工作区** 用 `nex-material-sidebar`。
+- **普通面板 / 嵌入工作面** 用 `nex-material-panel`。
+- **菜单 / popover / toast / modal / 悬浮说明层** 用
+  `nex-material-floating` 或 `--material-elevated`。
+- 层级主要靠：
+  - 半透明材质
+  - hairline 边界
+  - 顶部内高光
+  - 柔和阴影
+  不要靠粗边框或大块纯色对比。
+- **不要把轻玻璃叠在轻玻璃上**。若某层已经是浮层，下层应更稳、更重，
+  否则可读性会塌。
+
+#### 3. 交互反馈
+
+- **反馈从 pointer-down 开始**。按钮、tab、chip、icon control 的按下态必须
+  立即出现，不要等 click 结束。
+- 用 `nex-interactive-chrome` 统一 hover / focus / active 的节奏；
+  用 `nex-pressable` 提供按下缩放。
+- **不要再写到处都是各自不同的 `transition-colors duration-150`。**
+  统一交给共享 chrome 语法，除非确实有独特需求。
+- hover 的目标是**更像系统 chrome 被点亮**，不是网页卡片“漂起来”。
+  少用明显 `translateY`，优先用 tint / border / inner highlight。
+
+#### 4. 动效
+
+- 默认动效应该 **短、稳、可打断、低存在感**。
+- 对话框、菜单、popover 这类浮层：
+  - 以 opacity + scale 为主；
+  - 从来源方向 / 来源关系上保持空间一致；
+  - 不做花哨弹跳。
+- 手势驱动或会被持续抓取的交互，优先遵守 Apple 的 fluid 规则：
+  从当前呈现值出发、不中断输入、保留速度连续性。
+- **`prefers-reduced-motion` / `prefers-reduced-transparency` /
+  `prefers-contrast` 必须继续有效。** 新样式不要绕过这些媒体查询。
+
+#### 5. 文本与层次
+
+- 默认继续使用系统字体栈。
+- 标题、工具栏标签、分组标签的层次，优先靠：
+  - 字重
+  - tracking
+  - 对比度
+  - 间距
+  不要只靠加大字号。
+- 小标签 / 分组标题倾向更紧凑、更高对比，但不要做成刺眼的全亮文本。
+- 高密度工作面板里，正文可读性优先于“玻璃感”。
+
+#### 6. 组件级设计规则
+
+- **项目选择器 / 下拉 / 右键菜单 / popover / 对话框** 都属于同一浮层家族；
+  新增一个，就按同一 material 语法写。
+- **会话线程卡片 / tool cards / pending bars / plan bars** 属于嵌入式工作面：
+  应该像工作台上的轻浮层，而不是纯平 `div` 或重型卡片。
+- **设置页、文件树、Git、搜索、终端** 这类高密度工作面板必须克制；
+  优先清晰、可扫读，不要为了 Apple 风格把它们做成过亮、过糊、过厚重。
+
+#### 7. 禁止项
+
+- 不要引入新的“第二套”命名（例如再造一组 `frost-*` / `liquid-*` token）
+  与当前 material 体系并存。
+- 不要回到旧的 `glass-* + border-subtle + hover:bg-[var(--overlay-hover)]`
+  杂糅写法作为默认新标准；若旧代码尚未迁移，可保留，但**新代码按现在的
+  material 体系写**。
+- 不要把 Apple 风格理解成：更亮、更多 blur、更多阴影。标准是
+  **层次清楚、反馈直接、视觉克制**。
+
+#### 8. 做新界面时的默认顺序
+
+1. 先判断它属于 toolbar / sidebar / panel / floating 哪个层级。
+2. 先选共享 recipe，再补局部 class。
+3. 先保证 pointer-down / hover / focus 的一致反馈。
+4. 再补充细节（标签、状态徽标、分隔线、空态、错误态）。
+5. 最后检查 reduced-motion / reduced-transparency / contrast 是否仍成立。
+
+
 ## 约定
 
 - Commit 消息用 Conventional Commits：`feat:`、`fix:`、

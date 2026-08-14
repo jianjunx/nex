@@ -1,0 +1,21 @@
+src/features/projects/ProjectRail.tsx
+  s_8570e2e29d9773::t_885a7474522a7a 76
+src/features/projects/ProjectRail.test.tsx
+  s_8570e2e29d9773::t_885a7474522a7a 83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "0454b6199e51fa8a66d317ca00466e6584d06618",
+  "prompts": {},
+  "sessions": {
+    "s_8570e2e29d9773": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fff59-6119-7930-8bd6-aa1e64373669",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

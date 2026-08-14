@@ -115,8 +115,9 @@ export function ProjectRail() {
               <span
                 aria-hidden
                 className={cn(
+                  "font-bold",
                   workStatus && "animate-pulse motion-reduce:animate-none",
-                  workStatus === "running" && "text-[var(--accent)]",
+                  workStatus === "running" && "text-[var(--success)]",
                   workStatus === "waiting" && "text-[var(--warning)]",
                 )}
               >

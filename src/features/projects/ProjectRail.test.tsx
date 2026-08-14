@@ -155,9 +155,11 @@ describe("ProjectRail", () => {
     expect(p1?.getAttribute("aria-label")).toContain("Agent 运行中");
     expect(p2?.getAttribute("aria-label")).toContain("Agent 等待中");
     expect(p1?.querySelector("span")?.className).toContain("animate-pulse");
-    expect(p1?.querySelector("span")?.className).toContain("text-[var(--accent)]");
+    expect(p1?.querySelector("span")?.className).toContain("text-[var(--success)]");
+    expect(p1?.querySelector("span")?.className).toContain("font-bold");
     expect(p2?.querySelector("span")?.className).toContain("animate-pulse");
     expect(p2?.querySelector("span")?.className).toContain("text-[var(--warning)]");
+    expect(p2?.querySelector("span")?.className).toContain("font-bold");
   });
 
   it("uses the shared project activation flow when a shortcut is clicked", () => {

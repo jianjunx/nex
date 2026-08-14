@@ -1,0 +1,33 @@
+src/features/layout/IconBar.tsx
+  s_8570e2e29d9773::t_e2269cbba85ee3 5,57
+src/features/projects/ProjectRail.tsx
+  s_8570e2e29d9773::t_19bfa65f967272 76
+  s_8570e2e29d9773::t_e2269cbba85ee3 1-36,38-75,77-91
+  s_8570e2e29d9773::t_4986e8b7f73f4c 37
+src/features/agent/ComposerEditor.test.tsx
+  s_8570e2e29d9773::t_7d988cd31a6568 1-26
+src/features/agent/ComposerEditor.tsx
+  s_8570e2e29d9773::t_e2269cbba85ee3 162-164,259
+src/features/projects/activateProject.ts
+  s_8570e2e29d9773::t_e2269cbba85ee3 1-51
+src/features/projects/ProjectRail.test.tsx
+  s_8570e2e29d9773::t_7d988cd31a6568 1-91
+src/features/projects/ProjectSelector.tsx
+  s_8570e2e29d9773::t_e2269cbba85ee3 23,98,129,209-210
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "9769247d7f562741fcf4ab41a29d760f50df8136",
+  "prompts": {},
+  "sessions": {
+    "s_8570e2e29d9773": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fff59-6119-7930-8bd6-aa1e64373669",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

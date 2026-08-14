@@ -1,0 +1,24 @@
+src/features/agent/thread/UserMessageBubble.test.tsx
+  s_12980fd44991ae::t_dc766841ff0694 53
+src/features/agent/thread/stickyUserMessage.ts
+  s_12980fd44991ae::t_dc766841ff0694 1
+src/features/agent/thread/UserMessageBubble.tsx
+  s_12980fd44991ae::t_dc766841ff0694 12
+  s_12980fd44991ae::t_90104eb843dc95 67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "6bfc4683b74f39d80e0801ed3002b5125b18685e",
+  "prompts": {},
+  "sessions": {
+    "s_12980fd44991ae": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ffe6e-ac9d-7000-a0ac-debec9bd0014",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

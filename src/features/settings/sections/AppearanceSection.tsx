@@ -27,7 +27,7 @@ export function AppearanceSection() {
             <Label htmlFor="theme-dark">深色</Label>
           </div>
         </RadioGroup>
-        <p className="text-xs text-[var(--text-tertiary)]">深色主题采用 One Dark Pro 配色</p>
+        <p className="text-xs text-[var(--text-tertiary)]">深色主题</p>
       </div>
     </section>
   );

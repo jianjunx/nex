@@ -5,7 +5,7 @@
 /* ─── shadcn/ui design tokens ───────────────────────────────────────────
    Standard CSS-variable theme consumed by shadcn components via Tailwind
    utilities (bg-background, text-foreground, border-border, etc.).
-   Dark defaults to One Dark Pro (Binaryify / Atom One Dark); light values
+    light values
    live under [data-theme="light"] for the app theme-switch mechanism. */
 :root {
   /* macOS Pro dark workbench */
@@ -38,7 +38,7 @@
 
   --radius: 0.625rem;
 
-  /* ─── App semantic tokens (One Dark Pro) ───────────────────────────── */
+  /* ─── App semantic tokens ───────────────────────────── */
   /* Hairlines sit between surfaces — not a black trench. */
   --border-subtle: rgba(255, 255, 255, 0.07);
   --border-default: rgba(255, 255, 255, 0.12);

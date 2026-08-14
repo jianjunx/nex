@@ -1,0 +1,21 @@
+src-tauri/src/agent/native/mod.rs
+  s_8570e2e29d9773::t_89bc99d10bcc52 912-916,921-922
+src-tauri/src/commands/update_cmds.rs
+  s_8570e2e29d9773::t_89bc99d10bcc52 673
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "bebb7b3f09ae5395875b53d709b715380a9c41db",
+  "prompts": {},
+  "sessions": {
+    "s_8570e2e29d9773": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fff59-6119-7930-8bd6-aa1e64373669",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

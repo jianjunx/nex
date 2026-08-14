@@ -19,24 +19,13 @@ import { useFsStore } from "../../stores/fs.store";
 import { fsWatchStart } from "../../bridge/tauri";
 import { projectSessionIndicators } from "../agent/projectSessionIndicators";
 import { restoreProjectConversationTabs } from "./restoreProjectConversationTabs";
-import { useClipboardStore } from "../../stores/clipboard.store";
 import { AgentIcon } from "../agent/AgentIcon";
+import { activateProject, resetFsSelectionForProjectSwitch } from "./activateProject";
 
 const platform = typeof navigator !== "undefined" ? navigator.platform : "";
 const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
 // Match TopBar's compact fused bar on macOS (see TopBar for the rationale).
 const isMac = platform.startsWith("Mac") || /Macintosh/.test(ua);
-
-/** Drop tree selection + file clipboard so Cmd+V after a switch cannot
- *  paste into a stale path (e.g. previous project's `src` into itself). */
-function resetFsSelectionForProjectSwitch(projectPath: string) {
-  useFsStore.getState().clearTreeExcept(projectPath);
-  useClipboardStore.getState().clear();
-}
-
-function onProjectActivated(projectId: string) {
-  useFsStore.getState().switchSearchProject(projectId);
-}
 
 // Radix highlights items on hover/keyboard via focus + data-[highlighted];
 // override shadcn's solid accent focus with the app's subtle overlay token.
@@ -106,7 +95,7 @@ function LatestConversationRow({ projectId }: { projectId: string }) {
 }
 
 export function ProjectSelector() {
-  const { projects, activeProjectId, openProject, switchProject } = useProjectStore();
+  const { projects, activeProjectId, openProject } = useProjectStore();
   const activeProject = projects.find((p) => p.id === activeProjectId);
   const [openError, setOpenError] = useState<string | null>(null);
   const openErrorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -137,7 +126,7 @@ export function ProjectSelector() {
         const active = all.find((p) => p.id === id);
         if (active) {
           resetFsSelectionForProjectSwitch(active.path);
-          onProjectActivated(active.id);
+          useFsStore.getState().switchSearchProject(active.id);
           await Promise.all([
             useFsStore.getState().loadEditorState(active.id),
             restoreProjectConversationTabs(active.id),
@@ -217,33 +206,8 @@ export function ProjectSelector() {
                 key={p.id}
                 title={p.path}
                 onSelect={() => {
-                const oldId = useProjectStore.getState().activeProjectId;
-                void (async () => {
-                  if (oldId && oldId !== p.id) {
-                    await useFsStore.getState().saveCurrentEditorState(oldId);
-                  }
-                  switchProject(p.id);
-                  resetFsSelectionForProjectSwitch(p.path);
-                  onProjectActivated(p.id);
-                  // Keep only this project's tab ids hydrated; others re-fetch on visit.
-                  const keep = new Set(useConversationStore.getState().tabsByProject[p.id] ?? []);
-                  useAgentStore.getState().pruneEntriesExcept(keep);
-                  await Promise.all([
-                    useFsStore.getState().loadEditorState(p.id),
-                    restoreProjectConversationTabs(p.id),
-                    fsWatchStart(p.path).catch(() => {}),
-                  ]);
-                  // 项目切换后激活其最近活跃会话（若在已开页签内）。
-                  const convs = useConversationStore.getState().conversationsByProject[p.id] ?? [];
-                  const latestId = [...convs].sort((a, b) => b.updated_at - a.updated_at)[0]?.id;
-                  if (
-                    latestId &&
-                    (useConversationStore.getState().tabsByProject[p.id] ?? []).includes(latestId)
-                  ) {
-                    useConversationStore.getState().switchTab(latestId);
-                  }
-                })();
-              }}
+                  void activateProject(p);
+                }}
               className={cn(
                 "group/proj nex-interactive-chrome cursor-pointer items-start gap-2.5 rounded-[var(--radius-md)] px-2 py-2",
                 ITEM_HIGHLIGHT,

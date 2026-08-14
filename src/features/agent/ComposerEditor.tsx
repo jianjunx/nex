@@ -159,7 +159,9 @@ const composerTheme = EditorView.theme({
     fontFamily: "inherit",
     lineHeight: "21px",
   },
-  ".cm-scroller": { overflow: "auto" },
+  // Soft-wrap pasted prose and long unbroken strings; the editor keeps its
+  // existing vertical height cap, but never exposes a horizontal scrollbar.
+  ".cm-scroller": { overflowX: "hidden", overflowY: "auto" },
   ".cm-line": { padding: "0" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--text-primary)" },
   "&.cm-editor .cm-placeholder": { color: "var(--text-tertiary)" },
@@ -254,6 +256,7 @@ export const ComposerEditor = forwardRef<ComposerEditorHandle, ComposerEditorPro
             placeholderComp.current.of(placeholder(propsRef.current.placeholder)),
             EditorView.contentAttributes.of({ "data-composer-input": "" }),
             composerTheme,
+            EditorView.lineWrapping,
             tokenPlugin,
             domEvents,
             onChangeExt,

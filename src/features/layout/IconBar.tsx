@@ -2,6 +2,7 @@ import { FolderTree, GitBranch, Search, Settings, Terminal } from "lucide-react"
 import { Button } from "@/components/ui/button";
 import { useUiStore, type SidePanelTab } from "../../stores/ui.store";
 import { useGitStore } from "../../stores/git.store";
+import { ProjectRail } from "../projects/ProjectRail";
 
 const tabs: { id: SidePanelTab; icon: typeof FolderTree; label: string }[] = [
   { id: "files", icon: FolderTree, label: "文件" },
@@ -53,6 +54,7 @@ export function IconBar() {
             </Button>
           );
         })}
+        <ProjectRail />
       </div>
       <div className="flex-1" />
       <div className="mx-2 mb-1.5 h-px w-4 bg-[color:var(--hairline-soft)]" />

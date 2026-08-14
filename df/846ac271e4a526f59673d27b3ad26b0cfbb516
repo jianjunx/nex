@@ -1,0 +1,27 @@
+src/features/agent/ComposerEditor.tsx
+  s_0cb63b9ee89429::t_f861831c3829d8 34,124,205-234
+src/features/agent/composerTokens.test.ts
+  s_0cb63b9ee89429::t_8409f0f6aa5d07 4-5,79-104
+src/features/agent/composerTokens.ts
+  s_0cb63b9ee89429::t_87716fd1900eda 30-73
+src/features/agent/thread/UserMessageBubble.test.tsx
+  s_0cb63b9ee89429::t_7fc66731b2c759 41-52
+src/features/agent/thread/UserMessageBubble.tsx
+  s_0cb63b9ee89429::t_143a7c4e5c4173 5,66-68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "df846ac271e4a526f59673d27b3ad26b0cfbb516",
+  "prompts": {},
+  "sessions": {
+    "s_0cb63b9ee89429": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_0cb63b9ee89429",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

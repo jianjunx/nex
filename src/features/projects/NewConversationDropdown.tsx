@@ -102,7 +102,7 @@ export function NewConversationDropdown({ triggerSize }: Props) {
   }, [open, servers.length, serversLoading, serversLoadedAt, loadServers]);
 
   // 语义搬自旧新建会话模态框的 handleCreate：createConversation 立即开标签
-  // → 关面板 → createSession 后台握手（失败写 agent.store 共享 error，现状一致）。
+  // → 关面板 → createSession 后台握手（失败写入该会话的 Composer 错误）。
   // 拆成两段 try：建标签前的失败只出错误行；建标签后的任何同步失败回滚标签。
   const handleCreate = async (selected: ServerDescriptor) => {
     if (!project || creatingId) return;
@@ -125,9 +125,8 @@ export function NewConversationDropdown({ triggerSize }: Props) {
             : { type: "registry", id: selected.id };
       setCreatingId(null);
       closeNewConversation();
-      void createSession(conv.id, target, project.path).catch((err) => {
-        useAgentStore.setState({ error: errorMessage(err) });
-      });
+      // createSession itself records a conversation-scoped Composer error.
+      void createSession(conv.id, target, project.path).catch(() => {});
     } catch (err) {
       closeTab(conv.id);
       setError(errorMessage(err));

@@ -151,7 +151,10 @@ interface AgentStore {
   serversLoading: boolean;
   /** 上次 loadAllServers 尝试（成败均计）的时间戳（0＝从未尝试）。失败也打点，防守卫以 IPC 为节拍自激重试；手动重试走 refreshRegistry。 */
   serversLoadedAt: number;
+  /** Global errors for registry/settings work that is not tied to a conversation. */
   error: string | null;
+  /** Dismissible Composer errors, isolated to the conversation that caused them. */
+  errorsByConversation: Record<string, string>;
 
   createSession: (conversationId: string, target: SessionTarget, cwd: string) => Promise<string>;
   removeSession: (conversationId: string) => Promise<void>;
@@ -190,6 +193,7 @@ interface AgentStore {
   setModel: (sessionId: string, modelId: string) => Promise<void>;
   setConfigOption: (sessionId: string, configId: string, value: string) => Promise<void>;
   setAuthMode: (conversationId: string, authMode: AuthMode) => void;
+  clearErrorForConversation: (conversationId: string) => void;
   /** Cached from nex-agent.json; used to chain `/review` after mutating turns. */
   nativeAutoReview: boolean;
   /** Latest backend context stats per conversation (debug/observability). */
@@ -219,6 +223,28 @@ interface AgentStore {
 }
 
 let listenerTeardown: (() => void) | null = null;
+
+function clearConversationError(
+  s: Pick<AgentStore, "errorsByConversation">,
+  conversationId: string,
+): void {
+  delete s.errorsByConversation[conversationId];
+}
+
+function setConversationError(
+  s: Pick<AgentStore, "errorsByConversation">,
+  conversationId: string,
+  error: string,
+): void {
+  s.errorsByConversation[conversationId] = error;
+}
+
+function conversationIdForSession(
+  s: Pick<AgentStore, "sessions">,
+  sessionId: string,
+): string | null {
+  return Object.values(s.sessions).find((session) => session.sessionId === sessionId)?.conversationId ?? null;
+}
 
 function nextPendingPermission(
   queues: Record<string, AgentPermissionRequestPayload[]>,
@@ -325,7 +351,7 @@ async function handoffPlanToExecute(
         patchPrefs(set, conversationId, { modeId: execMode });
       } catch (err) {
         set((s) => {
-          s.error = errorMessage(err);
+          setConversationError(s, conversationId, errorMessage(err));
         });
       }
     }
@@ -643,13 +669,14 @@ export const useAgentStore = create<AgentStore>()(
     serversLoading: false,
     serversLoadedAt: 0,
     error: null,
+    errorsByConversation: {},
     nativeAutoReview: false,
     contextStatsByConversation: {},
 
     createSession: async (conversationId, target, cwd) => {
       set((s) => {
         s.loading = true;
-        s.error = null;
+        clearConversationError(s, conversationId);
         s.sessions[conversationId] = {
           sessionId: "",
           conversationId,
@@ -678,7 +705,7 @@ export const useAgentStore = create<AgentStore>()(
       } catch (err) {
         set((s) => {
           delete s.sessions[conversationId];
-          s.error = errorMessage(err);
+          setConversationError(s, conversationId, errorMessage(err));
         });
         pruneStalePendingNotifications(get);
         throw err;
@@ -693,13 +720,13 @@ export const useAgentStore = create<AgentStore>()(
       const session = get().sessions[conversationId];
       if (!session) return;
       set((s) => {
-        s.error = null;
+        clearConversationError(s, conversationId);
       });
       try {
         if (session.sessionId) await agentCloseSession(session.sessionId);
       } catch (err) {
         set((s) => {
-          s.error = errorMessage(err);
+          setConversationError(s, conversationId, errorMessage(err));
         });
       } finally {
         set((s) => {
@@ -709,6 +736,7 @@ export const useAgentStore = create<AgentStore>()(
           // Drop queued-but-unsent messages and any permission queues so a
           // removed conversation leaves no orphaned state behind.
           delete s.pendingMessagesByConversation[conversationId];
+          clearConversationError(s, conversationId);
           const liveSessionId = session.sessionId;
           if (liveSessionId) {
             pendingNotificationsBySessionId.delete(liveSessionId);
@@ -785,6 +813,7 @@ export const useAgentStore = create<AgentStore>()(
           delete s.entriesByConversation[id];
           delete s.metaByConversation[id];
           delete s.pendingMessagesByConversation[id];
+          clearConversationError(s, id);
         }
       });
     },
@@ -822,7 +851,7 @@ export const useAgentStore = create<AgentStore>()(
       }
       set((s) => {
         s.sessions[session.conversationId].status = "running";
-        s.error = null;
+        clearConversationError(s, session.conversationId);
       });
       let promptFailed = false;
       let hadMutations = false;
@@ -837,7 +866,7 @@ export const useAgentStore = create<AgentStore>()(
       } catch (err) {
         promptFailed = true;
         set((s) => {
-          s.error = errorMessage(err);
+          setConversationError(s, session.conversationId, errorMessage(err));
         });
       }
 
@@ -935,14 +964,16 @@ export const useAgentStore = create<AgentStore>()(
     },
 
     cancel: async (sessionId) => {
+      const conversationId = conversationIdForSession(get(), sessionId);
       set((s) => {
-        s.error = null;
+        if (conversationId) clearConversationError(s, conversationId);
       });
       try {
         await agentCancel(sessionId);
       } catch (err) {
         set((s) => {
-          s.error = errorMessage(err);
+          if (conversationId) setConversationError(s, conversationId, errorMessage(err));
+          else s.error = errorMessage(err);
         });
       } finally {
         set((s) => {
@@ -977,14 +1008,19 @@ export const useAgentStore = create<AgentStore>()(
     },
 
     respondPermission: async (requestId, optionId) => {
+      const sessionId = Object.entries(get().permissionQueues).find(([, queue]) =>
+        queue.some((request) => request.requestId === requestId),
+      )?.[0];
+      const conversationId = sessionId ? conversationIdForSession(get(), sessionId) : null;
       set((s) => {
-        s.error = null;
+        if (conversationId) clearConversationError(s, conversationId);
       });
       try {
         await agentRespondPermission(requestId, optionId);
       } catch (err) {
         set((s) => {
-          s.error = errorMessage(err);
+          if (conversationId) setConversationError(s, conversationId, errorMessage(err));
+          else s.error = errorMessage(err);
         });
       } finally {
         set((s) => {
@@ -1024,7 +1060,6 @@ export const useAgentStore = create<AgentStore>()(
       let conversationIdForHandoff: string | null = null;
       let dequeued: AgentPlanApprovalRequestPayload | null = null;
       set((s) => {
-        s.error = null;
         for (const [sessionId, queue] of Object.entries(s.planApprovalQueues)) {
           const idx = queue.findIndex((q) => q.requestId === requestId);
           if (idx !== -1) {
@@ -1050,6 +1085,7 @@ export const useAgentStore = create<AgentStore>()(
           : undefined;
         if (session) {
           conversationIdForHandoff = session.conversationId;
+          clearConversationError(s, session.conversationId);
           const list = s.entriesByConversation[session.conversationId];
           const card = list?.find(
             (e) => e.kind === "plan_approval" && e.requestId === requestId,
@@ -1072,7 +1108,11 @@ export const useAgentStore = create<AgentStore>()(
         respondedOk = true;
       } catch (err) {
         set((s) => {
-          s.error = errorMessage(err);
+          if (conversationIdForHandoff) {
+            setConversationError(s, conversationIdForHandoff, errorMessage(err));
+          } else {
+            s.error = errorMessage(err);
+          }
           // Re-queue + roll back card so the user can retry.
           if (dequeued) {
             const queue = s.planApprovalQueues[resolvedSessionId] ?? [];
@@ -1112,9 +1152,9 @@ export const useAgentStore = create<AgentStore>()(
 
     respondAskQuestion: async (requestId, outcome, answers, reason) => {
       let sessionIdForStatus: string | null = null;
+      let conversationIdForError: string | null = null;
       let dequeued: AgentAskQuestionRequestPayload | null = null;
       set((s) => {
-        s.error = null;
         for (const [sessionId, queue] of Object.entries(s.askQuestionQueues)) {
           const idx = queue.findIndex((q) => q.requestId === requestId);
           if (idx !== -1) {
@@ -1135,6 +1175,13 @@ export const useAgentStore = create<AgentStore>()(
           }
         }
         s.pendingAskQuestion = nextPendingAskQuestion(s.askQuestionQueues);
+        if (sessionIdForStatus) {
+          const session = Object.values(s.sessions).find((ss) => ss.sessionId === sessionIdForStatus);
+          if (session) {
+            conversationIdForError = session.conversationId;
+            clearConversationError(s, session.conversationId);
+          }
+        }
       });
       if (!sessionIdForStatus) return;
       const resolvedSessionId = sessionIdForStatus;
@@ -1142,7 +1189,11 @@ export const useAgentStore = create<AgentStore>()(
         await agentRespondAskQuestion(requestId, outcome, answers, reason);
       } catch (err) {
         set((s) => {
-          s.error = errorMessage(err);
+          if (conversationIdForError) {
+            setConversationError(s, conversationIdForError, errorMessage(err));
+          } else {
+            s.error = errorMessage(err);
+          }
           if (dequeued) {
             const queue = s.askQuestionQueues[resolvedSessionId] ?? [];
             if (!queue.some((q) => q.requestId === requestId)) {
@@ -1188,7 +1239,8 @@ export const useAgentStore = create<AgentStore>()(
         }
       } catch (err) {
         set((s) => {
-          s.error = errorMessage(err);
+          if (session) setConversationError(s, session.conversationId, errorMessage(err));
+          else s.error = errorMessage(err);
         });
       }
     },
@@ -1217,7 +1269,8 @@ export const useAgentStore = create<AgentStore>()(
         }
       } catch (err) {
         set((s) => {
-          s.error = errorMessage(err);
+          if (session) setConversationError(s, session.conversationId, errorMessage(err));
+          else s.error = errorMessage(err);
         });
       }
     },
@@ -1272,13 +1325,20 @@ export const useAgentStore = create<AgentStore>()(
         }
       } catch (err) {
         set((s) => {
-          s.error = errorMessage(err);
+          if (session) setConversationError(s, session.conversationId, errorMessage(err));
+          else s.error = errorMessage(err);
         });
       }
     },
 
     setAuthMode: (conversationId, authMode) => {
       patchPrefs(set, conversationId, { authMode });
+    },
+
+    clearErrorForConversation: (conversationId) => {
+      set((s) => {
+        clearConversationError(s, conversationId);
+      });
     },
 
     refreshNativeAutoReview: async () => {
@@ -1310,7 +1370,7 @@ export const useAgentStore = create<AgentStore>()(
           queue.length >= MAX_PENDING_MESSAGES_PER_CONVERSATION ||
           imageChars > MAX_PENDING_IMAGE_BASE64_CHARS
         ) {
-          s.error = "等待发送的消息过多，请先发送或移除已有消息";
+          setConversationError(s, conversationId, "等待发送的消息过多，请先发送或移除已有消息");
           return;
         }
         queue.push(next);

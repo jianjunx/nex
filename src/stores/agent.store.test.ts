@@ -71,6 +71,7 @@ beforeEach(() => {
     serversLoading: false,
     serversLoadedAt: 0,
     error: null,
+    errorsByConversation: {},
     sessions: {},
     metaByConversation: {},
     sessionPrefsByConversation: {},
@@ -136,7 +137,7 @@ describe("agent.store pending message bounds", () => {
 
     const state = useAgentStore.getState();
     expect(state.pendingMessagesByConversation["conv-1"]).toHaveLength(8);
-    expect(state.error).toContain("等待发送的消息过多");
+    expect(state.errorsByConversation["conv-1"]).toContain("等待发送的消息过多");
   });
 
   it("拒绝累计超过 64 MiB base64 的图片队列", () => {
@@ -147,7 +148,34 @@ describe("agent.store pending message bounds", () => {
 
     const state = useAgentStore.getState();
     expect(state.pendingMessagesByConversation["conv-1"]).toHaveLength(1);
-    expect(state.error).toContain("等待发送的消息过多");
+    expect(state.errorsByConversation["conv-1"]).toContain("等待发送的消息过多");
+  });
+});
+
+describe("agent.store conversation-scoped errors", () => {
+  it("keeps a send failure on its own conversation and can dismiss it independently", async () => {
+    agentSendPrompt.mockRejectedValue(new Error("conversation one failed"));
+    useAgentStore.setState({
+      sessions: {
+        "conv-1": { sessionId: "sid-1", conversationId: "conv-1", status: "idle" },
+        "conv-2": { sessionId: "sid-2", conversationId: "conv-2", status: "idle" },
+      },
+      error: "registry failed",
+      errorsByConversation: { "conv-2": "conversation two failed" },
+    });
+
+    await useAgentStore.getState().sendPrompt("sid-1", [{ type: "text", text: "hello" }]);
+
+    expect(useAgentStore.getState().errorsByConversation).toEqual({
+      "conv-1": "conversation one failed",
+      "conv-2": "conversation two failed",
+    });
+    expect(useAgentStore.getState().error).toBe("registry failed");
+
+    useAgentStore.getState().clearErrorForConversation("conv-1");
+    expect(useAgentStore.getState().errorsByConversation).toEqual({
+      "conv-2": "conversation two failed",
+    });
   });
 });
 
@@ -315,6 +343,7 @@ describe("agent.store session prefs", () => {
 
     rejectCreate(new Error("spawn failed"));
     await expect(failPromise).rejects.toThrow("spawn failed");
+    expect(useAgentStore.getState().errorsByConversation["conv-1"]).toBe("spawn failed");
 
     agentCreateSession.mockResolvedValue({ sessionId: "sid-orphan" });
     await useAgentStore.getState().createSession("conv-2", { type: "native" }, "/tmp");
@@ -527,7 +556,7 @@ describe("respondPlan / respondAskQuestion re-queue", () => {
     await useAgentStore.getState().respondPlan("plan-1", "accepted");
 
     const s = useAgentStore.getState();
-    expect(s.error).toBe("backend down");
+    expect(s.errorsByConversation["conv-1"]).toBe("backend down");
     expect(s.planApprovalQueues["sid-1"]?.[0]?.requestId).toBe("plan-1");
     expect(s.pendingPlanApproval?.requestId).toBe("plan-1");
     const card = s.entriesByConversation["conv-1"]?.[0];
@@ -564,7 +593,7 @@ describe("respondPlan / respondAskQuestion re-queue", () => {
     ]);
 
     const s = useAgentStore.getState();
-    expect(s.error).toBe("ask failed");
+    expect(s.errorsByConversation["conv-1"]).toBe("ask failed");
     expect(s.askQuestionQueues["sid-1"]?.[0]?.requestId).toBe("ask-1");
     expect(s.pendingAskQuestion?.requestId).toBe("ask-1");
   });

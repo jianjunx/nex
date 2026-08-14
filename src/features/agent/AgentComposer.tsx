@@ -34,6 +34,7 @@ import { fileBasename, relativeToProject } from "../editor/pathUtils";
 import FileIcon from "../files/FileIcon";
 import type { AvailableCommand } from "./thread/types";
 import { ComposerEditor, type ComposerEditorHandle } from "./ComposerEditor";
+import { ComposerStatusNotice } from "./ComposerStatusNotice";
 import {
   appendToken,
   hasToken,
@@ -174,7 +175,6 @@ export function AgentComposer() {
   const isStarting = session?.status === "starting";
   const isRunning = session?.status === "running" || session?.status === "waiting";
   const pendingMessages = activeTabId ? (pendingMessagesByConversation[activeTabId] ?? []) : [];
-  const agentError = useAgentStore((s) => s.error);
   const createSession = useAgentStore((s) => s.createSession);
   const conversations = useConversationStore((s) =>
     selectProjectConversations(s, activeProjectId),
@@ -734,14 +734,7 @@ export function AgentComposer() {
       />
 
       <div className="px-4 pb-3 relative" data-composer-dropzone>
-        {(isStarting || agentError) && (
-          <div className="mb-2 text-xs px-1">
-            {isStarting && <p className="text-[var(--text-tertiary)]">正在连接服务…</p>}
-            {agentError && !isStarting && (
-              <p className="text-[var(--error)] whitespace-pre-wrap">{agentError}</p>
-            )}
-          </div>
-        )}
+        <ComposerStatusNotice conversationId={activeTabId} isStarting={isStarting} />
 
         {suggestOpen && (
           <div style={popoverStyle} className="flex items-start gap-0 max-w-[min(92vw,640px)] pointer-events-auto">

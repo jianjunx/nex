@@ -98,7 +98,7 @@ function shouldShowAgentLoading(
 }
 
 function followThreadEnd(
-  virtualizer: { getTotalSize: () => number; scrollToIndex: (index: number, opts: { align: "end" }) => void },
+  virtualizer: { getTotalSize: () => number },
   scroller: HTMLDivElement | null,
   itemCount: number,
 ) {
@@ -109,7 +109,16 @@ function followThreadEnd(
     if (scroller && scroller.scrollTop !== 0) scroller.scrollTop = 0;
     return;
   }
-  virtualizer.scrollToIndex(itemCount - 1, { align: "end" });
+  if (!scroller) return;
+
+  // Do not use virtualizer.scrollToIndex here. It keeps an animation-frame
+  // reconciliation alive after the initial scroll; if the user takes over
+  // before it settles, a later append can replay that stale scroll and pull
+  // the viewport back to the bottom. `totalSize` already re-triggers this
+  // effect as measurements change, so a direct end offset keeps follow logic
+  // deterministic while giving a manual scroll immediate precedence.
+  const target = Math.max(virtualizer.getTotalSize() - viewport, 0);
+  if (scroller.scrollTop !== target) scroller.scrollTop = target;
 }
 
 type VirtualRange = {
@@ -149,7 +158,9 @@ export function ThreadView() {
 
   const scrollerRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
-  const lastUserMsgIdRef = useRef<string | null>(null);
+  // Seed from the rendered history so an existing last user message is never
+  // mistaken for a freshly sent one while mount/hydration effects settle.
+  const lastUserMsgIdRef = useRef<string | null>(lastUserMessageId(entries));
   const stickyIndexRef = useRef<number | null>(null);
   const [sticky, setSticky] = useState<StickyUserMessage | null>(null);
   const [expandedUserIds, setExpandedUserIds] = useState<Set<string>>(EMPTY_EXPANDED);

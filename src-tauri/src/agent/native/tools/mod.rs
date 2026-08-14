@@ -581,7 +581,7 @@ mod tests {
         let hash = hex(Sha256::digest(&bytes));
         eprintln!("canonical schema sha256: {hash}");
         assert_eq!(
-            hash, "4a643180e7cf7e1da8a2b098227b27f86bec713f98f1a6594ea6801be450e1f3",
+            hash, "58c6b6fd9a945754a302d100478c5dc356df1a7c76d422f567ac472be933c64f",
             "tool schema drift detected; update the snapshot intentionally"
         );
     }

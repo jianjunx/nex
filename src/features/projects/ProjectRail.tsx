@@ -73,7 +73,7 @@ export function ProjectRail() {
               role="tooltip"
               className="pointer-events-none invisible absolute right-full top-1/2 z-50 mr-2 w-60 -translate-y-1/2 rounded-[calc(var(--radius-md)+2px)] border border-[color:var(--hairline-soft)] bg-[var(--material-floating)] px-3 py-2 text-right opacity-0 shadow-[0_12px_32px_-18px_rgba(0,0,0,0.72)] transition-[opacity,visibility] duration-150 group-hover/project:visible group-hover/project:opacity-100 group-focus-within/project:visible group-focus-within/project:opacity-100"
             >
-              <div className="break-words text-[14px] font-medium text-[var(--text-primary)]">
+              <div className="break-words text-[16px] font-bold text-[var(--text-primary)]">
                 {project.name}
               </div>
               <div className="mt-0.5 flex min-w-0 items-center justify-end gap-1.5 text-[13px] leading-tight text-[var(--text-tertiary)]">

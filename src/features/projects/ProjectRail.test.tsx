@@ -80,7 +80,7 @@ describe("ProjectRail", () => {
     expect(tooltip?.className).toContain("group-hover/project:visible");
     expect(tooltip?.className).toContain("group-focus-within/project:visible");
     expect(tooltip?.className).toContain("text-right");
-    expect(tooltip?.querySelector(".text-\\[14px\\]")).toBeTruthy();
+    expect(tooltip?.querySelector(".text-\\[16px\\].font-bold")).toBeTruthy();
     expect(tooltip?.querySelector(".text-\\[13px\\]")).toBeTruthy();
   });
 

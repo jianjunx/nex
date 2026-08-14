@@ -1,0 +1,39 @@
+src/features/agent/ComposerStatusNotice.test.tsx
+  s_8570e2e29d9773::t_f61e91e76c0d00 1-12,17-41
+  s_8570e2e29d9773::t_5e6bc049e8ffb9 13-16
+src/features/agent/ComposerStatusNotice.tsx
+  s_8570e2e29d9773::t_c6dca830c2b173 1-42
+src/features/agent/AgentComposer.tsx
+  s_8570e2e29d9773::t_c6dca830c2b173 37,737
+src/stores/agent.store.test.ts
+  s_8570e2e29d9773::t_b026d901d7a4c1 74,140,151,559,596
+  s_8570e2e29d9773::t_944aab9cea6439 155-162,164-172,174-178
+  s_8570e2e29d9773::t_5e6bc049e8ffb9 163,173
+  s_8570e2e29d9773::t_430749f59941c8 346
+  s_8570e2e29d9773::t_2ab40285013bc9 152-154
+src/features/projects/NewConversationDropdown.tsx
+  s_8570e2e29d9773::t_c6dca830c2b173 105,128-129
+src/stores/agent.store.ts
+  s_8570e2e29d9773::t_04ed7baffa7297 1088,1111-1115
+  s_8570e2e29d9773::t_3b415533416739 1011-1014,1016,1022-1023
+  s_8570e2e29d9773::t_f1fe29c50e431d 1155,1178-1184,1192-1196
+  s_8570e2e29d9773::t_0d4a4cddc23ed3 154,156-157,196,227-248,354,672,679,708,723,729,739,816
+  s_8570e2e29d9773::t_0ef91f957b0435 854,869,967,969,975-976
+  s_8570e2e29d9773::t_e5185941a761e0 1242-1243,1272-1273,1328-1329,1338-1343,1373
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "0a67c0d2bf834fdb66f68d2a0f12393d81f21492",
+  "prompts": {},
+  "sessions": {
+    "s_8570e2e29d9773": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fff59-6119-7930-8bd6-aa1e64373669",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

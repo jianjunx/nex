@@ -1,0 +1,25 @@
+src/features/projects/ProjectRail.test.tsx
+  s_8570e2e29d9773::t_a66a3d2035235b 5,21,66,72,74,77,87-161
+  s_8570e2e29d9773::t_e9858f0748f77d 162
+src/features/projects/ProjectRail.tsx
+  s_8570e2e29d9773::t_8b025dd94b6cb9 69-71
+  s_8570e2e29d9773::t_a66a3d2035235b 1,8,11,24-28,35-63,76,84-85,88-98,105,115-124
+src/features/projects/ProjectSelector.test.tsx
+  s_8570e2e29d9773::t_a66a3d2035235b 118-144
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "da6161a4ca38750bad236848e27cd89fab6f5cbe",
+  "prompts": {},
+  "sessions": {
+    "s_8570e2e29d9773": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fff59-6119-7930-8bd6-aa1e64373669",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

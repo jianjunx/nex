@@ -115,4 +115,31 @@ describe("ProjectSelector dropdown", () => {
     openDropdown();
     expect(screen.queryByRole("button", { name: "从项目列表移除 alpha" })).toBeNull();
   });
+
+  it("does not render project status dots", () => {
+    useConversationStore.setState({
+      conversationsByProject: {
+        p1: [
+          {
+            id: "c-running",
+            project_id: "p1",
+            title: "running",
+            agent_type: "nex",
+            status: "active",
+            created_at: 0,
+            updated_at: 0,
+          },
+        ],
+      },
+    });
+    useAgentStore.setState({
+      sessions: {
+        "c-running": { sessionId: "s1", conversationId: "c-running", status: "running" },
+      },
+    });
+
+    render(<ProjectSelector />);
+    expect(screen.queryByTitle("Agent 运行中")).toBeNull();
+    expect(screen.queryByTitle("Agent 等待中")).toBeNull();
+  });
 });

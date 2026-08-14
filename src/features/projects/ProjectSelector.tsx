@@ -17,7 +17,6 @@ import { useConversationStore } from "../../stores/conversation.store";
 import { useAgentStore } from "../../stores/agent.store";
 import { useFsStore } from "../../stores/fs.store";
 import { fsWatchStart } from "../../bridge/tauri";
-import { projectSessionIndicators } from "../agent/projectSessionIndicators";
 import { restoreProjectConversationTabs } from "./restoreProjectConversationTabs";
 import { AgentIcon } from "../agent/AgentIcon";
 import { activateProject, resetFsSelectionForProjectSwitch } from "./activateProject";
@@ -35,32 +34,6 @@ const ITEM_HIGHLIGHT =
 function projectMonogram(name: string): string {
   const first = Array.from(name.trim())[0];
   return first ? first.toUpperCase() : "?";
-}
-
-function StatusDots({ projectId, className }: { projectId: string; className?: string }) {
-  const sessions = useAgentStore((s) => s.sessions);
-  const conversationsByProject = useConversationStore((s) => s.conversationsByProject);
-  const ids = (conversationsByProject[projectId] ?? []).map((c) => c.id);
-  const { hasRunning, hasWaiting } = projectSessionIndicators(ids, sessions);
-  if (!hasRunning && !hasWaiting) return null;
-  return (
-    <span className={cn("inline-flex items-center gap-1", className)}>
-      {hasRunning && (
-        <span
-          className="size-1.5 rounded-full animate-pulse"
-          style={{ backgroundColor: "var(--accent)", boxShadow: "0 0 6px 1px color-mix(in srgb, var(--accent) 70%, transparent)" }}
-          title="Agent 运行中"
-        />
-      )}
-      {hasWaiting && (
-        <span
-          className="size-1.5 rounded-full"
-          style={{ backgroundColor: "var(--warning)", boxShadow: "0 0 6px 1px color-mix(in srgb, var(--warning) 70%, transparent)" }}
-          title="Agent 等待中"
-        />
-      )}
-    </span>
-  );
 }
 
 /** 运行中会话数量角标（0 时隐藏）。 */
@@ -176,7 +149,6 @@ export function ProjectSelector() {
             <span className="inline-flex items-center">
               {activeProjectId && <RunningCountBadge projectId={activeProjectId} />}
               <span className="font-semibold">{activeProject?.name || "打开项目"}</span>
-              {activeProjectId && <StatusDots projectId={activeProjectId} className="ml-2" />}
               <ChevronDown
                 size={12}
                 className={cn(
@@ -232,7 +204,6 @@ export function ProjectSelector() {
                   <span className={cn("truncate text-[13px] leading-tight", isActive && "font-medium")}>
                     {p.name}
                   </span>
-                  <StatusDots projectId={p.id} />
                   <span className="ml-auto flex size-5 shrink-0 items-center justify-center">
                     {isActive ? (
                       <Check size={14} className="text-[var(--accent)]" aria-hidden />

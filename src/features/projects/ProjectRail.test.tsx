@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import type { Project } from "../../bridge/tauri";
 
 const { activateProjectMock } = vi.hoisted(() => ({
@@ -18,7 +18,7 @@ import { useAgentStore } from "../../stores/agent.store";
 import { useConversationStore } from "../../stores/conversation.store";
 import { useProjectStore } from "../../stores/project.store";
 
-const projects: Project[] = Array.from({ length: 6 }, (_, index) => ({
+const projects: Project[] = Array.from({ length: 8 }, (_, index) => ({
   id: `p${index + 1}`,
   name: `项目 ${index + 1}`,
   path: `/tmp/project-${index + 1}`,
@@ -63,18 +63,18 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("ProjectRail", () => {
-  it("shows the first five projects in dropdown order and exposes their latest conversation", () => {
+  it("shows the first seven projects in dropdown order and exposes their latest conversation", () => {
     const { container } = render(<ProjectRail />);
     const shortcuts = container.querySelectorAll<HTMLButtonElement>(
       'button[aria-label^="切换到项目"]',
     );
 
-    expect(shortcuts).toHaveLength(5);
+    expect(shortcuts).toHaveLength(7);
     expect(shortcuts[0]?.textContent).toBe("项");
-    expect(shortcuts[4]?.getAttribute("aria-label")).toContain("项目 5 的最新会话");
+    expect(shortcuts[6]?.getAttribute("aria-label")).toContain("项目 7 的最新会话");
     expect(container.textContent).toContain("项目 1");
     expect(container.textContent).toContain("项目 1 的最新会话");
-    expect(container.textContent).not.toContain("项目 6 的最新会话");
+    expect(container.textContent).not.toContain("项目 8 的最新会话");
     expect(shortcuts[1]?.getAttribute("aria-current")).toBe("page");
     const tooltip = container.querySelector<HTMLElement>("[role=tooltip]");
     expect(tooltip?.className).toContain("group-hover/project:visible");
@@ -82,6 +82,82 @@ describe("ProjectRail", () => {
     expect(tooltip?.className).toContain("text-right");
     expect(tooltip?.querySelector(".text-\\[16px\\].font-bold")).toBeTruthy();
     expect(tooltip?.querySelector(".text-\\[13px\\]")).toBeTruthy();
+  });
+
+  it("keeps its order on a switch, then syncs the dropdown order when a new project enters", async () => {
+    const { container } = render(<ProjectRail />);
+    const shortcutNames = () =>
+      Array.from(container.querySelectorAll<HTMLButtonElement>('button[aria-label^="切换到项目"]')).map(
+        (button) => button.getAttribute("aria-label")?.match(/^切换到项目 ([^，]+)/)?.[1],
+      );
+
+    expect(shortcutNames()).toEqual([
+      "项目 1",
+      "项目 2",
+      "项目 3",
+      "项目 4",
+      "项目 5",
+      "项目 6",
+      "项目 7",
+    ]);
+
+    // Switching inside the existing seven only changes dropdown MRU order.
+    act(() => {
+      useProjectStore.setState({
+        activeProjectId: "p3",
+        projects: [projects[2], projects[0], projects[1], ...projects.slice(3)],
+      });
+    });
+    await waitFor(() =>
+      expect(shortcutNames()).toEqual([
+        "项目 1",
+        "项目 2",
+        "项目 3",
+        "项目 4",
+        "项目 5",
+        "项目 6",
+        "项目 7",
+      ]),
+    );
+
+    // Project 8 newly enters the dropdown's first seven, so the rail takes
+    // the same first-seven ordering as the dropdown.
+    act(() => {
+      useProjectStore.setState({
+        activeProjectId: "p8",
+        projects: [projects[7], projects[2], projects[0], projects[1], ...projects.slice(3, 7)],
+      });
+    });
+    await waitFor(() =>
+      expect(shortcutNames()).toEqual([
+        "项目 8",
+        "项目 3",
+        "项目 1",
+        "项目 2",
+        "项目 4",
+        "项目 5",
+        "项目 6",
+      ]),
+    );
+  });
+
+  it("uses a colored breathing monogram to show running and waiting work", () => {
+    useAgentStore.setState({
+      sessions: {
+        "p1-latest": { sessionId: "s1", conversationId: "p1-latest", status: "running" },
+        "p2-latest": { sessionId: "s2", conversationId: "p2-latest", status: "waiting" },
+      },
+    });
+    const { container } = render(<ProjectRail />);
+    const p1 = container.querySelector<HTMLButtonElement>('button[aria-label^="切换到项目 项目 1"]');
+    const p2 = container.querySelector<HTMLButtonElement>('button[aria-label^="切换到项目 项目 2"]');
+
+    expect(p1?.getAttribute("aria-label")).toContain("Agent 运行中");
+    expect(p2?.getAttribute("aria-label")).toContain("Agent 等待中");
+    expect(p1?.querySelector("span")?.className).toContain("animate-pulse");
+    expect(p1?.querySelector("span")?.className).toContain("text-[var(--accent)]");
+    expect(p2?.querySelector("span")?.className).toContain("animate-pulse");
+    expect(p2?.querySelector("span")?.className).toContain("text-[var(--warning)]");
   });
 
   it("uses the shared project activation flow when a shortcut is clicked", () => {

@@ -1,0 +1,40 @@
+src-tauri/src/agent/server.rs
+  s_a59af5f336c167::t_9e29b835b25645 335,340-347
+src-tauri/src/agent/package_cache.rs
+  s_a59af5f336c167::t_721ae37a661856 506-507,514-522,526-527,534-594
+  s_a59af5f336c167::t_431d6d7df6a4bd 290-350,352-387,403-447
+  s_a59af5f336c167::t_3edb5b49a8a955 21,31-32,36-39,100
+  s_a59af5f336c167::t_e5749ac32fe1da 133-198
+  s_a59af5f336c167::t_8d41b2089e539d 962
+  s_a59af5f336c167::t_3b13477d8a1eb4 394-399
+  s_a59af5f336c167::t_af292f820f23af 33-34,248-252,260,351,388-393,400-402
+  s_a59af5f336c167::t_5f49b97bb1035d 468-470,473-484,486-488
+  s_a59af5f336c167::t_416c23549022aa 228,230-246,254-259,261-277
+  s_a59af5f336c167::t_40e1a77c64619f 693-694,702-712
+  s_a59af5f336c167::t_ecf1c0b02b75cb 1085-1086,1094,1111-1121
+  s_a59af5f336c167::t_f93f7a3c1295b2 1164-1200
+  s_a59af5f336c167::t_6fe0c2dcd49e72 35,595-596,1122-1123
+  s_a59af5f336c167::t_b718fa8e38ab7f 938-961,963-971
+src-tauri/src/agent/binary.rs
+  s_a59af5f336c167::t_a723f7d4689e85 38,44,49-55,57-65,67-74,81-82,85-94,104-160,162-188
+  s_a59af5f336c167::t_b23cdb4c43fc5f 95,161
+  s_a59af5f336c167::t_b7f8b992cf71a3 9,11,16,19,24-27
+  s_a59af5f336c167::t_37cd8ea2e6833b 310-387
+  s_a59af5f336c167::t_17d4730490d11c 193
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "274457fcb50a1575cdb7453891f56277ef36383c",
+  "prompts": {},
+  "sessions": {
+    "s_a59af5f336c167": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fffaf-7f87-7d62-b99f-0d955195015d",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+src/features/agent/thread/ThreadView.tsx
+  s_12980fd44991ae::t_8d9d1df94be729 101,112-121
+  s_12980fd44991ae::t_9bed963deebd76 161-163
+src-tauri/src/agent/native/tools/mod.rs
+  s_12980fd44991ae::t_9bed963deebd76 584
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "7308b161ea684bef64a7c9a508055fcc809e4222",
+  "prompts": {},
+  "sessions": {
+    "s_12980fd44991ae": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ffe6e-ac9d-7000-a0ac-debec9bd0014",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

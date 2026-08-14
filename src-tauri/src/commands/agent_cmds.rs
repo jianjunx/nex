@@ -140,7 +140,11 @@ pub fn native_agent_get_config(app: AppHandle) -> Result<NativeAgentConfig, NexE
 
 /// Persists the built-in native agent config (`nex-agent.json`).
 #[tauri::command]
-pub fn native_agent_set_config(app: AppHandle, config: NativeAgentConfig) -> Result<(), NexError> {
+pub fn native_agent_set_config(
+    app: AppHandle,
+    mut config: NativeAgentConfig,
+) -> Result<(), NexError> {
+    config.normalize_agent_limits();
     config.save(&app_data_dir(&app)?)
 }
 
@@ -221,9 +225,16 @@ pub struct McpUpsertRequest {
 }
 
 #[tauri::command]
-pub fn native_agent_list_mcp(app: AppHandle) -> Result<Vec<mcp::McpServerInfo>, NexError> {
+pub fn native_agent_list_mcp(
+    app: AppHandle,
+    cwd: Option<String>,
+) -> Result<Vec<mcp::McpServerInfo>, NexError> {
     let cfg = NativeAgentConfig::load(&app_data_dir(&app)?);
-    Ok(mcp::list_global(&cfg.disabled_mcp_servers))
+    Ok(mcp::list_servers(
+        cwd.as_deref().map(std::path::Path::new),
+        &cfg.disabled_mcp_servers,
+        &cfg.approved_project_mcp_servers,
+    ))
 }
 
 #[tauri::command]
@@ -261,27 +272,52 @@ pub fn native_agent_set_mcp_enabled(
     cfg.save(&dir)
 }
 
+/// Explicitly trusts (or revokes trust for) one server in the active project's
+/// `.nex/mcp.json`. The current file hash is stored with the decision, so any
+/// subsequent repository config change disables it until the user reviews it.
+#[tauri::command]
+pub fn native_agent_set_project_mcp_enabled(
+    app: AppHandle,
+    cwd: String,
+    name: String,
+    enabled: bool,
+) -> Result<(), NexError> {
+    let (project_path, config_hash, _) =
+        mcp::project_server(std::path::Path::new(&cwd), &name).map_err(NexError::Agent)?;
+    let dir = app_data_dir(&app)?;
+    let mut cfg = NativeAgentConfig::load(&dir);
+    cfg.set_project_mcp_approved(project_path, config_hash, name, enabled);
+    cfg.save(&dir)
+}
+
 /// Short handshake probe for the settings status badge.
 #[tauri::command]
 pub async fn native_agent_probe_mcp(
     app: AppHandle,
     state: State<'_, AppState>,
     name: String,
+    cwd: Option<String>,
+    source: Option<String>,
 ) -> Result<String, NexError> {
-    let list = mcp::list_global(&[]);
-    let Some(info) = list.into_iter().find(|s| s.name == name) else {
-        return Err(NexError::Agent(format!("MCP server `{name}` not found")));
-    };
-    let cfg = mcp::McpServerConfig {
-        command: info.command,
-        args: info.args,
-        env: info.env,
-        url: info.url,
-        headers: info.headers,
-    };
     let app_data_dir = app_data_dir(&app)?;
+    let agent_cfg = NativeAgentConfig::load(&app_data_dir);
+    let source = source.unwrap_or_else(|| "global".to_string());
+    let cfg = mcp::configured_server(
+        cwd.as_deref().map(std::path::Path::new),
+        &source,
+        &name,
+        &agent_cfg.disabled_mcp_servers,
+        &agent_cfg.approved_project_mcp_servers,
+    )
+    .map_err(NexError::Agent)?;
     let _ = state.agent_manager.refresh_registry().await;
-    let shell_env = state.agent_manager.env_for_cwd(&app_data_dir.to_string_lossy()).await;
+    let env_cwd = if source == "project" {
+        cwd.as_deref()
+            .ok_or_else(|| NexError::Agent("project MCP probe requires cwd".to_string()))?
+    } else {
+        app_data_dir.to_str().unwrap_or_default()
+    };
+    let shell_env = state.agent_manager.env_for_cwd(env_cwd).await;
     match mcp::McpClient::connect_with_base_env(&name, &cfg, &shell_env).await {
         Ok(client) => Ok(format!("connected:{} tools", client.tools.len())),
         Err(e) => Ok(format!("error:{e}")),

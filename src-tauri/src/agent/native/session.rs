@@ -1,7 +1,6 @@
 //! The harness main loop: assemble request → stream → accumulate tool calls →
-//! execute → feed `role=tool` results back → repeat. Optionally bounded by
-//! `max_steps` (`0` = unlimited) and always by the no-progress lease plus
-//! cooperative cancellation.
+//! execute → feed `role=tool` results back → repeat. Bounded by `max_steps`,
+//! a repeated-success/no-progress lease, and cooperative cancellation.
 //!
 //! The transcript (`Vec<ChatMessage>`) is append-only and owned by the caller
 //! (per-session state); this module only pushes new turns onto it.
@@ -9,6 +8,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::ffi::OsString;
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -18,7 +18,7 @@ use agent_client_protocol::{self as acp};
 
 use super::provider::{
     ChatMessage, ChatRequest, ChatToolCall, ChatToolCallFunction, Chunk, Content, NativeToolCall,
-    Provider, ReasoningControl, ToolSpec, Usage,
+    Provider, ReasoningControl, StopReasonKind, ToolSpec, Usage,
 };
 use super::stats;
 use super::tools::todo::{parse_todos, TodoStatus};
@@ -106,7 +106,9 @@ pub struct SubagentHarness {
     pub model: String,
     pub reasoning: ReasoningControl,
     pub max_sub_steps: u32,
-    /// `fleet` concurrency cap (`max_subagent_concurrency`).
+    /// Legacy configured fleet concurrency. Shared-workspace fleet execution
+    /// is deliberately serialized until isolated worktrees/conflict handling
+    /// exist, so this is retained for config compatibility only.
     pub concurrency: usize,
     pub cwd: PathBuf,
     pub bash_timeout: Duration,
@@ -119,6 +121,12 @@ pub struct SubagentHarness {
     pub cancelled: Rc<Cell<bool>>,
     /// Parent session mode (Auto skips approval prompts for subagents too).
     pub mode_id: Rc<RefCell<String>>,
+    /// Parent mutation log. Child workspace edits write here so auto-review
+    /// and the parent transcript's mutation outcome stay accurate.
+    pub mutations: Rc<RefCell<Vec<String>>>,
+    /// Parent working memory. Child discoveries/edits are session state, not
+    /// disposable side effects of an isolated transcript.
+    pub memory: Rc<RefCell<super::memory::WorkingMemory>>,
 }
 
 /// Runs one isolated subagent turn and returns only its final answer. Huge
@@ -128,6 +136,13 @@ pub async fn run_subagent(harness: &SubagentHarness, task: &str) -> Result<Strin
     if harness.cancelled.get() {
         return Err("cancelled".to_string());
     }
+    // The child shares operational memory so file discoveries, mutations and
+    // tool errors flow back to the parent. Its task goal and scratch todo list,
+    // however, are transcript-local and must not replace the parent's state.
+    let (parent_goal, parent_todos) = {
+        let memory = harness.memory.borrow();
+        (memory.goal.clone(), memory.active_todos.clone())
+    };
     let tool_ctx = ToolCtx {
         cwd: harness.cwd.clone(),
         bash_timeout: harness.bash_timeout,
@@ -136,10 +151,10 @@ pub async fn run_subagent(harness: &SubagentHarness, task: &str) -> Result<Strin
         jobs: Rc::new(RefCell::new(super::tools::jobs::JobTable::default())),
         // No harness on the child: subagents cannot spawn subagents.
         harness: None,
-        mutations: Rc::new(RefCell::new(Vec::new())),
+        mutations: harness.mutations.clone(),
         // Parent mode is not mutable from subagents (`switch_mode` is filtered out).
         mode_id: None,
-        memory: super::tools::test_memory_handle(),
+        memory: harness.memory.clone(),
     };
     let env = TurnEnv {
         conn: harness.conn.clone(),
@@ -164,6 +179,11 @@ pub async fn run_subagent(harness: &SubagentHarness, task: &str) -> Result<Strin
         &harness.model,
     ))];
     let _ = run_turn(&env, &mut messages, Content::Text(task.to_string())).await;
+    {
+        let mut memory = harness.memory.borrow_mut();
+        memory.goal = parent_goal;
+        memory.active_todos = parent_todos;
+    }
     let answer = final_answer(&messages);
     if answer.chars().count() > SUBAGENT_INLINE_LIMIT {
         let _ = std::fs::create_dir_all(&harness.archive_dir);
@@ -184,7 +204,7 @@ pub async fn run_subagent(harness: &SubagentHarness, task: &str) -> Result<Strin
 /// (fallback: last assistant text at all).
 fn final_answer(messages: &[ChatMessage]) -> String {
     let mut last_assistant: Option<&str> = None;
-    for m in messages {
+    for m in messages.iter().rev() {
         if m.role != "assistant" {
             continue;
         }
@@ -192,8 +212,10 @@ fn final_answer(messages: &[ChatMessage]) -> String {
             if let Some(c) = m.content.as_ref().and_then(Content::as_text) {
                 return c.to_string();
             }
-        } else if let Some(c) = m.content.as_ref().and_then(Content::as_text) {
-            last_assistant = Some(c);
+        } else if last_assistant.is_none() {
+            if let Some(c) = m.content.as_ref().and_then(Content::as_text) {
+                last_assistant = Some(c);
+            }
         }
     }
     last_assistant
@@ -213,21 +235,19 @@ pub async fn run_turn(
     messages: &mut Vec<ChatMessage>,
     content: Content,
 ) -> acp::StopReason {
-    // First real user text becomes the goal, replacing the boot placeholder.
-    if let Content::Text(text) = &content {
-        let trimmed = text.trim();
-        if !trimmed.is_empty() {
-            let first_line = trimmed.lines().next().unwrap_or(trimmed).trim();
-            let goal: String = first_line.chars().take(160).collect();
-            if !goal.is_empty() {
-                env.tool_ctx.memory.borrow_mut().set_goal_if_placeholder(goal);
-            }
+    // Every real user request can start a new task. Extract text from both
+    // plain and multimodal turns (skipping the injected mode preamble), then
+    // replace the stale goal unless this is an internal slash-command turn.
+    if let Some(goal) = goal_from_content(&content) {
+        if !goal.starts_with('/') {
+            env.tool_ctx.memory.borrow_mut().set_goal_for_request(goal);
         }
     }
     messages.push(ChatMessage::user_content(content));
 
     let mut steps = 0u32;
     let mut no_progress = 0u32;
+    let mut previous_round_signature: Option<u64> = None;
     loop {
         if env.cancelled.get() {
             return acp::StopReason::Cancelled;
@@ -293,9 +313,10 @@ pub async fn run_turn(
             return acp::StopReason::EndTurn;
         }
 
-        // Hit the optional step cap: one final text-only turn (OpenCode-style),
-        // then stop. `max_steps == 0` means unlimited.
-        let wrap_up = env.max_steps > 0 && steps >= env.max_steps;
+        // Hit the configured step cap: one final text-only turn (OpenCode
+        // style), then stop. Defensive `.max(1)` prevents externally built
+        // TurnEnv values from reintroducing an unlimited loop.
+        let wrap_up = steps >= env.max_steps.max(1);
         if wrap_up {
             messages.push(ChatMessage::user(MAX_STEPS_PROMPT));
         }
@@ -325,6 +346,7 @@ pub async fn run_turn(
         let mut text = String::new();
         let mut calls: Vec<NativeToolCall> = Vec::new();
         let mut provider_error: Option<String> = None;
+        let mut provider_stop = StopReasonKind::EndTurn;
         loop {
             if env.cancelled.get() {
                 drop(rx);
@@ -343,7 +365,8 @@ pub async fn run_turn(
                         calls.push(c);
                     }
                 }
-                Chunk::Done { usage, .. } => {
+                Chunk::Done { stop_reason, usage } => {
+                    provider_stop = stop_reason;
                     if let Some(u) = usage {
                         let mut acc = env.usage.borrow_mut();
                         acc.prompt_tokens += u.prompt_tokens;
@@ -366,6 +389,22 @@ pub async fn run_turn(
         if let Some(e) = provider_error {
             emit_text(env, &format!("模型流中断：{e}")).await;
             return acp::StopReason::EndTurn;
+        }
+
+        // A `length` finish reason means the model's message may be partial;
+        // in particular, executing a partially emitted tool call would be
+        // unsafe. Preserve any visible text, surface a concrete recovery
+        // message, and return the protocol's MaxTokens reason instead of
+        // silently treating this as a normal completed turn.
+        if provider_stop == StopReasonKind::MaxTokens {
+            let notice = "模型输出因达到 token 限制而被截断；本轮未执行任何未完成的工具调用。请缩小任务、提高模型的最大输出，或在新一轮继续。";
+            if !text.trim().is_empty() {
+                text.push_str("\n\n");
+            }
+            text.push_str(notice);
+            messages.push(ChatMessage::assistant(text));
+            emit_text(env, notice).await;
+            return acp::StopReason::MaxTokens;
         }
 
         // Wrap-up or natural end: persist assistant text and finish the turn.
@@ -400,6 +439,14 @@ pub async fn run_turn(
         // Execute the requested tool calls: consecutive read-only calls run
         // as one parallel batch, mutating ones run serially and get logged.
         let results = execute_calls(env, &calls).await;
+        let round_signature = tool_round_signature(&calls, &results);
+        let all_failed = results.iter().all(Result::is_err);
+        // Same tool names, arguments, and results in consecutive rounds means
+        // the model is looping even if each call returned `Ok`. A changing
+        // result intentionally resets the lease: repeated reads can be valid
+        // while another process is making progress.
+        let repeated_success = previous_round_signature == Some(round_signature)
+            && results.iter().any(Result::is_ok);
         for (call, result) in calls.iter().zip(results) {
             messages.push(ChatMessage::tool_result(
                 call.id.clone(),
@@ -414,26 +461,14 @@ pub async fn run_turn(
         // Do not hard-stop here: the next loop iteration runs the OpenCode-style
         // text-only wrap-up when `steps >= max_steps`.
 
-        // Progress lease: rounds where every tool call failed count as
-        // no-progress. Warn at 8 consecutive, pause the turn at 16.
-        let all_failed = calls.iter().all(|c| {
-            messages
-                .iter()
-                .rev()
-                .find(|m| m.tool_call_id.as_deref() == Some(c.id.as_str()))
-                .is_some_and(|m| {
-                    m.content
-                        .as_ref()
-                        .and_then(Content::as_text)
-                        .is_some_and(|s| s.starts_with("ERROR:"))
-                })
-        });
-        if all_failed {
+        // Progress lease: all-failed rounds and identical successful rounds
+        // both count as no-progress. Warn at 8 consecutive, pause at 16.
+        if all_failed || repeated_success {
             no_progress += 1;
             if no_progress == LEASE_WARN_ROUNDS {
                 emit_text(
                     env,
-                    "已连续多轮没有实质进展（工具调用持续失败）。建议换一个思路或先排查失败原因。",
+                    "已连续多轮没有实质进展（工具持续失败或重复返回相同结果）。建议换一个思路或先排查失败原因。",
                 )
                 .await;
             }
@@ -448,7 +483,44 @@ pub async fn run_turn(
         } else {
             no_progress = 0;
         }
+        previous_round_signature = Some(round_signature);
     }
+}
+
+fn goal_from_content(content: &Content) -> Option<String> {
+    let text = match content {
+        Content::Text(text) => Some(text.as_str()),
+        Content::Parts(parts) => parts
+            .iter()
+            .filter(|part| part.typ == "text")
+            .filter_map(|part| part.text.as_deref())
+            .find(|text| !text.trim_start().starts_with("[Mode:")),
+    }?;
+    let trimmed = text.trim();
+    let first_line = trimmed.lines().next().unwrap_or(trimmed).trim();
+    let goal: String = first_line.chars().take(160).collect();
+    (!goal.is_empty()).then_some(goal)
+}
+
+/// Compact fingerprint of one tool-call round. The raw data never leaves this
+/// process; hashing avoids adding large tool output bodies to loop state.
+fn tool_round_signature(calls: &[NativeToolCall], results: &[Result<String, String>]) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for (call, result) in calls.iter().zip(results) {
+        call.name.hash(&mut hasher);
+        call.arguments.to_string().hash(&mut hasher);
+        match result {
+            Ok(output) => {
+                true.hash(&mut hasher);
+                output.hash(&mut hasher);
+            }
+            Err(error) => {
+                false.hash(&mut hasher);
+                error.hash(&mut hasher);
+            }
+        }
+    }
+    hasher.finish()
 }
 
 /// Executes one round of tool calls. Consecutive read-only calls run
@@ -585,6 +657,9 @@ async fn execute_tool(env: &TurnEnv, call: &NativeToolCall) -> Result<String, St
     // memory block; the harness observes tool outcomes and folds them in.
     {
         let mut mem = env.tool_ctx.memory.borrow_mut();
+        if result.is_ok() {
+            mem.resolve_tool_errors(&call.name);
+        }
         match result.as_ref() {
             Ok(_) if matches!(call.name.as_str(), "write_file" | "edit_file" | "multi_edit") => {
                 if let Some(path) = call.arguments.get("path").and_then(|v| v.as_str()) {
@@ -598,11 +673,10 @@ async fn execute_tool(env: &TurnEnv, call: &NativeToolCall) -> Result<String, St
             }
             Ok(_) if call.name == "todo_write" => {
                 if let Ok(entries) = parse_todos(&call.arguments) {
-                    for e in entries {
-                        if matches!(e.status, TodoStatus::Pending | TodoStatus::InProgress) {
-                            mem.record_open_question(e.content);
-                        }
-                    }
+                    mem.replace_active_todos(entries.into_iter().filter_map(|entry| {
+                        matches!(entry.status, TodoStatus::Pending | TodoStatus::InProgress)
+                            .then_some(entry.content)
+                    }));
                 }
             }
             Err(e) => {
@@ -1055,6 +1129,12 @@ mod tests {
             usage: Some(Usage::default()),
         }
     }
+    fn max_tokens_done() -> Chunk {
+        Chunk::Done {
+            stop_reason: StopReasonKind::MaxTokens,
+            usage: Some(Usage::default()),
+        }
+    }
 
     /// Wires `run_turn`'s `TurnEnv` over the exact duplex setup the real agent
     /// uses: RecClient on the client side, NullAgent on the agent side. The
@@ -1138,6 +1218,74 @@ mod tests {
             stats: RefCell::new(stats::ContextStats::new()),
         };
         (env, notifications, permission_requests)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn subagent_restores_parent_goal_and_todos_but_keeps_workspace_memory() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let tmp = tempfile::tempdir().unwrap();
+                let provider = ScriptedProvider {
+                    turns: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
+                        vec![
+                            Chunk::ToolCall(NativeToolCall {
+                                id: "todo_1".into(),
+                                name: "todo_write".into(),
+                                arguments: serde_json::json!({
+                                    "todos": [{"content": "child todo", "status": "pending"}]
+                                }),
+                            }),
+                            Chunk::ToolCall(NativeToolCall {
+                                id: "write_1".into(),
+                                name: "write_file".into(),
+                                arguments: serde_json::json!({
+                                    "path": "child.txt",
+                                    "content": "from child"
+                                }),
+                            }),
+                            done(),
+                        ],
+                        vec![text_chunk("child done"), done()],
+                    ])),
+                    tools_nonempty: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+                };
+                let (env, _, _) = make_env(provider, tmp.path(), false);
+                {
+                    let mut memory = env.tool_ctx.memory.borrow_mut();
+                    memory.set_goal("parent goal");
+                    memory.replace_active_todos(["parent todo".to_string()]);
+                }
+                let registry = Rc::new(ToolRegistry::subagents());
+                let harness = SubagentHarness {
+                    conn: env.conn.clone(),
+                    parent_session_id: env.session_id.clone(),
+                    provider: env.provider.clone(),
+                    tool_specs: registry.specs(),
+                    registry,
+                    model: env.model.clone(),
+                    reasoning: env.reasoning,
+                    max_sub_steps: 5,
+                    concurrency: 1,
+                    cwd: tmp.path().to_path_buf(),
+                    bash_timeout: Duration::from_secs(10),
+                    path_env: std::env::var_os("PATH").unwrap_or_default(),
+                    archive_dir: tmp.path().join(".nex-archive"),
+                    context_window: 0,
+                    cancelled: Rc::new(Cell::new(false)),
+                    mode_id: env.mode_id.clone(),
+                    mutations: env.tool_ctx.mutations.clone(),
+                    memory: env.tool_ctx.memory.clone(),
+                };
+
+                assert_eq!(run_subagent(&harness, "child goal").await.unwrap(), "child done");
+                let memory = harness.memory.borrow();
+                assert_eq!(memory.goal, vec!["parent goal"]);
+                assert_eq!(memory.active_todos, vec!["parent todo"]);
+                assert!(memory.files_changed.iter().any(|path| path == "child.txt"));
+                assert!(!harness.mutations.borrow().is_empty());
+            })
+            .await;
     }
 
     /// Multi-round loop: first turn requests a read_file tool call, second
@@ -1660,6 +1808,82 @@ mod tests {
                 assert!(
                     !joined.contains("已达到最大步数限制"),
                     "must not emit the old hard-stop banner"
+                );
+            })
+            .await;
+    }
+
+    /// A provider `finish_reason=length` must surface as MaxTokens and must
+    /// never execute tool calls whose JSON may have been cut off mid-stream.
+    #[tokio::test(flavor = "current_thread")]
+    async fn max_tokens_stops_without_executing_partial_tool_calls() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let tmp = tempfile::tempdir().unwrap();
+                let provider = ScriptedProvider {
+                    turns: std::sync::Mutex::new(std::collections::VecDeque::from(vec![vec![
+                        text_chunk("正在处理，但回复被截断"),
+                        Chunk::ToolCall(NativeToolCall {
+                            id: "cut-off-call".into(),
+                            name: "write_file".into(),
+                            arguments: serde_json::json!({"path": "must-not-exist.txt", "content": "x"}),
+                        }),
+                        max_tokens_done(),
+                    ]])),
+                    tools_nonempty: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+                };
+                let (env, _nots, perms) = make_env(provider, tmp.path(), false);
+                let mut messages = vec![ChatMessage::system("sys")];
+                let stop = run_turn(&env, &mut messages, Content::Text("写文件".into())).await;
+                assert!(matches!(stop, acp::StopReason::MaxTokens));
+                assert_eq!(*perms.borrow(), 0, "truncated call must not prompt");
+                assert!(!tmp.path().join("must-not-exist.txt").exists());
+                assert!(messages
+                    .last()
+                    .and_then(|m| m.content.as_ref())
+                    .and_then(Content::as_text)
+                    .is_some_and(|text| text.contains("token 限制")));
+            })
+            .await;
+    }
+
+    /// Repeating a successful identical tool call is still a loop. The old
+    /// lease only counted failures, so a model could read the same file forever
+    /// when `maxSteps` was unbounded.
+    #[tokio::test(flavor = "current_thread")]
+    async fn repeated_successful_tool_rounds_hit_progress_lease() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let tmp = tempfile::tempdir().unwrap();
+                std::fs::write(tmp.path().join("same.txt"), "unchanged").unwrap();
+                let turns: Vec<Vec<Chunk>> = (0..=LEASE_PAUSE_ROUNDS)
+                    .map(|i| {
+                        vec![
+                            Chunk::ToolCall(NativeToolCall {
+                                id: format!("repeat-{i}"),
+                                name: "read_file".into(),
+                                arguments: serde_json::json!({"path": "same.txt"}),
+                            }),
+                            done(),
+                        ]
+                    })
+                    .collect();
+                let tools_log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+                let provider = ScriptedProvider {
+                    turns: std::sync::Mutex::new(std::collections::VecDeque::from(turns)),
+                    tools_nonempty: tools_log.clone(),
+                };
+                let (mut env, _nots, _perms) = make_env(provider, tmp.path(), false);
+                env.max_steps = 100;
+                let mut messages = vec![ChatMessage::system("sys")];
+                let stop = run_turn(&env, &mut messages, Content::Text("反复读取".into())).await;
+                assert!(matches!(stop, acp::StopReason::EndTurn));
+                assert_eq!(
+                    tools_log.lock().unwrap().len(),
+                    (LEASE_PAUSE_ROUNDS + 1) as usize,
+                    "progress lease should stop before an unbounded loop"
                 );
             })
             .await;

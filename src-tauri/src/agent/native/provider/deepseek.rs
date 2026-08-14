@@ -275,11 +275,15 @@ async fn pump_sse(
         }
     }
 
-    // Stream ended: flush any accumulated tool calls, then report completion.
-    for call in acc.drain() {
+    // Stream ended: validate and flush accumulated tool calls. Never turn a
+    // malformed argument string into `{}`: doing so can execute a completely
+    // different tool invocation than the model actually emitted.
+    let calls = acc.drain()?;
+    let had_calls = !calls.is_empty();
+    for call in calls {
         let _ = tx.send(Chunk::ToolCall(call));
     }
-    let stop_reason = finish.unwrap_or(if acc.is_empty() {
+    let stop_reason = finish.unwrap_or(if !had_calls {
         StopReasonKind::EndTurn
     } else {
         StopReasonKind::ToolCalls
@@ -327,22 +331,27 @@ impl ToolAccumulator {
         }
     }
 
-    fn is_empty(&self) -> bool {
-        self.calls.is_empty()
-    }
-
-    fn drain(&mut self) -> Vec<NativeToolCall> {
+    fn drain(&mut self) -> Result<Vec<NativeToolCall>, String> {
         let mut out: Vec<(u32, PartialCall)> = self.calls.drain().collect();
         out.sort_by_key(|(idx, _)| *idx);
         out.into_iter()
-            .filter_map(|(_, p)| {
-                let name = p.name?;
+            .map(|(index, p)| {
+                let name = p
+                    .name
+                    .ok_or_else(|| format!("tool call {index} has no function name"))?;
                 let args = if p.arguments.trim().is_empty() {
                     serde_json::json!({})
                 } else {
-                    serde_json::from_str(&p.arguments).unwrap_or(serde_json::json!({}))
+                    serde_json::from_str(&p.arguments).map_err(|e| {
+                        format!("tool call `{name}` has invalid JSON arguments: {e}")
+                    })?
                 };
-                Some(NativeToolCall {
+                if !args.is_object() {
+                    return Err(format!(
+                        "tool call `{name}` arguments must be a JSON object"
+                    ));
+                }
+                Ok(NativeToolCall {
                     id: p.id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
                     name,
                     arguments: args,
@@ -528,11 +537,27 @@ mod tests {
                 arguments: "\"a.rs\"}".into(),
             }),
         }]);
-        let calls = acc.drain();
+        let calls = acc.drain().unwrap();
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "read_file");
         assert_eq!(calls[0].id, "call_1");
         assert_eq!(calls[0].arguments["path"], "a.rs");
+    }
+
+    #[test]
+    fn accumulator_rejects_invalid_tool_argument_json() {
+        let mut acc = ToolAccumulator::default();
+        acc.absorb(vec![SseToolCallDelta {
+            index: 0,
+            id: Some("call_bad".into()),
+            function: Some(SseFunctionDelta {
+                name: Some("write_file".into()),
+                arguments: r#"{"path":"a.txt""#.into(),
+            }),
+        }]);
+        let err = acc.drain().expect_err("invalid JSON must abort the stream");
+        assert!(err.contains("write_file"));
+        assert!(err.contains("invalid JSON"));
     }
 
     #[test]

@@ -357,10 +357,11 @@ impl NexNativeAgent {
             bundled::ensure_bundled(&home);
         }
 
-        for (name, server_cfg) in mcp::load_configs(cwd) {
-            if cfg.disabled_mcp_servers.iter().any(|d| d == &name) {
-                continue;
-            }
+        for (name, server_cfg) in mcp::load_configs(
+            cwd,
+            &cfg.disabled_mcp_servers,
+            &cfg.approved_project_mcp_servers,
+        ) {
             let mut base_env = HashMap::new();
             if let Some(path) = self
                 .inner
@@ -825,6 +826,8 @@ impl acp::Agent for NexNativeAgent {
                     context_window: cfg.context_window_for(&model_id),
                     cancelled: session.handles.cancelled.clone(),
                     mode_id: session.handles.mode_id.clone(),
+                    mutations: Rc::new(RefCell::new(Vec::new())),
+                    memory: session.memory.clone(),
                 });
 
                 let env = TurnEnv {
@@ -848,8 +851,8 @@ impl acp::Agent for NexNativeAgent {
                         path_env: session.path_env.clone(),
                         archive_dir,
                         jobs: session.jobs.clone(),
+                        mutations: harness.mutations.clone(),
                         harness: Some(harness),
-                        mutations: Rc::new(RefCell::new(Vec::new())),
                         mode_id: Some(session.handles.mode_id.clone()),
                         memory: session.memory.clone(),
                     },
@@ -860,6 +863,10 @@ impl acp::Agent for NexNativeAgent {
                     )),
                 };
                 let stop = session::run_turn(&env, &mut session.history, content).await;
+                // The image was available for every provider/tool loop in
+                // this turn. Drop its base64 data before returning the
+                // session to the map so later turns cannot retain it.
+                archive::strip_images_in_place(&mut session.history);
                 // Auto-review only cares about workspace file edits, not bash /
                 // background jobs / other non-readonly tools.
                 let had_mutations =
@@ -902,7 +909,7 @@ impl acp::Agent for NexNativeAgent {
 
         // Persist history so `session/load` can resume after app restart.
         // Strip multimodal image payloads — archives must stay small/safe.
-        let _ = archive::save(
+        if let Err(e) = archive::save(
             &session_key,
             &archive::SessionArchive {
                 cwd: session.cwd.clone(),
@@ -910,7 +917,16 @@ impl acp::Agent for NexNativeAgent {
                 mode_id: session.handles.mode_id.borrow().clone(),
                 history: archive::history_without_images(&session.history),
             },
-        );
+        ) {
+            // The turn itself completed, but hiding a persistence failure
+            // makes a later `session/load` loss look like a successful save.
+            log::error!("failed to persist native-agent session {session_key}: {e}");
+            self.emit_text(
+                &args.session_id,
+                "警告：本轮会话记录未能保存，重启后可能无法恢复本次进度。",
+            )
+            .await;
+        }
 
         self.inner
             .sessions
@@ -1059,6 +1075,11 @@ fn mode_preamble(mode_id: &str) -> Option<String> {
 
 /// Maximum size of a `file://` resource link injected into the prompt.
 const RESOURCE_INJECT_LIMIT: u64 = 256 * 1024;
+/// Images are transient vision inputs, not session storage. Bound their raw
+/// decoded size and count before building data URIs for a model request.
+const MAX_PROMPT_IMAGE_BYTES: usize = 8 * 1024 * 1024;
+const MAX_PROMPT_IMAGE_BASE64_CHARS: usize = (MAX_PROMPT_IMAGE_BYTES * 4) / 3 + 8;
+const MAX_PROMPT_IMAGES: usize = 4;
 
 /// Converts incoming ACP prompt blocks into OpenAI content parts:
 /// - `Text` → text part
@@ -1068,16 +1089,35 @@ const RESOURCE_INJECT_LIMIT: u64 = 256 * 1024;
 /// - anything else degrades to an explanatory text part
 fn prompt_parts(cwd: &Path, blocks: &[acp::ContentBlock]) -> Vec<ContentPart> {
     let mut parts = Vec::new();
+    let mut image_count = 0usize;
     for block in blocks {
         match block {
             acp::ContentBlock::Text(t) => parts.push(ContentPart::text(t.text.clone())),
             acp::ContentBlock::Image(img) => {
+                if image_count >= MAX_PROMPT_IMAGES {
+                    parts.push(ContentPart::text(format!(
+                        "[图片附件未注入：每条消息最多 {MAX_PROMPT_IMAGES} 张图片]"
+                    )));
+                    continue;
+                }
+                if !img.mime_type.starts_with("image/") {
+                    parts.push(ContentPart::text("[图片附件未注入：无效的图片 MIME 类型]"));
+                    continue;
+                }
+                if img.data.len() > MAX_PROMPT_IMAGE_BASE64_CHARS {
+                    parts.push(ContentPart::text(format!(
+                        "[图片附件未注入：超过 {} MiB 限制]",
+                        MAX_PROMPT_IMAGE_BYTES / (1024 * 1024)
+                    )));
+                    continue;
+                }
                 let url = if img.data.starts_with("data:") {
                     img.data.clone()
                 } else {
                     format!("data:{};base64,{}", img.mime_type, img.data)
                 };
                 parts.push(ContentPart::image(url));
+                image_count += 1;
             }
             acp::ContentBlock::Resource(res) => match &res.resource {
                 acp::EmbeddedResourceResource::TextResourceContents(t) => {
@@ -1898,15 +1938,16 @@ mod tests {
                 let s = sessions
                     .get(session.session_id.0.as_ref())
                     .expect("session");
-                // history layout: [system_prompt, working_memory, user_turn, ...]
+                // The provider received the image above, but after the turn
+                // completes the live history must release its base64 payload.
                 // Working memory is the second message; the user turn lands at index 2.
                 let Some(Content::Parts(parts)) = &s.history[2].content else {
                     panic!("user turn must be stored as parts");
                 };
-                assert_eq!(parts.len(), 3);
+                assert_eq!(parts.len(), 2);
                 assert_eq!(parts[0].text.as_deref(), Some("看图"));
-                assert!(parts[1].image_url.is_some());
-                assert!(parts[2].text.as_deref().unwrap().contains("文件内容在这里"));
+                assert!(parts.iter().all(|part| part.image_url.is_none()));
+                assert!(parts[1].text.as_deref().unwrap().contains("文件内容在这里"));
             })
             .await;
         tokio::time::timeout(std::time::Duration::from_secs(5), server)

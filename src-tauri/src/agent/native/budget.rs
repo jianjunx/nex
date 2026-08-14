@@ -17,13 +17,13 @@ use crate::agent::native::{compact, memory, summary};
 /// early on no-progress, so this is a hard ceiling rather than a target.
 pub const MAX_COMPACT_PASSES: usize = 3;
 
-/// Fallback used when the model's window is too small to admit the
-/// `reserved_response + safety_margin` formula. Lets degraded sessions still
-/// send a request instead of failing the prompt turn.
+/// Upper bound for the fallback used when the model's window is too small to
+/// admit the `reserved_response + safety_margin` formula. The actual fallback
+/// is always clamped to the reported model window.
 pub const SMALL_WINDOW_FALLBACK: u64 = 4096;
 
-/// Minimum prompt budget we will ever send. Below this the request is
-/// effectively useless; we clamp to `SMALL_WINDOW_FALLBACK` instead.
+/// Preferred minimum prompt budget. Smaller windows may receive less, but
+/// never more than their reported capacity.
 pub const MIN_PROMPT_BUDGET: u64 = 1024;
 
 /// Result of a budget resolution. `prompt_budget = 0` is the sentinel that
@@ -56,11 +56,7 @@ pub fn default_reserved_response(model_id: &str, reasoning: ReasoningControl) ->
                 || lower.contains("thinking")
         })
         .unwrap_or(false);
-    if family_is_reasoning
-        || matches!(
-            reasoning,
-            ReasoningControl::High | ReasoningControl::XHigh
-        )
+    if family_is_reasoning || matches!(reasoning, ReasoningControl::High | ReasoningControl::XHigh)
     {
         8192
     } else {
@@ -91,7 +87,10 @@ pub fn resolve(model_window: u64, reserved_response: u64, safety_margin: u64) ->
     let mut budget = model_window.saturating_sub(reserved_response);
     budget = budget.saturating_sub(safety_margin);
     if budget < MIN_PROMPT_BUDGET {
-        budget = SMALL_WINDOW_FALLBACK;
+        // The old 4096 fallback could exceed a 512/2048-token model window,
+        // guaranteeing a rejected request. A degraded prompt is preferable
+        // to knowingly exceeding the provider's declared hard limit.
+        budget = SMALL_WINDOW_FALLBACK.min(model_window);
     }
     ContextBudget {
         model_window,
@@ -247,7 +246,11 @@ mod tests {
     use crate::agent::native::provider::ChatMessage;
 
     fn model_window(window: u64) -> ContextBudget {
-        resolve(window, default_reserved_response("demo", ReasoningControl::Off), default_safety_margin(window))
+        resolve(
+            window,
+            default_reserved_response("demo", ReasoningControl::Off),
+            default_safety_margin(window),
+        )
     }
 
     #[test]
@@ -268,7 +271,11 @@ mod tests {
     #[test]
     fn tiny_window_falls_back_to_safe_minimum() {
         let b = model_window(2048);
-        assert_eq!(b.prompt_budget, SMALL_WINDOW_FALLBACK);
+        assert_eq!(b.prompt_budget, 2048);
+        assert!(b.prompt_budget <= b.model_window);
+        let smaller = model_window(512);
+        assert_eq!(smaller.prompt_budget, 512);
+        assert!(smaller.prompt_budget <= smaller.model_window);
     }
 
     #[test]
@@ -287,7 +294,10 @@ mod tests {
         let mut msgs: Vec<ChatMessage> = vec![ChatMessage::system("sys")];
         for i in 0..40 {
             msgs.push(ChatMessage::user(format!("user {i} {}", "u".repeat(200))));
-            msgs.push(ChatMessage::assistant(format!("assistant {i} {}", "a".repeat(200))));
+            msgs.push(ChatMessage::assistant(format!(
+                "assistant {i} {}",
+                "a".repeat(200)
+            )));
         }
         let budget = model_window(8_000);
         let tmp = tempfile::tempdir().unwrap();
@@ -375,16 +385,18 @@ mod tests {
     }
 
     #[test]
-    fn resolve_min_prompt_budget_clamps_to_fallback() {
+    fn resolve_min_prompt_budget_clamps_fallback_to_model_window() {
         let b = resolve(1500, 1000, 500);
-        assert_eq!(b.prompt_budget, SMALL_WINDOW_FALLBACK);
+        assert_eq!(b.prompt_budget, 1500);
+        assert!(b.prompt_budget <= b.model_window);
     }
 
     #[test]
-    fn resolve_saturating_sub_with_underflow_falls_back() {
+    fn resolve_saturating_sub_with_underflow_stays_within_window() {
         // model_window too small to admit reserved + safety -> clamp to fallback.
         let b = resolve(2048, 4096, 2048);
-        assert_eq!(b.prompt_budget, SMALL_WINDOW_FALLBACK);
+        assert_eq!(b.prompt_budget, 2048);
+        assert!(b.prompt_budget <= b.model_window);
     }
 
     #[test]

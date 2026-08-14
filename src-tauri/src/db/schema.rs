@@ -44,4 +44,12 @@ CREATE TABLE IF NOT EXISTS thread_entries (
 );
 
 CREATE INDEX IF NOT EXISTS idx_thread_conv_seq ON thread_entries(conversation_id, sequence);
+
+-- One-time, versioned data-maintenance markers. This is intentionally kept
+-- separate from SQLite's user_version so independent schema additions remain
+-- backwards-compatible with existing Nex databases.
+CREATE TABLE IF NOT EXISTS nex_metadata (
+    key     TEXT PRIMARY KEY,
+    value   TEXT NOT NULL
+);
 "#;

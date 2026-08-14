@@ -62,6 +62,11 @@ export function UserMessageBubble({
                   ))}
                 </div>
               )}
+              {!entry.images?.length && entry.imageCount && entry.imageCount > 0 && (
+                <p className="mb-1 text-xs text-[var(--text-tertiary)]">
+                  图片 ×{entry.imageCount}（仅用于当轮请求，未保留原始附件）
+                </p>
+              )}
               {entry.text ? (
                 <p className="min-w-0 whitespace-pre-wrap wrap-anywhere">
                   {formatTokensForDisplay(entry.text)}

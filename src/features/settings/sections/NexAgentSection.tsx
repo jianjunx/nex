@@ -25,6 +25,7 @@ import {
   nativeAgentProbeReasoning,
   nativeAgentSetConfig,
   nativeAgentSetMcpEnabled,
+  nativeAgentSetProjectMcpEnabled,
   nativeAgentSetSkillEnabled,
   nativeAgentUpsertMcp,
   type NativeAgentConfig,
@@ -35,10 +36,15 @@ import {
   type ReasoningSource,
 } from "../../../bridge/tauri";
 import { useAgentStore } from "../../../stores/agent.store";
+import { useProjectStore } from "../../../stores/project.store";
 import { SECTION_HEADER } from "./_shared";
 import { DEFAULT_MCP_JSON, parseMcpServersJson } from "./mcpJson";
 
 type SubTab = "providers" | "mcp" | "skills" | "advanced";
+
+function mcpStatusKey(source: NativeMcpServerInfo["source"], name: string): string {
+  return `${source}:${name}`;
+}
 
 function errorMessage(err: unknown): string {
   if (err && typeof err === "object" && "message" in err && typeof (err as { message: unknown }).message === "string") {
@@ -193,6 +199,10 @@ const SUB_TABS: { id: SubTab; label: string }[] = [
  * Settings panel for the built-in in-process Nex native agent.
  */
 export function NexAgentSection() {
+  const activeProjectPath = useProjectStore((state) => {
+    const project = state.projects.find((p) => p.id === state.activeProjectId);
+    return project?.path ?? null;
+  });
   const [config, setConfig] = useState<NativeAgentConfig | null>(null);
   const [savedConfig, setSavedConfig] = useState<NativeAgentConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -206,20 +216,21 @@ export function NexAgentSection() {
   const [mcpEditorOpen, setMcpEditorOpen] = useState(false);
   const [skills, setSkills] = useState<NativeSkillInfo[]>([]);
 
-  const probeMcp = useCallback(async (name: string) => {
-    setMcpStatus((s) => ({ ...s, [name]: "探测中…" }));
+  const probeMcp = useCallback(async (name: string, source: NativeMcpServerInfo["source"]) => {
+    const key = mcpStatusKey(source, name);
+    setMcpStatus((s) => ({ ...s, [key]: "探测中…" }));
     try {
-      const r = await nativeAgentProbeMcp(name);
-      setMcpStatus((s) => ({ ...s, [name]: r }));
+      const r = await nativeAgentProbeMcp(name, source, activeProjectPath);
+      setMcpStatus((s) => ({ ...s, [key]: r }));
     } catch (err) {
-      setMcpStatus((s) => ({ ...s, [name]: `error:${errorMessage(err)}` }));
+      setMcpStatus((s) => ({ ...s, [key]: `error:${errorMessage(err)}` }));
     }
-  }, []);
+  }, [activeProjectPath]);
 
   const probeEnabledMcps = useCallback(
     (servers: NativeMcpServerInfo[]) => {
       for (const server of servers) {
-        if (server.enabled) void probeMcp(server.name);
+        if (server.enabled) void probeMcp(server.name, server.source);
       }
     },
     [probeMcp],
@@ -227,7 +238,7 @@ export function NexAgentSection() {
 
   const reloadExtras = useCallback(async () => {
     try {
-      const [m, s] = await Promise.all([nativeAgentListMcp(), nativeAgentListSkills()]);
+      const [m, s] = await Promise.all([nativeAgentListMcp(activeProjectPath), nativeAgentListSkills()]);
       setMcpList(m);
       setSkills(s);
       return m;
@@ -235,7 +246,7 @@ export function NexAgentSection() {
       setError(errorMessage(err));
       return [] as NativeMcpServerInfo[];
     }
-  }, []);
+  }, [activeProjectPath]);
 
   useEffect(() => {
     let cancelled = false;
@@ -373,24 +384,30 @@ export function NexAgentSection() {
           onRefresh={() => {
             void reloadExtras().then((m) => probeEnabledMcps(m));
           }}
-          onProbe={(name) => void probeMcp(name)}
-          onToggle={async (name, enabled) => {
-            await nativeAgentSetMcpEnabled(name, enabled);
+          onProbe={(source, name) => void probeMcp(name, source)}
+          onToggle={async (source, name, enabled) => {
+            if (source === "project") {
+              if (!activeProjectPath) throw new Error("请先打开项目，再批准项目 MCP 服务器");
+              await nativeAgentSetProjectMcpEnabled(activeProjectPath, name, enabled);
+            } else {
+              await nativeAgentSetMcpEnabled(name, enabled);
+            }
             await reloadExtras();
-            if (enabled) void probeMcp(name);
+            if (enabled) void probeMcp(name, source);
             else {
               setMcpStatus((s) => {
                 const next = { ...s };
-                delete next[name];
+                delete next[mcpStatusKey(source, name)];
                 return next;
               });
             }
           }}
-          onDelete={async (name) => {
+          onDelete={async (source, name) => {
+            if (source !== "global") return;
             await nativeAgentDeleteMcp(name);
             setMcpStatus((s) => {
               const next = { ...s };
-              delete next[name];
+              delete next[mcpStatusKey(source, name)];
               return next;
             });
             await reloadExtras();
@@ -444,11 +461,11 @@ export function NexAgentSection() {
             <Input
               id="nex-max-steps"
               type="number"
-              min={0}
+              min={1}
               disabled={saving}
               value={config.agent.maxSteps}
               onChange={(e) => {
-                const value = Math.max(0, Number(e.target.value) || 0);
+                const value = Math.max(1, Number(e.target.value) || 1);
                 void updateAdvancedConfig((cfg) => ({
                   ...cfg,
                   agent: { ...cfg.agent, maxSteps: value },
@@ -456,7 +473,7 @@ export function NexAgentSection() {
               }}
             />
             <p className="text-xs text-[var(--text-tertiary)]">
-              单轮「模型 ↔ 工具」循环上限。0 表示不限制（推荐）。
+              单轮「模型 ↔ 工具」循环上限。默认 64；至少为 1，用于阻止无限工具循环。
             </p>
           </div>
           <div className="space-y-1">
@@ -1072,15 +1089,15 @@ function McpPane({
   list: NativeMcpServerInfo[];
   status: Record<string, string>;
   onRefresh: () => void;
-  onProbe: (name: string) => void;
-  onToggle: (name: string, enabled: boolean) => Promise<void>;
-  onDelete: (name: string) => Promise<void>;
+  onProbe: (source: NativeMcpServerInfo["source"], name: string) => void;
+  onToggle: (source: NativeMcpServerInfo["source"], name: string, enabled: boolean) => Promise<void>;
+  onDelete: (source: NativeMcpServerInfo["source"], name: string) => Promise<void>;
   onAdd: () => void;
 }) {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <p className="text-xs text-[var(--text-tertiary)]">全局 ~/.nex/mcp.json</p>
+        <p className="text-xs text-[var(--text-tertiary)]">全局与当前项目的 MCP 配置</p>
         <Button size="sm" variant="ghost" onClick={onRefresh}>
           <RefreshCw size={12} /> 刷新
         </Button>
@@ -1089,22 +1106,40 @@ function McpPane({
         <p className="text-sm text-[var(--text-tertiary)]">尚未配置 MCP 服务器</p>
       )}
       {list.map((s) => {
-        const st = status[s.name] ?? "";
+        const projectServer = s.source === "project";
+        const envKeys = Object.keys(s.env).sort();
+        const headerKeys = Object.keys(s.headers).sort();
+        const st = status[mcpStatusKey(s.source, s.name)] ?? "";
         const probing = st === "探测中…";
         const ok = st.startsWith("connected");
         const bad = st.startsWith("error");
-        const label = !s.enabled ? "已禁用" : mcpStatusLabel(st) || "未知";
+        const label = !s.enabled
+          ? projectServer
+            ? "未批准（项目配置不会连接或执行）"
+            : "已禁用"
+          : mcpStatusLabel(st) || "未知";
         return (
           <div
-            key={s.name}
+            key={mcpStatusKey(s.source, s.name)}
             className="flex items-center justify-between gap-2 rounded-[var(--radius-md)] border border-[color:var(--border-subtle)] px-3 py-2"
           >
             <div className="min-w-0">
               <div className="truncate text-sm font-medium">{s.name}</div>
+              <div className="truncate text-[10px] text-[var(--text-tertiary)]">
+                {projectServer ? "项目 .nex/mcp.json" : "全局 ~/.nex/mcp.json"}
+              </div>
               <div className="truncate text-xs text-[var(--text-tertiary)]">
                 {s.command ?? s.url ?? "—"}
                 {s.args?.length ? ` ${s.args.join(" ")}` : ""}
               </div>
+              {(envKeys.length > 0 || headerKeys.length > 0) && (
+                <div className="truncate text-[10px] text-[var(--text-tertiary)]">
+                  {envKeys.length > 0 ? `环境变量：${envKeys.join(", ")}` : ""}
+                  {envKeys.length > 0 && headerKeys.length > 0 ? "；" : ""}
+                  {headerKeys.length > 0 ? `请求头：${headerKeys.join(", ")}` : ""}
+                  （值已隐藏）
+                </div>
+              )}
               <div
                 className={`mt-0.5 truncate text-[10px] ${
                   !s.enabled
@@ -1123,8 +1158,8 @@ function McpPane({
               <Switch
                 size="sm"
                 checked={s.enabled}
-                onCheckedChange={(v) => void onToggle(s.name, v)}
-                aria-label={`启用 ${s.name}`}
+                onCheckedChange={(v) => void onToggle(s.source, s.name, v)}
+                aria-label={`${projectServer ? "批准" : "启用"} ${s.name}`}
               />
               <Button
                 size="icon-xs"
@@ -1132,20 +1167,22 @@ function McpPane({
                 title="探测"
                 aria-label={`探测 ${s.name}`}
                 disabled={!s.enabled || probing}
-                onClick={() => onProbe(s.name)}
+                onClick={() => onProbe(s.source, s.name)}
               >
                 {probing ? <Loader2 size={13} className="animate-spin" /> : <Activity size={13} />}
               </Button>
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                className="text-[var(--error)]"
-                title="删除"
-                aria-label={`删除 ${s.name}`}
-                onClick={() => void onDelete(s.name)}
-              >
-                <Trash2 size={13} />
-              </Button>
+              {!projectServer && (
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  className="text-[var(--error)]"
+                  title="删除"
+                  aria-label={`删除 ${s.name}`}
+                  onClick={() => void onDelete(s.source, s.name)}
+                >
+                  <Trash2 size={13} />
+                </Button>
+              )}
             </div>
           </div>
         );

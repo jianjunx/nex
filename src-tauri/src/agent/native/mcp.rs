@@ -1,11 +1,15 @@
 //! Minimal MCP (Model Context Protocol) client.
 //!
-//! Reads `~/.nex/mcp.json` and `<cwd>/.nex/mcp.json` (Claude-compatible
-//! `{"mcpServers": {"<name>": {"command", "args", "env", "url"}}}` layout; project
-//! overrides global by name), connects each server (stdio via `command`, or
-//! Streamable HTTP via `url` — `url` wins when both are set), performs the
-//! JSON-RPC 2.0 handshake (`initialize` → `notifications/initialized` →
-//! `tools/list`) and proxies `tools/call` for the harness.
+//! Reads global `~/.nex/mcp.json` plus project-local `.nex/mcp.json` files
+//! (Claude-compatible `{"mcpServers": {"<name>": {"command", "args", "env",
+//! "url"}}}` layout). Project entries are executable configuration, so they
+//! are only connected after a user explicitly trusts that server for the
+//! exact config-file hash. Trusted project entries override global entries by
+//! name; untrusted ones remain visible in Settings but have no runtime effect.
+//! Connected servers use stdio via `command`, or Streamable HTTP via `url`
+//! (`url` wins), perform the JSON-RPC 2.0 handshake (`initialize` →
+//! `notifications/initialized` → `tools/list`), and proxy `tools/call` for
+//! the harness.
 //!
 //! Failure policy: a single failing server degrades to a log entry — it never
 //! blocks session creation. Dropping the last [`McpClient`] handle kills the
@@ -17,14 +21,23 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use sha2::{Digest, Sha256};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::Mutex;
+
+use super::config::ProjectMcpApproval;
 
 /// Handshake (spawn/connect → initialize → tools/list) budget per server.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
 /// Per-`tools/call` response budget.
 const CALL_TIMEOUT: Duration = Duration::from_secs(300);
+/// Largest complete MCP JSON-RPC message accepted from either transport.
+/// Stdio servers and HTTP endpoints are configured code, not trusted input.
+const MAX_MCP_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
+/// Header lines are much smaller than JSON bodies and get a separate cap so a
+/// server cannot consume memory by omitting the frame terminator.
+const MAX_MCP_HEADER_BYTES: usize = 16 * 1024;
 
 /// A MCP server configuration from `mcp.json`.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -62,13 +75,25 @@ pub struct McpServerInfo {
     pub url: Option<String>,
     pub headers: HashMap<String, String>,
     pub enabled: bool,
-    /// `global` for `~/.nex/mcp.json` entries.
+    /// `global` for `~/.nex/mcp.json`, `project` for `<cwd>/.nex/mcp.json`.
     pub source: String,
+}
+
+#[derive(Debug, Clone)]
+struct ProjectMcpConfig {
+    project_path: String,
+    config_hash: String,
+    mcp_servers: HashMap<String, McpServerConfig>,
 }
 
 /// Path to the user-global MCP config (`~/.nex/mcp.json`).
 pub fn global_mcp_path() -> Option<std::path::PathBuf> {
     super::home::nex_home().map(|h| h.join("mcp.json"))
+}
+
+/// Path to a project-local MCP config.
+pub fn project_mcp_path(cwd: &Path) -> PathBuf {
+    cwd.join(".nex").join("mcp.json")
 }
 
 /// Lists servers from the global mcp.json (sorted by name).
@@ -95,6 +120,46 @@ pub fn list_global(disabled: &[String]) -> Vec<McpServerInfo> {
         })
         .collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+/// Lists global servers and (when `cwd` is supplied) all project servers.
+/// Project rows are intentionally returned even when disabled/untrusted so
+/// users can inspect what a repository is asking Nex to execute.
+pub fn list_servers(
+    cwd: Option<&Path>,
+    disabled_global: &[String],
+    approvals: &[ProjectMcpApproval],
+) -> Vec<McpServerInfo> {
+    let mut out = list_global(disabled_global);
+    let Some(cwd) = cwd else {
+        return out;
+    };
+    match read_project_config(cwd) {
+        Ok(Some(project)) => {
+            out.extend(project.mcp_servers.into_iter().map(|(name, cfg)| {
+                let enabled = is_project_approved(
+                    approvals,
+                    &project.project_path,
+                    &project.config_hash,
+                    &name,
+                );
+                McpServerInfo {
+                    name,
+                    command: cfg.command,
+                    args: cfg.args,
+                    env: cfg.env,
+                    url: cfg.url,
+                    headers: cfg.headers,
+                    enabled,
+                    source: "project".to_string(),
+                }
+            }));
+        }
+        Ok(None) => {}
+        Err(e) => log::warn!("ignoring project MCP config: {e}"),
+    }
+    out.sort_by(|a, b| a.source.cmp(&b.source).then_with(|| a.name.cmp(&b.name)));
     out
 }
 
@@ -135,21 +200,142 @@ fn write_file(path: &Path, file: &McpFile) -> Result<(), String> {
     std::fs::write(path, json).map_err(|e| format!("failed to write {}: {e}", path.display()))
 }
 
-/// Loads the merged MCP configuration for a session working dir: global
-/// `~/.nex/mcp.json` first, project `.nex/mcp.json` overriding same-name
-/// entries. Malformed files are skipped with a log. Returns entries sorted by
-/// name so tool specs are byte-stable.
-pub fn load_configs(cwd: &Path) -> Vec<(String, McpServerConfig)> {
-    let mut paths: Vec<std::path::PathBuf> = Vec::new();
-    if let Some(home) = super::home::nex_home() {
-        paths.push(home.join("mcp.json"));
+/// Loads the runtime MCP configuration for a session. Global servers retain
+/// their existing enable/disable setting. Project entries are merged only
+/// when their path, server name, and exact config hash match an explicit
+/// approval; an untrusted project entry therefore cannot shadow a global one.
+pub fn load_configs(
+    cwd: &Path,
+    disabled_global: &[String],
+    approvals: &[ProjectMcpApproval],
+) -> Vec<(String, McpServerConfig)> {
+    let mut merged: HashMap<String, McpServerConfig> = HashMap::new();
+    if let Some(path) = global_mcp_path() {
+        let mut global = HashMap::new();
+        merge_file(&mut global, &path);
+        for (name, cfg) in global {
+            if !disabled_global.iter().any(|disabled| disabled == &name) {
+                merged.insert(name, cfg);
+            }
+        }
     }
-    paths.push(cwd.join(".nex").join("mcp.json"));
-    merge_files(&paths)
+
+    match read_project_config(cwd) {
+        Ok(Some(project)) => merge_approved_project_configs(&mut merged, project, approvals),
+        Ok(None) => {}
+        Err(e) => log::warn!("ignoring project MCP config: {e}"),
+    }
+
+    let mut out: Vec<(String, McpServerConfig)> = merged.into_iter().collect();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+fn merge_approved_project_configs(
+    merged: &mut HashMap<String, McpServerConfig>,
+    project: ProjectMcpConfig,
+    approvals: &[ProjectMcpApproval],
+) {
+    for (name, cfg) in project.mcp_servers {
+        if is_project_approved(
+            approvals,
+            &project.project_path,
+            &project.config_hash,
+            &name,
+        ) {
+            merged.insert(name, cfg);
+        }
+    }
+}
+
+/// Gets the current project identity and named server. Used by Settings to
+/// record a trust decision, and never by the session loader directly.
+pub fn project_server(cwd: &Path, name: &str) -> Result<(String, String, McpServerConfig), String> {
+    let project =
+        read_project_config(cwd)?.ok_or_else(|| "project MCP config not found".to_string())?;
+    let server = project
+        .mcp_servers
+        .get(name)
+        .cloned()
+        .ok_or_else(|| format!("project MCP server `{name}` not found"))?;
+    Ok((project.project_path, project.config_hash, server))
+}
+
+/// Resolves a settings probe to a server that is actually allowed to connect.
+/// This repeats the runtime trust check so a direct frontend command cannot
+/// turn an untrusted repository config into a process spawn.
+pub fn configured_server(
+    cwd: Option<&Path>,
+    source: &str,
+    name: &str,
+    disabled_global: &[String],
+    approvals: &[ProjectMcpApproval],
+) -> Result<McpServerConfig, String> {
+    match source {
+        "global" => {
+            if disabled_global.iter().any(|disabled| disabled == name) {
+                return Err(format!("global MCP server `{name}` is disabled"));
+            }
+            let path = global_mcp_path().ok_or_else(|| "home directory unavailable".to_string())?;
+            read_file(&path)
+                .mcp_servers
+                .remove(name)
+                .ok_or_else(|| format!("global MCP server `{name}` not found"))
+        }
+        "project" => {
+            let cwd = cwd.ok_or_else(|| "project path is required for project MCP".to_string())?;
+            let (project_path, config_hash, server) = project_server(cwd, name)?;
+            if !is_project_approved(approvals, &project_path, &config_hash, name) {
+                return Err(format!(
+                    "project MCP server `{name}` requires explicit approval before it can connect"
+                ));
+            }
+            Ok(server)
+        }
+        _ => Err(format!("unknown MCP source `{source}`")),
+    }
+}
+
+fn is_project_approved(
+    approvals: &[ProjectMcpApproval],
+    project_path: &str,
+    config_hash: &str,
+    name: &str,
+) -> bool {
+    approvals.iter().any(|approval| {
+        approval.project_path == project_path
+            && approval.config_hash == config_hash
+            && approval.server_name == name
+    })
+}
+
+fn read_project_config(cwd: &Path) -> Result<Option<ProjectMcpConfig>, String> {
+    let project_path = std::fs::canonicalize(cwd)
+        .map_err(|e| format!("failed to resolve project path {}: {e}", cwd.display()))?;
+    if !project_path.is_dir() {
+        return Err(format!(
+            "project path {} is not a directory",
+            project_path.display()
+        ));
+    }
+    let path = project_mcp_path(&project_path);
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("failed to read {}: {e}", path.display())),
+    };
+    let file: McpFile = serde_json::from_slice(&bytes)
+        .map_err(|e| format!("malformed MCP config {}: {e}", path.display()))?;
+    Ok(Some(ProjectMcpConfig {
+        project_path: project_path.to_string_lossy().into_owned(),
+        config_hash: format!("{:x}", Sha256::digest(&bytes)),
+        mcp_servers: file.mcp_servers,
+    }))
 }
 
 /// Merges `mcp.json` files in order (later files win per name) and sorts the
 /// result by name for a byte-stable tool catalog.
+#[cfg(test)]
 fn merge_files(paths: &[std::path::PathBuf]) -> Vec<(String, McpServerConfig)> {
     let mut merged: HashMap<String, McpServerConfig> = HashMap::new();
     for p in paths {
@@ -235,8 +421,7 @@ impl std::fmt::Debug for McpClient {
 /// Note: hostnames that *resolve* to link-local (e.g. `metadata.internal`)
 /// are not caught here; that would require a DNS hook on the client.
 fn validate_mcp_url(raw: &str) -> Result<(), String> {
-    let parsed =
-        reqwest::Url::parse(raw).map_err(|e| format!("invalid MCP url `{raw}`: {e}"))?;
+    let parsed = reqwest::Url::parse(raw).map_err(|e| format!("invalid MCP url `{raw}`: {e}"))?;
     match parsed.scheme() {
         "http" | "https" => {}
         other => {
@@ -577,48 +762,46 @@ impl Transport {
         let stdout = stdout
             .as_mut()
             .ok_or_else(|| "MCP stdout closed".to_string())?;
-        let mut first_line = String::new();
-        let n = stdout
-            .read_line(&mut first_line)
-            .await
-            .map_err(|e| format!("MCP read failed: {e}"))?;
-        if n == 0 {
+        let Some(first_line) = read_limited_line(stdout, MAX_MCP_MESSAGE_BYTES).await? else {
             return Err("MCP server closed the stream".to_string());
-        }
+        };
+        let first_line = String::from_utf8(first_line)
+            .map_err(|_| "MCP frame header is not valid UTF-8".to_string())?;
 
         if let Some(msg) = parse_stdio_line_message(&first_line)? {
             return Ok(msg);
         }
-
-        let mut content_length: Option<usize> = None;
-        if let Some(v) = first_line
-            .to_ascii_lowercase()
-            .trim()
-            .strip_prefix("content-length:")
-        {
-            content_length = v.trim().parse::<usize>().ok();
+        if first_line.len() > MAX_MCP_HEADER_BYTES {
+            return Err(format!(
+                "MCP frame header exceeds {} byte limit",
+                MAX_MCP_HEADER_BYTES
+            ));
         }
+
+        let mut content_length = parse_content_length(&first_line);
+        let mut header_bytes = first_line.len();
         loop {
-            let mut line = String::new();
-            let n = stdout
-                .read_line(&mut line)
-                .await
-                .map_err(|e| format!("MCP read failed: {e}"))?;
-            if n == 0 {
+            let remaining = MAX_MCP_HEADER_BYTES.saturating_sub(header_bytes);
+            let Some(line) = read_limited_line(stdout, remaining).await? else {
                 return Err("MCP server closed the stream".to_string());
-            }
+            };
+            header_bytes = header_bytes.saturating_add(line.len());
+            let line = String::from_utf8(line)
+                .map_err(|_| "MCP frame header is not valid UTF-8".to_string())?;
             if line.trim().is_empty() {
                 break;
             }
-            if let Some(v) = line
-                .to_ascii_lowercase()
-                .trim()
-                .strip_prefix("content-length:")
-            {
-                content_length = v.trim().parse::<usize>().ok();
+            if let Some(len) = parse_content_length(&line) {
+                content_length = Some(len);
             }
         }
         let len = content_length.ok_or_else(|| "missing Content-Length header".to_string())?;
+        if len > MAX_MCP_MESSAGE_BYTES {
+            return Err(format!(
+                "MCP Content-Length {len} exceeds {} byte limit",
+                MAX_MCP_MESSAGE_BYTES
+            ));
+        }
         let mut body = vec![0u8; len];
         stdout
             .read_exact(&mut body)
@@ -681,10 +864,7 @@ impl Transport {
             .and_then(|v| v.to_str().ok())
             .unwrap_or("")
             .to_ascii_lowercase();
-        let body = resp
-            .text()
-            .await
-            .map_err(|e| format!("MCP HTTP read failed: {e}"))?;
+        let body = read_http_body_limited(resp).await?;
 
         if !status.is_success() {
             return Err(format!("MCP HTTP {status}: {body}"));
@@ -715,6 +895,79 @@ impl Transport {
             Ok(msg)
         }
     }
+}
+
+/// Read one newline-terminated frame/header line without allocating beyond
+/// `limit`. `AsyncBufReadExt::read_line` has no receive cap and would let a
+/// malicious stdio server grow a `String` until memory exhaustion.
+async fn read_limited_line<R>(reader: &mut R, limit: usize) -> Result<Option<Vec<u8>>, String>
+where
+    R: AsyncBufRead + Unpin,
+{
+    let mut line = Vec::new();
+    loop {
+        let consumed = {
+            let buf = reader
+                .fill_buf()
+                .await
+                .map_err(|e| format!("MCP read failed: {e}"))?;
+            if buf.is_empty() {
+                if line.is_empty() {
+                    return Ok(None);
+                }
+                return Err("MCP server closed mid-frame".to_string());
+            }
+            let take = buf
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map(|pos| pos + 1)
+                .unwrap_or(buf.len());
+            if line.len().saturating_add(take) > limit {
+                return Err(format!("MCP line exceeds {limit} byte limit"));
+            }
+            line.extend_from_slice(&buf[..take]);
+            take
+        };
+        reader.consume(consumed);
+        if line.last() == Some(&b'\n') {
+            return Ok(Some(line));
+        }
+    }
+}
+
+fn parse_content_length(line: &str) -> Option<usize> {
+    line.trim()
+        .split_once(':')
+        .filter(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+        .and_then(|(_, value)| value.trim().parse::<usize>().ok())
+}
+
+/// Bounded HTTP body receive for JSON and SSE MCP transports. Content-Length
+/// is merely an early rejection hint; chunked bodies are counted while read.
+async fn read_http_body_limited(mut resp: reqwest::Response) -> Result<String, String> {
+    if let Some(length) = resp.content_length() {
+        if length > MAX_MCP_MESSAGE_BYTES as u64 {
+            return Err(format!(
+                "MCP HTTP response Content-Length {length} exceeds {} byte limit",
+                MAX_MCP_MESSAGE_BYTES
+            ));
+        }
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| format!("MCP HTTP read failed: {e}"))?
+    {
+        if body.len().saturating_add(chunk.len()) > MAX_MCP_MESSAGE_BYTES {
+            return Err(format!(
+                "MCP HTTP response exceeds {} byte limit",
+                MAX_MCP_MESSAGE_BYTES
+            ));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    String::from_utf8(body).map_err(|_| "MCP HTTP response is not valid UTF-8".to_string())
 }
 
 fn parse_stdio_line_message(line: &str) -> Result<Option<serde_json::Value>, String> {
@@ -890,6 +1143,68 @@ while True:
     }
 
     #[test]
+    fn project_mcp_requires_exact_explicit_approval() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path().join("project");
+        std::fs::create_dir_all(project_dir.join(".nex")).unwrap();
+        let project_file = project_mcp_path(&project_dir);
+        std::fs::write(
+            &project_file,
+            r#"{"mcpServers":{"shadow":{"command":"project-command"},"only-project":{"command":"never-spawn-until-approved"}}}"#,
+        )
+        .unwrap();
+        let project = read_project_config(&project_dir).unwrap().unwrap();
+
+        // A repo config cannot shadow an enabled global server before a user
+        // approves it. This is the map session setup uses before it considers
+        // spawning a stdio MCP process.
+        let mut runtime = HashMap::from([(
+            "shadow".to_string(),
+            McpServerConfig {
+                command: Some("global-command".to_string()),
+                args: Vec::new(),
+                env: HashMap::new(),
+                url: None,
+                headers: HashMap::new(),
+            },
+        )]);
+        merge_approved_project_configs(&mut runtime, project.clone(), &[]);
+        assert_eq!(
+            runtime.get("shadow").and_then(|cfg| cfg.command.as_deref()),
+            Some("global-command")
+        );
+        assert!(!runtime.contains_key("only-project"));
+        assert!(
+            configured_server(Some(&project_dir), "project", "only-project", &[], &[])
+                .unwrap_err()
+                .contains("requires explicit approval")
+        );
+
+        let approvals = vec![ProjectMcpApproval {
+            project_path: project.project_path.clone(),
+            config_hash: project.config_hash.clone(),
+            server_name: "shadow".to_string(),
+        }];
+        merge_approved_project_configs(&mut runtime, project.clone(), &approvals);
+        assert_eq!(
+            runtime.get("shadow").and_then(|cfg| cfg.command.as_deref()),
+            Some("project-command")
+        );
+
+        // Editing any part of the file changes the hash and immediately
+        // invalidates even a previously approved server.
+        std::fs::write(
+            &project_file,
+            r#"{"mcpServers":{"shadow":{"command":"changed-command"}}}"#,
+        )
+        .unwrap();
+        let changed = read_project_config(&project_dir).unwrap().unwrap();
+        let mut after_change = HashMap::new();
+        merge_approved_project_configs(&mut after_change, changed, &approvals);
+        assert!(after_change.is_empty());
+    }
+
+    #[test]
     fn parse_sse_jsonrpc_picks_matching_id() {
         let body = "\
 event: message\n\
@@ -900,7 +1215,12 @@ data: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"ok\":true}}\n\
 data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[]}}\n\
 ";
         let msg = parse_sse_jsonrpc(body, 1).expect("id=1");
-        assert_eq!(msg.pointer("/result/tools").and_then(|v| v.as_array()).map(|a| a.len()), Some(0));
+        assert_eq!(
+            msg.pointer("/result/tools")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len()),
+            Some(0)
+        );
         let err = parse_sse_jsonrpc(body, 99).expect_err("missing id");
         assert!(err.contains("id 99"), "got: {err}");
     }
@@ -913,16 +1233,41 @@ data: \"result\":{\"ok\":true}}\n\
 \n\
 ";
         let msg = parse_sse_jsonrpc(body, 1).expect("multiline");
-        assert_eq!(msg.pointer("/result/ok").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(
+            msg.pointer("/result/ok").and_then(|v| v.as_bool()),
+            Some(true)
+        );
     }
 
     #[test]
     fn parse_stdio_line_message_parses_newline_json() {
-        let msg = parse_stdio_line_message("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}\n")
-            .unwrap()
-            .expect("json line");
+        let msg =
+            parse_stdio_line_message("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}\n")
+                .unwrap()
+                .expect("json line");
         assert_eq!(msg.get("id").and_then(|v| v.as_u64()), Some(1));
-        assert_eq!(msg.pointer("/result/ok").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(
+            msg.pointer("/result/ok").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+    }
+
+    #[tokio::test]
+    async fn bounded_stdio_lines_reject_oversized_input_before_allocation() {
+        let (mut writer, reader) = tokio::io::duplex(128);
+        writer.write_all(b"0123456789\n").await.unwrap();
+        drop(writer);
+        let mut reader = BufReader::new(reader);
+        let err = read_limited_line(&mut reader, 8).await.unwrap_err();
+        assert!(err.contains("exceeds 8 byte limit"), "got: {err}");
+    }
+
+    #[test]
+    fn content_length_parser_is_case_insensitive_and_strict() {
+        assert_eq!(parse_content_length("Content-Length: 42\r\n"), Some(42));
+        assert_eq!(parse_content_length("content-length: 7"), Some(7));
+        assert_eq!(parse_content_length("Content-Length: nope"), None);
+        assert_eq!(parse_content_length("Other: 42"), None);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1045,9 +1390,7 @@ data: \"result\":{\"ok\":true}}\n\
             "url servers must use HTTP, got: {err}"
         );
         assert!(
-            err.contains("handshake failed")
-                || err.contains("timed out")
-                || err.contains("HTTP"),
+            err.contains("handshake failed") || err.contains("timed out") || err.contains("HTTP"),
             "got: {err}"
         );
         // Prefer url over command: failure must be HTTP, not spawn.
@@ -1089,7 +1432,10 @@ data: \"result\":{\"ok\":true}}\n\
         assert!(validate_mcp_url("file:///etc/passwd").is_err());
         assert!(validate_mcp_url("ftp://example.com/x").is_err());
         // Missing host.
-        assert!(validate_mcp_url("http:///nohost").is_ok(), "parser normalizes to host=nohost");
+        assert!(
+            validate_mcp_url("http:///nohost").is_ok(),
+            "parser normalizes to host=nohost"
+        );
         assert!(validate_mcp_url("http://:8080/x").is_err());
     }
 
@@ -1113,7 +1459,10 @@ data: \"result\":{\"ok\":true}}\n\
             headers: HashMap::new(),
         };
         let mut base_env = HashMap::new();
-        base_env.insert("PATH".to_string(), dir.path().to_string_lossy().into_owned());
+        base_env.insert(
+            "PATH".to_string(),
+            dir.path().to_string_lossy().into_owned(),
+        );
         let resolved = resolve_command("fake-mcp", &cfg, &base_env);
         assert_eq!(resolved, script.into_os_string());
     }

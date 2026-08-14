@@ -6,7 +6,8 @@
 
 export type ComposerMention = { path: string; name: string };
 
-/** Pending image attachment (base64 payload; preview URLs are recreated on load). */
+/** Pending image attachment shape accepted by the composer. Image bytes are
+ * intentionally not retained in cross-tab drafts. */
 export type ComposerDraftImage = {
   id: string;
   mimeType: string;
@@ -34,22 +35,21 @@ function touch(id: string) {
 }
 
 function isEmptyDraft(draft: ComposerDraft): boolean {
-  return !draft.text && draft.mentions.length === 0 && draft.images.length === 0;
+  return !draft.text && draft.mentions.length === 0;
 }
 
 function cloneDraft(draft: ComposerDraft): ComposerDraft {
   return {
     text: draft.text,
     mentions: draft.mentions.map((m) => ({ path: m.path, name: m.name })),
-    images: draft.images.map((img) => ({
-      id: img.id,
-      mimeType: img.mimeType,
-      data: img.data,
-    })),
+    // Base64 attachments can be megabytes each. They are deliberately
+    // one-shot composer input rather than long-lived draft/store state.
+    images: [],
   };
 }
 
-/** Persist (or clear) the draft for a conversation tab. Empty drafts are dropped. */
+/** Persist (or clear) text/mentions for a conversation tab. Image attachments
+ * are dropped on tab switch/unmount instead of retaining base64 in memory. */
 export function saveComposerDraft(conversationId: string, draft: ComposerDraft): void {
   const next = cloneDraft({
     text: draft.text,

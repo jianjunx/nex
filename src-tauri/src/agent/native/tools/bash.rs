@@ -3,6 +3,7 @@
 
 use super::{arg_str, truncate_output, Tool, ToolCtx};
 use agent_client_protocol as acp;
+use tokio::io::AsyncReadExt;
 
 #[cfg(windows)]
 fn apply_path_env(cmd: &mut tokio::process::Command, path_env: &std::ffi::OsStr) {
@@ -16,6 +17,140 @@ fn apply_path_env(cmd: &mut tokio::process::Command, path_env: &std::ffi::OsStr)
 
 /// Cap on total output characters.
 const MAX_OUTPUT_CHARS: usize = 20_000;
+/// Each pipe is drained continuously, but only this many bytes are retained.
+/// Keeping a bounded prefix prevents `output()`-style unbounded buffering while
+/// still avoiding a child deadlock when it writes more than we return.
+const MAX_CAPTURE_BYTES_PER_STREAM: usize = 512 * 1024;
+/// After a timeout, give the direct child a brief chance to reap after its
+/// process group is killed. Never let cleanup itself turn into an unbounded
+/// wait.
+const TERMINATION_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
+
+struct CapturedOutput {
+    bytes: Vec<u8>,
+    truncated: bool,
+}
+
+/// Drain a child output pipe without letting its retained data grow without
+/// bound. Reads continue after the cap so a noisy command cannot block on a
+/// full OS pipe; excess bytes are intentionally discarded.
+async fn capture_output<R>(mut reader: R) -> std::io::Result<CapturedOutput>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    let mut bytes = Vec::with_capacity(MAX_CAPTURE_BYTES_PER_STREAM.min(8192));
+    let mut buf = [0u8; 8192];
+    let mut truncated = false;
+    loop {
+        let read = reader.read(&mut buf).await?;
+        if read == 0 {
+            break;
+        }
+        let available = MAX_CAPTURE_BYTES_PER_STREAM.saturating_sub(bytes.len());
+        let keep = available.min(read);
+        bytes.extend_from_slice(&buf[..keep]);
+        truncated |= keep < read;
+    }
+    Ok(CapturedOutput { bytes, truncated })
+}
+
+#[cfg(unix)]
+fn configure_process_group(cmd: &mut tokio::process::Command) {
+    // Give the shell and all of its descendants a fresh process group. This
+    // lets timeout kill the entire tree instead of orphaning `sleep`, compiler
+    // workers, or background jobs started by the shell.
+    cmd.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn configure_process_group(_cmd: &mut tokio::process::Command) {}
+
+/// `kill_on_drop` only kills the direct shell. On Unix, retain its dedicated
+/// process-group id as a synchronous drop guard too, so cancellation of the
+/// tool future cannot orphan descendants that inherited the shell's group.
+#[cfg(unix)]
+struct ProcessGroupGuard {
+    pid: libc::pid_t,
+    armed: bool,
+}
+
+#[cfg(unix)]
+impl ProcessGroupGuard {
+    fn new(pid: u32) -> Self {
+        Self {
+            pid: pid as libc::pid_t,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ProcessGroupGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            // The group belongs only to this shell (set with process_group(0)).
+            // Ignore ESRCH after a normal/previously-killed exit.
+            unsafe {
+                let _ = libc::kill(-self.pid, libc::SIGKILL);
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+async fn terminate_process_tree(child: &mut tokio::process::Child) {
+    if let Some(pid) = child.id() {
+        // Negative pid addresses the process group created above. Ignore
+        // ESRCH: a fast-exiting process may have won the timeout race.
+        unsafe {
+            let _ = libc::kill(-(pid as libc::pid_t), libc::SIGKILL);
+        }
+    }
+    let _ = child.start_kill();
+}
+
+async fn clean_up_timed_out_command(
+    child: &mut tokio::process::Child,
+    stdout_task: &tokio::task::JoinHandle<std::io::Result<CapturedOutput>>,
+    stderr_task: &tokio::task::JoinHandle<std::io::Result<CapturedOutput>>,
+) {
+    terminate_process_tree(child).await;
+    // Do not await pipe drains indefinitely: a daemonized descendant could
+    // have retained a pipe despite the kill attempt. Aborting the tasks drops
+    // their readers and releases their bounded buffers.
+    stdout_task.abort();
+    stderr_task.abort();
+    let _ = tokio::time::timeout(TERMINATION_WAIT, child.wait()).await;
+}
+
+fn timeout_error(timeout: std::time::Duration) -> String {
+    format!(
+        "command timed out after {}s; process tree was terminated",
+        timeout.as_secs()
+    )
+}
+
+#[cfg(windows)]
+async fn terminate_process_tree(child: &mut tokio::process::Child) {
+    if let Some(pid) = child.id() {
+        // `/T` includes descendants. `taskkill` is part of supported Windows
+        // installations; start_kill below remains a fallback if it fails.
+        let _ = tokio::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .output()
+            .await;
+    }
+    let _ = child.start_kill();
+}
+
+#[cfg(all(not(unix), not(windows)))]
+async fn terminate_process_tree(child: &mut tokio::process::Child) {
+    let _ = child.start_kill();
+}
 
 pub struct Bash;
 
@@ -47,7 +182,11 @@ impl Tool for Bash {
         let command = arg_str(&args, "command")?;
         // Absent `timeout_secs` uses the context timeout verbatim (keeps
         // sub-second precision; `arg_usize` would truncate via `as_secs()`).
-        let timeout = match args.get("timeout_secs").and_then(|v| v.as_u64()).filter(|v| *v > 0) {
+        let timeout = match args
+            .get("timeout_secs")
+            .and_then(|v| v.as_u64())
+            .filter(|v| *v > 0)
+        {
             Some(secs) => std::time::Duration::from_secs(secs),
             None => ctx.bash_timeout,
         };
@@ -55,31 +194,91 @@ impl Tool for Bash {
         let mut cmd = super::shell_command_script(super::shell_command(), &command);
         cmd.current_dir(&ctx.cwd);
         apply_path_env(&mut cmd, &ctx.path_env);
-        // `output()` kills the child when its future is dropped (timeout).
-        let output = match tokio::time::timeout(timeout, cmd.output()).await {
-            Ok(res) => res.map_err(|e| format!("failed to run command: {e}"))?,
-            Err(_) => return Err(format!("command timed out after {}s", timeout.as_secs())),
-        };
+        configure_process_group(&mut cmd);
+        cmd.stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            // Covers caller cancellation / future drop, not just the explicit
+            // timeout branch below.
+            .kill_on_drop(true);
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("failed to run command: {e}"))?;
+        #[cfg(unix)]
+        let mut process_group_guard = child.id().map(ProcessGroupGuard::new);
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "command stdout pipe unavailable".to_string())?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| "command stderr pipe unavailable".to_string())?;
+        let mut stdout_task = tokio::spawn(capture_output(stdout));
+        let mut stderr_task = tokio::spawn(capture_output(stderr));
+        // The timeout applies to the full operation, including pipe draining.
+        // A shell can exit while a background child keeps stdout/stderr open.
+        let deadline = tokio::time::Instant::now() + timeout;
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let code = output.status.code().unwrap_or(-1);
+        let status = match tokio::time::timeout_at(deadline, child.wait()).await {
+            Ok(res) => res.map_err(|e| format!("failed to wait for command: {e}"))?,
+            Err(_) => {
+                clean_up_timed_out_command(&mut child, &stdout_task, &stderr_task).await;
+                return Err(timeout_error(timeout));
+            }
+        };
+        let stdout = match tokio::time::timeout_at(deadline, &mut stdout_task).await {
+            Ok(result) => result
+                .map_err(|e| format!("stdout capture task failed: {e}"))?
+                .map_err(|e| format!("stdout capture failed: {e}"))?,
+            Err(_) => {
+                clean_up_timed_out_command(&mut child, &stdout_task, &stderr_task).await;
+                return Err(timeout_error(timeout));
+            }
+        };
+        let stderr = match tokio::time::timeout_at(deadline, &mut stderr_task).await {
+            Ok(result) => result
+                .map_err(|e| format!("stderr capture task failed: {e}"))?
+                .map_err(|e| format!("stderr capture failed: {e}"))?,
+            Err(_) => {
+                clean_up_timed_out_command(&mut child, &stdout_task, &stderr_task).await;
+                return Err(timeout_error(timeout));
+            }
+        };
+        #[cfg(unix)]
+        if let Some(guard) = process_group_guard.as_mut() {
+            guard.disarm();
+        }
+        let stdout_text = String::from_utf8_lossy(&stdout.bytes);
+        let stderr_text = String::from_utf8_lossy(&stderr.bytes);
+        let code = status.code().unwrap_or(-1);
         let mut out = format!("exit code: {code}\n");
-        let mut truncated = false;
-        if !stdout.is_empty() {
-            let (body, was_truncated) = tier_tool_output("bash", &stdout);
-            truncated |= was_truncated;
+        let mut truncated = stdout.truncated || stderr.truncated;
+        if !stdout_text.is_empty() {
+            let (body, was_truncated) = tier_tool_output("bash", &stdout_text);
+            truncated |= was_truncated || stdout.truncated;
             out.push_str(&format!("--- stdout ---\n{body}"));
             if !body.ends_with('\n') {
                 out.push('\n');
             }
+            if stdout.truncated {
+                out.push_str(&format!(
+                    "[stdout capture capped at {} bytes; remaining output discarded]\n",
+                    MAX_CAPTURE_BYTES_PER_STREAM
+                ));
+            }
         }
-        if !stderr.is_empty() {
-            let (body, was_truncated) = tier_tool_output("bash", &stderr);
-            truncated |= was_truncated;
+        if !stderr_text.is_empty() {
+            let (body, was_truncated) = tier_tool_output("bash", &stderr_text);
+            truncated |= was_truncated || stderr.truncated;
             out.push_str(&format!("--- stderr ---\n{body}"));
             if !body.ends_with('\n') {
                 out.push('\n');
+            }
+            if stderr.truncated {
+                out.push_str(&format!(
+                    "[stderr capture capped at {} bytes; remaining output discarded]\n",
+                    MAX_CAPTURE_BYTES_PER_STREAM
+                ));
             }
         }
         // Captured for future use (e.g. tagging the result as partial in
@@ -122,9 +321,7 @@ fn tier_tool_output(tool: &'static str, raw: &str) -> (String, bool) {
         "Re-run with `head/tail/sed`/`grep -n` to inspect the rest, or archive via `history` if the transcript already compacted it.",
     );
     (
-        format!(
-            "{notice}{head}\n--- omitted middle: {omitted} chars ---\n{tail}"
-        ),
+        format!("{notice}{head}\n--- omitted middle: {omitted} chars ---\n{tail}"),
         true,
     )
 }
@@ -207,6 +404,51 @@ mod tests {
         assert!(err.contains("timed out"));
     }
 
+    #[cfg(unix)]
+    #[tokio::test(flavor = "current_thread")]
+    async fn bash_timeout_covers_background_children_that_hold_output_pipes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut c = ctx(tmp.path());
+        c.bash_timeout = Duration::from_millis(250);
+        // The shell exits immediately, but the background process inherits
+        // stdout. Waiting only on `child.wait()` would then hang at output
+        // drain time (until the 30s sleep ends) and leave the child running.
+        let result = tokio::time::timeout(
+            Duration::from_secs(3),
+            Bash.execute(
+                serde_json::json!({
+                    "command": "sleep 30 & echo $! > background.pid; echo shell-exited"
+                }),
+                &c,
+            ),
+        )
+        .await
+        .expect("entire bash operation must honor its timeout");
+        let err = result.expect_err("background pipe holder must be terminated");
+        assert!(err.contains("timed out"), "got: {err}");
+    }
+
+    #[cfg(not(windows))]
+    #[tokio::test(flavor = "current_thread")]
+    async fn bash_drains_but_caps_noisy_output() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = Bash
+            .execute(
+                serde_json::json!({
+                    "command": "yes x | head -c 1048576",
+                    "timeout_secs": 5,
+                }),
+                &ctx(tmp.path()),
+            )
+            .await
+            .unwrap();
+        assert!(out.contains("stdout capture capped"), "got: {out}");
+        assert!(
+            out.len() <= MAX_OUTPUT_CHARS + 128,
+            "result should remain bounded"
+        );
+    }
+
     #[test]
     fn tier_tool_output_inlines_small_results() {
         let (body, was_truncated) = tier_tool_output("bash", "small output");
@@ -221,7 +463,10 @@ mod tests {
         assert!(was_truncated);
         assert!(body.contains(super::super::PARTIAL_MARKER));
         assert!(body.contains("bash output truncated"));
-        assert!(body.contains("TAIL-ERROR-SUMMARY"), "tail should survive preview");
+        assert!(
+            body.contains("TAIL-ERROR-SUMMARY"),
+            "tail should survive preview"
+        );
         assert!(body.contains("omitted middle"));
     }
 }

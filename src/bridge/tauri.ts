@@ -231,7 +231,7 @@ export interface NativeMcpServerInfo {
   url?: string | null;
   headers: Record<string, string>;
   enabled: boolean;
-  source: string;
+  source: "global" | "project";
 }
 
 export interface NativeSkillInfo {
@@ -419,8 +419,8 @@ export async function nativeAgentProbeReasoning(
   return invoke(COMMANDS.NATIVE_AGENT_PROBE_REASONING, { baseUrl, apiKey, modelId });
 }
 
-export async function nativeAgentListMcp(): Promise<NativeMcpServerInfo[]> {
-  return invoke(COMMANDS.NATIVE_AGENT_LIST_MCP);
+export async function nativeAgentListMcp(cwd?: string | null): Promise<NativeMcpServerInfo[]> {
+  return invoke(COMMANDS.NATIVE_AGENT_LIST_MCP, { cwd: cwd ?? null });
 }
 
 export async function nativeAgentUpsertMcp(server: NativeMcpUpsert): Promise<void> {
@@ -435,8 +435,20 @@ export async function nativeAgentSetMcpEnabled(name: string, enabled: boolean): 
   return invoke(COMMANDS.NATIVE_AGENT_SET_MCP_ENABLED, { name, enabled });
 }
 
-export async function nativeAgentProbeMcp(name: string): Promise<string> {
-  return invoke(COMMANDS.NATIVE_AGENT_PROBE_MCP, { name });
+export async function nativeAgentSetProjectMcpEnabled(
+  cwd: string,
+  name: string,
+  enabled: boolean,
+): Promise<void> {
+  return invoke(COMMANDS.NATIVE_AGENT_SET_PROJECT_MCP_ENABLED, { cwd, name, enabled });
+}
+
+export async function nativeAgentProbeMcp(
+  name: string,
+  source: "global" | "project" = "global",
+  cwd?: string | null,
+): Promise<string> {
+  return invoke(COMMANDS.NATIVE_AGENT_PROBE_MCP, { name, source, cwd: cwd ?? null });
 }
 
 export async function nativeAgentListSkills(): Promise<NativeSkillInfo[]> {

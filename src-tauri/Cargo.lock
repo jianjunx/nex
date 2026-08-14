@@ -2513,6 +2513,7 @@ dependencies = [
  "git2",
  "globset",
  "ignore",
+ "libc",
  "log",
  "notify",
  "notify-debouncer-full",

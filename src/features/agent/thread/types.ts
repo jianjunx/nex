@@ -56,6 +56,8 @@ export interface UserMessageEntry extends ThreadEntryBase {
   kind: "user_message";
   text: string;
   images?: UserMessageImage[];
+  /** Number of images that were sent transiently but not retained/persisted. */
+  imageCount?: number;
 }
 
 export interface AssistantMessageEntry extends ThreadEntryBase {

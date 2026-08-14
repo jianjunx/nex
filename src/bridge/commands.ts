@@ -37,6 +37,7 @@ export const COMMANDS = {
   NATIVE_AGENT_UPSERT_MCP: "native_agent_upsert_mcp",
   NATIVE_AGENT_DELETE_MCP: "native_agent_delete_mcp",
   NATIVE_AGENT_SET_MCP_ENABLED: "native_agent_set_mcp_enabled",
+  NATIVE_AGENT_SET_PROJECT_MCP_ENABLED: "native_agent_set_project_mcp_enabled",
   NATIVE_AGENT_PROBE_MCP: "native_agent_probe_mcp",
   NATIVE_AGENT_LIST_SKILLS: "native_agent_list_skills",
   NATIVE_AGENT_DELETE_SKILL: "native_agent_delete_skill",

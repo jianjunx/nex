@@ -149,6 +149,11 @@ impl Database {
         )?;
 
         for e in entries {
+            // Thread snapshots are UI restore data, not an attachment store.
+            // Strip image base64 before serialization so a pasted image cannot
+            // become a long-lived SQLite blob (or be reloaded into memory on
+            // every app start).
+            let payload = scrub_inline_image_payload(e.payload.clone());
             tx.execute(
                 "INSERT INTO thread_entries (id, conversation_id, kind, sequence, timestamp, payload_json)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -158,7 +163,7 @@ impl Database {
                     e.kind,
                     e.sequence,
                     e.timestamp,
-                    serde_json::to_string(&e.payload).unwrap_or_else(|_| "null".to_string())
+                    serde_json::to_string(&payload).unwrap_or_else(|_| "null".to_string())
                 ],
             )?;
         }
@@ -198,5 +203,203 @@ impl Database {
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(rows)
+    }
+
+    /// Upgrade cleanup for snapshots written before inline images were made
+    /// transient. The marker is committed in the same transaction, so an
+    /// interrupted cleanup is retried at the next startup instead of leaving
+    /// a partially-sanitized database marked complete.
+    pub(crate) fn scrub_legacy_thread_image_payloads(&self) -> Result<(), NexError> {
+        const SCRUB_MARKER: &str = "thread_entries_inline_image_scrub_v1";
+
+        let mut conn = self.conn.lock().unwrap();
+        let already_scrubbed: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM nex_metadata WHERE key = ?1)",
+            params![SCRUB_MARKER],
+            |row| row.get(0),
+        )?;
+        if already_scrubbed {
+            return Ok(());
+        }
+
+        let tx = conn.transaction()?;
+        // Select only small ids first. A legacy image can be many MiB, and
+        // processing one payload at a time avoids multiplying that allocation
+        // while upgrading an existing database.
+        let ids: Vec<String> = {
+            let mut stmt = tx.prepare(
+                r#"SELECT id FROM thread_entries
+                   WHERE instr(payload_json, 'data:image/') > 0
+                      OR instr(payload_json, '"images"') > 0
+                      OR instr(payload_json, '"data"') > 0"#,
+            )?;
+            let ids = stmt
+                .query_map([], |row| row.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            ids
+        };
+
+        for id in ids {
+            let payload_json: String = tx.query_row(
+                "SELECT payload_json FROM thread_entries WHERE id = ?1",
+                params![&id],
+                |row| row.get(0),
+            )?;
+            // Malformed JSON already restores as Null; replacing it with an
+            // explicit Null is safer than retaining a possible image blob.
+            let payload = serde_json::from_str::<Value>(&payload_json)
+                .map(scrub_inline_image_payload)
+                .unwrap_or(Value::Null);
+            let cleaned = serde_json::to_string(&payload).map_err(|e| {
+                NexError::Database(format!("failed to serialize thread snapshot: {e}"))
+            })?;
+            if cleaned != payload_json {
+                tx.execute(
+                    "UPDATE thread_entries SET payload_json = ?1 WHERE id = ?2",
+                    params![cleaned, id],
+                )?;
+            }
+        }
+
+        tx.execute(
+            "INSERT INTO nex_metadata (key, value) VALUES (?1, 'complete')",
+            params![SCRUB_MARKER],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+}
+
+/// Remove inline image/base64 fields from a persisted thread payload while
+/// preserving a small count/marker for the restored UI. This deliberately
+/// operates on the generic JSON DTO so older frontend builds cannot bypass it.
+fn scrub_inline_image_payload(mut payload: Value) -> Value {
+    scrub_inline_images(&mut payload);
+    payload
+}
+
+fn scrub_inline_images(value: &mut Value) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                scrub_inline_images(item);
+            }
+        }
+        Value::Object(map) => {
+            // User-message images have no `type` discriminator. Remove the
+            // whole array, retaining only an image count for a truthful UI
+            // placeholder after restart.
+            if let Some(Value::Array(images)) = map.remove("images") {
+                let count = images.len();
+                if count > 0 {
+                    map.insert("imageCount".to_string(), Value::from(count as u64));
+                }
+            }
+
+            let is_image = map
+                .get("type")
+                .and_then(Value::as_str)
+                .is_some_and(|typ| typ == "image" || typ == "image_url")
+                || (map.contains_key("data")
+                    && (map.contains_key("mimeType") || map.contains_key("mime_type")));
+            if is_image && map.remove("data").is_some() {
+                map.insert(
+                    "text".to_string(),
+                    Value::String("[图片附件未持久化]".to_string()),
+                );
+                map.insert("imageOmitted".to_string(), Value::Bool(true));
+            }
+            if map
+                .get("url")
+                .and_then(Value::as_str)
+                .is_some_and(|url| url.starts_with("data:image/"))
+            {
+                map.insert(
+                    "url".to_string(),
+                    Value::String("[inline image omitted]".to_string()),
+                );
+                map.insert("imageOmitted".to_string(), Value::Bool(true));
+            }
+            for child in map.values_mut() {
+                scrub_inline_images(child);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn thread_payload_scrubber_removes_user_and_tool_image_base64() {
+        let payload = serde_json::json!({
+            "kind": "user_message",
+            "text": "look",
+            "images": [{"mimeType": "image/png", "data": "SECRET-BASE64"}],
+            "nested": {
+                "type": "image",
+                "mimeType": "image/png",
+                "data": "TOOL-IMAGE-BASE64"
+            }
+        });
+        let scrubbed = scrub_inline_image_payload(payload);
+        let encoded = serde_json::to_string(&scrubbed).unwrap();
+        assert!(!encoded.contains("SECRET-BASE64"));
+        assert!(!encoded.contains("TOOL-IMAGE-BASE64"));
+        assert_eq!(scrubbed["imageCount"], 1);
+        assert_eq!(scrubbed["nested"]["imageOmitted"], true);
+    }
+
+    #[test]
+    fn opening_existing_database_scrubs_legacy_thread_image_payloads_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("nex.db");
+        {
+            // Simulate an older Nex database: it has the current table shape
+            // but a pre-fix thread snapshot with inline attachment bytes.
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute_batch(crate::db::schema::SCHEMA).unwrap();
+            conn.execute(
+                "INSERT INTO projects (id, name, path, created_at, last_opened) VALUES ('p', 'P', '/tmp/p', 1, 1)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO conversations (id, project_id, title, agent_type, status, created_at, updated_at) VALUES ('c', 'p', 'C', 'nex', 'idle', 1, 1)",
+                [],
+            )
+            .unwrap();
+            let payload = serde_json::json!({
+                "kind": "user_message",
+                "text": "look",
+                "images": [{"mimeType": "image/png", "data": "LEGACY-USER-BASE64"}],
+                "content": [{"type": "image", "mimeType": "image/png", "data": "LEGACY-TOOL-BASE64"}]
+            });
+            conn.execute(
+                "INSERT INTO thread_entries (id, conversation_id, kind, sequence, timestamp, payload_json) VALUES ('e', 'c', 'user_message', 0, 1, ?1)",
+                params![payload.to_string()],
+            )
+            .unwrap();
+        }
+
+        let db = Database::new(&path).expect("upgrade cleanup");
+        let rows = db.get_thread_entries("c").unwrap();
+        let encoded = rows[0].payload.to_string();
+        assert!(!encoded.contains("LEGACY-USER-BASE64"));
+        assert!(!encoded.contains("LEGACY-TOOL-BASE64"));
+        assert_eq!(rows[0].payload["imageCount"], 1);
+        assert_eq!(rows[0].payload["content"][0]["imageOmitted"], true);
+
+        let conn = db.conn.lock().unwrap();
+        let marker: String = conn
+            .query_row(
+                "SELECT value FROM nex_metadata WHERE key = 'thread_entries_inline_image_scrub_v1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(marker, "complete");
     }
 }

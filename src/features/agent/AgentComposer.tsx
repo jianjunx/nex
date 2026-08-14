@@ -52,6 +52,11 @@ interface PendingImage {
   previewUrl: string;
 }
 
+/** Image payloads cross the invoke boundary as base64, so cap both their size
+ * and count before allocating/retaining them in the composer. */
+const MAX_COMPOSER_IMAGES = 4;
+const MAX_COMPOSER_IMAGE_BYTES = 8 * 1024 * 1024;
+
 /** Match `/query` at end of input (allows mid-message slash after whitespace). */
 function matchSlashTrigger(value: string): { query: string; start: number } | null {
   const m = value.match(/(?:^|\s)\/([^\s]*)$/);
@@ -335,6 +340,8 @@ export function AgentComposer() {
     const next: PendingImage[] = [];
     for (const file of files) {
       if (!file.type.startsWith("image/")) continue;
+      if (file.size > MAX_COMPOSER_IMAGE_BYTES) continue;
+      if (imagesRef.current.length + next.length >= MAX_COMPOSER_IMAGES) break;
       try {
         const data = await fileToBase64(file);
         next.push({
@@ -347,7 +354,9 @@ export function AgentComposer() {
         /* skip */
       }
     }
-    if (next.length > 0) setImages((prev) => [...prev, ...next]);
+    if (next.length > 0) {
+      setImages((prev) => [...prev, ...next].slice(0, MAX_COMPOSER_IMAGES));
+    }
   }, [modelSupportsVision]);
 
   const ensureLiveSession = async (): Promise<string | null> => {

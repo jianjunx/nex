@@ -27,7 +27,7 @@ describe("composerDrafts", () => {
     expect(loadComposerDraft("c2")?.text).toBe("other");
   });
 
-  it("keeps image-only drafts across conversations", () => {
+  it("drops image-only drafts instead of retaining base64 across conversations", () => {
     saveComposerDraft("c1", {
       text: "",
       mentions: [],
@@ -39,21 +39,15 @@ describe("composerDrafts", () => {
       images: [{ id: "i2", mimeType: "image/jpeg", data: "xyz" }],
     });
 
-    expect(loadComposerDraft("c1")).toEqual({
-      text: "",
-      mentions: [],
-      images: [{ id: "i1", mimeType: "image/png", data: "abc" }],
-    });
-    expect(loadComposerDraft("c2")?.images).toEqual([
-      { id: "i2", mimeType: "image/jpeg", data: "xyz" },
-    ]);
+    expect(loadComposerDraft("c1")).toBeNull();
+    expect(loadComposerDraft("c2")?.images).toEqual([]);
   });
 
-  it("clones image payloads so later mutations do not leak", () => {
+  it("does not retain image payloads in drafts", () => {
     const images = [{ id: "i1", mimeType: "image/png", data: "abc" }];
     saveComposerDraft("c1", { text: "", mentions: [], images });
     images[0]!.data = "mutated";
-    expect(loadComposerDraft("c1")?.images[0]?.data).toBe("abc");
+    expect(loadComposerDraft("c1")).toBeNull();
   });
 
   it("drops empty drafts and clear removes entries", () => {

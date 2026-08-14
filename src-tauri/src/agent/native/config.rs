@@ -141,8 +141,9 @@ impl Default for ProviderEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AgentParams {
-    /// Max tool-call loop iterations per prompt turn. `0` means no hard cap
-    /// (the no-progress lease still stops runaway failure loops).
+    /// Max tool-call loop iterations per prompt turn. Always positive: a hard
+    /// cap is the final safety net when a model keeps making superficially
+    /// successful but unproductive calls.
     pub max_steps: u32,
     /// Global fallback context window in tokens when the selected model has no
     /// per-model `contextWindow`. `0` disables compression.
@@ -160,12 +161,26 @@ pub struct AgentParams {
     pub auto_review: bool,
 }
 
+/// An explicit trust decision for one MCP server declared by a project.
+///
+/// Project MCP files are executable configuration: a stdio entry can spawn an
+/// arbitrary command before the model has made a tool call.  Bind approval to
+/// both the canonical project path and the exact file bytes so copying a
+/// project or changing its `.nex/mcp.json` requires a fresh user decision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectMcpApproval {
+    pub project_path: String,
+    pub config_hash: String,
+    pub server_name: String,
+}
+
 impl Default for AgentParams {
     fn default() -> Self {
         Self {
-            // Complex coding tasks routinely exceed dozens of tool rounds;
-            // rely on the no-progress lease instead of a low hard cap.
-            max_steps: 0,
+            // Large enough for multi-file work, finite enough to bound a
+            // model/tool loop that keeps reporting nominal success.
+            max_steps: 64,
             context_window: 200_000,
             context_window_migrated: true,
             bash_timeout_secs: 120,
@@ -191,6 +206,11 @@ pub struct NativeAgentConfig {
     /// MCP server names skipped when connecting for a session.
     #[serde(default)]
     pub disabled_mcp_servers: Vec<String>,
+    /// Explicitly trusted servers from project-local `.nex/mcp.json` files.
+    /// Global MCP configuration is managed separately and does not use this
+    /// allowlist.
+    #[serde(default)]
+    pub approved_project_mcp_servers: Vec<ProjectMcpApproval>,
 }
 
 impl Default for NativeAgentConfig {
@@ -208,6 +228,7 @@ impl Default for NativeAgentConfig {
             agent: AgentParams::default(),
             disabled_skills: Vec::new(),
             disabled_mcp_servers: Vec::new(),
+            approved_project_mcp_servers: Vec::new(),
         }
     }
 }
@@ -216,7 +237,8 @@ impl NativeAgentConfig {
     /// Loads the config from `dir/nex-agent.json`. Missing or malformed files
     /// fall back to defaults (a fresh install has no config yet). Legacy
     /// single-provider files are migrated in place on read. The old hard-cap
-    /// default (`maxSteps: 40`) is lifted to unlimited (`0`) once.
+    /// default (`maxSteps: 0` / legacy `40`) is lifted to the bounded v1.1.7
+    /// default once.
     pub fn load(dir: &Path) -> Self {
         let path = dir.join(NATIVE_CONFIG_FILE);
         let Ok(bytes) = std::fs::read(&path) else {
@@ -239,10 +261,15 @@ impl NativeAgentConfig {
                 Self::default()
             }
         };
-        // Product default used to be 40 and cut off complex turns; lift it.
-        if cfg.agent.max_steps == 40 {
-            log::info!("migrating native-agent maxSteps 40 → 0 (unlimited)");
-            cfg.agent.max_steps = 0;
+        // Prior defaults allowed an unbounded loop (`0`) or used the old 40
+        // step cap. Both are product defaults, not a reliable user intent, so
+        // migrate them to the bounded v1.1.7 default.
+        if cfg.agent.max_steps == 0 || cfg.agent.max_steps == 40 {
+            log::info!(
+                "migrating native-agent maxSteps {} → 64 (bounded default)",
+                cfg.agent.max_steps
+            );
+            cfg.agent.max_steps = AgentParams::default().max_steps;
             let _ = cfg.save(dir);
         }
         // Product default used to be 0 (compression off). Lift unmarked
@@ -319,6 +346,7 @@ impl NativeAgentConfig {
             agent,
             disabled_skills: Vec::new(),
             disabled_mcp_servers: Vec::new(),
+            approved_project_mcp_servers: Vec::new(),
         }
     }
 
@@ -415,6 +443,51 @@ impl NativeAgentConfig {
         }
         self.agent.context_window as u64
     }
+
+    /// Clamp values received from an older or external Settings client before
+    /// persisting them. `0` used to mean unlimited and is no longer safe.
+    pub fn normalize_agent_limits(&mut self) {
+        if self.agent.max_steps == 0 {
+            self.agent.max_steps = AgentParams::default().max_steps;
+        }
+    }
+
+    /// Whether a project-local MCP server is trusted for the exact current
+    /// config file. A changed hash deliberately invalidates this decision.
+    pub fn project_mcp_is_approved(
+        &self,
+        project_path: &str,
+        config_hash: &str,
+        server_name: &str,
+    ) -> bool {
+        self.approved_project_mcp_servers.iter().any(|approval| {
+            approval.project_path == project_path
+                && approval.config_hash == config_hash
+                && approval.server_name == server_name
+        })
+    }
+
+    /// Records or revokes approval for one project MCP server. Replacing older
+    /// approvals for the same path/name keeps config migration from retaining
+    /// stale hashes indefinitely.
+    pub fn set_project_mcp_approved(
+        &mut self,
+        project_path: String,
+        config_hash: String,
+        server_name: String,
+        enabled: bool,
+    ) {
+        self.approved_project_mcp_servers.retain(|approval| {
+            approval.project_path != project_path || approval.server_name != server_name
+        });
+        if enabled {
+            self.approved_project_mcp_servers.push(ProjectMcpApproval {
+                project_path,
+                config_hash,
+                server_name,
+            });
+        }
+    }
 }
 
 #[cfg(test)]
@@ -426,7 +499,7 @@ mod tests {
         let cfg = NativeAgentConfig::default();
         assert_eq!(cfg.providers.len(), 1);
         assert_eq!(cfg.providers[0].models[0].id, "deepseek-chat");
-        assert_eq!(cfg.agent.max_steps, 0);
+        assert_eq!(cfg.agent.max_steps, 64);
         assert_eq!(cfg.agent.context_window, 200_000);
         let json = serde_json::to_string(&cfg).unwrap();
         let back: NativeAgentConfig = serde_json::from_str(&json).unwrap();
@@ -434,7 +507,7 @@ mod tests {
     }
 
     #[test]
-    fn load_migrates_old_max_steps_default_to_unlimited() {
+    fn load_migrates_old_max_steps_default_to_bounded_limit() {
         let tmp = std::env::temp_dir().join(format!("nex-cfg-maxsteps-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
@@ -442,11 +515,11 @@ mod tests {
         cfg.agent.max_steps = 40;
         cfg.save(&tmp).unwrap();
         let loaded = NativeAgentConfig::load(&tmp);
-        assert_eq!(loaded.agent.max_steps, 0);
+        assert_eq!(loaded.agent.max_steps, 64);
         // Persisted so the next launch does not re-migrate other intentional values.
         let disk: NativeAgentConfig =
             serde_json::from_slice(&std::fs::read(tmp.join(NATIVE_CONFIG_FILE)).unwrap()).unwrap();
-        assert_eq!(disk.agent.max_steps, 0);
+        assert_eq!(disk.agent.max_steps, 64);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

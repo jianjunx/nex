@@ -20,6 +20,13 @@ impl Database {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.execute_batch(schema::SCHEMA)?;
-        Ok(Self { conn: Mutex::new(conn) })
+        let db = Self {
+            conn: Mutex::new(conn),
+        };
+        // Older releases stored transient image/base64 payloads in thread
+        // snapshots. Remove them once on upgrade as well as preventing future
+        // writes, so a restart cannot repeatedly load legacy blobs into RAM.
+        db.scrub_legacy_thread_image_payloads()?;
+        Ok(db)
     }
 }

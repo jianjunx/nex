@@ -52,6 +52,11 @@ pub struct WorkingMemory {
     pub files_changed: Vec<String>,
     /// Open questions the model is actively tracking.
     pub open_questions: Vec<String>,
+    /// The current todo list supplied by `todo_write`. Unlike ad-hoc open
+    /// questions, that tool replaces the entire list, so completed/cancelled
+    /// work can disappear instead of accumulating forever.
+    #[serde(default)]
+    pub active_todos: Vec<String>,
     /// Free-text "soft state" — for things the schema cannot express
     /// (user-claimed constraints, partial hypotheses, debugging context).
     /// Kept short on purpose; the block is for live reasoning, not for
@@ -69,7 +74,7 @@ impl Default for WorkingMemory {
 
 impl WorkingMemory {
     /// Bump the schema version when changing the serialised layout.
-    pub const VERSION: u32 = 1;
+    pub const VERSION: u32 = 2;
 
     pub fn new() -> Self {
         Self {
@@ -77,6 +82,7 @@ impl WorkingMemory {
             files_inspected: Vec::new(),
             files_changed: Vec::new(),
             open_questions: Vec::new(),
+            active_todos: Vec::new(),
             state_notes: String::new(),
             version: Self::VERSION,
         }
@@ -111,6 +117,10 @@ impl WorkingMemory {
                 section = Some("open");
                 continue;
             }
+            if line == "Open tasks:" {
+                section = Some("todos");
+                continue;
+            }
             if line == "State notes:" {
                 section = Some("notes");
                 continue;
@@ -123,6 +133,7 @@ impl WorkingMemory {
                 Some("changed") if line.starts_with("- ") => memory.files_changed.push(line[2..].to_string()),
                 Some("inspected") if line.starts_with("- ") => memory.files_inspected.push(line[2..].to_string()),
                 Some("open") if line.starts_with("- ") => memory.open_questions.push(line[2..].to_string()),
+                Some("todos") if line.starts_with("- ") => memory.active_todos.push(line[2..].to_string()),
                 Some("notes") => {
                     if memory.state_notes.is_empty() {
                         memory.state_notes.push_str(line);
@@ -156,9 +167,41 @@ impl WorkingMemory {
         push_unique(&mut self.open_questions, format!("tool error: {}", summary.into()));
     }
 
+    /// A successful retry of a tool resolves its prior error reminders. Keep
+    /// errors from other tools: they may still need attention.
+    pub fn resolve_tool_errors(&mut self, tool_name: &str) {
+        let prefix = format!("tool error: {tool_name}:");
+        self.open_questions.retain(|question| !question.starts_with(&prefix));
+    }
+
+    /// Replaces the todo-derived portion of memory. `todo_write` is a full
+    /// snapshot rather than an append operation, so this is what removes
+    /// completed/cancelled work and tasks omitted from a revised plan.
+    pub fn replace_active_todos<I>(&mut self, todos: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.active_todos.clear();
+        for todo in todos {
+            push_unique(&mut self.active_todos, todo);
+        }
+    }
+
     pub fn set_goal(&mut self, goal: impl Into<String>) {
         self.goal.clear();
         self.goal.push(goal.into());
+    }
+
+    /// Records the goal for a new user request. Follow-up work can be a new
+    /// task, so unlike the old placeholder-only helper this replaces a stale
+    /// previous goal while avoiding no-op rewrites for identical text.
+    pub fn set_goal_for_request(&mut self, goal: impl Into<String>) -> bool {
+        let next = goal.into();
+        if self.goal.first().map(String::as_str) == Some(next.as_str()) {
+            return false;
+        }
+        self.set_goal(next);
+        true
     }
 
     /// Replace the boot placeholder with the first real user request.
@@ -265,6 +308,12 @@ pub fn render(memory: &WorkingMemory) -> String {
             s.push_str(&format!("- {q}\n"));
         }
     }
+    if !memory.active_todos.is_empty() {
+        s.push_str("Open tasks:\n");
+        for todo in &memory.active_todos {
+            s.push_str(&format!("- {todo}\n"));
+        }
+    }
     if !memory.state_notes.is_empty() {
         s.push_str("State notes:\n");
         s.push_str(memory.state_notes.trim_end());
@@ -369,6 +418,29 @@ mod tests {
         // Subsequent attempts do not overwrite the real goal.
         assert!(!m.set_goal_if_placeholder("另一个目标"));
         assert_eq!(m.goal, vec!["真实任务目标"]);
+    }
+
+    #[test]
+    fn new_request_replaces_stale_goal() {
+        let mut m = WorkingMemory::new();
+        m.set_goal("修复登录");
+        assert!(m.set_goal_for_request("实现导出"));
+        assert_eq!(m.goal, vec!["实现导出"]);
+        assert!(!m.set_goal_for_request("实现导出"));
+    }
+
+    #[test]
+    fn todo_and_tool_error_lifecycle_is_reconciled() {
+        let mut m = WorkingMemory::new();
+        m.replace_active_todos(["写实现".to_string(), "跑测试".to_string()]);
+        m.replace_active_todos(["跑测试".to_string()]);
+        assert_eq!(m.active_todos, vec!["跑测试"]);
+
+        m.record_tool_error("bash: exit code: 1");
+        m.record_tool_error("read_file: missing file");
+        m.resolve_tool_errors("bash");
+        assert!(!m.open_questions.iter().any(|q| q.contains("bash:")));
+        assert!(m.open_questions.iter().any(|q| q.contains("read_file:")));
     }
 
     #[test]

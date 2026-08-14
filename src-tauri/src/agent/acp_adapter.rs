@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use agent_client_protocol::{self as acp, Agent as _};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::oneshot;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
@@ -23,8 +23,8 @@ use super::types::{
     AgentAskQuestionRequest, AgentNotification, AgentPermissionRequest, AgentPlanApprovalRequest,
     AgentSessionTerminated, AskQuestionAnswerDto, AskQuestionItemDto, AskQuestionOptionDto,
     AvailableCommandDto, CreateSessionResult, CursorTodoDto, PermissionOption, PromptBlock,
-    SessionConfigOptionDto,
-    SessionConfigValueDto, SessionModeDto, SessionModesDto, SessionModelDto, SessionModelsDto,
+    SessionConfigOptionDto, SessionConfigValueDto, SessionModeDto, SessionModelDto,
+    SessionModelsDto, SessionModesDto,
 };
 use crate::error::NexError;
 
@@ -42,6 +42,42 @@ const MAX_GENERATED_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
 // Steady-state restarts complete in well under a second.
 const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 const STDERR_TAIL_LINES: usize = 50;
+/// Each ACP session owns an OS thread and a current-thread Tokio runtime.
+/// Keep the process resource usage bounded even while handshakes are pending
+/// (those sessions are not in `sessions` yet).
+const MAX_ACTIVE_SESSIONS: usize = 16;
+
+/// A reserved ACP session slot. It is moved into the session thread, so every
+/// exit path — including a failed runtime build or handshake — returns the
+/// slot automatically.
+struct SessionSlot {
+    active: Arc<AtomicUsize>,
+}
+
+impl Drop for SessionSlot {
+    fn drop(&mut self) {
+        self.active.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+fn reserve_session_slot(active: &Arc<AtomicUsize>) -> Result<SessionSlot, NexError> {
+    loop {
+        let current = active.load(Ordering::Acquire);
+        if current >= MAX_ACTIVE_SESSIONS {
+            return Err(NexError::Agent(format!(
+                "maximum of {MAX_ACTIVE_SESSIONS} active agent sessions reached; close an existing conversation and try again"
+            )));
+        }
+        if active
+            .compare_exchange_weak(current, current + 1, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            return Ok(SessionSlot {
+                active: Arc::clone(active),
+            });
+        }
+    }
+}
 
 /// Session metadata delivered by a successful handshake.
 type SessionHandshakeInfo = (
@@ -132,6 +168,9 @@ struct SessionHandle {
 
 pub struct AcpSessionManager {
     sessions: Arc<Mutex<HashMap<String, Arc<SessionHandle>>>>,
+    /// Counts both live sessions and sessions still handshaking. A session
+    /// thread owns its slot and releases it when the thread exits.
+    active_sessions: Arc<AtomicUsize>,
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
     pending_plan_approvals: Arc<Mutex<HashMap<String, PendingPlanApproval>>>,
     pending_ask_questions: Arc<Mutex<HashMap<String, PendingAskQuestion>>>,
@@ -155,7 +194,10 @@ impl acp::Client for NexAcpClient {
         let update = serde_json::to_value(&args.update).unwrap_or(serde_json::Value::Null);
         let _ = self.app.emit(
             AGENT_NOTIFICATION_EVENT,
-            AgentNotification { session_id: self.session_key.clone(), update },
+            AgentNotification {
+                session_id: self.session_key.clone(),
+                update,
+            },
         );
         Ok(())
     }
@@ -168,7 +210,10 @@ impl acp::Client for NexAcpClient {
         let (tx, rx) = oneshot::channel();
         self.pending_permissions.lock().unwrap().insert(
             request_id.clone(),
-            PendingPermission { session_key: self.session_key.clone(), tx },
+            PendingPermission {
+                session_key: self.session_key.clone(),
+                tx,
+            },
         );
 
         let tool_call_id = Some(args.tool_call.id.0.to_string());
@@ -204,7 +249,10 @@ impl acp::Client for NexAcpClient {
         );
 
         let outcome = rx.await.unwrap_or(acp::RequestPermissionOutcome::Cancelled);
-        Ok(acp::RequestPermissionResponse { outcome, meta: None })
+        Ok(acp::RequestPermissionResponse {
+            outcome,
+            meta: None,
+        })
     }
 
     async fn write_text_file(
@@ -414,7 +462,11 @@ impl NexAcpClient {
             .or_else(|| params.get("duration_ms"))
             .and_then(|v| v.as_u64());
         let completed = duration_ms.is_some();
-        let status = if completed { "completed" } else { "in_progress" };
+        let status = if completed {
+            "completed"
+        } else {
+            "in_progress"
+        };
         let mut content = Vec::new();
         if !prompt.is_empty() {
             content.push(serde_json::json!({
@@ -715,17 +767,28 @@ async fn persist_generated_image(cwd: &Path, b64: &str, mime: &str) -> Result<St
     Ok(path.to_string_lossy().into_owned())
 }
 
-/// Builds ACP `mcpServers` for `session/new` from Nex's `~/.nex/mcp.json` +
-/// project `.nex/mcp.json`. External agents (Claude/Codex/Cursor) receive the
-/// same stdio/HTTP servers the built-in agent uses.
-fn acp_mcp_servers_from_nex(cwd: &std::path::Path) -> Vec<serde_json::Value> {
-    super::native::mcp::load_configs(cwd)
-        .into_iter()
-        .filter_map(|(name, cfg)| mcp_config_to_acp_value(&name, &cfg))
-        .collect()
+/// Builds ACP `mcpServers` for `session/new` using the same global enablement
+/// and project-MCP approval gate as the built-in agent. External agents can
+/// spawn stdio MCP commands too, so forwarding raw project config here would
+/// bypass the native-session safety check.
+fn acp_mcp_servers_from_nex(
+    cwd: &std::path::Path,
+    cfg: &super::native::config::NativeAgentConfig,
+) -> Vec<serde_json::Value> {
+    super::native::mcp::load_configs(
+        cwd,
+        &cfg.disabled_mcp_servers,
+        &cfg.approved_project_mcp_servers,
+    )
+    .into_iter()
+    .filter_map(|(name, cfg)| mcp_config_to_acp_value(&name, &cfg))
+    .collect()
 }
 
-fn mcp_config_to_acp_value(name: &str, cfg: &super::native::mcp::McpServerConfig) -> Option<serde_json::Value> {
+fn mcp_config_to_acp_value(
+    name: &str,
+    cfg: &super::native::mcp::McpServerConfig,
+) -> Option<serde_json::Value> {
     if let Some(url) = cfg.url.as_ref().filter(|u| !u.trim().is_empty()) {
         let headers: Vec<serde_json::Value> = cfg
             .headers
@@ -797,7 +860,11 @@ fn parse_cursor_todos_from_phases(params: &serde_json::Value) -> Vec<CursorTodoD
         .collect()
 }
 
-fn merge_cursor_todos(existing: &mut Vec<CursorTodoDto>, incoming: Vec<CursorTodoDto>, merge: bool) {
+fn merge_cursor_todos(
+    existing: &mut Vec<CursorTodoDto>,
+    incoming: Vec<CursorTodoDto>,
+    merge: bool,
+) {
     if !merge {
         *existing = incoming;
         return;
@@ -879,41 +946,47 @@ fn prompt_blocks_to_acp(blocks: Vec<PromptBlock>) -> Vec<acp::ContentBlock> {
         .into_iter()
         .map(|b| match b {
             PromptBlock::Text { text } => acp::ContentBlock::from(text),
-            PromptBlock::Image { data, mime_type, uri } => acp::ContentBlock::Image(
-                acp::ImageContent {
-                    annotations: None,
-                    data,
-                    mime_type,
-                    uri,
-                    meta: None,
-                },
-            ),
-            PromptBlock::Resource { uri, mime_type, text } => acp::ContentBlock::Resource(
-                acp::EmbeddedResource {
-                    annotations: None,
-                    resource: acp::EmbeddedResourceResource::TextResourceContents(
-                        acp::TextResourceContents {
-                            mime_type,
-                            text,
-                            uri,
-                            meta: None,
-                        },
-                    ),
-                    meta: None,
-                },
-            ),
-            PromptBlock::ResourceLink { uri, name, mime_type } => {
-                acp::ContentBlock::ResourceLink(acp::ResourceLink {
-                    annotations: None,
-                    description: None,
-                    mime_type,
-                    name,
-                    size: None,
-                    title: None,
-                    uri,
-                    meta: None,
-                })
-            }
+            PromptBlock::Image {
+                data,
+                mime_type,
+                uri,
+            } => acp::ContentBlock::Image(acp::ImageContent {
+                annotations: None,
+                data,
+                mime_type,
+                uri,
+                meta: None,
+            }),
+            PromptBlock::Resource {
+                uri,
+                mime_type,
+                text,
+            } => acp::ContentBlock::Resource(acp::EmbeddedResource {
+                annotations: None,
+                resource: acp::EmbeddedResourceResource::TextResourceContents(
+                    acp::TextResourceContents {
+                        mime_type,
+                        text,
+                        uri,
+                        meta: None,
+                    },
+                ),
+                meta: None,
+            }),
+            PromptBlock::ResourceLink {
+                uri,
+                name,
+                mime_type,
+            } => acp::ContentBlock::ResourceLink(acp::ResourceLink {
+                annotations: None,
+                description: None,
+                mime_type,
+                name,
+                size: None,
+                title: None,
+                uri,
+                meta: None,
+            }),
         })
         .collect()
 }
@@ -999,29 +1072,31 @@ fn config_options_from_json(value: &serde_json::Value) -> Option<Vec<SessionConf
                             .and_then(|v| v.as_str())
                             .unwrap_or(oid.as_str())
                             .to_string();
-                        Some(SessionConfigValueDto { id: oid, name: oname })
+                        Some(SessionConfigValueDto {
+                            id: oid,
+                            name: oname,
+                        })
                     })
                     .collect()
             })
             .unwrap_or_default();
         // Boolean options are projected as a two-value select so Composer can
         // reuse the existing option menu (true/false).
-        let options = if item.get("type").and_then(|v| v.as_str()) == Some("boolean")
-            && options.is_empty()
-        {
-            vec![
-                SessionConfigValueDto {
-                    id: "true".into(),
-                    name: "On".into(),
-                },
-                SessionConfigValueDto {
-                    id: "false".into(),
-                    name: "Off".into(),
-                },
-            ]
-        } else {
-            options
-        };
+        let options =
+            if item.get("type").and_then(|v| v.as_str()) == Some("boolean") && options.is_empty() {
+                vec![
+                    SessionConfigValueDto {
+                        id: "true".into(),
+                        name: "On".into(),
+                    },
+                    SessionConfigValueDto {
+                        id: "false".into(),
+                        name: "Off".into(),
+                    },
+                ]
+            } else {
+                options
+            };
         if options.is_empty() {
             continue;
         }
@@ -1052,7 +1127,11 @@ fn modes_from_json(value: &serde_json::Value) -> Option<SessionModesDto> {
                 .filter_map(|m| {
                     Some(SessionModeDto {
                         id: m.get("id")?.as_str()?.to_string(),
-                        name: m.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        name: m
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
                         description: m
                             .get("description")
                             .and_then(|v| v.as_str())
@@ -1096,7 +1175,11 @@ fn models_from_json(value: &serde_json::Value) -> Option<SessionModelsDto> {
                         .or_else(|| m.get("vision").and_then(|v| v.as_bool()));
                     Some(SessionModelDto {
                         id,
-                        name: m.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        name: m
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
                         description: m
                             .get("description")
                             .and_then(|v| v.as_str())
@@ -1207,6 +1290,7 @@ impl AcpSessionManager {
     pub fn new() -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            active_sessions: Arc::new(AtomicUsize::new(0)),
             pending_permissions: Arc::new(Mutex::new(HashMap::new())),
             pending_plan_approvals: Arc::new(Mutex::new(HashMap::new())),
             pending_ask_questions: Arc::new(Mutex::new(HashMap::new())),
@@ -1219,6 +1303,10 @@ impl AcpSessionManager {
         conversation_id: &str,
         spec: LaunchSpec,
     ) -> Result<CreateSessionResult, NexError> {
+        // Reserve before spawning: a session is expensive even before its ACP
+        // handshake succeeds, and at that point it has not been inserted into
+        // `sessions` yet.
+        let session_slot = reserve_session_slot(&self.active_sessions)?;
         let session_key = uuid::Uuid::new_v4().to_string();
         let (init_tx, init_rx) = oneshot::channel::<SessionInitResult>();
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
@@ -1233,10 +1321,18 @@ impl AcpSessionManager {
         std::thread::Builder::new()
             .name(format!("agent-session-{session_key}"))
             .spawn(move || {
-                let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+                // Keep the reservation for the full thread lifetime. Its Drop
+                // implementation returns the slot on every early-return path.
+                let _session_slot = session_slot;
+                let runtime = match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
                     Ok(rt) => rt,
                     Err(e) => {
-                        let _ = init_tx.send(Err(NexError::Agent(format!("failed to start session runtime: {e}"))));
+                        let _ = init_tx.send(Err(NexError::Agent(format!(
+                            "failed to start session runtime: {e}"
+                        ))));
                         return;
                     }
                 };
@@ -1258,9 +1354,10 @@ impl AcpSessionManager {
             })
             .map_err(|e| NexError::Agent(format!("failed to spawn session thread: {e}")))?;
 
-        let (conn, agent_session_id, modes, models, config_options, available_commands) = init_rx
-            .await
-            .map_err(|_| NexError::Agent("session thread stopped during initialization".to_string()))??;
+        let (conn, agent_session_id, modes, models, config_options, available_commands) =
+            init_rx.await.map_err(|_| {
+                NexError::Agent("session thread stopped during initialization".to_string())
+            })??;
 
         let handle = Arc::new(SessionHandle {
             conn,
@@ -1269,7 +1366,10 @@ impl AcpSessionManager {
             prompt_in_flight: AtomicBool::new(false),
             _shutdown: shutdown_tx,
         });
-        self.sessions.lock().unwrap().insert(session_key.clone(), handle);
+        self.sessions
+            .lock()
+            .unwrap()
+            .insert(session_key.clone(), handle);
         Ok(CreateSessionResult {
             session_id: session_key,
             modes,
@@ -1290,6 +1390,7 @@ impl AcpSessionManager {
         path_env: std::ffi::OsString,
         config_path: std::path::PathBuf,
     ) -> Result<CreateSessionResult, NexError> {
+        let session_slot = reserve_session_slot(&self.active_sessions)?;
         let session_key = uuid::Uuid::new_v4().to_string();
         let (init_tx, init_rx) = oneshot::channel::<SessionInitResult>();
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
@@ -1307,10 +1408,16 @@ impl AcpSessionManager {
         std::thread::Builder::new()
             .name(format!("agent-session-{session_key}"))
             .spawn(move || {
-                let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+                let _session_slot = session_slot;
+                let runtime = match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
                     Ok(rt) => rt,
                     Err(e) => {
-                        let _ = init_tx.send(Err(NexError::Agent(format!("failed to start session runtime: {e}"))));
+                        let _ = init_tx.send(Err(NexError::Agent(format!(
+                            "failed to start session runtime: {e}"
+                        ))));
                         return;
                     }
                 };
@@ -1335,9 +1442,10 @@ impl AcpSessionManager {
             })
             .map_err(|e| NexError::Agent(format!("failed to spawn session thread: {e}")))?;
 
-        let (conn, agent_session_id, modes, models, config_options, available_commands) = init_rx
-            .await
-            .map_err(|_| NexError::Agent("session thread stopped during initialization".to_string()))??;
+        let (conn, agent_session_id, modes, models, config_options, available_commands) =
+            init_rx.await.map_err(|_| {
+                NexError::Agent("session thread stopped during initialization".to_string())
+            })??;
 
         let handle = Arc::new(SessionHandle {
             conn,
@@ -1346,7 +1454,10 @@ impl AcpSessionManager {
             prompt_in_flight: AtomicBool::new(false),
             _shutdown: shutdown_tx,
         });
-        self.sessions.lock().unwrap().insert(session_key.clone(), handle);
+        self.sessions
+            .lock()
+            .unwrap()
+            .insert(session_key.clone(), handle);
         Ok(CreateSessionResult {
             session_id: session_key,
             modes,
@@ -1367,7 +1478,9 @@ impl AcpSessionManager {
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_err()
         {
-            return Err(NexError::Agent("a prompt is already in flight for this session".to_string()));
+            return Err(NexError::Agent(
+                "a prompt is already in flight for this session".to_string(),
+            ));
         }
         let prompt = prompt_blocks_to_acp(blocks);
         let agent_session_id = handle.agent_session_id.clone();
@@ -1488,7 +1601,10 @@ impl AcpSessionManager {
 
     pub async fn cancel(&self, session_id: &str) -> Result<(), NexError> {
         let handle = self.session(session_id)?;
-        self.resolve_session_permissions(session_id, Some(acp::RequestPermissionOutcome::Cancelled));
+        self.resolve_session_permissions(
+            session_id,
+            Some(acp::RequestPermissionOutcome::Cancelled),
+        );
         self.resolve_session_plan_approvals(session_id, PlanApprovalOutcome::Cancelled);
         self.resolve_session_ask_questions(session_id, AskQuestionOutcome::Cancelled);
         let agent_session_id = handle.agent_session_id.clone();
@@ -1507,7 +1623,11 @@ impl AcpSessionManager {
         .await
     }
 
-    pub fn respond_permission(&self, request_id: &str, option_id: Option<String>) -> Result<(), NexError> {
+    pub fn respond_permission(
+        &self,
+        request_id: &str,
+        option_id: Option<String>,
+    ) -> Result<(), NexError> {
         let pending = self.pending_permissions.lock().unwrap().remove(request_id);
         let pending = pending
             .ok_or_else(|| NexError::Agent(format!("unknown permission request `{request_id}`")))?;
@@ -1535,7 +1655,9 @@ impl AcpSessionManager {
             .lock()
             .unwrap()
             .remove(request_id)
-            .ok_or_else(|| NexError::Agent(format!("unknown plan approval request `{request_id}`")))?;
+            .ok_or_else(|| {
+                NexError::Agent(format!("unknown plan approval request `{request_id}`"))
+            })?;
         let mapped = match outcome {
             "accepted" => PlanApprovalOutcome::Accepted,
             "rejected" => PlanApprovalOutcome::Rejected { reason },
@@ -1565,7 +1687,9 @@ impl AcpSessionManager {
             .lock()
             .unwrap()
             .remove(request_id)
-            .ok_or_else(|| NexError::Agent(format!("unknown ask-question request `{request_id}`")))?;
+            .ok_or_else(|| {
+                NexError::Agent(format!("unknown ask-question request `{request_id}`"))
+            })?;
         let mapped = match outcome {
             "answered" => {
                 let answers = answers.unwrap_or_default();
@@ -1611,7 +1735,11 @@ impl AcpSessionManager {
             .ok_or_else(|| NexError::Agent(format!("no such session `{session_id}`")))
     }
 
-    fn resolve_session_permissions(&self, session_id: &str, outcome: Option<acp::RequestPermissionOutcome>) {
+    fn resolve_session_permissions(
+        &self,
+        session_id: &str,
+        outcome: Option<acp::RequestPermissionOutcome>,
+    ) {
         let mut map = self.pending_permissions.lock().unwrap();
         let keys: Vec<String> = map
             .iter()
@@ -1698,8 +1826,16 @@ async fn run_session(
         drain_stderr(stderr, program.clone(), Arc::clone(&stderr_tail));
     }
 
-    let outgoing = child.stdin.take().expect("agent stdin not piped").compat_write();
-    let incoming = child.stdout.take().expect("agent stdout not piped").compat();
+    let outgoing = child
+        .stdin
+        .take()
+        .expect("agent stdin not piped")
+        .compat_write();
+    let incoming = child
+        .stdout
+        .take()
+        .expect("agent stdout not piped")
+        .compat();
 
     let diag = DiagCtx {
         program: program.clone(),
@@ -1876,7 +2012,18 @@ async fn run_acp_session<W, R>(
             authenticate_with(&conn, method).await?;
         }
 
-        let mcp_servers = acp_mcp_servers_from_nex(std::path::Path::new(&cwd));
+        let mcp_servers = match app.path().app_data_dir() {
+            Ok(dir) => {
+                let cfg = super::native::config::NativeAgentConfig::load(&dir);
+                acp_mcp_servers_from_nex(std::path::Path::new(&cwd), &cfg)
+            }
+            Err(e) => {
+                // Failing closed avoids forwarding executable project config
+                // when we cannot load the user's approval store.
+                log::warn!("cannot load MCP approval config for ACP session: {e}");
+                Vec::new()
+            }
+        };
         let (session_id, response) = if let Some(id) = resume_conversation_id.as_deref() {
             // Native resume: try archived history first; on miss fall back to a
             // fresh session with a stable conversation-scoped id.
@@ -1896,9 +2043,7 @@ async fn run_acp_session<W, R>(
                     (acp::SessionId(Arc::from(id)), response)
                 }
                 Err(e) => {
-                    log::info!(
-                        "session/load failed for `{id}` ({e}); falling back to session/new"
-                    );
+                    log::info!("session/load failed for `{id}` ({e}); falling back to session/new");
                     let response = session_new_maybe_auth(
                         &conn,
                         &init.auth_methods,
@@ -2035,7 +2180,12 @@ async fn run_acp_session<W, R>(
     }
 
     sessions.lock().unwrap().remove(&session_key);
-    let _ = app.emit(AGENT_SESSION_TERMINATED_EVENT, AgentSessionTerminated { session_id: session_key });
+    let _ = app.emit(
+        AGENT_SESSION_TERMINATED_EVENT,
+        AgentSessionTerminated {
+            session_id: session_key,
+        },
+    );
 }
 
 /// Choose an auth method to send *before* `session/new`.
@@ -2058,7 +2208,10 @@ fn pick_auth_method(
             return Some(m);
         }
     }
-    if methods.iter().any(|m| is_codex_auth_method(m.id.0.as_ref())) {
+    if methods
+        .iter()
+        .any(|m| is_codex_auth_method(m.id.0.as_ref()))
+    {
         return None;
     }
     methods.first()
@@ -2076,10 +2229,7 @@ fn interactive_auth_method(methods: &[acp::AuthMethod]) -> Option<&acp::AuthMeth
         .or_else(|| find_auth_method(methods, "chat-gpt-device-code"))
 }
 
-fn find_auth_method<'a>(
-    methods: &'a [acp::AuthMethod],
-    id: &str,
-) -> Option<&'a acp::AuthMethod> {
+fn find_auth_method<'a>(methods: &'a [acp::AuthMethod], id: &str) -> Option<&'a acp::AuthMethod> {
     methods.iter().find(|m| m.id.0.as_ref() == id)
 }
 
@@ -2089,7 +2239,9 @@ fn launch_has_openai_api_key(spec_env: &HashMap<String, String>) -> bool {
             .get(*key)
             .map(|v| !v.trim().is_empty())
             .unwrap_or(false)
-            || std::env::var(key).map(|v| !v.trim().is_empty()).unwrap_or(false)
+            || std::env::var(key)
+                .map(|v| !v.trim().is_empty())
+                .unwrap_or(false)
     })
 }
 
@@ -2165,7 +2317,11 @@ fn diag_details(diag: &mut DiagCtx, process_guess: bool) -> String {
     let Some(child) = diag.child.as_mut() else {
         return out;
     };
-    out.push_str(&format!("\ncommand: {} {}", diag.program, diag.args.join(" ")));
+    out.push_str(&format!(
+        "\ncommand: {} {}",
+        diag.program,
+        diag.args.join(" ")
+    ));
     match child.try_wait() {
         Ok(Some(status)) => out.push_str(&format!("\nagent process exited ({status})")),
         Ok(None) if process_guess => out.push_str(
@@ -2208,7 +2364,11 @@ fn start_kill_diag(diag: &mut DiagCtx) {
     }
 }
 
-fn drain_stderr(stderr: tokio::process::ChildStderr, program: String, tail: Arc<Mutex<VecDeque<String>>>) {
+fn drain_stderr(
+    stderr: tokio::process::ChildStderr,
+    program: String,
+    tail: Arc<Mutex<VecDeque<String>>>,
+) {
     const MAX_LOGGED_LINES: u32 = 100;
     tokio::task::spawn_local(async move {
         use tokio::io::AsyncBufReadExt;
@@ -2476,5 +2636,29 @@ mod tests {
         let mut env = HashMap::new();
         env.insert("CODEX_API_KEY".to_string(), " sk-test ".to_string());
         assert!(launch_has_openai_api_key(&env));
+    }
+
+    #[test]
+    fn session_slots_bound_pending_and_live_sessions_and_release_on_drop() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let mut slots = Vec::with_capacity(MAX_ACTIVE_SESSIONS);
+        for _ in 0..MAX_ACTIVE_SESSIONS {
+            slots.push(reserve_session_slot(&active).expect("slot below limit"));
+        }
+
+        assert_eq!(active.load(Ordering::Acquire), MAX_ACTIVE_SESSIONS);
+        let err = reserve_session_slot(&active)
+            .err()
+            .expect("limit must reject another session");
+        assert!(err.to_string().contains("active agent sessions"));
+
+        drop(slots.pop());
+        assert_eq!(active.load(Ordering::Acquire), MAX_ACTIVE_SESSIONS - 1);
+        let replacement = reserve_session_slot(&active).expect("released slot can be reused");
+        assert_eq!(active.load(Ordering::Acquire), MAX_ACTIVE_SESSIONS);
+
+        drop(replacement);
+        drop(slots);
+        assert_eq!(active.load(Ordering::Acquire), 0);
     }
 }

@@ -239,7 +239,7 @@ const sampleMcp = {
   url: null,
   headers: {},
   enabled: true,
-  source: "user",
+  source: "global" as const,
 };
 
 const sampleSkill = {
@@ -275,12 +275,31 @@ describe("NexAgentSection MCP and skills", () => {
     render(<NexAgentSection />);
 
     fireEvent.click(await screen.findByRole("button", { name: "MCP" }));
-    await waitFor(() => expect(nativeAgentProbeMcp).toHaveBeenCalledWith("filesystem"));
+    await waitFor(() => expect(nativeAgentProbeMcp).toHaveBeenCalledWith("filesystem", "global", null));
     const status = await screen.findByText("connected:2 tools");
     expect(status.className).toContain("text-[var(--success)]");
     expect(screen.getByRole("button", { name: "探测 filesystem" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "删除 filesystem" })).toBeTruthy();
     expect(screen.getByRole("switch", { name: "启用 filesystem" })).toBeTruthy();
+  });
+
+  it("shows MCP environment and header names without exposing values", async () => {
+    nativeAgentListMcp.mockResolvedValue([
+      {
+        ...sampleMcp,
+        source: "project",
+        enabled: false,
+        env: { LD_PRELOAD: "secret-loader" },
+        headers: { Authorization: "Bearer secret" },
+      },
+    ]);
+    render(<NexAgentSection />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "MCP" }));
+    expect((await screen.findByText(/环境变量：LD_PRELOAD/)).textContent).toContain(
+      "请求头：Authorization",
+    );
+    expect(screen.queryByText(/secret-loader|Bearer secret/)).toBeNull();
   });
 
   it("adds MCP servers from JSON", async () => {

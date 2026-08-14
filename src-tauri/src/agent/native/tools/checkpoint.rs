@@ -1,6 +1,6 @@
 //! Checkpoints & rewind: session snapshots stored as commits on a hidden
-//! `nex-checkpoints` branch of the workspace repo; `rewind` restores the
-//! worktree to a previous checkpoint.
+//! `nex-checkpoints` branch of the workspace repo; `rewind` restores checkpoint
+//! files without moving the user's branch, HEAD, or index.
 
 use super::{arg_str, Tool, ToolCtx};
 use agent_client_protocol as acp;
@@ -83,9 +83,9 @@ fn create_checkpoint(cwd: &std::path::Path, message: &str) -> Result<String, Str
         index.remove_path(p).ok(); // exact file entry, if any
         index.remove_dir(p, 0).ok(); // recursive subtree removal
     }
-    index
-        .write()
-        .map_err(|e| format!("failed to write index: {e}"))?;
+    // `repo.index()` is an in-memory view until `write()` is called.  Keep the
+    // add_all result private to this checkpoint: writing it would silently
+    // stage every workspace file in the user's real index.
     let tree_id = index
         .write_tree()
         .map_err(|e| format!("failed to write tree: {e}"))?;
@@ -158,12 +158,87 @@ fn rewind_to(cwd: &std::path::Path, id: &str) -> Result<String, String> {
         }
     };
 
-    repo.reset(commit.as_object(), git2::ResetType::Hard, None)
+    // A hard reset would move the user's current branch/HEAD and replace their
+    // index.  Check out only files that exist in the checkpoint tree instead:
+    // this restores deleted/changed checkpoint files while deliberately leaving
+    // files created afterwards alone (they may be user-owned untracked files).
+    let tree = commit
+        .tree()
+        .map_err(|e| format!("checkpoint tree error: {e}"))?;
+    let paths = checkpoint_paths(&tree)?;
+    let conflicts = untracked_path_conflicts(&repo, &paths)?;
+    if !conflicts.is_empty() {
+        let shown = conflicts
+            .iter()
+            .take(5)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        let suffix = if conflicts.len() > 5 { ", …" } else { "" };
+        return Err(format!(
+            "rewind refused: checkpoint would overwrite untracked path(s): {shown}{suffix}. Move, add, or remove them before retrying"
+        ));
+    }
+    let mut checkout = git2::build::CheckoutBuilder::new();
+    checkout.force().update_index(false);
+    for path in paths {
+        checkout.path(path);
+    }
+    repo.checkout_tree(commit.as_object(), Some(&mut checkout))
         .map_err(|e| format!("rewind failed: {e}"))?;
     Ok(format!(
-        "workspace rewound to checkpoint {}",
+        "checkpoint files restored to {} (branch, HEAD, index, and new untracked files preserved)",
         &commit.id().to_string()[..10]
     ))
+}
+
+/// Reject a checkout target that currently has no index entry. Such a path is
+/// untracked (or ignored) from Git's perspective, so force-checking it out
+/// would silently destroy user data. Tracked files remain rewindable: that is
+/// the explicit purpose of the tool, while the index itself stays untouched.
+fn untracked_path_conflicts(
+    repo: &git2::Repository,
+    checkpoint_paths: &[String],
+) -> Result<Vec<String>, String> {
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| "bare repositories do not support rewind".to_string())?;
+    let index = repo.index().map_err(|e| format!("index error: {e}"))?;
+    let mut conflicts = Vec::new();
+    for path in checkpoint_paths {
+        let candidate = workdir.join(path);
+        match std::fs::symlink_metadata(&candidate) {
+            Ok(_) if index.get_path(std::path::Path::new(path), 0).is_none() => {
+                conflicts.push(path.clone());
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(format!(
+                    "failed to inspect checkpoint target {}: {e}",
+                    candidate.display()
+                ));
+            }
+        }
+    }
+    Ok(conflicts)
+}
+
+/// File paths represented by a checkpoint tree. Passing this exact list to
+/// `CheckoutBuilder` prevents checkout from deleting paths absent from the
+/// snapshot, which is essential for preserving user-created untracked files.
+fn checkpoint_paths(tree: &git2::Tree<'_>) -> Result<Vec<String>, String> {
+    let mut paths = Vec::new();
+    tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
+        if entry.kind() == Some(git2::ObjectType::Blob) {
+            if let Some(name) = entry.name() {
+                paths.push(format!("{root}{name}"));
+            }
+        }
+        git2::TreeWalkResult::Ok
+    })
+    .map_err(|e| format!("checkpoint tree walk failed: {e}"))?;
+    Ok(paths)
 }
 
 #[cfg(test)]
@@ -191,11 +266,15 @@ mod tests {
     async fn checkpoint_and_rewind_round_trip() {
         let tmp = tempfile::tempdir().unwrap();
         let repo = git2::Repository::init(tmp.path()).unwrap();
-        // An initial commit so HEAD exists.
+        // An initial tracked file so rewind is allowed to restore a checkpoint
+        // target without overwriting an untracked user file.
         {
+            std::fs::write(tmp.path().join("a.txt"), "base").unwrap();
             let sig = git2::Signature::now("t", "t@t").unwrap();
             let tree = {
                 let mut idx = repo.index().unwrap();
+                idx.add_path(std::path::Path::new("a.txt")).unwrap();
+                idx.write().unwrap();
                 let id = idx.write_tree().unwrap();
                 repo.find_tree(id).unwrap()
             };
@@ -217,10 +296,117 @@ mod tests {
             .execute(serde_json::json!({"checkpoint": id}), &c)
             .await
             .unwrap();
-        assert!(out.contains("rewound"));
+        assert!(out.contains("restored"));
         assert_eq!(
             std::fs::read_to_string(tmp.path().join("a.txt")).unwrap(),
             "v1"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn rewind_refuses_to_overwrite_an_untracked_checkpoint_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(tmp.path()).unwrap();
+        std::fs::write(tmp.path().join("tracked.txt"), "base").unwrap();
+        {
+            let sig = git2::Signature::now("t", "t@t").unwrap();
+            let mut index = repo.index().unwrap();
+            index.add_path(std::path::Path::new("tracked.txt")).unwrap();
+            index.write().unwrap();
+            let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+                .unwrap();
+        }
+
+        std::fs::write(tmp.path().join("tracked.txt"), "checkpoint").unwrap();
+        let c = ctx(tmp.path());
+        let checkpoint = Checkpoint
+            .execute(serde_json::json!({"message": "safe snapshot"}), &c)
+            .await
+            .unwrap();
+        let id = checkpoint.split(": ").nth(1).unwrap().to_string();
+
+        // Simulate a user replacing the tracked target with their own
+        // untracked file after the checkpoint was made.
+        {
+            let mut index = repo.index().unwrap();
+            index
+                .remove_path(std::path::Path::new("tracked.txt"))
+                .unwrap();
+            index.write().unwrap();
+        }
+        let index_before = std::fs::read(repo.path().join("index")).unwrap();
+        std::fs::write(tmp.path().join("tracked.txt"), "do not overwrite").unwrap();
+
+        let err = Rewind
+            .execute(serde_json::json!({"checkpoint": id}), &c)
+            .await
+            .unwrap_err();
+        assert!(err.contains("would overwrite untracked"), "got: {err}");
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("tracked.txt")).unwrap(),
+            "do not overwrite"
+        );
+        assert_eq!(
+            std::fs::read(repo.path().join("index")).unwrap(),
+            index_before
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn rewind_preserves_branch_head_index_and_untracked_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(tmp.path()).unwrap();
+        std::fs::write(tmp.path().join("tracked.txt"), "base").unwrap();
+        {
+            let sig = git2::Signature::now("t", "t@t").unwrap();
+            let mut index = repo.index().unwrap();
+            index.add_path(std::path::Path::new("tracked.txt")).unwrap();
+            index.write().unwrap();
+            let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+                .unwrap();
+        }
+
+        // A real staged user change must survive both checkpoint creation and
+        // rewind byte-for-byte in .git/index.
+        std::fs::write(tmp.path().join("staged.txt"), "user staged").unwrap();
+        {
+            let mut index = repo.index().unwrap();
+            index.add_path(std::path::Path::new("staged.txt")).unwrap();
+            index.write().unwrap();
+        }
+        let head_before = repo.head().unwrap().target().unwrap();
+        let branch_before = repo.head().unwrap().name().unwrap().to_string();
+        let index_path = repo.path().join("index");
+        let index_before = std::fs::read(&index_path).unwrap();
+
+        std::fs::write(tmp.path().join("tracked.txt"), "checkpoint").unwrap();
+        let c = ctx(tmp.path());
+        let checkpoint = Checkpoint
+            .execute(serde_json::json!({"message": "safe snapshot"}), &c)
+            .await
+            .unwrap();
+        let id = checkpoint.split(": ").nth(1).unwrap().to_string();
+        assert_eq!(std::fs::read(&index_path).unwrap(), index_before);
+
+        std::fs::write(tmp.path().join("tracked.txt"), "broken").unwrap();
+        std::fs::write(tmp.path().join("user-notes.txt"), "keep me").unwrap();
+        Rewind
+            .execute(serde_json::json!({"checkpoint": id}), &c)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("tracked.txt")).unwrap(),
+            "checkpoint"
+        );
+        assert_eq!(repo.head().unwrap().target(), Some(head_before));
+        assert_eq!(repo.head().unwrap().name(), Some(branch_before.as_str()));
+        assert_eq!(std::fs::read(&index_path).unwrap(), index_before);
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("user-notes.txt")).unwrap(),
+            "keep me"
         );
     }
 
@@ -255,7 +441,9 @@ mod tests {
 
         // The checkpoint tree must not contain .nex / .nex-archive entries.
         let repo = git2::Repository::discover(tmp.path()).unwrap();
-        let branch = repo.find_branch(CHECKPOINT_BRANCH, git2::BranchType::Local).unwrap();
+        let branch = repo
+            .find_branch(CHECKPOINT_BRANCH, git2::BranchType::Local)
+            .unwrap();
         let head = branch.get().target().unwrap();
         let commit = repo.find_commit(head).unwrap();
         let tree = commit.tree().unwrap();

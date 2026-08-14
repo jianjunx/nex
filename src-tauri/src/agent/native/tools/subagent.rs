@@ -1,11 +1,13 @@
 //! Subagent orchestration tools: `task` runs one isolated subagent turn,
-//! `fleet` fans out several in parallel (bounded by `max_subagent_concurrency`),
-//! and `read_subagent_result` pages through results that were spilled to disk.
+//! `fleet` runs several subagent tasks in deterministic sequence. They share a
+//! workspace, so parallel writable turns are unsafe without worktrees or a
+//! conflict protocol; `read_subagent_result` pages through spilled results.
 //!
 //! Subagents share the parent connection (notifications/permissions reuse the
 //! same popup flow) but get a fresh transcript, tool registry without the
 //! orchestration tools, and `harness: None` so they cannot recurse.
 
+#[cfg(test)]
 use std::rc::Rc;
 
 use super::{arg_str, arg_usize, truncate_output, Tool, ToolCtx};
@@ -63,8 +65,8 @@ impl Tool for Fleet {
         "fleet"
     }
     fn description(&self) -> &'static str {
-        "Run several independent subagent tasks in parallel (concurrency-limited). \
-         Each entry is a self-contained task description; results come back in order."
+        "Run several independent subagent tasks in deterministic sequence. \
+         They share the workspace, so writes cannot race; results come back in order."
     }
     fn schema(&self) -> serde_json::Value {
         serde_json::json!({
@@ -103,17 +105,13 @@ impl Tool for Fleet {
             return Err("at most 16 tasks per fleet".to_string());
         }
 
-        let sem = Rc::new(tokio::sync::Semaphore::new(harness.concurrency.max(1)));
-        let futs = tasks.iter().map(|task| {
-            let harness = harness.clone();
-            let sem = sem.clone();
-            let task = task.clone();
-            async move {
-                let _permit = sem.acquire().await;
-                run_subagent(&harness, &task).await
-            }
-        });
-        let outcomes = futures::future::join_all(futs).await;
+        // All subagents receive the same `cwd` and may call mutating tools.
+        // Serializing is the only honest safety boundary until fleet gives each
+        // task an isolated worktree and a reviewed merge path.
+        let mut outcomes = Vec::with_capacity(tasks.len());
+        for task in &tasks {
+            outcomes.push(run_subagent(&harness, task).await);
+        }
 
         let mut out = String::new();
         for (i, (task, res)) in tasks.iter().zip(outcomes).enumerate() {
@@ -319,6 +317,8 @@ mod tests {
                     context_window: 0,
                     cancelled: Rc::new(std::cell::Cell::new(false)),
                     mode_id: Rc::new(std::cell::RefCell::new("code".to_string())),
+                    mutations: Rc::new(RefCell::new(Vec::new())),
+                    memory: super::super::test_memory_handle(),
                 };
                 let mut ctx = ctx_without_harness(tmp.path());
                 ctx.harness = Some(Rc::new(harness));

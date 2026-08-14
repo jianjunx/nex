@@ -64,6 +64,16 @@ export interface PendingMessage {
   images?: { mimeType: string; data: string }[];
 }
 
+const MAX_PENDING_MESSAGES_PER_CONVERSATION = 8;
+// Base64 characters are a close upper bound for the retained image payload.
+// Individual attachments are limited separately; this caps accumulation while
+// a long-running turn keeps accepting queued messages.
+const MAX_PENDING_IMAGE_BASE64_CHARS = 64 * 1024 * 1024;
+
+function pendingImageChars(message: Pick<PendingMessage, "images">): number {
+  return message.images?.reduce((total, image) => total + image.data.length, 0) ?? 0;
+}
+
 /** Build a short preview string from a list of PromptBlock for display. */
 export function pendingMessagePreview(blocks: PromptBlock[]): string {
   const textBlock = blocks.find((b) => b.type === "text") as { type: "text"; text: string } | undefined;
@@ -74,6 +84,23 @@ export function pendingMessagePreview(blocks: PromptBlock[]): string {
   if (imageCount > 0) preview += (preview ? " " : "") + `[图片 ×${imageCount}]`;
   if (hasResource) preview += (preview ? " " : "") + "[文件]";
   return preview.trim() || "(empty)";
+}
+
+/**
+ * Image base64 is needed only while a prompt is in flight. Once the agent has
+ * consumed the turn, retain a count for the thread UI but release the payload
+ * before the snapshot is written to SQLite or kept in the long-lived store.
+ */
+function releaseCompletedImagePayloads(entries: ThreadEntry[]): void {
+  for (const entry of entries) {
+    if (entry.kind !== "user_message" || !entry.images?.length) continue;
+    const count = entry.images.length;
+    entry.images = undefined;
+    entry.imageCount = count;
+    if (!entry.text.trim()) {
+      entry.text = `[图片 ×${count}，原始附件仅用于本轮请求]`;
+    }
+  }
 }
 
 /** 真正发送前：把排队消息写入会话气泡（入队时故意不写）。 */
@@ -853,6 +880,10 @@ export const useAgentStore = create<AgentStore>()(
       }
       // Persist full thread snapshot (thought/tool_call/etc.) so the UI can
       // restore complete history after restart.
+      set((s) => {
+        const list = s.entriesByConversation[session.conversationId];
+        if (list) releaseCompletedImagePayloads(list);
+      });
       const latestEntries = get().entriesByConversation[session.conversationId] ?? entries;
       void conversationReplaceThreadEntries(
         session.conversationId,
@@ -1264,15 +1295,26 @@ export const useAgentStore = create<AgentStore>()(
     enqueuePendingMessage: (conversationId, blocks, text, images) => {
       const id = crypto.randomUUID();
       set((s) => {
-        if (!s.pendingMessagesByConversation[conversationId]) {
-          s.pendingMessagesByConversation[conversationId] = [];
-        }
-        s.pendingMessagesByConversation[conversationId].push({
+        const queue = s.pendingMessagesByConversation[conversationId] ?? [];
+        const next: PendingMessage = {
           id,
           blocks,
           text,
           ...(images && images.length > 0 ? { images } : {}),
-        });
+        };
+        const imageChars = queue.reduce(
+          (total, message) => total + pendingImageChars(message),
+          pendingImageChars(next),
+        );
+        if (
+          queue.length >= MAX_PENDING_MESSAGES_PER_CONVERSATION ||
+          imageChars > MAX_PENDING_IMAGE_BASE64_CHARS
+        ) {
+          s.error = "等待发送的消息过多，请先发送或移除已有消息";
+          return;
+        }
+        queue.push(next);
+        s.pendingMessagesByConversation[conversationId] = queue;
       });
       return id;
     },

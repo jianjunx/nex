@@ -127,6 +127,30 @@ describe("agent.store serversLoadedAt 打点语义", () => {
   });
 });
 
+describe("agent.store pending message bounds", () => {
+  it("每个会话最多保留 8 条待发送消息", () => {
+    const store = useAgentStore.getState();
+    for (let i = 0; i < 9; i += 1) {
+      store.enqueuePendingMessage("conv-1", [{ type: "text", text: String(i) }], String(i));
+    }
+
+    const state = useAgentStore.getState();
+    expect(state.pendingMessagesByConversation["conv-1"]).toHaveLength(8);
+    expect(state.error).toContain("等待发送的消息过多");
+  });
+
+  it("拒绝累计超过 64 MiB base64 的图片队列", () => {
+    const image = { mimeType: "image/png", data: "x".repeat(33 * 1024 * 1024) };
+    const store = useAgentStore.getState();
+    store.enqueuePendingMessage("conv-1", [{ type: "text", text: "one" }], "one", [image]);
+    store.enqueuePendingMessage("conv-1", [{ type: "text", text: "two" }], "two", [image]);
+
+    const state = useAgentStore.getState();
+    expect(state.pendingMessagesByConversation["conv-1"]).toHaveLength(1);
+    expect(state.error).toContain("等待发送的消息过多");
+  });
+});
+
 describe("agent.store session prefs", () => {
   it("setAuthMode 写入按会话偏好", () => {
     useAgentStore.getState().setAuthMode("conv-1", "allow");

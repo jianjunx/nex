@@ -183,7 +183,7 @@ export function ProjectSelector() {
         }}
       >
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="sm" className={`nex-interactive-chrome nex-pressable cursor-pointer rounded-[calc(var(--radius-lg)+2px)] border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_78%,transparent)] px-2.5 text-xs shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)] ${isMac ? "h-8" : ""}`}>
+          <Button variant="ghost" size="sm" className={`nex-interactive-chrome nex-pressable cursor-pointer rounded-[calc(var(--radius-lg)+2px)] border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_72%,transparent)] px-2.5 text-xs shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)] ${isMac ? "h-8" : ""}`}>
             <span className="inline-flex items-center">
               {activeProjectId && <RunningCountBadge projectId={activeProjectId} />}
               <span className="font-semibold">{activeProject?.name || "打开项目"}</span>
@@ -248,7 +248,7 @@ export function ProjectSelector() {
                 "group/proj nex-interactive-chrome cursor-pointer items-start gap-2.5 rounded-[var(--radius-md)] px-2 py-2",
                 ITEM_HIGHLIGHT,
                 isActive
-                  ? "border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-elevated)_88%,transparent)] text-[var(--text-primary)] shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)]"
+                  ? "border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-elevated)_80%,transparent)] text-[var(--text-primary)] shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)]"
                   : "text-[var(--text-secondary)]",
               )}
             >
@@ -258,7 +258,7 @@ export function ProjectSelector() {
                   "mt-px flex size-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[11px] font-semibold",
                   isActive
                     ? "bg-[color-mix(in_srgb,var(--accent)_18%,transparent)] text-[var(--accent)]"
-                    : "border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_72%,transparent)] text-[var(--text-secondary)]",
+                    : "border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_66%,transparent)] text-[var(--text-secondary)]",
                 )}
               >
                 {projectMonogram(p.name)}

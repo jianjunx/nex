@@ -142,7 +142,7 @@ describe("conversation tab outline (F5)", () => {
   it("inactive triggers keep a soft outline + material hover tint", () => {
     render(<TopBar />);
     const inactive = screen.getByRole("tab", { name: /第二个会话/ });
-    expect(inactive.className).toContain("hover:bg-[color:color-mix(in_srgb,var(--material-floating)_72%,transparent)]");
+    expect(inactive.className).toContain("hover:bg-[color:color-mix(in_srgb,var(--material-floating)_68%,transparent)]");
     expect(inactive.className).toContain("hover:border-[color:var(--hairline-soft)]");
     expect(inactive.className).not.toContain("hover:-translate-y-px");
   });

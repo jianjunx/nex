@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   appendToken,
+  findTokenDeletionRange,
+  formatTokensForDisplay,
   hasToken,
   parseTokens,
   resolveTokenPath,
@@ -71,6 +73,32 @@ describe("hasToken / appendToken", () => {
   });
   it("append keeps absolute for outside paths", () => {
     expect(appendToken("", "/etc/hosts", PROJ)).toBe("@[/etc/hosts] ");
+  });
+});
+
+describe("formatTokensForDisplay", () => {
+  it("renders file tokens as @basename", () => {
+    expect(formatTokensForDisplay("看下 @[src/main.rs] 和 @[/tmp/README.md]"))
+      .toBe("看下 @main.rs 和 @README.md");
+  });
+});
+
+describe("findTokenDeletionRange", () => {
+  const text = "hi @[src/a.ts] there";
+
+  it("deletes the whole token when backspacing inside or at its end", () => {
+    expect(findTokenDeletionRange(text, 13, "backward")).toEqual({ from: 3, to: 14 });
+    expect(findTokenDeletionRange(text, 14, "backward")).toEqual({ from: 3, to: 14 });
+  });
+
+  it("deletes the whole token when deleting inside or at its start", () => {
+    expect(findTokenDeletionRange(text, 3, "forward")).toEqual({ from: 3, to: 14 });
+    expect(findTokenDeletionRange(text, 8, "forward")).toEqual({ from: 3, to: 14 });
+  });
+
+  it("returns null away from tokens", () => {
+    expect(findTokenDeletionRange(text, 2, "backward")).toBeNull();
+    expect(findTokenDeletionRange(text, 14, "forward")).toBeNull();
   });
 });
 

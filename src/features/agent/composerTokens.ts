@@ -27,6 +27,50 @@ export function parseTokens(text: string): FileToken[] {
   return out;
 }
 
+export interface TokenRange {
+  from: number;
+  to: number;
+  path: string;
+  name: string;
+}
+
+/** Find every token range in the source text. */
+export function findTokenRanges(text: string): TokenRange[] {
+  const out: TokenRange[] = [];
+  for (const m of text.matchAll(TOKEN_RE)) {
+    const from = m.index ?? 0;
+    const to = from + m[0].length;
+    const path = m[0].slice(2, -1);
+    if (!path) continue;
+    out.push({ from, to, path, name: fileBasename(path) });
+  }
+  return out;
+}
+
+/** Render token text for user-facing bubbles without exposing bracket syntax. */
+export function formatTokensForDisplay(text: string): string {
+  return text.replace(TOKEN_RE, (token) => `@${fileBasename(token.slice(2, -1))}`);
+}
+
+/**
+ * If the caret is deleting next to a token, return that whole token range so
+ * keyboard Delete / Backspace removes the chip atomically.
+ */
+export function findTokenDeletionRange(
+  text: string,
+  pos: number,
+  direction: "backward" | "forward",
+): Pick<TokenRange, "from" | "to"> | null {
+  for (const { from, to } of findTokenRanges(text)) {
+    if (direction === "backward") {
+      if (pos > from && pos <= to) return { from, to };
+    } else if (pos >= from && pos < to) {
+      return { from, to };
+    }
+  }
+  return null;
+}
+
 /** Token text for a path: project-relative inside the project, absolute outside. */
 export function tokenFor(path: string, projectPath: string | undefined): string {
   const rel = relativeToProject(path, projectPath);

@@ -2,6 +2,7 @@ import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { formatTokensForDisplay } from "../composerTokens";
 import { MessageContextMenu } from "./MessageContextMenu";
 import { ThreadImageThumb } from "./ThreadImageThumb";
 import { USER_MESSAGE_COLLAPSE_HEIGHT } from "./stickyUserMessage";
@@ -62,7 +63,9 @@ export function UserMessageBubble({
                 </div>
               )}
               {entry.text ? (
-                <p className="min-w-0 whitespace-pre-wrap wrap-anywhere">{entry.text}</p>
+                <p className="min-w-0 whitespace-pre-wrap wrap-anywhere">
+                  {formatTokensForDisplay(entry.text)}
+                </p>
               ) : null}
             </div>
             {overflows && (

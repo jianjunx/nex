@@ -31,7 +31,7 @@ import {
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { fileBasename } from "../editor/pathUtils";
 import { fileIconUrl } from "../files/FileIcon";
-import { TOKEN_RE } from "./composerTokens";
+import { findTokenDeletionRange, findTokenRanges } from "./composerTokens";
 
 export interface ComposerEditorHandle {
   focus: () => void;
@@ -121,10 +121,7 @@ class TokenWidget extends WidgetType {
 function buildTokenDecorations(view: EditorView): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   const text = view.state.doc.toString();
-  for (const m of text.matchAll(TOKEN_RE)) {
-    const from = m.index ?? 0;
-    const to = from + m[0].length;
-    const path = m[0].slice(2, -1);
+  for (const { from, to, path } of findTokenRanges(text)) {
     builder.add(
       from,
       to,
@@ -205,6 +202,36 @@ export const ComposerEditor = forwardRef<ComposerEditorHandle, ComposerEditorPro
       });
 
       const baseKeymap = keymap.of([
+        {
+          key: "Backspace",
+          run: (v) => {
+            const sel = v.state.selection.main;
+            if (!sel.empty) return false;
+            const range = findTokenDeletionRange(
+              v.state.doc.toString(),
+              sel.head,
+              "backward",
+            );
+            if (!range) return false;
+            v.dispatch({ changes: range, selection: { anchor: range.from } });
+            return true;
+          },
+        },
+        {
+          key: "Delete",
+          run: (v) => {
+            const sel = v.state.selection.main;
+            if (!sel.empty) return false;
+            const range = findTokenDeletionRange(
+              v.state.doc.toString(),
+              sel.head,
+              "forward",
+            );
+            if (!range) return false;
+            v.dispatch({ changes: range, selection: { anchor: range.from } });
+            return true;
+          },
+        },
         // Shift+Enter always inserts a newline (Enter-to-send is handled by
         // the keydown handler above; this is the explicit "not send" path).
         {

@@ -38,6 +38,18 @@ describe("UserMessageBubble", () => {
     expect(screen.queryByRole("button", { name: "展开" })).toBeNull();
   });
 
+  it("renders file tokens as @文件名 in the bubble", () => {
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(80);
+    render(
+      <UserMessageBubble
+        entry={{ ...ENTRY, text: "请看 @[src/features/agent/ComposerEditor.tsx]" }}
+        expanded={false}
+        onToggleExpand={() => {}}
+      />,
+    );
+    expect(screen.getByText("请看 @ComposerEditor.tsx")).toBeTruthy();
+  });
+
   it("内容超过 170px 时折叠并显示展开", () => {
     vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(400);
     const { container } = render(

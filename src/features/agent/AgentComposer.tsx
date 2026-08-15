@@ -897,9 +897,7 @@ export function AgentComposer() {
                       imageInputRef.current?.click();
                     }}
                   >
-                    <ImagePlus size={14} />
-                    {modelSupportsVision ? "选择图片" : "选择图片（模型不支持）"}
-                  </button>
+                    <ImagePlus size={14} />选择图片</button>
                   <button
                     type="button"
                     className="nex-interactive-chrome flex w-full items-center gap-2 px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:bg-[color:color-mix(in_srgb,var(--material-elevated)_86%,transparent)] hover:text-[var(--text-primary)]"

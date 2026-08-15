@@ -71,10 +71,16 @@ function editorThemeFor(appTheme: "light" | "dark"): Extension {
 // Plan 5 行定位：搜索跳转携带 pendingLine。视图就绪后选中并滚动到目标行，
 // 然后消费掉 pending 防止重复触发。两条入口：新视图走 onCreateEditor，
 // 已存在视图（同文件再次跳转，不按 path 重建）走组件内 effect。
-const applyPendingLine = (view: EditorView) => {
+// ownerPath 是 view 所属的文件路径。切换文件时 CodeMirror 按 key 重建，
+// 新视图要等下一次 commit 才创建，而组件内 effect 在本轮 commit 就带着
+// 仍指向旧文件的 viewRef 跑——若只比 pending.path === activePath，跳转会
+// 打到旧视图上并提前消费 pendingLine，新视图再也收不到跳转（表现为：
+// 点搜索结果切对了文件但光标停在文件开头）。ownerPath 不匹配时直接
+// 返回、不消费，等新视图的 onCreateEditor 来应用。
+const applyPendingLine = (view: EditorView, ownerPath: string | null) => {
   const fs = useFsStore.getState();
   const pending = fs.pendingLine;
-  if (!pending || pending.path !== fs.activePath) return;
+  if (!pending || pending.path !== fs.activePath || ownerPath !== pending.path) return;
   const line = Math.min(Math.max(1, pending.line), view.state.doc.lines);
   const pos = view.state.doc.line(line).from;
   view.dispatch({
@@ -120,6 +126,9 @@ export function EditorPanel() {
   const wrapColumn = useSettingsStore((s) => s.editorWrapColumn);
   const editorTheme = useMemo(() => editorThemeFor(appTheme), [appTheme]);
   const viewRef = useRef<EditorView | null>(null);
+  // viewRef 里视图所属的文件路径（onCreateEditor 时记录）。用于识别
+  // 文件切换重建期间的过期视图，见 applyPendingLine。
+  const viewPathRef = useRef<string | null>(null);
   const pendingLine = useFsStore((s) => s.pendingLine);
   const { draggingIndex, bindTab } = useTabReorder(reorderOpenFiles);
 
@@ -160,7 +169,7 @@ export function EditorPanel() {
 
   useEffect(() => {
     const v = viewRef.current;
-    if (v) applyPendingLine(v);
+    if (v) applyPendingLine(v, viewPathRef.current);
   }, [pendingLine, editorFile?.path]);
 
   if (openFiles.length === 0) return null;
@@ -236,7 +245,7 @@ export function EditorPanel() {
               payload={editorFile.diff}
               theme={editorTheme}
               extensions={extensions}
-              onCreateEditor={(view) => { viewRef.current = view; }}
+              onCreateEditor={(view) => { viewRef.current = view; viewPathRef.current = editorFile.path; }}
             />
           </EditorContextMenu>
         ) : editorFile?.isText ? (
@@ -247,7 +256,11 @@ export function EditorPanel() {
                 key={editorFile.path}
                 value={editorFile.draft}
                 onChange={setDraft}
-                onCreateEditor={(view) => { viewRef.current = view; applyPendingLine(view); }}
+                onCreateEditor={(view) => {
+                  viewRef.current = view;
+                  viewPathRef.current = editorFile.path;
+                  applyPendingLine(view, editorFile.path);
+                }}
                 theme={editorTheme}
                 extensions={extensions}
                 height="100%"

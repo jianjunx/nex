@@ -120,7 +120,7 @@ export function TopBar() {
           <span className="text-xs text-[var(--text-tertiary)] px-2">暂无会话</span>
         ) : (
           <Tabs value={activeTabId ?? ""} onValueChange={switchTab} className="min-w-0">
-            <TabsList variant="line" className="h-7 gap-1 rounded-[calc(var(--radius-lg)+2px)] border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-floating)_62%,transparent)] px-1 shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)]">
+            <TabsList variant="line" className="h-7 gap-1 px-1">
               {openTabs.map((tabId, index) => {
                 const status = sessions[tabId]?.status ?? null;
                 const conv = projectConversations.find((c) => c.id === tabId);

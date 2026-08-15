@@ -223,13 +223,13 @@ export function TerminalPanel() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="nex-material-toolbar flex items-center gap-1.5 border-b border-[color:var(--hairline-soft)] px-3 py-1.5">
+      <div className="nex-material-toolbar flex items-center gap-1.5 border-b border-[color:var(--hairline-soft)] px-3 py-1">
         {sessions.map((s) => (
           <button
             key={s.id}
             type="button"
             onClick={() => setActive(s.id)}
-            className={`nex-interactive-chrome flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-[var(--radius-md)] border ${s.id === activeSessionId ? "border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-elevated)_80%,transparent)] text-[var(--text-primary)] shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)]" : "border-transparent text-[var(--text-tertiary)] hover:bg-[color:color-mix(in_srgb,var(--material-floating)_72%,transparent)] hover:text-[var(--text-secondary)]"}`}
+            className={`nex-interactive-chrome flex items-center gap-1.5 px-2.5 py-0.5 text-xs rounded-[var(--radius-md)] border ${s.id === activeSessionId ? "border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-elevated)_80%,transparent)] text-[var(--text-primary)] shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)]" : "border-transparent text-[var(--text-tertiary)] hover:bg-[color:color-mix(in_srgb,var(--material-floating)_72%,transparent)] hover:text-[var(--text-secondary)]"}`}
           >
             <span className="truncate max-w-[120px]">{s.title}</span>
             <span
@@ -249,7 +249,7 @@ export function TerminalPanel() {
             </span>
           </button>
         ))}
-        <Button size="sm" variant="ghost" disabled={!project} onClick={handleCreate} title="新建终端" className="nex-interactive-chrome nex-pressable rounded-[var(--radius-md)] border border-transparent hover:border-[color:var(--hairline-soft)] hover:bg-[color:color-mix(in_srgb,var(--material-floating)_72%,transparent)]">
+        <Button size="icon-xs" variant="ghost" disabled={!project} onClick={handleCreate} title="新建终端" className="nex-interactive-chrome nex-pressable rounded-[var(--radius-md)] border border-transparent hover:border-[color:var(--hairline-soft)] hover:bg-[color:color-mix(in_srgb,var(--material-floating)_72%,transparent)]">
           <Plus size={12} />
         </Button>
       </div>

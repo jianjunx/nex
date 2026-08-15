@@ -55,7 +55,7 @@ export function SettingsDialog() {
           if (isRecordingActive()) e.preventDefault();
         }}
       >
-        <DialogHeader className="px-6 pt-5 pb-3.5 border-b border-[color:var(--border-subtle)]">
+        <DialogHeader className="px-6 pt-3 pb-2.5 border-b border-[color:var(--border-subtle)]">
           <DialogTitle className="text-base tracking-tight">设置</DialogTitle>
           <DialogDescription className="sr-only">应用设置</DialogDescription>
         </DialogHeader>

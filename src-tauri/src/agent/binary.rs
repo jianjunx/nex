@@ -70,17 +70,8 @@ impl BinaryCache {
         target: &RegistryBinaryTarget,
         platform_key: &str,
     ) -> Result<PathBuf, NexError> {
-        // Validate metadata before downloading a large archive that could
-        // never pass the mandatory integrity check.
-        let Some(expected) = &target.sha256 else {
-            return Err(NexError::Agent(format!(
-                "agent 分发缺少 sha256 校验值，拒绝安装: {}",
-                entry.id
-            )));
-        };
-
         let bytes = download_archive(&target.archive).await?;
-        verify_sha256(&bytes, expected)?;
+        verify_optional_sha256(&bytes, target.sha256.as_deref(), &entry.id)?;
 
         let install_dir = self.install_dir(entry, platform_key);
         let marker = install_dir.join(".nex-install-ok");
@@ -225,6 +216,27 @@ fn verify_sha256(data: &[u8], expected_hex: &str) -> Result<(), NexError> {
         )));
     }
     Ok(())
+}
+
+/// Verifies the archive checksum when the registry provides one. Entries
+/// without a sha256 are logged and accepted — several registry publishers
+/// (Cursor, Junie, ...) never attach hashes, and refusing them would
+/// permanently block install/update. This matches Zed's behavior: verify when
+/// present, otherwise rely on the HTTPS transport.
+fn verify_optional_sha256(
+    data: &[u8],
+    expected: Option<&str>,
+    agent_id: &str,
+) -> Result<(), NexError> {
+    match expected {
+        Some(expected) => verify_sha256(data, expected),
+        None => {
+            log::warn!(
+                "registry entry `{agent_id}` provides no sha256; installing archive without integrity verification"
+            );
+            Ok(())
+        }
+    }
 }
 
 fn extract_archive(data: &[u8], url: &str, dest: &Path) -> Result<(), NexError> {
@@ -372,8 +384,12 @@ mod tests {
         );
     }
 
+    /// A missing checksum must no longer veto the install (Cursor, Junie, ...
+    /// publish no hashes); the cold path should proceed to download. The URL
+    /// uses the RFC 6761 `.invalid` TLD so the attempt fails at DNS — the
+    /// point is *which* error surfaces: a download error, not a sha256 veto.
     #[tokio::test]
-    async fn cold_binary_rejects_missing_checksum_before_creating_version_dir() {
+    async fn cold_binary_without_checksum_attempts_download_instead_of_rejecting() {
         let dir = tempfile::tempdir().unwrap();
         let cache = BinaryCache::new(dir.path());
         let new_entry = entry("2026.08.11");
@@ -381,7 +397,31 @@ mod tests {
             .ensure_installed(&new_entry, &target(None), "darwin-aarch64")
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("sha256"));
+        let msg = err.to_string();
+        assert!(
+            !msg.to_ascii_lowercase().contains("sha256"),
+            "missing sha256 must not reject the install: {msg}"
+        );
+        assert!(
+            msg.contains("download"),
+            "should fail at the download step: {msg}"
+        );
         assert!(!cache.install_dir(&new_entry, "darwin-aarch64").exists());
+    }
+
+    #[test]
+    fn optional_checksum_accepts_missing() {
+        assert!(verify_optional_sha256(b"data", None, "cursor").is_ok());
+    }
+
+    #[test]
+    fn optional_checksum_verifies_when_present() {
+        use sha2::{Digest, Sha256};
+        let data = b"hello nex";
+        let good = format!("{:x}", Sha256::digest(data));
+        assert!(verify_optional_sha256(data, Some(&good), "cursor").is_ok());
+        let bad = "0".repeat(64);
+        let err = verify_optional_sha256(data, Some(&bad), "cursor").unwrap_err();
+        assert!(err.to_string().contains("checksum mismatch"));
     }
 }

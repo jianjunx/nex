@@ -263,10 +263,12 @@ export function TerminalPanel() {
           construction is a mount-once effect, so unmounting the host while
           no project is open would leave a dead terminal when one is opened
           later (the effect never re-runs). The empty state overlays it. */}
+      {/* p-2：终端内容区四周留 8px 内边距。内层尺寸变化由 ResizeObserver
+          捕获，debounced fit 会重算 cols/rows 并同步 PTY。 */}
       <div
         ref={hostRef}
         data-terminal-host
-        className="relative flex-1 overflow-hidden min-h-0"
+        className="relative flex-1 overflow-hidden min-h-0 p-2"
         onMouseDown={focusTerminal}
       >
         <div ref={termRef} className="h-full w-full" />

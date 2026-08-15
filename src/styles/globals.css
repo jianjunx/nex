@@ -453,6 +453,16 @@ html, body {
 .xterm .xterm-helper-textarea {
   background: transparent !important;
 }
+/* 终端滚动条隐藏：滚动功能保留（滚轮 / 触摸板照常），只去掉可见条。
+   Windows WebView2 与 macOS WKWebView 都走 webkit 伪元素；
+   scrollbar-width 兜底 Gecko 渲染。 */
+.xterm .xterm-viewport {
+  scrollbar-width: none;
+}
+.xterm .xterm-viewport::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
 /* Search panel micro-interactions (Plan 5) — restraint: 150ms, no new deps. */
 
 /* 结果行 stagger 渐显；animation-delay 由行内样式按索引给出（上限前 20 条）。 */

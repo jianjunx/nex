@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { PanelRight, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Button } from "@/components/ui/button";
@@ -38,6 +38,10 @@ const MAC_TRAFFIC_LIGHT_PAD = "pl-[78px]";
 const INTERACTIVE =
   "button, input, select, textarea, a, [role='button'], [role='menuitem'], [data-radix-popper-content-wrapper]";
 
+// 空白区双击最大化/恢复的检测窗口（OS 双击判定的近似值）。
+const DOUBLE_CLICK_MS = 500;
+const DOUBLE_CLICK_SLOP_PX = 8;
+
 function isInteractiveTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement ? !!target.closest(INTERACTIVE) : false;
 }
@@ -63,13 +67,29 @@ export function TopBar() {
   // on every platform (Windows is frameless for the same reason). On macOS the
   // traffic lights are native controls above the webview, so their clicks never
   // reach these handlers — no special exclusion needed.
+  // 双击空白区域最大化/恢复：必须靠 mousedown 计时自己检测。第一次
+  // mousedown 的 startDragging() 会进入 OS 拖拽循环，吞掉后续 mouseup /
+  // dblclick——等 onDoubleClick 事件永远等不到（Windows 上实测如此）。
+  // 所以记录空白区 mousedown 的时间与屏幕坐标，500ms 内第二次按下且
+  // 位置基本没动即视为双击：toggleMaximize 并跳过 startDragging。
+  const lastBlankDown = useRef<{ t: number; x: number; y: number } | null>(null);
+
   const handleMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0 || isInteractiveTarget(e.target)) return;
+    const last = lastBlankDown.current;
+    const now = Date.now();
+    const isDouble =
+      last !== null &&
+      now - last.t < DOUBLE_CLICK_MS &&
+      Math.abs(e.screenX - last.x) <= DOUBLE_CLICK_SLOP_PX &&
+      Math.abs(e.screenY - last.y) <= DOUBLE_CLICK_SLOP_PX;
+    if (isDouble) {
+      lastBlankDown.current = null;
+      void getCurrentWindow().toggleMaximize();
+      return;
+    }
+    lastBlankDown.current = { t: now, x: e.screenX, y: e.screenY };
     void getCurrentWindow().startDragging();
-  };
-  const handleDoubleClick = (e: React.MouseEvent) => {
-    if (isInteractiveTarget(e.target)) return;
-    void getCurrentWindow().toggleMaximize();
   };
 
   // Track macOS fullscreen to toggle the traffic-light padding (see above).
@@ -104,7 +124,6 @@ export function TopBar() {
   return (
     <div
       onMouseDown={handleMouseDown}
-      onDoubleClick={handleDoubleClick}
       className={`nex-material-toolbar nex-chrome-edge flex items-center border-b border-[color:var(--hairline-soft)] ${sizing} ${pad}`}
     >
       {/* Project selector */}

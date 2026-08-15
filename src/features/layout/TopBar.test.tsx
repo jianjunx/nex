@@ -8,10 +8,15 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 
 // TopBar 触碰 Tauri 窗口 API 与重子组件；全部打桩。NewConversationDropdown
 // 保持真实（本文件同时覆盖 F5 轮廓与 F6 接线）。
+// startDragging/toggleMaximize 用 hoisted spy，供空白区拖拽/双击断言。
+const { startDraggingMock, toggleMaximizeMock } = vi.hoisted(() => ({
+  startDraggingMock: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+  toggleMaximizeMock: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+}));
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
-    startDragging: () => Promise.resolve(),
-    toggleMaximize: () => Promise.resolve(),
+    startDragging: () => startDraggingMock(),
+    toggleMaximize: () => toggleMaximizeMock(),
     isFullscreen: () => Promise.resolve(false),
     onResized: () => Promise.resolve(() => {}),
   }),
@@ -69,6 +74,8 @@ const fakeCreateConversation = async (projectId: string, agentType: string): Pro
 };
 
 beforeEach(() => {
+  startDraggingMock.mockClear();
+  toggleMaximizeMock.mockClear();
   createConversationMock = vi.fn<CreateConversationFn>().mockImplementation(fakeCreateConversation);
   createSessionMock = vi.fn<CreateSessionFn>().mockResolvedValue("sess-1");
   loadAllServersMock = vi.fn<LoadAllServersFn>().mockResolvedValue(undefined);
@@ -168,6 +175,60 @@ describe("conversation tab outline (F5)", () => {
     render(<TopBar />);
     fireEvent.mouseDown(screen.getByRole("tab", { name: /第二个会话/ }));
     expect(useConversationStore.getState().activeTabByProject.p1).toBe("c2");
+  });
+});
+
+describe("blank-area window controls", () => {
+  it("single mousedown on blank area starts window drag", () => {
+    vi.useFakeTimers({ now: 1000 });
+    try {
+      const { container } = render(<TopBar />);
+      fireEvent.mouseDown(container.firstElementChild!, { screenX: 100, screenY: 20 });
+      expect(startDraggingMock).toHaveBeenCalledTimes(1);
+      expect(toggleMaximizeMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Windows 上 startDragging 吞掉 dblclick 事件，双击必须靠 mousedown
+  // 计时检测：500ms 内、位置基本不动的第二次按下 → toggleMaximize，
+  // 且不再触发第二次拖拽。
+  it("second mousedown within 500ms toggles maximize instead of dragging", () => {
+    vi.useFakeTimers({ now: 1000 });
+    try {
+      const { container } = render(<TopBar />);
+      const bar = container.firstElementChild!;
+      fireEvent.mouseDown(bar, { screenX: 100, screenY: 20 });
+      vi.setSystemTime(1400);
+      fireEvent.mouseDown(bar, { screenX: 102, screenY: 21 });
+      expect(startDraggingMock).toHaveBeenCalledTimes(1);
+      expect(toggleMaximizeMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("mousedown again after the 500ms window starts a drag, not a maximize", () => {
+    vi.useFakeTimers({ now: 1000 });
+    try {
+      const { container } = render(<TopBar />);
+      const bar = container.firstElementChild!;
+      fireEvent.mouseDown(bar, { screenX: 100, screenY: 20 });
+      vi.setSystemTime(1600);
+      fireEvent.mouseDown(bar, { screenX: 100, screenY: 20 });
+      expect(startDraggingMock).toHaveBeenCalledTimes(2);
+      expect(toggleMaximizeMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("mousedown on interactive children neither drags nor maximizes", () => {
+    render(<TopBar />);
+    fireEvent.mouseDown(screen.getByRole("tab", { name: /第二个会话/ }), { screenX: 100, screenY: 20 });
+    expect(startDraggingMock).not.toHaveBeenCalled();
+    expect(toggleMaximizeMock).not.toHaveBeenCalled();
   });
 });
 

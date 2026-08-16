@@ -13,7 +13,8 @@
 //!
 //! Failure policy: a single failing server degrades to a log entry — it never
 //! blocks session creation. Dropping the last [`McpClient`] handle kills the
-//! stdio child process (`kill_on_drop`) when present; HTTP clients have no child.
+//! stdio child *process group* (`process_tree`) when present so wrappers like
+//! `uvx` cannot leave a Python grandchild behind; HTTP clients have no child.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -547,6 +548,10 @@ impl McpClient {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::inherit())
             .kill_on_drop(true);
+        // `uvx` / `uv` / `pipx` keep a wrapper as the direct child and run
+        // the real server (often Python 3.12) as a grandchild. Without a
+        // dedicated process group, Drop only kills the wrapper.
+        crate::agent::process_tree::configure_new_group(&mut cmd);
         let mut child = cmd
             .spawn()
             .map_err(|e| format!("failed to spawn MCP server `{name}`: {e}"))?;
@@ -664,10 +669,10 @@ impl McpClient {
 
 impl Drop for McpClient {
     fn drop(&mut self) {
-        // Session teardown: kill the stdio server child when present
-        // (kill_on_drop is a second net in case the child handle is lost first).
+        // Session teardown: kill the stdio server *tree* when present.
+        // `start_kill` / `kill_on_drop` only cover the direct child.
         if let Some(mut child) = self.child.take() {
-            let _ = child.start_kill();
+            crate::agent::process_tree::kill_tree_sync(&mut child);
         }
     }
 }

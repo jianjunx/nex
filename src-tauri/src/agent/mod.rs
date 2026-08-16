@@ -10,6 +10,7 @@ pub mod acp_adapter;
 pub mod binary;
 pub mod launch;
 pub mod native;
+pub mod process_tree;
 pub mod node_runtime;
 pub mod package_cache;
 pub mod project_env;

@@ -2349,18 +2349,18 @@ fn enrich(e: NexError, diag: &mut DiagCtx) -> NexError {
     }
 }
 
-/// Forcefully terminates the transport on handshake failure. A child process is
-/// killed; the native agent has nothing to stop here.
+/// Forcefully terminates the transport on handshake failure. A child process
+/// tree is killed; the native agent has nothing to stop here.
 async fn kill_diag(diag: &mut DiagCtx) {
     if let Some(child) = diag.child.as_mut() {
-        let _ = child.kill().await;
+        super::process_tree::kill_tree(child).await;
     }
 }
 
-/// Requests termination of the transport during normal teardown.
+/// Requests termination of the transport tree during normal teardown.
 fn start_kill_diag(diag: &mut DiagCtx) {
     if let Some(child) = diag.child.as_mut() {
-        let _ = child.start_kill();
+        super::process_tree::kill_tree_sync(child);
     }
 }
 

@@ -290,6 +290,10 @@ fn configure(cmd: &mut tokio::process::Command, spec: &LaunchSpec) {
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true)
         .envs(&spec.env);
+    // External agents (Claude Code / Codex / Cursor) spawn their own MCP
+    // servers and tool processes. Closing the conversation must reap that
+    // tree — otherwise Python MCP grandchildren outlive the agent.
+    super::process_tree::configure_new_group(cmd);
 
     #[cfg(windows)]
     {

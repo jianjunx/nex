@@ -81,6 +81,19 @@ pub struct JobTable {
     next_id: u64,
 }
 
+impl Drop for JobTable {
+    fn drop(&mut self) {
+        // Session close must reap background shells (and their Python/node
+        // descendants). Dropping `kill_tx` also unblocks the supervisor, but
+        // sending the signal is the explicit path the supervisor waits on.
+        for job in self.jobs.values_mut() {
+            if let Some(tx) = job.kill_tx.take() {
+                let _ = tx.send(());
+            }
+        }
+    }
+}
+
 impl JobTable {
     /// Spawns `command` under the platform shell in `cwd`, returning the job id.
     /// Sync on purpose: nothing here awaits (the drain/kill supervision runs on

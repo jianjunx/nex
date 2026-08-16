@@ -16,7 +16,7 @@ use serde::Deserialize;
 
 use super::{
     ChatRequest, Chunk, ChunkStream, NativeToolCall, Provider, ReasoningControl, StopReasonKind,
-    Usage,
+    Usage, PARSE_ERROR_KEY,
 };
 use crate::error::NexError;
 
@@ -247,13 +247,13 @@ async fn pump_sse(
                     if let Some(choice) = event.choices.and_then(|c| c.into_iter().next()) {
                         let delta = choice.delta.unwrap_or_default();
                         if let Some(text) = delta.content {
-                            if !text.is_empty() {
-                                let _ = tx.send(Chunk::Text(text));
+                            if !text.is_empty() && tx.send(Chunk::Text(text)).is_err() {
+                                return Ok(());
                             }
                         }
                         if let Some(think) = delta.reasoning_content {
-                            if !think.is_empty() {
-                                let _ = tx.send(Chunk::Thinking(think));
+                            if !think.is_empty() && tx.send(Chunk::Thinking(think)).is_err() {
+                                return Ok(());
                             }
                         }
                         if let Some(calls) = delta.tool_calls {
@@ -275,13 +275,15 @@ async fn pump_sse(
         }
     }
 
-    // Stream ended: validate and flush accumulated tool calls. Never turn a
-    // malformed argument string into `{}`: doing so can execute a completely
-    // different tool invocation than the model actually emitted.
-    let calls = acc.drain()?;
+    // Stream ended: flush accumulated tool calls. Malformed calls become
+    // ERROR results instead of aborting the whole turn, so sibling calls
+    // and already-streamed text still reach the transcript.
+    let calls = acc.drain();
     let had_calls = !calls.is_empty();
     for call in calls {
-        let _ = tx.send(Chunk::ToolCall(call));
+        if tx.send(Chunk::ToolCall(call)).is_err() {
+            return Ok(());
+        }
     }
     let stop_reason = finish.unwrap_or(if !had_calls {
         StopReasonKind::EndTurn
@@ -331,7 +333,7 @@ impl ToolAccumulator {
         }
     }
 
-    fn drain(&mut self) -> Result<Vec<NativeToolCall>, String> {
+    fn drain(&mut self) -> Vec<NativeToolCall> {
         let mut out: Vec<(u32, PartialCall)> = self.calls.drain().collect();
         out.sort_by_key(|(idx, _)| *idx);
         // Gateways reject empty / duplicate `tool_call_id` values (400). Some
@@ -340,21 +342,6 @@ impl ToolAccumulator {
         let mut used = std::collections::HashSet::new();
         out.into_iter()
             .map(|(index, p)| {
-                let name = p
-                    .name
-                    .ok_or_else(|| format!("tool call {index} has no function name"))?;
-                let args = if p.arguments.trim().is_empty() {
-                    serde_json::json!({})
-                } else {
-                    serde_json::from_str(&p.arguments).map_err(|e| {
-                        format!("tool call `{name}` has invalid JSON arguments: {e}")
-                    })?
-                };
-                if !args.is_object() {
-                    return Err(format!(
-                        "tool call `{name}` arguments must be a JSON object"
-                    ));
-                }
                 let mut id = p
                     .id
                     .filter(|s| !s.trim().is_empty())
@@ -363,14 +350,46 @@ impl ToolAccumulator {
                     id = uuid::Uuid::new_v4().to_string();
                     used.insert(id.clone());
                 }
-                Ok(NativeToolCall {
+                let name = p
+                    .name
+                    .clone()
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or_else(|| "unknown_tool".to_string());
+                let arguments = match parse_tool_arguments(index, &name, &p.arguments, &p.name) {
+                    Ok(args) => args,
+                    Err(err) => serde_json::json!({ PARSE_ERROR_KEY: err }),
+                };
+                NativeToolCall {
                     id,
                     name,
-                    arguments: args,
-                })
+                    arguments,
+                }
             })
             .collect()
     }
+}
+
+fn parse_tool_arguments(
+    index: u32,
+    name: &str,
+    raw: &str,
+    original_name: &Option<String>,
+) -> Result<serde_json::Value, String> {
+    if original_name.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+        return Err(format!("tool call {index} has no function name"));
+    }
+    let args = if raw.trim().is_empty() {
+        serde_json::json!({})
+    } else {
+        serde_json::from_str(raw)
+            .map_err(|e| format!("tool call `{name}` has invalid JSON arguments: {e}"))?
+    };
+    if !args.is_object() {
+        return Err(format!(
+            "tool call `{name}` arguments must be a JSON object"
+        ));
+    }
+    Ok(args)
 }
 
 // --- SSE wire types (only the fields we read) ---
@@ -549,7 +568,7 @@ mod tests {
                 arguments: "\"a.rs\"}".into(),
             }),
         }]);
-        let calls = acc.drain().unwrap();
+        let calls = acc.drain();
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "read_file");
         assert_eq!(calls[0].id, "call_1");
@@ -585,7 +604,7 @@ mod tests {
                 }),
             },
         ]);
-        let calls = acc.drain().unwrap();
+        let calls = acc.drain();
         assert_eq!(calls.len(), 3);
         assert!(!calls[0].id.trim().is_empty());
         assert_eq!(calls[1].id, "same");
@@ -606,9 +625,40 @@ mod tests {
                 arguments: r#"{"path":"a.txt""#.into(),
             }),
         }]);
-        let err = acc.drain().expect_err("invalid JSON must abort the stream");
+        let calls = acc.drain();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "write_file");
+        let err = calls[0].arguments[PARSE_ERROR_KEY].as_str().unwrap();
         assert!(err.contains("write_file"));
         assert!(err.contains("invalid JSON"));
+    }
+
+    #[test]
+    fn accumulator_keeps_valid_calls_when_sibling_is_malformed() {
+        let mut acc = ToolAccumulator::default();
+        acc.absorb(vec![
+            SseToolCallDelta {
+                index: 0,
+                id: Some("good".into()),
+                function: Some(SseFunctionDelta {
+                    name: Some("read_file".into()),
+                    arguments: r#"{"path":"a.rs"}"#.into(),
+                }),
+            },
+            SseToolCallDelta {
+                index: 1,
+                id: Some("bad".into()),
+                function: Some(SseFunctionDelta {
+                    name: Some("write_file".into()),
+                    arguments: r#"{"path":"a.txt""#.into(),
+                }),
+            },
+        ]);
+        let calls = acc.drain();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].name, "read_file");
+        assert!(calls[0].arguments.get(PARSE_ERROR_KEY).is_none());
+        assert!(calls[1].arguments.get(PARSE_ERROR_KEY).is_some());
     }
 
     #[test]

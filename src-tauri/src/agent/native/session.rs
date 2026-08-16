@@ -6,7 +6,7 @@
 //! (per-session state); this module only pushes new turns onto it.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::ffi::OsString;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
@@ -19,6 +19,7 @@ use agent_client_protocol::{self as acp};
 use super::provider::{
     ensure_unique_tool_call_ids, ChatMessage, ChatRequest, ChatToolCall, ChatToolCallFunction,
     Chunk, Content, NativeToolCall, Provider, ReasoningControl, StopReasonKind, ToolSpec, Usage,
+    PARSE_ERROR_KEY,
 };
 use super::stats;
 use super::tools::todo::{parse_todos, TodoStatus};
@@ -30,6 +31,11 @@ const PARALLEL_BATCH_LIMIT: usize = 8;
 /// Progress lease: warn / pause after this many consecutive no-progress rounds.
 const LEASE_WARN_ROUNDS: u32 = 8;
 const LEASE_PAUSE_ROUNDS: u32 = 16;
+/// Sliding window of recent tool-round signatures. Consecutive-only comparison
+/// let A→B→A→B reset the lease every turn.
+const SIGNATURE_WINDOW: usize = 8;
+/// Abort a hung provider stream if no chunk arrives within this idle window.
+const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Subagent final answers larger than this go to disk behind a stable ref.
 const SUBAGENT_INLINE_LIMIT: usize = 20_000;
 
@@ -60,7 +66,8 @@ pub struct TurnEnv {
     pub tool_specs: Vec<super::provider::ToolSpec>,
     pub model: String,
     pub reasoning: ReasoningControl,
-    /// Hard cap on tool-call rounds; `0` disables the cap.
+    /// Hard cap on tool-call rounds. Values below 1 are treated as 1
+    /// (unlimited loops are not allowed).
     pub max_steps: u32,
     /// Live session mode (`code`/`ask`/`plan`/`auto`). Re-read on every tool
     /// call so mid-turn switches (especially Auto) take effect immediately.
@@ -247,7 +254,7 @@ pub async fn run_turn(
 
     let mut steps = 0u32;
     let mut no_progress = 0u32;
-    let mut previous_round_signature: Option<u64> = None;
+    let mut recent_signatures: VecDeque<u64> = VecDeque::with_capacity(SIGNATURE_WINDOW);
     loop {
         if env.cancelled.get() {
             return acp::StopReason::Cancelled;
@@ -305,11 +312,11 @@ pub async fn run_turn(
         );
 
         if outcome.over_budget {
-            emit_text(
-                env,
-                "上下文超出模型窗口，压缩后仍无法放入本轮请求。请开新会话，或在设置里提高该模型的上下文窗口。",
-            )
-            .await;
+            let notice = "上下文超出模型窗口，压缩后仍无法放入本轮请求。请开新会话，或在设置里提高该模型的上下文窗口。";
+            emit_text(env, notice).await;
+            // Persist an assistant turn so the next prompt is not two user
+            // messages in a row (the user message was already pushed).
+            messages.push(ChatMessage::assistant(notice));
             return acp::StopReason::EndTurn;
         }
 
@@ -357,7 +364,22 @@ pub async fn run_turn(
                 drop(rx);
                 return acp::StopReason::Cancelled;
             }
-            let Some(chunk) = rx.recv().await else { break };
+            let chunk = match tokio::time::timeout(STREAM_IDLE_TIMEOUT, rx.recv()).await {
+                Ok(Some(chunk)) => chunk,
+                Ok(None) => break,
+                Err(_) => {
+                    drop(rx);
+                    if !text.trim().is_empty() {
+                        messages.push(ChatMessage::assistant(text));
+                    }
+                    emit_text(
+                        env,
+                        "模型流超过 60 秒没有新的输出，本轮已中止。",
+                    )
+                    .await;
+                    return acp::StopReason::EndTurn;
+                }
+            };
             match chunk {
                 Chunk::Text(t) => {
                     text.push_str(&t);
@@ -446,11 +468,10 @@ pub async fn run_turn(
         let results = execute_calls(env, &calls).await;
         let round_signature = tool_round_signature(&calls, &results);
         let all_failed = results.iter().all(Result::is_err);
-        // Same tool names, arguments, and results in consecutive rounds means
-        // the model is looping even if each call returned `Ok`. A changing
-        // result intentionally resets the lease: repeated reads can be valid
-        // while another process is making progress.
-        let repeated_success = previous_round_signature == Some(round_signature)
+        // Same tool names, arguments, and results seen in the recent window
+        // means the model is looping even if each call returned `Ok`. A
+        // changing result is a new signature and does not match.
+        let repeated_success = recent_signatures.contains(&round_signature)
             && results.iter().any(Result::is_ok);
         for (call, result) in calls.iter().zip(results) {
             messages.push(ChatMessage::tool_result(
@@ -488,7 +509,10 @@ pub async fn run_turn(
         } else {
             no_progress = 0;
         }
-        previous_round_signature = Some(round_signature);
+        recent_signatures.push_back(round_signature);
+        if recent_signatures.len() > SIGNATURE_WINDOW {
+            recent_signatures.pop_front();
+        }
     }
 }
 
@@ -622,6 +646,14 @@ async fn execute_tool(env: &TurnEnv, call: &NativeToolCall) -> Result<String, St
     )
     .await;
 
+    if let Some(err) = call
+        .arguments
+        .get(PARSE_ERROR_KEY)
+        .and_then(|v| v.as_str())
+    {
+        return finish_tool(env, &call_id, false, err).await;
+    }
+
     let Some(tool) = tool else {
         return finish_tool(
             env,
@@ -633,30 +665,40 @@ async fn execute_tool(env: &TurnEnv, call: &NativeToolCall) -> Result<String, St
     };
 
     // Read-only tools run without prompting; mutating ones need permission
-    // unless the user already said "always allow" for this tool or the
-    // session runs in `auto` mode (re-read live so mid-turn switches apply).
+    // unless the user already said "always allow" for this tool (bash is
+    // keyed by command prefix) or the session runs in `auto` mode.
     if !read_only {
         if env.read_only_mode() {
             return finish_tool(env, &call_id, false, "当前为只读模式，禁止执行写操作/命令").await;
         }
-        if !env.auto_approve() && !env.auto_allow.borrow().contains(&call.name) {
-            match request_permission(env, &call_id, &title, kind, &call.arguments).await {
+        let allow_key = permission_allow_key(&call.name, &call.arguments);
+        if !env.auto_approve() && !env.auto_allow.borrow().contains(&allow_key) {
+            match request_permission(env, &call_id, &title, kind, &call.name, &call.arguments)
+                .await
+            {
                 PermissionDecision::Allowed { always } => {
                     if always {
-                        env.auto_allow.borrow_mut().insert(call.name.clone());
+                        env.auto_allow.borrow_mut().insert(allow_key);
                     }
                 }
                 PermissionDecision::Denied => {
                     return finish_tool(env, &call_id, false, "permission denied by user").await;
                 }
-                PermissionDecision::TurnCancelled => return Err("cancelled".to_string()),
+                PermissionDecision::TurnCancelled => {
+                    return finish_tool(env, &call_id, false, "cancelled").await;
+                }
             }
         }
     }
 
     update_status(env, &call_id, acp::ToolCallStatus::InProgress).await;
     let mode_before = env.mode_id.borrow().clone();
-    let result = tool.execute(call.arguments.clone(), &env.tool_ctx).await;
+    let result = tokio::select! {
+        _ = wait_cancelled(env) => {
+            return finish_tool(env, &call_id, false, "cancelled").await;
+        }
+        result = tool.execute(call.arguments.clone(), &env.tool_ctx) => result,
+    };
 
     // System-driven working-memory updates. The model never rewrites the
     // memory block; the harness observes tool outcomes and folds them in.
@@ -734,34 +776,48 @@ async fn execute_tool(env: &TurnEnv, call: &NativeToolCall) -> Result<String, St
         }
     }
 
-    // Plan gate: entering plan arms `plan_pending_confirm`; any later switch
-    // into code/auto (including plan→ask→code) requires explicit approval.
+    // Mode elevation gates:
+    // - entering plan arms `plan_pending_confirm`; any later switch into
+    //   code/auto (including plan→ask→code) requires explicit approval.
+    // - any model-driven switch into `auto` also requires approval, even
+    //   from ask/code that never entered plan. `auto` suppresses every
+    //   subsequent permission prompt.
     // Rejected switches revert the mode cell.
     if call.name == "switch_mode" && result.is_ok() {
         let current = env.mode_id.borrow().clone();
         if current == "plan" {
             env.plan_pending_confirm.set(true);
         }
-        let leaving_to_exec = matches!(current.as_str(), "code" | "auto")
-            && env.plan_pending_confirm.get();
-        if leaving_to_exec {
-            match request_plan_execution_approval(env, &call_id, &mode_before, &current).await {
+        let elevating_to_auto = current == "auto" && mode_before != "auto";
+        let leaving_plan_to_exec =
+            matches!(current.as_str(), "code" | "auto") && env.plan_pending_confirm.get();
+        if elevating_to_auto || leaving_plan_to_exec {
+            match request_mode_elevation_approval(
+                env,
+                &call_id,
+                &mode_before,
+                &current,
+                env.plan_pending_confirm.get(),
+            )
+            .await
+            {
                 PermissionDecision::Allowed { .. } => {
-                    env.plan_pending_confirm.set(false);
+                    if leaving_plan_to_exec {
+                        env.plan_pending_confirm.set(false);
+                    }
                 }
                 PermissionDecision::Denied => {
                     *env.mode_id.borrow_mut() = mode_before.clone();
-                    return finish_tool(
-                        env,
-                        &call_id,
-                        false,
-                        "用户拒绝执行计划，未切换到执行模式",
-                    )
-                    .await;
+                    let msg = if leaving_plan_to_exec {
+                        "用户拒绝执行计划，未切换到执行模式"
+                    } else {
+                        "用户拒绝切换到 auto，未提权"
+                    };
+                    return finish_tool(env, &call_id, false, msg).await;
                 }
                 PermissionDecision::TurnCancelled => {
                     *env.mode_id.borrow_mut() = mode_before;
-                    return Err("cancelled".to_string());
+                    return finish_tool(env, &call_id, false, "cancelled").await;
                 }
             }
         }
@@ -839,15 +895,45 @@ enum PermissionDecision {
     TurnCancelled,
 }
 
-/// Confirms leaving a pending Plan to start executing (code/auto).
-async fn request_plan_execution_approval(
+async fn wait_cancelled(env: &TurnEnv) {
+    loop {
+        if env.cancelled.get() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// Session-scoped always-allow key. Bash is keyed by the command prefix so
+/// "always allow `git status`" does not authorize `rm -rf`.
+fn permission_allow_key(name: &str, args: &serde_json::Value) -> String {
+    if name == "bash" {
+        if let Some(cmd) = args.get("command").and_then(|v| v.as_str()) {
+            return format!("bash:{}", bash_command_prefix(cmd));
+        }
+    }
+    name.to_string()
+}
+
+fn bash_command_prefix(cmd: &str) -> String {
+    cmd.split_whitespace().next().unwrap_or(cmd).to_string()
+}
+
+/// Confirms a model-driven mode elevation (leaving Plan, or entering auto).
+async fn request_mode_elevation_approval(
     env: &TurnEnv,
     call_id: &acp::ToolCallId,
     from_mode: &str,
     target_mode: &str,
+    plan_pending: bool,
 ) -> PermissionDecision {
     use acp::Client as _;
 
+    let title = if plan_pending {
+        format!("确认执行计划（切换到 {target_mode}）")
+    } else {
+        format!("确认切换到 {target_mode}（将自动批准后续所有工具调用）")
+    };
     let request = acp::RequestPermissionRequest {
         session_id: env.session_id.clone(),
         tool_call: acp::ToolCallUpdate {
@@ -855,11 +941,11 @@ async fn request_plan_execution_approval(
             fields: acp::ToolCallUpdateFields {
                 kind: Some(acp::ToolKind::SwitchMode),
                 status: Some(acp::ToolCallStatus::Pending),
-                title: Some(format!("确认执行计划（切换到 {target_mode}）")),
+                title: Some(title),
                 raw_input: Some(serde_json::json!({
                     "from": from_mode,
                     "to": target_mode,
-                    "planPending": true,
+                    "planPending": plan_pending,
                 })),
                 ..Default::default()
             },
@@ -900,10 +986,16 @@ async fn request_permission(
     call_id: &acp::ToolCallId,
     title: &str,
     kind: acp::ToolKind,
+    tool_name: &str,
     args: &serde_json::Value,
 ) -> PermissionDecision {
     use acp::Client as _;
 
+    let always_label = if tool_name == "bash" {
+        "始终允许该命令前缀".to_string()
+    } else {
+        "始终允许该工具".to_string()
+    };
     let request = acp::RequestPermissionRequest {
         session_id: env.session_id.clone(),
         tool_call: acp::ToolCallUpdate {
@@ -926,7 +1018,7 @@ async fn request_permission(
             },
             acp::PermissionOption {
                 id: acp::PermissionOptionId(Arc::from("allow-always")),
-                name: "始终允许该工具".to_string(),
+                name: always_label,
                 kind: acp::PermissionOptionKind::AllowAlways,
                 meta: None,
             },
@@ -1654,6 +1746,76 @@ mod tests {
             .await;
     }
 
+    /// An ask session must not silently enter auto: that would suppress every
+    /// later permission prompt.
+    #[tokio::test(flavor = "current_thread")]
+    async fn ask_to_auto_requires_confirmation() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let tmp = tempfile::tempdir().unwrap();
+                let provider = ScriptedProvider {
+                    turns: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
+                        vec![
+                            Chunk::ToolCall(NativeToolCall {
+                                id: "c_auto".into(),
+                                name: "switch_mode".into(),
+                                arguments: serde_json::json!({ "mode": "auto" }),
+                            }),
+                            done(),
+                        ],
+                        vec![text_chunk("staying in ask"), done()],
+                    ])),
+                    tools_nonempty: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+                };
+                let (env, _nots, perms) = make_env(provider, tmp.path(), true);
+                *env.mode_id.borrow_mut() = "ask".to_string();
+                let mut messages = vec![ChatMessage::system("sys")];
+                let stop = run_turn(&env, &mut messages, Content::Text("提权".into())).await;
+                assert!(matches!(stop, acp::StopReason::EndTurn));
+                assert_eq!(env.mode_id.borrow().as_str(), "ask");
+                assert!(
+                    *perms.borrow() >= 1,
+                    "ask→auto must request confirmation"
+                );
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn ask_to_auto_allowed_switches() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let tmp = tempfile::tempdir().unwrap();
+                let provider = ScriptedProvider {
+                    turns: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
+                        vec![
+                            Chunk::ToolCall(NativeToolCall {
+                                id: "c_auto".into(),
+                                name: "switch_mode".into(),
+                                arguments: serde_json::json!({ "mode": "auto" }),
+                            }),
+                            done(),
+                        ],
+                        vec![text_chunk("now auto"), done()],
+                    ])),
+                    tools_nonempty: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+                };
+                let (env, _nots, perms) = make_env(provider, tmp.path(), false);
+                *env.mode_id.borrow_mut() = "ask".to_string();
+                let mut messages = vec![ChatMessage::system("sys")];
+                let stop = run_turn(&env, &mut messages, Content::Text("提权".into())).await;
+                assert!(matches!(stop, acp::StopReason::EndTurn));
+                assert_eq!(env.mode_id.borrow().as_str(), "auto");
+                assert!(
+                    *perms.borrow() >= 1,
+                    "ask→auto must still prompt even when allowed"
+                );
+            })
+            .await;
+    }
+
     /// `plan → ask → code` must still hit the plan gate (not only direct
     /// `plan → code`).
     #[tokio::test(flavor = "current_thread")]
@@ -1946,6 +2108,22 @@ mod tests {
         assert!(
             compact::estimate_tokens(&active) < before,
             "active window must produce a smaller transcript"
+        );
+    }
+
+    #[test]
+    fn bash_always_allow_is_keyed_by_command_prefix() {
+        assert_eq!(
+            permission_allow_key("bash", &serde_json::json!({"command": "git status"})),
+            "bash:git"
+        );
+        assert_eq!(
+            permission_allow_key("write_file", &serde_json::json!({"path": "a.txt"})),
+            "write_file"
+        );
+        assert_ne!(
+            permission_allow_key("bash", &serde_json::json!({"command": "git status"})),
+            permission_allow_key("bash", &serde_json::json!({"command": "rm -rf /"}))
         );
     }
 }

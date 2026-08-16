@@ -103,6 +103,11 @@ impl ReasoningControl {
     }
 }
 
+/// Reserved argument key used when a tool-call delta could not be parsed.
+/// The harness turns these into `ERROR:` tool results instead of aborting
+/// the whole turn.
+pub const PARSE_ERROR_KEY: &str = "__nex_parse_error";
+
 /// A fully-accumulated tool call emitted by the provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NativeToolCall {

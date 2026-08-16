@@ -70,8 +70,33 @@ impl Tool for Rewind {
     }
 }
 
-fn create_checkpoint(cwd: &std::path::Path, message: &str) -> Result<String, String> {
+/// Open the git repo only when its workdir is the session cwd. `discover`
+/// walks parents, so a session opened on a monorepo subdirectory would
+/// otherwise snapshot/restore files outside the workspace sandbox.
+fn open_workspace_repo(cwd: &std::path::Path) -> Result<git2::Repository, String> {
     let repo = git2::Repository::discover(cwd).map_err(|e| format!("not a git repository: {e}"))?;
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| "bare repositories do not support checkpoint/rewind".to_string())?;
+    if !same_dir(cwd, workdir) {
+        return Err(
+            "checkpoint/rewind is limited to the session workspace root; \
+             the git repository is outside the session cwd"
+                .to_string(),
+        );
+    }
+    Ok(repo)
+}
+
+fn same_dir(a: &std::path::Path, b: &std::path::Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => a == b,
+    }
+}
+
+fn create_checkpoint(cwd: &std::path::Path, message: &str) -> Result<String, String> {
+    let repo = open_workspace_repo(cwd)?;
     let mut index = repo.index().map_err(|e| format!("index error: {e}"))?;
     index
         .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
@@ -119,7 +144,7 @@ fn create_checkpoint(cwd: &std::path::Path, message: &str) -> Result<String, Str
 }
 
 fn rewind_to(cwd: &std::path::Path, id: &str) -> Result<String, String> {
-    let repo = git2::Repository::discover(cwd).map_err(|e| format!("not a git repository: {e}"))?;
+    let repo = open_workspace_repo(cwd)?;
     let branch = repo
         .find_branch(CHECKPOINT_BRANCH, git2::BranchType::Local)
         .map_err(|_| "no checkpoints exist yet".to_string())?;
@@ -482,6 +507,31 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("too short"), "got: {err}");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn checkpoint_rejects_parent_repo_outside_cwd() {
+        let tmp = tempfile::tempdir().unwrap();
+        git2::Repository::init(tmp.path()).unwrap();
+        let nested = tmp.path().join("pkg");
+        std::fs::create_dir_all(&nested).unwrap();
+        let c = ctx(&nested);
+        let err = Checkpoint
+            .execute(serde_json::json!({"message": "escape"}), &c)
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("workspace root") || err.contains("outside"),
+            "got: {err}"
+        );
+        let rewind_err = Rewind
+            .execute(serde_json::json!({"checkpoint": "abcdefgh"}), &c)
+            .await
+            .unwrap_err();
+        assert!(
+            rewind_err.contains("workspace root") || rewind_err.contains("outside"),
+            "got: {rewind_err}"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

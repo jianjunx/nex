@@ -3,6 +3,9 @@
 
 use super::{arg_str, arg_str_opt, arg_usize, truncate_output, Tool, ToolCtx};
 use agent_client_protocol as acp;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+use std::time::SystemTime;
 
 /// Cap on total output characters.
 const MAX_OUTPUT_CHARS: usize = 20_000;
@@ -70,6 +73,7 @@ impl Tool for History {
 }
 
 /// One archived message (parsed from a jsonl line).
+#[derive(Clone)]
 struct Doc {
     role: String,
     content: String,
@@ -78,6 +82,17 @@ struct Doc {
     /// hits so the model (and the human) can correlate the excerpt with
     /// an `archive_ref` from a summary block.
     source: String,
+}
+
+struct CachedFile {
+    mtime: Option<SystemTime>,
+    len: u64,
+    docs: Vec<Doc>,
+}
+
+fn archive_cache() -> &'static Mutex<HashMap<std::path::PathBuf, CachedFile>> {
+    static CACHE: OnceLock<Mutex<HashMap<std::path::PathBuf, CachedFile>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn load_archive(dir: &std::path::Path, only_file: Option<&str>) -> Vec<Doc> {
@@ -100,48 +115,119 @@ fn load_archive(dir: &std::path::Path, only_file: Option<&str>) -> Vec<Doc> {
                 continue;
             }
         }
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        for line in text.lines() {
-            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
-                continue;
-            };
-            let role = v
-                .get("role")
-                .and_then(|r| r.as_str())
-                .unwrap_or("?")
-                .to_string();
-            let Some(content) = v.get("content").and_then(|c| c.as_str()) else {
-                continue;
-            };
-            if content.trim().is_empty() {
-                continue;
-            }
-            let tokens = tokenize(content);
-            docs.push(Doc {
-                role,
-                content: content.to_string(),
-                tokens,
-                source: name.to_string(),
-            });
-        }
+        docs.extend(load_file_docs(&path, name));
     }
     docs
 }
 
-/// Tokenizer: ASCII word runs + individual CJK characters.
+fn load_file_docs(path: &std::path::Path, name: &str) -> Vec<Doc> {
+    let meta = std::fs::metadata(path).ok();
+    let mtime = meta.as_ref().and_then(|m| m.modified().ok());
+    let len = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+    if let Ok(cache) = archive_cache().lock() {
+        if let Some(hit) = cache.get(path) {
+            if hit.mtime == mtime && hit.len == len {
+                return hit.docs.clone();
+            }
+        }
+    }
+    let docs = parse_archive_file(path, name);
+    if let Ok(mut cache) = archive_cache().lock() {
+        cache.insert(
+            path.to_path_buf(),
+            CachedFile {
+                mtime,
+                len,
+                docs: docs.clone(),
+            },
+        );
+    }
+    docs
+}
+
+fn parse_archive_file(path: &std::path::Path, name: &str) -> Vec<Doc> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let mut docs = Vec::new();
+    for line in text.lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let role = v
+            .get("role")
+            .and_then(|r| r.as_str())
+            .unwrap_or("?")
+            .to_string();
+        let Some(content) = indexable_text(&v) else {
+            continue;
+        };
+        if content.trim().is_empty() {
+            continue;
+        }
+        let tokens = tokenize(&content);
+        docs.push(Doc {
+            role,
+            content,
+            tokens,
+            source: name.to_string(),
+        });
+    }
+    docs
+}
+
+fn indexable_text(v: &serde_json::Value) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(text) = content_text(v.get("content")) {
+        parts.push(text);
+    }
+    if let Some(calls) = v.get("tool_calls").and_then(|c| c.as_array()) {
+        for call in calls {
+            if let Some(name) = call.pointer("/function/name").and_then(|n| n.as_str()) {
+                parts.push(name.to_string());
+            }
+            if let Some(args) = call.pointer("/function/arguments").and_then(|a| a.as_str()) {
+                parts.push(args.to_string());
+            }
+        }
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n"))
+    }
+}
+
+fn content_text(content: Option<&serde_json::Value>) -> Option<String> {
+    match content? {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Array(parts) => {
+            let texts: Vec<&str> = parts
+                .iter()
+                .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                .collect();
+            if texts.is_empty() {
+                None
+            } else {
+                Some(texts.join("\n"))
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Tokenizer: ASCII / Latin word runs + individual CJK / Kana / Hangul chars.
 fn tokenize(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut word = String::new();
     for ch in text.chars() {
-        if ch.is_ascii_alphanumeric() || ch == '_' {
-            word.push(ch.to_ascii_lowercase());
+        if is_word_char(ch) {
+            word.extend(ch.to_lowercase());
         } else {
             if !word.is_empty() {
                 out.push(std::mem::take(&mut word));
             }
-            if ('\u{4E00}'..'\u{9FFF}').contains(&ch) {
+            if is_cjk_kana_or_hangul(ch) {
                 out.push(ch.to_string());
             }
         }
@@ -150,6 +236,24 @@ fn tokenize(text: &str) -> Vec<String> {
         out.push(word);
     }
     out
+}
+
+fn is_word_char(ch: char) -> bool {
+    ch == '_' || (ch.is_alphanumeric() && !is_cjk_kana_or_hangul(ch))
+}
+
+fn is_cjk_kana_or_hangul(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{3400}'..='\u{4DBF}' // CJK Ext A
+        | '\u{4E00}'..='\u{9FFF}' // CJK Unified
+        | '\u{3040}'..='\u{309F}' // Hiragana
+        | '\u{30A0}'..='\u{30FF}' // Katakana
+        | '\u{AC00}'..='\u{D7AF}' // Hangul syllables
+        | '\u{1100}'..='\u{11FF}' // Hangul Jamo
+        | '\u{3130}'..='\u{318F}' // Hangul compatibility
+        | '\u{FF66}'..='\u{FF9D}' // Halfwidth katakana
+    )
 }
 
 /// Classic BM25 ranking over the archive.
@@ -323,6 +427,56 @@ mod tests {
         assert!(toks.contains(&"login".to_string()));
         assert!(toks.contains(&"bug".to_string()));
         assert!(toks.contains(&"登".to_string()));
+    }
+
+    #[test]
+    fn tokenizer_keeps_hangul_kana_and_accented_latin() {
+        let toks = tokenize("café 한글 カタカナ ひらがな");
+        assert!(toks.contains(&"café".to_string()));
+        assert!(toks.iter().any(|t| t == "한"));
+        assert!(toks.iter().any(|t| t == "カ"));
+        assert!(toks.iter().any(|t| t == "ひ"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn history_indexes_tool_call_arguments() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("archive");
+        std::fs::create_dir_all(&archive).unwrap();
+        let msg = ChatMessage::assistant_tool_calls(
+            vec![crate::agent::native::provider::ChatToolCall {
+                id: "c1".into(),
+                typ: "function".into(),
+                function: crate::agent::native::provider::ChatToolCallFunction {
+                    name: "write_file".into(),
+                    arguments: r#"{"path":"src/payment.rs"}"#.into(),
+                },
+            }],
+            None,
+        );
+        std::fs::write(
+            archive.join("20240101-000000-tool.jsonl"),
+            format!("{}\n", serde_json::to_string(&msg).unwrap()),
+        )
+        .unwrap();
+        let ctx = ToolCtx {
+            cwd: tmp.path().to_path_buf(),
+            bash_timeout: std::time::Duration::from_secs(10),
+            path_env: std::env::var_os("PATH").unwrap_or_default(),
+            archive_dir: archive,
+            jobs: std::rc::Rc::new(std::cell::RefCell::new(
+                super::super::jobs::JobTable::default(),
+            )),
+            harness: None,
+            mutations: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            mode_id: None,
+            memory: super::super::test_memory_handle(),
+        };
+        let out = History
+            .execute(serde_json::json!({"query": "payment"}), &ctx)
+            .await
+            .unwrap();
+        assert!(out.contains("payment"), "got: {out}");
     }
 
     #[test]

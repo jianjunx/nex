@@ -41,6 +41,40 @@ const MAX_JOB_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 /// Truncation marker prepended when the output cap was hit.
 const JOB_OUTPUT_TRUNCATED: &[u8] = b"\n\xE2\x80\xA6 [background output truncated]\n";
 
+#[cfg(unix)]
+fn configure_process_group(cmd: &mut tokio::process::Command) {
+    cmd.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn configure_process_group(_cmd: &mut tokio::process::Command) {}
+
+#[cfg(unix)]
+async fn terminate_process_tree(child: &mut tokio::process::Child) {
+    if let Some(pid) = child.id() {
+        unsafe {
+            let _ = libc::kill(-(pid as libc::pid_t), libc::SIGKILL);
+        }
+    }
+    let _ = child.start_kill();
+}
+
+#[cfg(windows)]
+async fn terminate_process_tree(child: &mut tokio::process::Child) {
+    if let Some(pid) = child.id() {
+        let _ = tokio::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .output()
+            .await;
+    }
+    let _ = child.start_kill();
+}
+
+#[cfg(all(not(unix), not(windows)))]
+async fn terminate_process_tree(child: &mut tokio::process::Child) {
+    let _ = child.start_kill();
+}
+
 #[derive(Default)]
 pub struct JobTable {
     jobs: HashMap<String, BgJobHandle>,
@@ -63,6 +97,7 @@ impl JobTable {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
+        configure_process_group(&mut cmd);
         #[cfg(windows)]
         {
             cmd.env("PATH", path_env).env("Path", path_env);
@@ -95,7 +130,7 @@ impl JobTable {
                     line.clear();
                     tokio::select! {
                         _ = &mut kill_rx => {
-                            let _ = child.kill().await;
+                            terminate_process_tree(&mut child).await;
                             break;
                         }
                         res = reader.read_until(b'\n', &mut line) => {

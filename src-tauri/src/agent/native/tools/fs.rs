@@ -5,11 +5,14 @@
 
 use super::{arg_str, arg_usize, resolve_within, Tool, ToolCtx, PARTIAL_MARKER};
 use agent_client_protocol as acp;
+use std::io::{BufRead, BufReader};
 
 /// Default page size for `read_file`.
 const DEFAULT_LIMIT: usize = 2000;
 /// Absolute cap so one read can't blow up the context.
 const MAX_LIMIT: usize = 4000;
+/// Stop scanning after this many bytes so a multi-GB file cannot OOM or hang.
+const MAX_READ_SCAN_BYTES: u64 = 32 * 1024 * 1024;
 
 pub struct ReadFile;
 
@@ -44,23 +47,51 @@ impl Tool for ReadFile {
         let path = resolve_within(&ctx.cwd, &arg_str(&args, "path")?)?;
         let offset = arg_usize(&args, "offset", 1);
         let limit = arg_usize(&args, "limit", DEFAULT_LIMIT).min(MAX_LIMIT);
-
-        let content = std::fs::read_to_string(&path)
-            .map_err(|e| format!("failed to read `{}`: {e}", path.display()))?;
-        let total = content.lines().count();
         let start = offset.max(1);
+
+        let file = std::fs::File::open(&path)
+            .map_err(|e| format!("failed to read `{}`: {e}", path.display()))?;
+        let mut reader = BufReader::new(file);
+        let mut line = String::new();
+        let mut line_no = 0usize;
+        let mut bytes_scanned = 0u64;
         let mut out = String::new();
-        for (idx, line) in content.lines().enumerate().skip(start - 1).take(limit) {
-            out.push_str(&format!("{:>6}→{}\n", idx + 1, line));
+        let mut reached_end = true;
+        loop {
+            line.clear();
+            let n = reader
+                .read_line(&mut line)
+                .map_err(|e| format!("failed to read `{}`: {e}", path.display()))?;
+            if n == 0 {
+                break;
+            }
+            bytes_scanned = bytes_scanned.saturating_add(n as u64);
+            if bytes_scanned > MAX_READ_SCAN_BYTES && line_no + 1 < start {
+                return Err(format!(
+                    "file `{}` exceeded the {}-byte scan limit before reaching offset {start}",
+                    path.display(),
+                    MAX_READ_SCAN_BYTES
+                ));
+            }
+            line_no += 1;
+            if line_no < start {
+                continue;
+            }
+            if line_no >= start + limit {
+                reached_end = false;
+                break;
+            }
+            let display = line.trim_end_matches(['\r', '\n']);
+            out.push_str(&format!("{:>6}→{}\n", line_no, display));
         }
-                if out.is_empty() {
+        if out.is_empty() {
             return Ok(format!(
-                "(file has {total} lines; offset {start} is past the end)"
+                "(file has {line_no} lines; offset {start} is past the end)"
             ));
         }
-        if start + limit <= total {
+        if !reached_end {
             out.push_str(&format!(
-                "{PARTIAL_MARKER} read_file slice: showing lines {start}–{} of {total}; pass a larger `offset` for more\n",
+                "{PARTIAL_MARKER} read_file slice: showing lines {start}–{} ; pass a larger `offset` for more\n",
                 start + limit - 1
             ));
         }

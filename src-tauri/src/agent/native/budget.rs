@@ -66,8 +66,8 @@ pub fn default_reserved_response(model_id: &str, reasoning: ReasoningControl) ->
 
 /// Conservative default for tokenizer uncertainty margin.
 pub fn default_safety_margin(model_window: u64) -> u64 {
-    let dyn_margin = (model_window * 3) / 100;
-    dyn_margin.clamp(2048, 8192)
+    let dyn_margin = (model_window * 5) / 100;
+    dyn_margin.clamp(2048, 16_384)
 }
 
 /// Resolve a model window into a hard prompt budget.
@@ -173,7 +173,8 @@ pub fn enforce_with_memory(
         };
     }
     let mut outcome = BudgetLoopOutcome::default();
-    let mut used = compact::estimate_tokens(messages);
+    let mut tokens = compact::TokenEstimateCache::default();
+    let mut used = tokens.estimate(messages);
     outcome.initial_tokens = used;
     if used <= budget.prompt_budget {
         outcome.final_tokens = used;
@@ -197,7 +198,7 @@ pub fn enforce_with_memory(
         if let Some(p) = step.archive_file {
             outcome.archive_files.push(p);
         }
-        let used_after = compact::estimate_tokens(messages);
+        let used_after = tokens.estimate(messages);
         if used_after >= used {
             // A full tier pass saved nothing: bail before burning more.
             break;
@@ -216,7 +217,7 @@ pub fn enforce_with_memory(
             outcome.archive_files.push(p);
             outcome.used_summary_fallback = true;
             outcome.total_folded += 1;
-            used = compact::estimate_tokens(messages);
+            used = tokens.estimate(messages);
         }
     }
     // Last resort: snip remaining tool bodies (including the protected tail)
@@ -224,7 +225,14 @@ pub fn enforce_with_memory(
     if used > budget.prompt_budget {
         let extra = compact::snip_tool_results(messages, true);
         outcome.total_snipped += extra;
-        used = compact::estimate_tokens(messages);
+        used = tokens.estimate(messages);
+    }
+    // Pathological user/assistant pastes are not tool results; snip them only
+    // after every other tier so a 1MB paste cannot permanently over_budget.
+    if used > budget.prompt_budget {
+        let extra = compact::snip_oversized_text(messages);
+        outcome.total_snipped += extra;
+        used = tokens.estimate(messages);
     }
     outcome.over_budget = used > budget.prompt_budget;
     if outcome.over_budget {
@@ -321,7 +329,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let outcome = enforce(&mut msgs, budget, tmp.path());
         assert!(outcome.passes <= MAX_COMPACT_PASSES);
-        assert!(outcome.over_budget);
+        assert!(
+            !outcome.over_budget,
+            "last-resort text snip must unblock a giant user paste"
+        );
+        assert!(outcome.total_snipped > 0);
     }
 
     #[test]

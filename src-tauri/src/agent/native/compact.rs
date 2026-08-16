@@ -11,7 +11,23 @@
 //! Rewritten originals are archived to `archive/<ts>.jsonl` so the read-only
 //! `history` tool can BM25-search them later. `context_window = 0` disables
 //! compression entirely.
+//!
+//! Channel rules (which messages each pass may touch):
+//! - `compact` / prose-fold: never rewrite the protected head or the last
+//!   [`KEEP_TAIL_MESSAGES`] messages.
+//! - `snip_tool_results` (Snip tier and last-resort): may truncate any tool
+//!   result, including the tail, so one oversized result cannot deadlock
+//!   the budget.
+//! - `snip_oversized_text` (last-resort only): may truncate giant user /
+//!   assistant prose, including the tail. System, working-memory, and
+//!   summary blocks stay intact.
+//! - `replace_prefix_with_summary`: archives the rewritable prefix
+//!   (including a previous summary slot) then splices; tail is kept.
+//!   Archive is written first; a write failure leaves the transcript
+//!   unchanged.
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use super::memory;
@@ -37,10 +53,80 @@ pub fn estimate_tokens(messages: &[ChatMessage]) -> u64 {
 }
 
 fn estimate_one(msg: &ChatMessage) -> u64 {
-    let bytes = serde_json::to_vec(msg).map(|v| v.len()).unwrap_or(0) as u64;
+    let bytes = message_wire_bytes(msg);
     let json_est = bytes / 4;
     let extra = msg.content.as_ref().map(cjk_extra_tokens).unwrap_or(0);
     json_est.saturating_add(extra)
+}
+
+fn message_wire_bytes(msg: &ChatMessage) -> u64 {
+    match serde_json::to_vec(msg) {
+        Ok(v) => v.len() as u64,
+        Err(_) => {
+            // Never report 0 on a serialize failure: that silently under-counts
+            // and can skip compression for a transcript that is already huge.
+            let mut n = msg.role.len() as u64;
+            if let Some(content) = &msg.content {
+                n = n.saturating_add(match content {
+                    Content::Text(s) => s.len() as u64,
+                    Content::Parts(parts) => parts
+                        .iter()
+                        .map(|p| p.text.as_ref().map(|t| t.len()).unwrap_or(0) as u64)
+                        .sum(),
+                });
+            }
+            n.max(1)
+        }
+    }
+}
+
+/// Reuses the last estimate when the transcript fingerprint is unchanged.
+/// The budget loop can call this several times per turn; hashing content is
+/// cheaper than re-serializing every message to JSON.
+#[derive(Debug, Default)]
+pub struct TokenEstimateCache {
+    fingerprint: Option<u64>,
+    tokens: u64,
+}
+
+impl TokenEstimateCache {
+    pub fn estimate(&mut self, messages: &[ChatMessage]) -> u64 {
+        let fp = fingerprint_messages(messages);
+        if self.fingerprint == Some(fp) {
+            return self.tokens;
+        }
+        let tokens = estimate_tokens(messages);
+        self.fingerprint = Some(fp);
+        self.tokens = tokens;
+        tokens
+    }
+}
+
+fn fingerprint_messages(messages: &[ChatMessage]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    messages.len().hash(&mut hasher);
+    for msg in messages {
+        msg.role.hash(&mut hasher);
+        msg.tool_call_id.hash(&mut hasher);
+        match &msg.content {
+            Some(Content::Text(s)) => s.hash(&mut hasher),
+            Some(Content::Parts(parts)) => {
+                for part in parts {
+                    part.typ.hash(&mut hasher);
+                    part.text.hash(&mut hasher);
+                }
+            }
+            None => {}
+        }
+        if let Some(calls) = &msg.tool_calls {
+            for call in calls {
+                call.id.hash(&mut hasher);
+                call.function.name.hash(&mut hasher);
+                call.function.arguments.hash(&mut hasher);
+            }
+        }
+    }
+    hasher.finish()
 }
 
 fn cjk_extra_tokens(content: &Content) -> u64 {
@@ -152,23 +238,55 @@ fn snip_string(s: &mut String, keep_chars: usize) -> bool {
     true
 }
 
-/// Tier 2/3: rewrite the old prefix. Returns the pre-rewrite copies of every
-/// modified message (for archiving). Pairing invariant: a `tool` message is
-/// only touched together with its owning assistant `tool_calls` turn — both
-/// stay in place, only their payloads shrink, so ids keep matching.
-pub fn compact(messages: &mut [ChatMessage], force: bool) -> Vec<ChatMessage> {
-    let mut archived: Vec<ChatMessage> = Vec::new();
+/// Last-resort: truncate giant user / assistant prose so a single oversized
+/// paste cannot permanently deadlock the budget. System, working-memory,
+/// summary, and tool messages are left to their own channels.
+pub fn snip_oversized_text(messages: &mut [ChatMessage]) -> usize {
+    let mut changed = 0usize;
+    for msg in messages.iter_mut() {
+        if msg.role != "user" && msg.role != "assistant" {
+            continue;
+        }
+        if is_working_memory(msg) || is_summary(msg) {
+            continue;
+        }
+        if msg.tool_calls.is_some() {
+            continue;
+        }
+        let Some(Content::Text(content)) = msg.content.as_mut() else {
+            continue;
+        };
+        if content.starts_with("[snipped") || content.starts_with("[compacted") {
+            continue;
+        }
+        if snip_string(content, FORCE_SNIP_KEEP_CHARS) {
+            changed += 1;
+        }
+    }
+    changed
+}
+
+struct CompactEdit {
+    index: usize,
+    original: ChatMessage,
+    new_content: Content,
+}
+
+/// Plan compact mutations without applying them so callers can archive the
+/// originals first. Pairing invariant: a `tool` message is only touched
+/// together with its owning assistant `tool_calls` turn — both stay in
+/// place, only their payloads shrink, so ids keep matching.
+fn collect_compact_edits(messages: &[ChatMessage], force: bool) -> Vec<CompactEdit> {
+    let mut edits = Vec::new();
     let head = protected_head_len(messages);
     if messages.len() <= KEEP_TAIL_MESSAGES + head {
-        return archived; // nothing outside the protected tail
+        return edits;
     }
     let boundary = messages.len() - KEEP_TAIL_MESSAGES;
 
-    // First fold old assistant prose (force tier), then snip tool results
-    // inside the rewritable region.
-    for (idx, msg) in messages.iter_mut().enumerate() {
+    for (idx, msg) in messages.iter().enumerate() {
         if idx < head || idx >= boundary {
-            continue; // system / memory / summary + recent tail are untouchable
+            continue;
         }
         if is_working_memory(msg) || is_summary(msg) {
             continue;
@@ -181,52 +299,94 @@ pub fn compact(messages: &mut [ChatMessage], force: bool) -> Vec<ChatMessage> {
                 .map(|c| !c.starts_with("[compacted"))
                 .unwrap_or(false);
             if should_fold {
-                archived.push(msg.clone());
                 let chars = msg.content.as_ref().map(Content::text_len).unwrap_or(0);
-                msg.content = Some(Content::Text(format!(
-                    "[compacted: {chars} chars of earlier assistant prose]"
-                )));
+                edits.push(CompactEdit {
+                    index: idx,
+                    original: msg.clone(),
+                    new_content: Content::Text(format!(
+                        "[compacted: {chars} chars of earlier assistant prose]"
+                    )),
+                });
             }
         }
     }
 
-    // Snip tool results in the rewritable region only.
     let keep = if force {
         FORCE_SNIP_KEEP_CHARS
     } else {
         SNIP_KEEP_CHARS
     };
-    for (idx, msg) in messages.iter_mut().enumerate() {
+    for (idx, msg) in messages.iter().enumerate() {
         if idx < head || idx >= boundary || msg.role != "tool" {
             continue;
         }
-        let needs_snip = msg
-            .content
-            .as_ref()
-            .and_then(Content::as_text)
-            .map(|c| {
-                !c.starts_with(ERROR_PREFIX)
-                    && !c.starts_with("[snipped")
-                    && c.chars().count() > keep
-            })
-            .unwrap_or(false);
-        if !needs_snip {
-            continue; // KeepErrors + idempotence
+        let Some(before) = msg.content.as_ref().and_then(Content::as_text) else {
+            continue;
+        };
+        if before.starts_with(ERROR_PREFIX)
+            || before.starts_with("[snipped")
+            || before.chars().count() <= keep
+        {
+            continue;
         }
-        let before = msg
-            .content
-            .as_ref()
-            .and_then(Content::as_text)
-            .unwrap_or_default()
-            .to_string();
-        if let Some(Content::Text(content)) = msg.content.as_mut() {
-            snip_string(content, keep);
-        }
+        let mut snipped = before.to_string();
+        snip_string(&mut snipped, keep);
         let mut original = msg.clone();
-        original.content = Some(Content::Text(before));
-        archived.push(original);
+        original.content = Some(Content::Text(before.to_string()));
+        edits.push(CompactEdit {
+            index: idx,
+            original,
+            new_content: Content::Text(snipped),
+        });
     }
+    edits
+}
+
+fn apply_compact_edits(messages: &mut [ChatMessage], edits: &[CompactEdit]) {
+    for edit in edits {
+        if let Some(msg) = messages.get_mut(edit.index) {
+            msg.content = Some(edit.new_content.clone());
+        }
+    }
+}
+
+/// Tier 2/3: rewrite the old prefix. Returns the pre-rewrite copies of every
+/// modified message (for archiving).
+pub fn compact(messages: &mut [ChatMessage], force: bool) -> Vec<ChatMessage> {
+    let edits = collect_compact_edits(messages, force);
+    let archived: Vec<ChatMessage> = edits.iter().map(|e| e.original.clone()).collect();
+    apply_compact_edits(messages, &edits);
     archived
+}
+
+enum CompactArchiveResult {
+    NothingToDo,
+    Archived { folded: usize, path: PathBuf },
+    ArchiveFailed,
+}
+
+/// Archive planned compact edits, then apply them. A failed archive write
+/// leaves the transcript untouched so content is never destroyed without a
+/// disk copy.
+fn compact_after_archive(
+    messages: &mut [ChatMessage],
+    force: bool,
+    archive_dir: &Path,
+) -> CompactArchiveResult {
+    let edits = collect_compact_edits(messages, force);
+    if edits.is_empty() {
+        return CompactArchiveResult::NothingToDo;
+    }
+    let originals: Vec<ChatMessage> = edits.iter().map(|e| e.original.clone()).collect();
+    let Some(path) = archive(archive_dir, &originals) else {
+        log::warn!("refusing to compact: archive write failed, originals kept");
+        return CompactArchiveResult::ArchiveFailed;
+    };
+    apply_compact_edits(messages, &edits);
+    CompactArchiveResult::Archived {
+        folded: originals.len(),
+        path,
+    }
 }
 
 /// Writes archived (pre-rewrite) messages to `archive_dir/<timestamp>.jsonl`.
@@ -306,16 +466,29 @@ pub fn replace_prefix_with_summary(
         };
     }
     let boundary = messages.len() - KEEP_TAIL_MESSAGES;
-    let existing_summary = messages.get(keep).is_some_and(is_summary);
-    let prefix_start = if existing_summary { keep + 1 } else { keep };
-    if prefix_start >= boundary {
+    // Include a reused summary slot in the archived prefix so facts that only
+    // lived there are not silently dropped when the slot is overwritten.
+    if keep >= boundary {
         return SummarySplice {
             archive_file: None,
             archive_ref: None,
         };
     }
-    let prefix: Vec<ChatMessage> = messages[prefix_start..boundary].to_vec();
-    let archive_file = archive(archive_dir, &prefix);
+    let prefix: Vec<ChatMessage> = messages[keep..boundary].to_vec();
+    if prefix.is_empty() {
+        return SummarySplice {
+            archive_file: None,
+            archive_ref: None,
+        };
+    }
+    let Some(archive_file) = archive(archive_dir, &prefix) else {
+        // Do not splice away the prefix if the original could not be saved.
+        return SummarySplice {
+            archive_file: None,
+            archive_ref: None,
+        };
+    };
+    let archive_file = Some(archive_file);
     let archive_ref = archive_file
         .as_ref()
         .and_then(|p| p.file_name().and_then(|s| s.to_str()).map(String::from));
@@ -362,11 +535,18 @@ pub fn maybe_compress(
             None
         }
         CompactLevel::Compact | CompactLevel::Force => {
-            let removed = compact(messages, matches!(level, CompactLevel::Force));
-            let path = archive(archive_dir, &removed);
-            // Snipping may still be needed after folding.
-            snip_tool_results(messages, matches!(level, CompactLevel::Force));
-            path
+            let force = matches!(level, CompactLevel::Force);
+            match compact_after_archive(messages, force, archive_dir) {
+                CompactArchiveResult::Archived { path, .. } => {
+                    snip_tool_results(messages, force);
+                    Some(path)
+                }
+                CompactArchiveResult::NothingToDo => {
+                    snip_tool_results(messages, force);
+                    None
+                }
+                CompactArchiveResult::ArchiveFailed => None,
+            }
         }
     }
 }
@@ -436,17 +616,23 @@ pub fn step(
                 archive_file: None,
             }
         }
-        CompactLevel::Compact | CompactLevel::Force => {
-            let removed = compact(messages, force);
-            let folded = removed.len();
-            let archive_file = archive(archive_dir, &removed);
-            let snipped = snip_tool_results(messages, force);
-            StepOutcome {
-                snipped,
+        CompactLevel::Compact | CompactLevel::Force => match compact_after_archive(
+            messages,
+            force,
+            archive_dir,
+        ) {
+            CompactArchiveResult::Archived { folded, path } => StepOutcome {
+                snipped: snip_tool_results(messages, force),
                 folded,
-                archive_file,
-            }
-        }
+                archive_file: Some(path),
+            },
+            CompactArchiveResult::NothingToDo => StepOutcome {
+                snipped: snip_tool_results(messages, force),
+                folded: 0,
+                archive_file: None,
+            },
+            CompactArchiveResult::ArchiveFailed => StepOutcome::default(),
+        },
     }
 }
 
@@ -724,6 +910,11 @@ mod tests {
             tmp.path(),
         );
         assert!(splice.archive_file.is_some());
+        let archived = std::fs::read_to_string(splice.archive_file.as_ref().unwrap()).unwrap();
+        assert!(
+            archived.contains("ship v1") && archived.contains("[nex:summary]"),
+            "reused summary slot must be archived, not dropped"
+        );
         // Still exactly one summary block at index 1.
         assert_eq!(
             msgs.iter()
@@ -793,6 +984,58 @@ mod tests {
             msgs[1].content.as_ref().and_then(Content::as_text),
             Some(rendered.as_str())
         );
+    }
+
+    #[test]
+    fn compact_refuses_to_rewrite_when_archive_fails() {
+        let tmp = tempfile::tempdir().unwrap();
+        let not_a_dir = tmp.path().join("blocked");
+        std::fs::write(&not_a_dir, b"not a directory").unwrap();
+        let big = "z".repeat(5000);
+        let mut msgs: Vec<ChatMessage> = vec![ChatMessage::system("sys")];
+        msgs.push(assistant_calls(&["a"]));
+        msgs.push(tool_msg("a", &big));
+        msgs.push(ChatMessage::assistant("old prose ".repeat(300)));
+        for i in 0..8 {
+            msgs.push(assistant_calls(&[&format!("p{i}")]));
+            msgs.push(tool_msg(&format!("p{i}"), &big));
+        }
+        let before = msgs
+            .iter()
+            .map(|m| {
+                m.content
+                    .as_ref()
+                    .and_then(Content::as_text)
+                    .unwrap_or("")
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        let outcome = step(&mut msgs, 100, StepTier::Force, &not_a_dir);
+        assert_eq!(outcome, StepOutcome::default());
+        let after = msgs
+            .iter()
+            .map(|m| {
+                m.content
+                    .as_ref()
+                    .and_then(Content::as_text)
+                    .unwrap_or("")
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(before, after, "failed archive must keep originals");
+    }
+
+    #[test]
+    fn token_cache_reuses_unchanged_transcript() {
+        let msgs = vec![ChatMessage::user("hello cache")];
+        let mut cache = TokenEstimateCache::default();
+        let first = cache.estimate(&msgs);
+        let second = cache.estimate(&msgs);
+        assert_eq!(first, second);
+        assert_eq!(first, estimate_tokens(&msgs));
+        let mut changed = msgs.clone();
+        changed.push(ChatMessage::assistant("more"));
+        assert_ne!(cache.estimate(&changed), first);
     }
 
     #[test]

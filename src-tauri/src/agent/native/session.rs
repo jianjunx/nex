@@ -35,7 +35,9 @@ const LEASE_PAUSE_ROUNDS: u32 = 16;
 /// let A→B→A→B reset the lease every turn.
 const SIGNATURE_WINDOW: usize = 8;
 /// Abort a hung provider stream if no chunk arrives within this idle window.
-const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+/// 60s is too tight for reasoners that hold the first token (or do not
+/// stream thinking). The timer resets on every chunk, including thoughts.
+const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 /// Subagent final answers larger than this go to disk behind a stable ref.
 const SUBAGENT_INLINE_LIMIT: usize = 20_000;
 
@@ -374,7 +376,10 @@ pub async fn run_turn(
                     }
                     emit_text(
                         env,
-                        "模型流超过 60 秒没有新的输出，本轮已中止。",
+                        &format!(
+                            "模型流超过 {} 秒没有新的输出，本轮已中止。",
+                            STREAM_IDLE_TIMEOUT.as_secs()
+                        ),
                     )
                     .await;
                     return acp::StopReason::EndTurn;

@@ -17,6 +17,22 @@ fn test_read_tree_respects_structure() {
 }
 
 #[test]
+fn test_read_tree_paths_are_unique() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join(".gitignore"), "target\n").unwrap();
+    fs::create_dir(dir.path().join("src")).unwrap();
+    fs::write(dir.path().join("src/.gitignore"), "*.o\n").unwrap();
+    fs::write(dir.path().join("src/App.tsx"), "export {}\n").unwrap();
+
+    let nodes = read_tree(dir.path(), 2).unwrap();
+    let mut paths = nodes.iter().map(|n| n.path.as_str()).collect::<Vec<_>>();
+    paths.sort();
+    let mut deduped = paths.clone();
+    deduped.dedup();
+    assert_eq!(paths, deduped, "file tree must not emit duplicate paths: {paths:?}");
+}
+
+#[test]
 fn test_write_file_atomic_round_trip() {
     let dir = tempdir().unwrap();
     let file_name = format!("nex-write-test-{}.txt", std::process::id());

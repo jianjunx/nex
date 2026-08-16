@@ -385,6 +385,14 @@ export const useFsStore = create<FsStore>()(
       set((s) => { s.loading = true; s.error = null; });
       try {
         const result = await fsReadFile(filePath);
+        if (get().openFiles.some((f) => f.path === filePath)) {
+          set((s) => {
+            s.activePath = filePath;
+            if (line != null) s.pendingLine = { path: filePath, line };
+          });
+          useUiStore.getState().setEditorVisible(true);
+          return;
+        }
         if (!pin) {
           // Preview mode: replace the first unpinned tab if one exists.
           const previewIndex = get().openFiles.findIndex((f) => !f.pinned);

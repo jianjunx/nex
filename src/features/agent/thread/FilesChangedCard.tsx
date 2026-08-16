@@ -73,7 +73,7 @@ export function FilesChangedCard({ files }: { files: ChangedFile[] }) {
         {files.map((f) => {
           const name = fileBasename(f.path);
           return (
-            <li key={f.path}>
+            <li key={f.path.replace(/\\/g, "/")}>
               <button
                 type="button"
                 title={f.path}

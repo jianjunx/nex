@@ -12,6 +12,12 @@ import { parentDirOf, resolveDirDropTarget } from "../../lib/dropTargets";
 import { usePointerDrag } from "../../lib/usePointerDrag";
 import { attachToComposer } from "../../lib/composerAttach";
 
+function uniqueByPath<T extends { path: string }>(nodes: T[] | undefined): T[] {
+  if (!nodes || nodes.length === 0) return [];
+  const seen = new Set<string>();
+  return nodes.filter((n) => (seen.has(n.path) ? false : (seen.add(n.path), true)));
+}
+
 // Stable action references (zustand actions never change identity): passing
 // these down instead of re-created closures lets memo() actually skip work.
 const fsActions = {
@@ -324,7 +330,7 @@ function TreeNode({
               onDone={(name) => onCreatingDone(name, node.path)}
             />
           )}
-          {children?.map((child) => (
+          {uniqueByPath(children).map((child) => (
             <MemoTreeNode
               key={child.path}
               node={child}

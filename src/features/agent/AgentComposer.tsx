@@ -99,8 +99,9 @@ function dedupeMentionHits(hits: SearchMatch[]): SearchMatch[] {
     return an - bn;
   });
   for (const h of ordered) {
-    if (seen.has(h.path)) continue;
-    seen.add(h.path);
+    const key = h.path.replace(/\\/g, "/").toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
     out.push(h);
   }
   return out;

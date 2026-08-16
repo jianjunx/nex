@@ -206,7 +206,7 @@ function ChangeTreeView({ projectPath, files, busy, onDiscard }: ChangeTreeViewP
           <>
             {dir.dirs.map((d) => renderDir(d, depth + 1))}
             {dir.files.map((f) => (
-              <div key={f.path} style={{ paddingLeft: (depth + 1) * 12 }}>
+              <div key={`${f.staged ? "s" : "u"}:${f.path}`} style={{ paddingLeft: (depth + 1) * 12 }}>
                 <FileRow
                   projectPath={projectPath}
                   file={f}
@@ -226,7 +226,7 @@ function ChangeTreeView({ projectPath, files, busy, onDiscard }: ChangeTreeViewP
     <div>
       {tree.dirs.map((d) => renderDir(d, 0))}
       {tree.files.map((f) => (
-        <FileRow key={f.path} projectPath={projectPath} file={f} display={f.path} busy={busy} onDiscard={onDiscard} />
+        <FileRow key={`${f.staged ? "s" : "u"}:${f.path}`} projectPath={projectPath} file={f} display={f.path} busy={busy} onDiscard={onDiscard} />
       ))}
     </div>
   );
@@ -322,7 +322,7 @@ function FileGroup({ projectPath, title, files, staged, busy, treeView, onDiscar
           <ChangeTreeView projectPath={projectPath} files={files} busy={busy} onDiscard={onDiscard} />
         ) : (
           files.map((f) => (
-            <FileRow key={f.path} projectPath={projectPath} file={f} display={f.path} busy={busy} onDiscard={onDiscard} />
+            <FileRow key={`${f.staged ? "s" : "u"}:${f.path}`} projectPath={projectPath} file={f} display={f.path} busy={busy} onDiscard={onDiscard} />
           ))
         ))}
     </div>

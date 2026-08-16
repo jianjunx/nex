@@ -351,7 +351,7 @@ pub async fn run_turn(
         let mut rx = match env.provider.stream(request).await {
             Ok(rx) => rx,
             Err(e) => {
-                emit_text(env, &format!("模型请求失败：{e}")).await;
+                emit_text(env, &format!("模型请求失败：{}", e.user_message())).await;
                 return acp::StopReason::EndTurn;
             }
         };

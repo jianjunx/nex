@@ -37,6 +37,63 @@ pub fn openai_endpoint(base_url: &str, path: &str) -> String {
     format!("{base}/{path}")
 }
 
+/// Map an OpenAI-compatible HTTP error into a short, actionable message.
+///
+/// DeepSeek and many `/v1` gateways return `402` + `Insufficient Balance`
+/// (or a 400 with the same body). Dumping the raw JSON into the transcript
+/// is not useful; billing / auth failures need a recharge-or-check-key hint.
+pub fn format_model_http_error(status: reqwest::StatusCode, body: &str) -> String {
+    let code = status.as_u16();
+    let provider_msg = extract_provider_error_message(body);
+    if is_billing_error(status, body) {
+        return format!("账户余额不足（HTTP {code}）。请到模型供应商控制台充值后再试。");
+    }
+    match code {
+        401 => "API Key 无效或已过期，请在设置中检查密钥。".into(),
+        403 => "没有访问该模型的权限，请检查 API Key 或模型开通状态。".into(),
+        404 => "模型或接口不存在，请检查供应商地址和模型 ID。".into(),
+        429 => "请求过于频繁，请稍后再试。".into(),
+        500..=599 => format!("模型服务暂时不可用（HTTP {code}），请稍后重试。"),
+        _ if !provider_msg.is_empty() => format!("模型接口返回 HTTP {code}：{provider_msg}"),
+        _ => format!("模型接口返回 HTTP {code}"),
+    }
+}
+
+/// True for payment / quota failures (DeepSeek `402`, or a 4xx whose body
+/// names insufficient balance / credits).
+pub fn is_billing_error(status: reqwest::StatusCode, body: &str) -> bool {
+    if status.as_u16() == 402 {
+        return true;
+    }
+    let lower = extract_provider_error_message(body).to_ascii_lowercase();
+    let hay = if lower.is_empty() {
+        body.to_ascii_lowercase()
+    } else {
+        lower
+    };
+    (hay.contains("insufficient")
+        && (hay.contains("balance") || hay.contains("credit") || hay.contains("quota")))
+        || hay.contains("余额不足")
+        || hay.contains("欠费")
+}
+
+fn extract_provider_error_message(body: &str) -> String {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        for pointer in ["/error/message", "/message", "/error/msg"] {
+            if let Some(s) = v.pointer(pointer).and_then(|m| m.as_str()).map(str::trim) {
+                if !s.is_empty() {
+                    return s.to_string();
+                }
+            }
+        }
+    }
+    trimmed.chars().take(160).collect()
+}
+
 /// Reasoning-effort hint forwarded to the provider.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -421,6 +478,39 @@ pub trait Provider: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn format_model_http_error_maps_deepseek_402() {
+        let body = r#"{"error":{"message":"Insufficient Balance","type":"unknown_error","param":null,"code":"invalid_request_error"}}"#;
+        let msg = format_model_http_error(reqwest::StatusCode::PAYMENT_REQUIRED, body);
+        assert!(msg.contains("余额不足"), "{msg}");
+        assert!(!msg.contains("invalid_request_error"), "{msg}");
+        assert!(is_billing_error(reqwest::StatusCode::PAYMENT_REQUIRED, body));
+    }
+
+    #[test]
+    fn format_model_http_error_maps_400_insufficient_balance() {
+        let body = r#"{"error":{"message":"Insufficient Balance"}}"#;
+        assert!(is_billing_error(reqwest::StatusCode::BAD_REQUEST, body));
+        let msg = format_model_http_error(reqwest::StatusCode::BAD_REQUEST, body);
+        assert!(msg.contains("余额不足"), "{msg}");
+    }
+
+    #[test]
+    fn format_model_http_error_extracts_json_message() {
+        let msg = format_model_http_error(
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"error":{"message":"bad api key"}}"#,
+        );
+        assert!(msg.contains("400"), "{msg}");
+        assert!(msg.contains("bad api key"), "{msg}");
+    }
+
+    #[test]
+    fn format_model_http_error_maps_401() {
+        let msg = format_model_http_error(reqwest::StatusCode::UNAUTHORIZED, "");
+        assert!(msg.contains("API Key"), "{msg}");
+    }
 
     #[test]
     fn openai_endpoint_injects_v1_when_missing() {

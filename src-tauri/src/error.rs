@@ -27,6 +27,16 @@ pub enum NexError {
     Internal(String),
 }
 
+impl NexError {
+    /// Transcript / toast text without the `Agent error:` Display prefix.
+    pub fn user_message(&self) -> String {
+        match self {
+            NexError::Agent(s) => s.clone(),
+            other => other.to_string(),
+        }
+    }
+}
+
 impl From<rusqlite::Error> for NexError {
     fn from(e: rusqlite::Error) -> Self {
         NexError::Database(e.to_string())

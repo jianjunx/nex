@@ -152,9 +152,8 @@ impl DeepSeekProvider {
                 attempt += 1;
                 continue;
             }
-            return Err(NexError::Agent(format!(
-                "model API error {status}: {}",
-                truncate(&err_text, 500)
+            return Err(NexError::Agent(super::format_model_http_error(
+                status, &err_text,
             )));
         }
     }
@@ -292,14 +291,6 @@ async fn pump_sse(
     });
     let _ = tx.send(Chunk::Done { stop_reason, usage });
     Ok(())
-}
-
-fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        s.chars().take(max).collect::<String>() + "…"
-    }
 }
 
 /// Accumulates split tool-call deltas keyed by their stream `index`.

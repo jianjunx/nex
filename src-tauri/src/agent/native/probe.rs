@@ -8,7 +8,7 @@ use super::capabilities::{
     apply_reasoning_ladder, detect, uses_binary_thinking_toggle, uses_deepseek_thinking_toggle,
 };
 use super::config::{ModelEntry, ReasoningSource, ReasoningSupport};
-use super::provider::openai_endpoint;
+use super::provider::{is_billing_error, openai_endpoint};
 use crate::error::NexError;
 
 /// Effort wire values to probe (excludes `off`, which is synthesized).
@@ -226,6 +226,11 @@ async fn send_probe(
 
     let status = resp.status();
     let text = resp.text().await.unwrap_or_default();
+    if is_billing_error(status, &text) {
+        return Err(NexError::Agent(
+            "账户余额不足，请到模型供应商控制台充值后再试。".into(),
+        ));
+    }
     Ok(classify(status, &text, effort))
 }
 
@@ -271,7 +276,7 @@ fn classify(status: reqwest::StatusCode, body: &str, effort: Option<&str>) -> Ou
             return Outcome::RejectedValue;
         }
     }
-    if status.is_server_error() || code == 429 {
+    if status.is_server_error() || code == 429 || code == 402 {
         return Outcome::Transient;
     }
     if status.is_client_error() {
@@ -314,5 +319,13 @@ mod tests {
             classify(reqwest::StatusCode::OK, "{}", Some("high")),
             Outcome::Accepted
         );
+    }
+
+    #[test]
+    fn billing_402_is_detected_before_classify() {
+        assert!(is_billing_error(
+            reqwest::StatusCode::PAYMENT_REQUIRED,
+            r#"{"error":{"message":"Insufficient Balance"}}"#
+        ));
     }
 }

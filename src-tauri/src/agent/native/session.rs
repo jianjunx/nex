@@ -17,8 +17,8 @@ use std::time::Duration;
 use agent_client_protocol::{self as acp};
 
 use super::provider::{
-    ChatMessage, ChatRequest, ChatToolCall, ChatToolCallFunction, Chunk, Content, NativeToolCall,
-    Provider, ReasoningControl, StopReasonKind, ToolSpec, Usage,
+    ensure_unique_tool_call_ids, ChatMessage, ChatRequest, ChatToolCall, ChatToolCallFunction,
+    Chunk, Content, NativeToolCall, Provider, ReasoningControl, StopReasonKind, ToolSpec, Usage,
 };
 use super::stats;
 use super::tools::todo::{parse_todos, TodoStatus};
@@ -320,6 +320,11 @@ pub async fn run_turn(
         if wrap_up {
             messages.push(ChatMessage::user(MAX_STEPS_PROMPT));
         }
+
+        // Heal empty / reused tool-call ids before the wire request. Models and
+        // resumed archives sometimes repeat ids; OpenAI-compatible gateways
+        // reject those with a 400 (`Duplicate value for 'tool_call_id'`).
+        ensure_unique_tool_call_ids(messages);
 
         let request = ChatRequest {
             model: env.model.clone(),

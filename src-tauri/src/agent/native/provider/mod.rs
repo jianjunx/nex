@@ -304,6 +304,54 @@ impl ChatMessage {
     }
 }
 
+/// Rewrites empty or duplicate tool-call ids so OpenAI-compatible gateways
+/// accept the transcript (`Duplicate value for 'tool_call_id'` 400s).
+///
+/// Walks assistant `tool_calls` in order; when an id is blank or already seen
+/// earlier in the transcript, assigns a fresh `call_<uuid>` and rewrites the
+/// immediately following `role=tool` results **by position** so pairing stays
+/// intact. Stable ids that are already unique are left unchanged.
+pub fn ensure_unique_tool_call_ids(messages: &mut [ChatMessage]) {
+    use std::collections::HashSet;
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut i = 0;
+    while i < messages.len() {
+        let Some(calls) = messages[i].tool_calls.as_mut() else {
+            i += 1;
+            continue;
+        };
+        let mut new_ids: Vec<String> = Vec::with_capacity(calls.len());
+        for call in calls.iter_mut() {
+            let trimmed = call.id.trim();
+            let id = if trimmed.is_empty() || seen.contains(trimmed) {
+                fresh_tool_call_id(&seen)
+            } else {
+                trimmed.to_string()
+            };
+            seen.insert(id.clone());
+            call.id = id.clone();
+            new_ids.push(id);
+        }
+        let mut j = i + 1;
+        let mut k = 0;
+        while j < messages.len() && k < new_ids.len() && messages[j].role == "tool" {
+            messages[j].tool_call_id = Some(new_ids[k].clone());
+            k += 1;
+            j += 1;
+        }
+        i += 1;
+    }
+}
+
+fn fresh_tool_call_id(seen: &std::collections::HashSet<String>) -> String {
+    loop {
+        let id = format!("call_{}", uuid::Uuid::new_v4().simple());
+        if !seen.contains(&id) {
+            return id;
+        }
+    }
+}
+
 /// A tool call as serialized on the OpenAI wire.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatToolCall {
@@ -402,6 +450,78 @@ mod tests {
             ),
             "https://api.openai.com/v1/chat/completions"
         );
+    }
+
+    fn tool_call(id: &str, name: &str) -> ChatToolCall {
+        ChatToolCall {
+            id: id.into(),
+            typ: "function".into(),
+            function: ChatToolCallFunction {
+                name: name.into(),
+                arguments: "{}".into(),
+            },
+        }
+    }
+
+    #[test]
+    fn ensure_unique_tool_call_ids_rewrites_empty_and_reused() {
+        let mut msgs = vec![
+            ChatMessage::system("sys"),
+            ChatMessage::assistant_tool_calls(vec![tool_call("call_a", "read_file")], None),
+            ChatMessage::tool_result("call_a", "ok"),
+            ChatMessage::assistant_tool_calls(
+                vec![
+                    tool_call("", "ls"),
+                    tool_call("call_a", "grep"), // reused from prior turn
+                    tool_call("dup", "bash"),
+                    tool_call("dup", "read_file"), // duplicate within round
+                ],
+                None,
+            ),
+            ChatMessage::tool_result("", "a"),
+            ChatMessage::tool_result("call_a", "b"),
+            ChatMessage::tool_result("dup", "c"),
+            ChatMessage::tool_result("dup", "d"),
+        ];
+        ensure_unique_tool_call_ids(&mut msgs);
+
+        let first = msgs[1].tool_calls.as_ref().unwrap();
+        assert_eq!(first[0].id, "call_a");
+        assert_eq!(msgs[2].tool_call_id.as_deref(), Some("call_a"));
+
+        let second = msgs[3].tool_calls.as_ref().unwrap();
+        assert!(!second[0].id.trim().is_empty());
+        assert_ne!(second[1].id, "call_a");
+        assert_eq!(second[2].id, "dup");
+        assert_ne!(second[3].id, "dup");
+        let ids: Vec<&str> = second.iter().map(|c| c.id.as_str()).collect();
+        let unique: std::collections::HashSet<_> = ids.iter().copied().collect();
+        assert_eq!(unique.len(), 4);
+        for (i, msg) in msgs[4..8].iter().enumerate() {
+            assert_eq!(msg.tool_call_id.as_deref(), Some(second[i].id.as_str()));
+        }
+        assert!(!ids.contains(&"call_a"));
+    }
+
+    #[test]
+    fn ensure_unique_tool_call_ids_is_noop_for_unique_ids() {
+        let mut msgs = vec![
+            ChatMessage::assistant_tool_calls(vec![tool_call("a", "ls")], None),
+            ChatMessage::tool_result("a", "ok"),
+            ChatMessage::assistant_tool_calls(vec![tool_call("b", "ls")], None),
+            ChatMessage::tool_result("b", "ok"),
+        ];
+        ensure_unique_tool_call_ids(&mut msgs);
+        assert_eq!(
+            msgs[0].tool_calls.as_ref().unwrap()[0].id,
+            "a"
+        );
+        assert_eq!(msgs[1].tool_call_id.as_deref(), Some("a"));
+        assert_eq!(
+            msgs[2].tool_calls.as_ref().unwrap()[0].id,
+            "b"
+        );
+        assert_eq!(msgs[3].tool_call_id.as_deref(), Some("b"));
     }
 
     #[test]

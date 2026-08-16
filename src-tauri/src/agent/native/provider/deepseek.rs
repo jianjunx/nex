@@ -334,6 +334,10 @@ impl ToolAccumulator {
     fn drain(&mut self) -> Result<Vec<NativeToolCall>, String> {
         let mut out: Vec<(u32, PartialCall)> = self.calls.drain().collect();
         out.sort_by_key(|(idx, _)| *idx);
+        // Gateways reject empty / duplicate `tool_call_id` values (400). Some
+        // models emit `id: ""` or reuse the same id for parallel calls; treat
+        // blank as missing and uniquify within this round.
+        let mut used = std::collections::HashSet::new();
         out.into_iter()
             .map(|(index, p)| {
                 let name = p
@@ -351,8 +355,16 @@ impl ToolAccumulator {
                         "tool call `{name}` arguments must be a JSON object"
                     ));
                 }
+                let mut id = p
+                    .id
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                if !used.insert(id.clone()) {
+                    id = uuid::Uuid::new_v4().to_string();
+                    used.insert(id.clone());
+                }
                 Ok(NativeToolCall {
-                    id: p.id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                    id,
                     name,
                     arguments: args,
                 })
@@ -542,6 +554,45 @@ mod tests {
         assert_eq!(calls[0].name, "read_file");
         assert_eq!(calls[0].id, "call_1");
         assert_eq!(calls[0].arguments["path"], "a.rs");
+    }
+
+    #[test]
+    fn accumulator_replaces_empty_and_duplicate_ids() {
+        let mut acc = ToolAccumulator::default();
+        acc.absorb(vec![
+            SseToolCallDelta {
+                index: 0,
+                id: Some("".into()),
+                function: Some(SseFunctionDelta {
+                    name: Some("read_file".into()),
+                    arguments: "{}".into(),
+                }),
+            },
+            SseToolCallDelta {
+                index: 1,
+                id: Some("same".into()),
+                function: Some(SseFunctionDelta {
+                    name: Some("ls".into()),
+                    arguments: "{}".into(),
+                }),
+            },
+            SseToolCallDelta {
+                index: 2,
+                id: Some("same".into()),
+                function: Some(SseFunctionDelta {
+                    name: Some("grep".into()),
+                    arguments: "{}".into(),
+                }),
+            },
+        ]);
+        let calls = acc.drain().unwrap();
+        assert_eq!(calls.len(), 3);
+        assert!(!calls[0].id.trim().is_empty());
+        assert_eq!(calls[1].id, "same");
+        assert_ne!(calls[2].id, "same");
+        assert_ne!(calls[0].id, calls[1].id);
+        assert_ne!(calls[0].id, calls[2].id);
+        assert_ne!(calls[1].id, calls[2].id);
     }
 
     #[test]

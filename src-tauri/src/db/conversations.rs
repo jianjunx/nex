@@ -130,6 +130,33 @@ impl Database {
         Ok(())
     }
 
+    /// Remove one conversation and everything it owns (messages + thread
+    /// snapshots) in one transaction. This is used when the user closes a
+    /// conversation tab: unlike VS Code tabs, Nex tabs *are* the durable local
+    /// conversation objects, so closing one must not leave its history growing
+    /// forever in SQLite.
+    pub fn delete_conversation(&self, id: &str) -> Result<(), NexError> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM messages WHERE conversation_id = ?1",
+            params![id],
+        )?;
+        tx.execute(
+            "DELETE FROM thread_entries WHERE conversation_id = ?1",
+            params![id],
+        )?;
+        let n = tx.execute(
+            "DELETE FROM conversations WHERE id = ?1",
+            params![id],
+        )?;
+        tx.commit()?;
+        if n == 0 {
+            return Err(NexError::Database(format!("conversation not found: {id}")));
+        }
+        Ok(())
+    }
+
     /// Replace the whole persisted thread snapshot for `conversation_id`.
     ///
     /// We overwrite rather than do incremental patching because ThreadEntry
@@ -350,6 +377,53 @@ mod tests {
         assert!(!encoded.contains("TOOL-IMAGE-BASE64"));
         assert_eq!(scrubbed["imageCount"], 1);
         assert_eq!(scrubbed["nested"]["imageOmitted"], true);
+    }
+
+    #[test]
+    fn delete_conversation_removes_messages_and_thread_entries() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("nex.db");
+        let db = Database::new(&path).unwrap();
+
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO projects (id, name, path, created_at, last_opened) VALUES ('p', 'P', '/tmp/p', 1, 1)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO conversations (id, project_id, title, agent_type, status, created_at, updated_at) VALUES ('c', 'p', 'C', 'nex', 'idle', 1, 1)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO messages (id, conversation_id, role, content, tool_summary, timestamp, sequence) VALUES ('m', 'c', 'user', 'hello', NULL, 1, 1)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO thread_entries (id, conversation_id, kind, sequence, timestamp, payload_json) VALUES ('e', 'c', 'user_message', 0, 1, '{}')",
+                [],
+            )
+            .unwrap();
+        }
+
+        db.delete_conversation("c").unwrap();
+
+        let conn = db.conn.lock().unwrap();
+        let conv_exists: bool = conn
+            .query_row("SELECT EXISTS(SELECT 1 FROM conversations WHERE id = 'c')", [], |row| row.get(0))
+            .unwrap();
+        let msg_exists: bool = conn
+            .query_row("SELECT EXISTS(SELECT 1 FROM messages WHERE conversation_id = 'c')", [], |row| row.get(0))
+            .unwrap();
+        let thread_exists: bool = conn
+            .query_row("SELECT EXISTS(SELECT 1 FROM thread_entries WHERE conversation_id = 'c')", [], |row| row.get(0))
+            .unwrap();
+        assert!(!conv_exists);
+        assert!(!msg_exists);
+        assert!(!thread_exists);
     }
 
     #[test]

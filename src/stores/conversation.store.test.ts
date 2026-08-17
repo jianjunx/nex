@@ -4,6 +4,7 @@ const conversationCreate = vi.fn();
 const conversationList = vi.fn();
 const conversationGetMessages = vi.fn();
 const conversationUpdateTitle = vi.fn();
+const conversationDelete = vi.fn();
 const conversationAppendMessage = vi.fn();
 
 vi.mock("../bridge/tauri", () => ({
@@ -11,6 +12,7 @@ vi.mock("../bridge/tauri", () => ({
   conversationList: (...args: unknown[]) => conversationList(...args),
   conversationGetMessages: (...args: unknown[]) => conversationGetMessages(...args),
   conversationUpdateTitle: (...args: unknown[]) => conversationUpdateTitle(...args),
+  conversationDelete: (...args: unknown[]) => conversationDelete(...args),
   conversationAppendMessage: (...args: unknown[]) => conversationAppendMessage(...args),
 }));
 
@@ -112,6 +114,38 @@ describe("conversation.store project-scoped tabs", () => {
       "a2",
     ]);
     expect(useConversationStore.getState().activeTabByProject["proj-a"]).toBe("a3");
+  });
+
+  it("removeConversation 删除 SQLite 记录并清掉本地会话索引", async () => {
+    conversationDelete.mockResolvedValue(undefined);
+    useConversationStore.setState({
+      conversationsByProject: {
+        "proj-a": [
+          { id: "c1", project_id: "proj-a", title: "one", agent_type: "x", status: "idle", created_at: 0, updated_at: 0 },
+          { id: "c2", project_id: "proj-a", title: "two", agent_type: "x", status: "idle", created_at: 0, updated_at: 0 },
+        ],
+      },
+      tabsByProject: { "proj-a": ["c1", "c2"] },
+      activeTabByProject: { "proj-a": "c1" },
+      messagesByConversation: {
+        c1: [{ id: "m1", conversation_id: "c1", role: "user", content: "hi", tool_summary: null, timestamp: 1, sequence: 1 }],
+        c2: [{ id: "m2", conversation_id: "c2", role: "user", content: "yo", tool_summary: null, timestamp: 1, sequence: 1 }],
+      },
+    });
+
+    await useConversationStore.getState().removeConversation("c1");
+
+    expect(conversationDelete).toHaveBeenCalledWith("c1");
+    expect(useConversationStore.getState().conversationsByProject["proj-a"].map((c) => c.id)).toEqual(["c2"]);
+    expect(useConversationStore.getState().tabsByProject["proj-a"]).toEqual(["c2"]);
+    expect(useConversationStore.getState().activeTabByProject["proj-a"]).toBe("c2");
+    expect(useConversationStore.getState().messagesByConversation["c1"]).toBeUndefined();
+    expect(useConversationStore.getState().messagesByConversation["c2"]).toHaveLength(1);
+  });
+
+  it("removeConversation 不吞掉后端删除失败", async () => {
+    conversationDelete.mockRejectedValueOnce(new Error("delete failed"));
+    await expect(useConversationStore.getState().removeConversation("c1")).rejects.toThrow("delete failed");
   });
 
   it("loadConversations returns null on list failure", async () => {

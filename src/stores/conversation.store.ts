@@ -6,6 +6,7 @@ import {
   conversationList,
   conversationGetMessages,
   conversationUpdateTitle,
+  conversationDelete,
   conversationAppendMessage,
   type Conversation,
   type Message,
@@ -36,6 +37,8 @@ interface ConversationStore {
   createConversation: (projectId: string, agentType: string) => Promise<Conversation>;
   switchTab: (id: string) => void;
   closeTab: (id: string) => void;
+  /** Delete one conversation and all of its persisted local data. */
+  removeConversation: (conversationId: string) => Promise<void>;
   /** Drop all in-memory state for a removed project (tabs, messages, entries). */
   removeProjectData: (projectId: string) => void;
   /** Reorder open conversation tabs for the active project. */
@@ -224,6 +227,26 @@ export const useConversationStore = create<ConversationStore>()(
           s.tabsByProject[projectId] = tabs;
           if (s.activeTabByProject[projectId] === id) {
             s.activeTabByProject[projectId] = tabs[tabs.length - 1] || null;
+          }
+        });
+      },
+
+      removeConversation: async (conversationId) => {
+        await conversationDelete(conversationId);
+        clearComposerDraft(conversationId);
+        set((s) => {
+          delete s.messagesByConversation[conversationId];
+          for (const [projectId, list] of Object.entries(s.conversationsByProject)) {
+            const next = list.filter((c) => c.id !== conversationId);
+            if (next.length !== list.length) {
+              s.conversationsByProject[projectId] = next;
+              const tabs = (s.tabsByProject[projectId] ?? []).filter((t) => t !== conversationId);
+              s.tabsByProject[projectId] = tabs;
+              if (s.activeTabByProject[projectId] === conversationId) {
+                s.activeTabByProject[projectId] = tabs[tabs.length - 1] || null;
+              }
+              break;
+            }
           }
         });
       },

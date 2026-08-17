@@ -718,28 +718,31 @@ export const useAgentStore = create<AgentStore>()(
 
     removeSession: async (conversationId) => {
       const session = get().sessions[conversationId];
-      if (!session) return;
       set((s) => {
         clearConversationError(s, conversationId);
       });
       try {
-        if (session.sessionId) await agentCloseSession(session.sessionId);
+        if (session?.sessionId) await agentCloseSession(session.sessionId);
       } catch (err) {
         set((s) => {
           setConversationError(s, conversationId, errorMessage(err));
         });
       } finally {
+        const liveSessionId = session?.sessionId;
+        if (liveSessionId) {
+          pendingNotificationsBySessionId.delete(liveSessionId);
+        }
         set((s) => {
           delete s.sessions[conversationId];
           delete s.entriesByConversation[conversationId];
           delete s.metaByConversation[conversationId];
+          delete s.sessionPrefsByConversation[conversationId];
+          delete s.contextStatsByConversation[conversationId];
           // Drop queued-but-unsent messages and any permission queues so a
           // removed conversation leaves no orphaned state behind.
           delete s.pendingMessagesByConversation[conversationId];
           clearConversationError(s, conversationId);
-          const liveSessionId = session.sessionId;
           if (liveSessionId) {
-            pendingNotificationsBySessionId.delete(liveSessionId);
             clearSessionQueues(s, liveSessionId);
           }
         });
@@ -813,6 +816,8 @@ export const useAgentStore = create<AgentStore>()(
           delete s.entriesByConversation[id];
           delete s.metaByConversation[id];
           delete s.pendingMessagesByConversation[id];
+          delete s.sessionPrefsByConversation[id];
+          delete s.contextStatsByConversation[id];
           clearConversationError(s, id);
         }
       });

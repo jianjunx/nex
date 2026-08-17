@@ -88,6 +88,10 @@ export async function conversationUpdateTitle(conversationId: string, title: str
   return invoke(COMMANDS.CONVERSATION_UPDATE_TITLE, { conversationId, title });
 }
 
+export async function conversationDelete(conversationId: string): Promise<void> {
+  return invoke(COMMANDS.CONVERSATION_DELETE, { conversationId });
+}
+
 export async function conversationGetThreadEntries(conversationId: string): Promise<ThreadEntryPayloadDto[]> {
   return invoke(COMMANDS.CONVERSATION_GET_THREAD_ENTRIES, { conversationId });
 }

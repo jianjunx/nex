@@ -52,6 +52,11 @@ pub fn conversation_update_title(state: State<AppState>, conversation_id: String
 }
 
 #[tauri::command]
+pub fn conversation_delete(state: State<AppState>, conversation_id: String) -> Result<(), NexError> {
+    state.db.delete_conversation(&conversation_id)
+}
+
+#[tauri::command]
 pub fn conversation_append_message(
     state: State<AppState>,
     conversation_id: String,

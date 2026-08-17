@@ -34,7 +34,7 @@ export function AppLifecycleHost() {
   const consumeCloseTabRequest = useUiStore((s) => s.consumeCloseTabRequest);
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const activeTabId = useConversationStore((s) => selectProjectActiveTabId(s, activeProjectId));
-  const closeTab = useConversationStore((s) => s.closeTab);
+  const removeConversation = useConversationStore((s) => s.removeConversation);
   const sessions = useAgentStore((s) => s.sessions);
   const removeSession = useAgentStore((s) => s.removeSession);
 
@@ -107,7 +107,7 @@ export function AppLifecycleHost() {
           void (async () => {
             try {
               await removeSession(id);
-              closeTab(id);
+              await removeConversation(id);
             } finally {
               setClosingTab(false);
               setPendingCloseId(null);

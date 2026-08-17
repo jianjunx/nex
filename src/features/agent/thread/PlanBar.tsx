@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import type { PlanEntry } from "./types";
 
 export function PlanBar({ entries }: { entries: PlanEntry[] }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   if (entries.length === 0) return null;
 
   const completed = entries.filter((e) => e.status === "completed").length;

@@ -53,7 +53,7 @@ export function TopBar() {
   const activeTabId = useConversationStore((s) => selectProjectActiveTabId(s, activeProjectId));
   const conversationsByProject = useConversationStore((s) => s.conversationsByProject);
   const switchTab = useConversationStore((s) => s.switchTab);
-  const closeTab = useConversationStore((s) => s.closeTab);
+  const removeConversation = useConversationStore((s) => s.removeConversation);
   const reorderTabs = useConversationStore((s) => s.reorderTabs);
   const sessions = useAgentStore((s) => s.sessions);
   const removeSession = useAgentStore((s) => s.removeSession);
@@ -220,7 +220,7 @@ export function TopBar() {
           void (async () => {
             try {
               await removeSession(id);
-              closeTab(id);
+              await removeConversation(id);
             } finally {
               setClosing(false);
               setPendingCloseId(null);

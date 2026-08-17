@@ -12,6 +12,7 @@ const agentRespondPlan = vi.fn();
 const agentRespondAskQuestion = vi.fn();
 const agentSendPrompt = vi.fn().mockResolvedValue({ hadMutations: false });
 const agentCancel = vi.fn().mockResolvedValue(undefined);
+const agentCloseSession = vi.fn().mockResolvedValue(undefined);
 const conversationReplaceThreadEntries = vi.fn().mockResolvedValue(undefined);
 const nativeAgentGetConfig = vi.fn().mockResolvedValue({
   providers: [],
@@ -32,8 +33,9 @@ vi.mock("../bridge/tauri", () => ({
   agentRespondAskQuestion: (...args: unknown[]) => agentRespondAskQuestion(...args),
   agentSendPrompt: (...args: unknown[]) => agentSendPrompt(...args),
   agentCancel: (...args: unknown[]) => agentCancel(...args),
-  agentCloseSession: vi.fn(),
+  agentCloseSession: (...args: unknown[]) => agentCloseSession(...args),
   agentRefreshRegistry: vi.fn(),
+
   agentCustomUpsert: vi.fn(),
   agentCustomDelete: vi.fn(),
   conversationReplaceThreadEntries: (...args: unknown[]) => conversationReplaceThreadEntries(...args),
@@ -89,6 +91,7 @@ beforeEach(() => {
   useConversationStore.setState({ conversationsByProject: {} });
   agentSendPrompt.mockResolvedValue({ hadMutations: false });
   agentCancel.mockResolvedValue(undefined);
+  agentCloseSession.mockResolvedValue(undefined);
   agentRespondPlan.mockResolvedValue(undefined);
   agentRespondAskQuestion.mockResolvedValue(undefined);
   agentSetSessionMode.mockResolvedValue(undefined);
@@ -176,6 +179,69 @@ describe("agent.store conversation-scoped errors", () => {
     expect(useAgentStore.getState().errorsByConversation).toEqual({
       "conv-2": "conversation two failed",
     });
+  });
+});
+
+describe("agent.store removeSession cleanup", () => {
+  it("drops persisted/session-scoped leftovers when a conversation is closed", async () => {
+    useAgentStore.setState({
+      sessions: {
+        "conv-1": { sessionId: "sid-1", conversationId: "conv-1", status: "idle" },
+      },
+      entriesByConversation: {
+        "conv-1": [{ id: "e1", kind: "assistant_message", chunks: [{ type: "message", text: "done" }], timestamp: 1 }],
+      },
+      metaByConversation: {
+        "conv-1": {
+          modes: [],
+          currentModeId: null,
+          models: [],
+          currentModelId: null,
+          configOptions: [],
+          availableCommands: [],
+          plan: null,
+          contextUsage: null,
+        },
+      },
+      sessionPrefsByConversation: {
+        "conv-1": { modeId: "agent", authMode: "allow" },
+      },
+      contextStatsByConversation: {
+        "conv-1": {
+          schemaVersion: 1,
+          initialTokens: 1,
+          finalTokens: 1,
+          compactionPasses: 0,
+          snippedMessages: 0,
+          foldedMessages: 0,
+          archiveFilesWritten: 0,
+          toolResults: 0,
+          partialToolResults: 0,
+          cacheHitTokens: 0,
+          promptTokens: 0,
+          usedSummaryFallback: false,
+          overBudget: false,
+        },
+      },
+      pendingMessagesByConversation: {
+        "conv-1": [{ id: "p1", blocks: [{ type: "text", text: "queued" }], text: "queued" }],
+      },
+      errorsByConversation: {
+        "conv-1": "oops",
+      },
+    });
+
+    await useAgentStore.getState().removeSession("conv-1");
+
+    expect(agentCloseSession).toHaveBeenCalledWith("sid-1");
+    const state = useAgentStore.getState();
+    expect(state.sessions["conv-1"]).toBeUndefined();
+    expect(state.entriesByConversation["conv-1"]).toBeUndefined();
+    expect(state.metaByConversation["conv-1"]).toBeUndefined();
+    expect(state.sessionPrefsByConversation["conv-1"]).toBeUndefined();
+    expect(state.contextStatsByConversation["conv-1"]).toBeUndefined();
+    expect(state.pendingMessagesByConversation["conv-1"]).toBeUndefined();
+    expect(state.errorsByConversation["conv-1"]).toBeUndefined();
   });
 });
 

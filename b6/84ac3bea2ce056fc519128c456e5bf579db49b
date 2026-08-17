@@ -1,0 +1,35 @@
+src/commands/KeybindingHost.test.tsx
+  s_b92dbdf9691a99::t_f4a521f89cbe62 25,37,52,158-182
+src/commands/KeybindingHost.tsx
+  s_b92dbdf9691a99::t_69815b7a5c75de 7,44-53,79-83
+src/commands/registry.run.test.ts
+  s_b92dbdf9691a99::t_feac2f88401e80 10,15,22,43,51-52,145-175
+src/commands/registry.ts
+  s_b92dbdf9691a99::t_0c6f7fc7e70543 143-157
+src/features/editor/EditorPanel.line.test.tsx
+  s_b92dbdf9691a99::t_2e9101fd69987b 33,90,101-139
+src/features/editor/EditorPanel.tsx
+  s_b92dbdf9691a99::t_d53b993f379a8b 1,133,135-144,186-201,206-211,227-229
+src/features/files/FileTree.tsx
+  s_b92dbdf9691a99::t_2a1c8df890b0e6 205-221
+src/features/layout/TopBar.test.tsx
+  s_b92dbdf9691a99::t_0c25aad48eccf3 174-184
+src/features/layout/TopBar.tsx
+  s_b92dbdf9691a99::t_2bc20ff8495bf3 1,65-72,145-149
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "b684ac3bea2ce056fc519128c456e5bf579db49b",
+  "prompts": {},
+  "sessions": {
+    "s_b92dbdf9691a99": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_b92dbdf9691a99",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

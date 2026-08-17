@@ -153,6 +153,62 @@ describe("agent.store pending message bounds", () => {
     expect(state.pendingMessagesByConversation["conv-1"]).toHaveLength(1);
     expect(state.errorsByConversation["conv-1"]).toContain("等待发送的消息过多");
   });
+
+  it("busy 会话里的新问题只会排队，不会立刻发送（这会看起来像在继续回答上一题）", () => {
+    useAgentStore.setState({
+      sessions: {
+        "conv-1": { sessionId: "sid-1", conversationId: "conv-1", status: "running" },
+      },
+      pendingMessagesByConversation: {},
+      entriesByConversation: {
+        "conv-1": [{ id: "u1", kind: "user_message", text: "上一题", timestamp: 1 }],
+      },
+    });
+
+    // 模拟用户在旧任务仍 running 时发来一个新问题。正确行为不是立刻 sendPrompt，
+    // 而是先排队，等旧任务结束后 processNextPending 再发送。
+    useAgentStore.getState().enqueuePendingMessage(
+      "conv-1",
+      [{ type: "text", text: "新问题" }],
+      "新问题",
+    );
+
+    const state = useAgentStore.getState();
+    expect(agentSendPrompt).not.toHaveBeenCalled();
+    expect(state.pendingMessagesByConversation["conv-1"]).toHaveLength(1);
+    expect(state.pendingMessagesByConversation["conv-1"]?.[0]?.text).toBe("新问题");
+    // 线程里最后一条仍然是上一题，用户主观上会读成“AI还在答上一题”。
+    const lastEntry = state.entriesByConversation["conv-1"]?.[
+      (state.entriesByConversation["conv-1"]?.length ?? 1) - 1
+    ];
+    expect(lastEntry).toEqual(
+      expect.objectContaining({ kind: "user_message", text: "上一题" }),
+    );
+  });
+
+  it("切项目裁剪缓存时会保留 live 会话的线程，不会把正在运行的会话直接清空", () => {
+    useAgentStore.setState({
+      sessions: {
+        "conv-a": { sessionId: "sid-a", conversationId: "conv-a", status: "running" },
+      },
+      entriesByConversation: {
+        "conv-a": [{ id: "a1", kind: "user_message", text: "项目A在跑", timestamp: 1 }],
+        "conv-b": [{ id: "b1", kind: "user_message", text: "项目B历史", timestamp: 2 }],
+      },
+    });
+
+    // 模拟切到项目 B：keepIds 里只有 B 的 tab。正在运行的 A 仍应保留，
+    // 否则切回来会看到空线程，从而更像“回串/丢上下文”。
+    useAgentStore.getState().pruneEntriesExcept(new Set(["conv-b"]));
+
+    const state = useAgentStore.getState();
+    expect(state.entriesByConversation["conv-a"]).toEqual([
+      expect.objectContaining({ text: "项目A在跑" }),
+    ]);
+    expect(state.entriesByConversation["conv-b"]).toEqual([
+      expect.objectContaining({ text: "项目B历史" }),
+    ]);
+  });
 });
 
 describe("agent.store conversation-scoped errors", () => {

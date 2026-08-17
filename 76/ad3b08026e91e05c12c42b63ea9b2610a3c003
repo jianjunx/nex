@@ -1,0 +1,33 @@
+package.json
+  s_d9938680a60b4f::t_e17adef6380f34 59
+pnpm-lock.yaml
+  s_d9938680a60b4f::t_875e025255822c 131-133
+src/features/agent/thread/EntryView.tsx
+  s_d9938680a60b4f::t_af7246541783af 67-68,73,77-80,87
+src/features/agent/thread/types.ts
+  s_d9938680a60b4f::t_299766bc0b0900 84-85
+src/features/editor/format.test.ts
+  s_d9938680a60b4f::t_6308896ec34e9e 10-11,29-30,44,70-79
+src/features/editor/format.ts
+  s_d9938680a60b4f::t_da2b6355829ac5 9,16-17,22-23,29,50-55,75-88,133,202-205
+src/stores/agent.store.test.ts
+  s_d9938680a60b4f::t_cfc33d4ce4cd84 762-837
+src/stores/agent.store.ts
+  s_d9938680a60b4f::t_662e3119c982de 47,330-368,540,956-959,963-965,1044,1784-1787
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "76ad3b08026e91e05c12c42b63ea9b2610a3c003",
+  "prompts": {},
+  "sessions": {
+    "s_d9938680a60b4f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_d9938680a60b4f",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

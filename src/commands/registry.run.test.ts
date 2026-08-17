@@ -9,24 +9,37 @@ let setEditorVisible: ReturnType<typeof vi.fn>;
 let requestSearchFocus: ReturnType<typeof vi.fn>;
 let requestCloseActiveTab: ReturnType<typeof vi.fn>;
 let fsState: {
-  openFiles: { path: string; dirty: boolean }[];
+  openFiles: { path: string; dirty: boolean; isText?: boolean; diff?: unknown; draft?: string }[];
   activePath: string | null;
   saveFile: ReturnType<typeof vi.fn>;
   closeFile: ReturnType<typeof vi.fn>;
+  setDraft: ReturnType<typeof vi.fn>;
+  error?: string | null;
 };
+
 let findBarOpen = false;
+let currentView: { state: { doc: { length: number }; selection: { main: { from: number; to: number } } }; dispatch: ReturnType<typeof vi.fn> } | null = null;
 let projectState: { projects: { id: string; path: string }[]; activeProjectId: string | null };
 let gitCmdState: { commitWith: ReturnType<typeof vi.fn> };
+const canFormatPath = vi.fn((path: string) => /\.(ts|tsx|js|jsx|json|css|html|md|yaml|yml)$/i.test(path));
+const formatTextForPath = vi.fn(async (_path: string, text: string) => text);
+const replaceWholeDocument = vi.fn();
 
 vi.mock("../stores/ui.store", () => ({
   useUiStore: { getState: () => ({ setEditorVisible, requestSearchFocus, requestCloseActiveTab, editorVisible: true }) },
 }));
 vi.mock("../stores/fs.store", () => ({
-  useFsStore: { getState: () => fsState },
+  useFsStore: {
+    getState: () => fsState,
+    setState: (patch: Partial<typeof fsState>) => {
+      fsState = { ...fsState, ...patch };
+    },
+  },
 }));
 vi.mock("./editorKeybindings", () => ({
   isFindBarOpen: () => findBarOpen,
   closeFindBar: () => findBarOpen,
+  viewForFindBar: () => currentView,
 }));
 vi.mock("../stores/project.store", () => ({
   useProjectStore: { getState: () => projectState },
@@ -34,12 +47,18 @@ vi.mock("../stores/project.store", () => ({
 vi.mock("../stores/git.store", () => ({
   useGitStore: { getState: () => gitCmdState },
 }));
+vi.mock("../features/editor/format", () => ({
+  canFormatPath: (path: string) => canFormatPath(path),
+  formatTextForPath: (path: string, text: string) => formatTextForPath(path, text),
+  replaceWholeDocument: (view: unknown, text: string) => replaceWholeDocument(view, text),
+}));
 
 import { getCommand } from "./registry";
 import { _resetCloseEscForTest } from "./keybindingHostState";
 
 const runClose = () => getCommand("editor.close")!.run();
 const runSave = () => getCommand("editor.save")!.run();
+const runFormat = () => getCommand("editor.formatDocument")!.run();
 const runCloseActiveTab = () => getCommand("workbench.closeActiveTab")!.run();
 
 beforeEach(() => {
@@ -49,10 +68,15 @@ beforeEach(() => {
   setEditorVisible = vi.fn();
   requestSearchFocus = vi.fn();
   requestCloseActiveTab = vi.fn();
-  fsState = { openFiles: [], activePath: null, saveFile: vi.fn(), closeFile: vi.fn() };
+  fsState = { openFiles: [], activePath: null, saveFile: vi.fn(), closeFile: vi.fn(), setDraft: vi.fn(), error: null };
   findBarOpen = false;
+  currentView = null;
   projectState = { projects: [], activeProjectId: null };
   gitCmdState = { commitWith: vi.fn() };
+  canFormatPath.mockClear();
+  formatTextForPath.mockReset();
+  formatTextForPath.mockImplementation(async (_path: string, text: string) => text);
+  replaceWholeDocument.mockClear();
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -111,6 +135,39 @@ describe("editor.save run", () => {
     fsState.activePath = null;
     runSave();
     expect(fsState.saveFile).not.toHaveBeenCalled();
+  });
+});
+
+describe("editor.formatDocument run", () => {
+  it("formats the active file through the current editor view", async () => {
+    fsState.openFiles = [{ path: "/p/a.ts", dirty: false, isText: true, draft: "const   x=1" }];
+    fsState.activePath = "/p/a.ts";
+    currentView = {
+      state: { doc: { length: 11 }, selection: { main: { from: 3, to: 3 } } },
+      dispatch: vi.fn(),
+    };
+    formatTextForPath.mockResolvedValueOnce("const x = 1;\n");
+
+    runFormat();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(formatTextForPath).toHaveBeenCalledWith("/p/a.ts", "const   x=1");
+    expect(replaceWholeDocument).toHaveBeenCalledWith(currentView, "const x = 1;\n");
+    expect(fsState.setDraft).not.toHaveBeenCalled();
+  });
+
+  it("falls back to fs.setDraft when no live editor view is registered", async () => {
+    fsState.openFiles = [{ path: "/p/data.json", dirty: false, isText: true, draft: '{"a":1}' }];
+    fsState.activePath = "/p/data.json";
+    currentView = null;
+    formatTextForPath.mockResolvedValueOnce('{\n  "a": 1\n}\n');
+
+    runFormat();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(fsState.setDraft).toHaveBeenCalledWith('{\n  "a": 1\n}\n');
   });
 });
 

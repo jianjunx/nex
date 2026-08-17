@@ -1,5 +1,5 @@
 import type { Command, KeyCombo } from "./types";
-import { isFindBarOpen, closeFindBar } from "./editorKeybindings";
+import { isFindBarOpen, closeFindBar, viewForFindBar } from "./editorKeybindings";
 import { noteCloseEsc } from "./keybindingHostState";
 import { useUiStore } from "../stores/ui.store";
 import { useFsStore } from "../stores/fs.store";
@@ -8,6 +8,7 @@ import { useGitStore } from "../stores/git.store";
 import { useClipboardStore } from "../stores/clipboard.store";
 import { isSameOrDescendant } from "../features/editor/pathUtils";
 import { isComposerSuggestOpen } from "../features/agent/composerPanelState";
+import { canFormatPath, formatTextForPath, replaceWholeDocument } from "../features/editor/format";
 
 /** Keep in sync with KeybindingHost.INPUT_SELECTOR (avoid circular import). */
 const INPUT_SELECTOR = "input, textarea, select, [contenteditable=''], [contenteditable='true']";
@@ -84,6 +85,41 @@ const COMMANDS: Command[] = [
       const fs = useFsStore.getState();
       const active = fs.openFiles.find((f) => f.path === fs.activePath);
       if (active?.dirty) void fs.saveFile();
+    },
+  },
+  {
+    id: "editor.formatDocument",
+    title: "格式化文档",
+    category: "编辑器",
+    defaultKey: k("keyf", { alt: true, shift: true }),
+    when: () => {
+      const fs = useFsStore.getState();
+      const active = fs.openFiles.find((f) => f.path === fs.activePath);
+      if (!active || active.diff || !active.isText) return false;
+      return canFormatPath(active.path);
+    },
+    run: () => {
+      const fs = useFsStore.getState();
+      const active = fs.openFiles.find((f) => f.path === fs.activePath);
+      if (!active || active.diff || !active.isText) return;
+      const path = active.path;
+      const source = active.draft;
+      useFsStore.setState({ error: null });
+      void formatTextForPath(path, source)
+        .then((formatted) => {
+          if (formatted === source) return;
+          const current = useFsStore.getState();
+          if (current.activePath !== path) return;
+          const view = viewForFindBar();
+          if (view) {
+            replaceWholeDocument(view, formatted);
+          } else {
+            current.setDraft(formatted);
+          }
+        })
+        .catch((err) => {
+          useFsStore.setState({ error: err instanceof Error ? err.message : String(err) });
+        });
     },
   },
   {

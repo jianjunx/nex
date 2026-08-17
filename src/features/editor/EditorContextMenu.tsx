@@ -1,5 +1,5 @@
 import { useCallback, type ReactNode, type RefObject } from "react";
-import { ClipboardPaste, Copy, Scissors, TextSelect } from "lucide-react";
+import { ClipboardPaste, Copy, Scissors, TextSelect, WandSparkles } from "lucide-react";
 import type { EditorView } from "@codemirror/view";
 import {
   PositionedDropdown,
@@ -9,17 +9,21 @@ import {
   usePositionedContextMenu,
 } from "@/components/ui/TextEditContextMenu";
 import { detectPlatform } from "@/commands/types";
+import { canFormatPath, formatTextForPath, replaceWholeDocument } from "./format";
 
 interface EditorContextMenuProps {
   children: ReactNode;
   viewRef: RefObject<EditorView | null>;
+  /** Current editor path; used to decide whether formatting is supported. */
+  path?: string | null;
   /** Diff / read-only editors hide cut & paste. */
   readOnly?: boolean;
 }
 
 const primaryLabel = detectPlatform() === "mac" ? "⌘" : "Ctrl";
+const formatShortcutLabel = detectPlatform() === "mac" ? "⌥⇧F" : "Alt+Shift+F";
 
-export function EditorContextMenu({ children, viewRef, readOnly = false }: EditorContextMenuProps) {
+export function EditorContextMenu({ children, viewRef, path = null, readOnly = false }: EditorContextMenuProps) {
   const { open, setOpen, pos, onContextMenu } = usePositionedContextMenu();
 
   const handleCopy = useCallback(() => {
@@ -67,6 +71,21 @@ export function EditorContextMenu({ children, viewRef, readOnly = false }: Edito
     setOpen(false);
   }, [viewRef, setOpen]);
 
+  const handleFormat = useCallback(async () => {
+    const view = viewRef.current;
+    if (!view || readOnly || !path || !canFormatPath(path)) return;
+    const source = view.state.doc.toString();
+    try {
+      const formatted = await formatTextForPath(path, source);
+      if (formatted !== source) replaceWholeDocument(view, formatted);
+    } catch {
+      // Keyboard command surfaces formatting failures in the editor error bar.
+      // The context menu keeps the fallback simple and silent.
+    } finally {
+      setOpen(false);
+    }
+  }, [viewRef, readOnly, path, setOpen]);
+
   return (
     <>
       <div className="h-full min-h-0" onContextMenu={onContextMenu}>
@@ -91,6 +110,16 @@ export function EditorContextMenu({ children, viewRef, readOnly = false }: Edito
             粘贴
             <PositionedMenuShortcut>{primaryLabel}+V</PositionedMenuShortcut>
           </PositionedMenuItem>
+        )}
+        {!readOnly && path && canFormatPath(path) && (
+          <>
+            <PositionedMenuSeparator />
+            <PositionedMenuItem onClick={() => void handleFormat()}>
+              <WandSparkles size={14} />
+              格式化文档
+              <PositionedMenuShortcut>{formatShortcutLabel}</PositionedMenuShortcut>
+            </PositionedMenuItem>
+          </>
         )}
         <PositionedMenuSeparator />
         <PositionedMenuItem onClick={handleSelectAll}>

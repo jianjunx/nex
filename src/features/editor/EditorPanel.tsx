@@ -274,7 +274,7 @@ export function EditorPanel() {
       )}
       <div className="flex-1 min-h-0 overflow-hidden">
         {editorFile?.diff ? (
-          <EditorContextMenu viewRef={viewRef} readOnly>
+          <EditorContextMenu viewRef={viewRef} readOnly path={editorFile.path}>
             <DiffView
               key={editorFile.path}
               payload={editorFile.diff}
@@ -284,7 +284,7 @@ export function EditorPanel() {
             />
           </EditorContextMenu>
         ) : editorFile?.isText ? (
-          <EditorContextMenu viewRef={viewRef}>
+          <EditorContextMenu viewRef={viewRef} path={editorFile.path}>
             <div className="h-full min-h-0">
               {/* key = one EditorView per file: without it the undo stack survives a file switch and Ctrl+Z can resurrect the previous file's content — a wrong-path save hazard. Esc-hide is unaffected (same path, CSS-only hide), so undo/scroll preservation across hide/re-show still holds. */}
               <CodeMirror

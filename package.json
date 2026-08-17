@@ -44,6 +44,7 @@
     "immer": "^11.1.15",
     "lucide-react": "^1.26.0",
     "mermaid": "^11.16.0",
+    "prettier": "^3.9.6",
     "radix-ui": "^1.6.7",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",

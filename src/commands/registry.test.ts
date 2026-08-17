@@ -20,6 +20,7 @@ describe("command registry", () => {
   it("seeds the core VSCode-style defaults", () => {
     const byId = (id: string) => comboToCanonical(getCommand(id)?.defaultKey ?? null);
     expect(byId("editor.save")).toBe("primary+keys");
+    expect(byId("editor.formatDocument")).toBe("alt+shift+keyf");
     expect(byId("view.toggleSidebar")).toBe("primary+keyb");
     expect(byId("search.focus")).toBe("primary+shift+keyf");
     expect(byId("scm.focus")).toBe("primary+shift+keyg");

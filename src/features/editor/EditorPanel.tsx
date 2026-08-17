@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useCallback } from "react";
 import CodeMirror, { EditorView } from "@uiw/react-codemirror";
 import { oneDark } from "@codemirror/theme-one-dark";
 import type { Extension } from "@codemirror/state";
@@ -130,7 +130,18 @@ export function EditorPanel() {
   // 文件切换重建期间的过期视图，见 applyPendingLine。
   const viewPathRef = useRef<string | null>(null);
   const pendingLine = useFsStore((s) => s.pendingLine);
+  const openFile = useFsStore((s) => s.openFile);
   const { draggingIndex, bindTab } = useTabReorder(reorderOpenFiles);
+  const tabsScrollerRef = useRef<HTMLDivElement>(null);
+  const prevOpenCountRef = useRef(openFiles.length);
+
+  const handleTabsWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    if (el.scrollWidth <= el.clientWidth) return;
+    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+    e.preventDefault();
+    el.scrollLeft += e.deltaY;
+  }, []);
 
   // diff 标签用合成路径（diff: 前缀），语言检测须走载荷中的 languageHint。
   const langPath = editorFile?.diff ? editorFile.diff.languageHint : (editorFile?.path ?? "");
@@ -172,11 +183,32 @@ export function EditorPanel() {
     if (v) applyPendingLine(v, viewPathRef.current);
   }, [pendingLine, editorFile?.path]);
 
+  useEffect(() => {
+    const el = tabsScrollerRef.current;
+    if (!el) {
+      prevOpenCountRef.current = openFiles.length;
+      return;
+    }
+    if (openFiles.length > prevOpenCountRef.current) {
+      requestAnimationFrame(() => {
+        const node = tabsScrollerRef.current;
+        if (!node) return;
+        node.scrollLeft = node.scrollWidth;
+      });
+    }
+    prevOpenCountRef.current = openFiles.length;
+  }, [openFiles.length]);
+
   if (openFiles.length === 0) return null;
 
   return (
     <div className="flex flex-col h-full min-h-0" data-editor-area>
-      <div className="flex items-center gap-1 px-1.5 py-1 border-b border-[color:var(--border-subtle)] overflow-x-auto shrink-0">
+      <div
+        ref={tabsScrollerRef}
+        data-editor-tabs-scroller
+        onWheel={handleTabsWheel}
+        className="flex items-center gap-1 px-1.5 py-1 border-b border-[color:var(--border-subtle)] overflow-x-auto shrink-0"
+      >
         {openFiles.map((f, index) => {
           const active = f.path === activePath;
           const drag = bindTab(index);
@@ -192,6 +224,9 @@ export function EditorPanel() {
               } ${draggingIndex === index ? "opacity-50" : ""}`}
               title={f.diff ? f.diff.title : relativeToProject(f.path, projectPath)}
               onClick={() => void switchFile(f.path)}
+              onDoubleClick={() => {
+                void openFile(f.path, true);
+              }}
             >
               <FileIcon filename={f.diff ? "" : fileBasename(f.path)} size={14} className="shrink-0" />
               <span className={`truncate ${!f.pinned ? "italic" : ""}`}>{f.diff ? f.diff.title : fileBasename(f.path)}</span>

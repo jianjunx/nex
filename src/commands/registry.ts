@@ -138,13 +138,23 @@ const COMMANDS: Command[] = [
     // 其它位置不生效。
     run: () => {
       const el = document.activeElement;
-      if (el instanceof HTMLElement && el.closest("[data-editor-area]")) {
-        const fs = useFsStore.getState();
-        if (fs.activePath) void fs.closeFile(fs.activePath);
-        return;
-      }
       if (el instanceof HTMLElement && el.closest("[data-conversation-area]")) {
         useUiStore.getState().requestCloseActiveTab();
+        return;
+      }
+      const fs = useFsStore.getState();
+      const ui = useUiStore.getState();
+      // Closing a file tab must keep working repeatedly even after focus lands
+      // on the document body / tab strip / other editor chrome. Requiring the
+      // activeElement to stay inside [data-editor-area] forced an extra click
+      // after each Cmd/Ctrl+W. If the editor panel is visible and there is an
+      // active file, prefer closing that file.
+      if (fs.activePath && ui.editorVisible) {
+        void fs.closeFile(fs.activePath);
+        return;
+      }
+      if (el instanceof HTMLElement && el.closest("[data-editor-area]")) {
+        if (fs.activePath) void fs.closeFile(fs.activePath);
       }
     },
   },

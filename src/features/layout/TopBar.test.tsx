@@ -171,6 +171,17 @@ describe("conversation tab outline (F5)", () => {
     expect(container.innerHTML).toContain("pointer-events-none");
   });
 
+  it("maps vertical mouse-wheel movement to horizontal tab scrolling", () => {
+    const { container } = render(<TopBar />);
+    const scroller = container.querySelector("[data-conversation-tabs-scroller]") as HTMLDivElement;
+    expect(scroller).toBeTruthy();
+    Object.defineProperty(scroller, "scrollWidth", { configurable: true, value: 400 });
+    Object.defineProperty(scroller, "clientWidth", { configurable: true, value: 160 });
+    scroller.scrollLeft = 10;
+    fireEvent.wheel(scroller, { deltaY: 48 });
+    expect(scroller.scrollLeft).toBe(58);
+  });
+
   it("mousedown on an inactive tab switches the active conversation", () => {
     render(<TopBar />);
     fireEvent.mouseDown(screen.getByRole("tab", { name: /第二个会话/ }));

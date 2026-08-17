@@ -7,17 +7,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // same pattern as KeybindingHost.test.tsx.
 let setEditorVisible: ReturnType<typeof vi.fn>;
 let requestSearchFocus: ReturnType<typeof vi.fn>;
+let requestCloseActiveTab: ReturnType<typeof vi.fn>;
 let fsState: {
   openFiles: { path: string; dirty: boolean }[];
   activePath: string | null;
   saveFile: ReturnType<typeof vi.fn>;
+  closeFile: ReturnType<typeof vi.fn>;
 };
 let findBarOpen = false;
 let projectState: { projects: { id: string; path: string }[]; activeProjectId: string | null };
 let gitCmdState: { commitWith: ReturnType<typeof vi.fn> };
 
 vi.mock("../stores/ui.store", () => ({
-  useUiStore: { getState: () => ({ setEditorVisible, requestSearchFocus }) },
+  useUiStore: { getState: () => ({ setEditorVisible, requestSearchFocus, requestCloseActiveTab, editorVisible: true }) },
 }));
 vi.mock("../stores/fs.store", () => ({
   useFsStore: { getState: () => fsState },
@@ -38,6 +40,7 @@ import { _resetCloseEscForTest } from "./keybindingHostState";
 
 const runClose = () => getCommand("editor.close")!.run();
 const runSave = () => getCommand("editor.save")!.run();
+const runCloseActiveTab = () => getCommand("workbench.closeActiveTab")!.run();
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -45,7 +48,8 @@ beforeEach(() => {
   _resetCloseEscForTest();
   setEditorVisible = vi.fn();
   requestSearchFocus = vi.fn();
-  fsState = { openFiles: [], activePath: null, saveFile: vi.fn() };
+  requestCloseActiveTab = vi.fn();
+  fsState = { openFiles: [], activePath: null, saveFile: vi.fn(), closeFile: vi.fn() };
   findBarOpen = false;
   projectState = { projects: [], activeProjectId: null };
   gitCmdState = { commitWith: vi.fn() };
@@ -135,6 +139,37 @@ describe("scm.commit run", () => {
     other.focus();
     expect(when()).toBe(false);
     document.body.innerHTML = "";
+  });
+});
+
+describe("workbench.closeActiveTab run", () => {
+  it("closes the active file when the editor is visible, even if focus left the editor", () => {
+    fsState.openFiles = [{ path: "/p/a.ts", dirty: false }];
+    fsState.activePath = "/p/a.ts";
+    const outside = document.createElement("button");
+    document.body.appendChild(outside);
+    outside.focus();
+
+    runCloseActiveTab();
+
+    expect(fsState.closeFile).toHaveBeenCalledWith("/p/a.ts");
+    expect(requestCloseActiveTab).not.toHaveBeenCalled();
+  });
+
+  it("prefers closing the conversation tab when focus is in the conversation area", () => {
+    fsState.openFiles = [{ path: "/p/a.ts", dirty: false }];
+    fsState.activePath = "/p/a.ts";
+    const composer = document.createElement("textarea");
+    const host = document.createElement("div");
+    host.setAttribute("data-conversation-area", "");
+    host.appendChild(composer);
+    document.body.appendChild(host);
+    composer.focus();
+
+    runCloseActiveTab();
+
+    expect(requestCloseActiveTab).toHaveBeenCalledTimes(1);
+    expect(fsState.closeFile).not.toHaveBeenCalled();
   });
 });
 

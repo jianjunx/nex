@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { PanelRight, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Button } from "@/components/ui/button";
@@ -61,6 +61,14 @@ export function TopBar() {
   const [closing, setClosing] = useState(false);
   const [macFullscreen, setMacFullscreen] = useState(false);
   const { draggingIndex, bindTab } = useTabReorder(reorderTabs);
+
+  const handleTabsWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    if (el.scrollWidth <= el.clientWidth) return;
+    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+    e.preventDefault();
+    el.scrollLeft += e.deltaY;
+  }, []);
 
   // Overlay mode puts our content under the native title bar, so the OS no
   // longer provides a drag strip or double-click-to-zoom. We re-add both here,
@@ -134,7 +142,11 @@ export function TopBar() {
 
       {/* Conversation tabs */}
       <div className="relative flex-1 min-w-0">
-        <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none">
+        <div
+          data-conversation-tabs-scroller
+          onWheel={handleTabsWheel}
+          className="flex items-center gap-1.5 overflow-x-auto scrollbar-none"
+        >
         {openTabs.length === 0 ? (
           <span className="text-xs text-[var(--text-tertiary)] px-2">暂无会话</span>
         ) : (

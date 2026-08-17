@@ -4,6 +4,7 @@ import {
   detectPlatform,
   eventToLogicalCombo,
   isModifierOnly,
+  type KeyCombo,
 } from "./types";
 import { listCommands } from "./registry";
 import { useKeybindingsStore } from "../stores/keybindings.store";
@@ -40,6 +41,16 @@ function dialogOpen(): boolean {
   return !!document.querySelector('[role="dialog"], [role="alertdialog"]');
 }
 
+function extraCombosForCommand(id: string, platform: ReturnType<typeof detectPlatform>): KeyCombo[] {
+  if (id === "files.delete" && platform === "mac") {
+    return [
+      { primary: true, key: "arrowleft" },
+      { primary: true, key: "backspace" },
+    ];
+  }
+  return [];
+}
+
 export function KeybindingHost() {
   useEffect(() => {
     const platform = detectPlatform();
@@ -65,7 +76,11 @@ export function KeybindingHost() {
         (a, b) => (a.id in overrides ? 0 : 1) - (b.id in overrides ? 0 : 1),
       );
       for (const cmd of cmds) {
-        if (!combosMatch(resolve(cmd.id), combo, platform)) continue;
+        const resolved = resolve(cmd.id);
+        const matched =
+          combosMatch(resolved, combo, platform) ||
+          extraCombosForCommand(cmd.id, platform).some((alt) => combosMatch(alt, combo, platform));
+        if (!matched) continue;
         if (dlg) continue; // 模态对话框打开时全局键位全部让行（Esc 交给 radix）
         // Terminal owns arrow/history/paste keys — only allow a small workbench set.
         // xterm's helper textarea is also an "input", so terminal checks must win.

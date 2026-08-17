@@ -22,6 +22,7 @@ vi.mock("../stores/keybindings.store", () => ({
         if (id === "editor.close") return { key: "escape" };
         if (id === "scm.commit") return { primary: true, key: "enter" };
         if (id === "terminal.toggle") return { ctrl: true, key: "`" };
+        if (id === "files.delete") return { key: "delete" };
         return null;
       },
     }),
@@ -33,6 +34,7 @@ const save = vi.fn();
 const close = vi.fn();
 const scmCommit = vi.fn();
 const terminalToggle = vi.fn();
+const filesDelete = vi.fn();
 vi.mock("../commands/registry", () => ({
   listCommands: () => [
     { id: "view.toggleSidebar", title: "t", category: "c", defaultKey: null, run: toggle },
@@ -47,6 +49,7 @@ vi.mock("../commands/registry", () => ({
       run: scmCommit,
     },
     { id: "terminal.toggle", title: "term", category: "c", defaultKey: null, run: terminalToggle },
+    { id: "files.delete", title: "del", category: "c", defaultKey: null, run: filesDelete },
   ],
   getCommand: () => undefined,
 }));
@@ -150,6 +153,31 @@ describe("KeybindingHost", () => {
     ta.focus();
     fire(window, { key: "`", code: "Backquote", ctrlKey: true });
     expect(terminalToggle).toHaveBeenCalledTimes(1);
+  });
+
+  it("supports macOS Cmd+Backspace / Cmd+← as alternative file-delete shortcuts", () => {
+    const origPlatform = navigator.platform;
+    const origUa = navigator.userAgent;
+    Object.defineProperty(window.navigator, "platform", { configurable: true, value: "MacIntel" });
+    Object.defineProperty(window.navigator, "userAgent", { configurable: true, value: "Macintosh" });
+    document.body.innerHTML = "";
+    render(<KeybindingHost />);
+
+    const tree = document.createElement("div");
+    tree.setAttribute("data-file-tree", "");
+    const row = document.createElement("div");
+    row.tabIndex = 0;
+    tree.appendChild(row);
+    document.body.appendChild(tree);
+    row.focus();
+
+    fire(window, { key: "Backspace", code: "Backspace", metaKey: true });
+    fire(window, { key: "ArrowLeft", code: "ArrowLeft", metaKey: true });
+
+    expect(filesDelete).toHaveBeenCalledTimes(2);
+
+    Object.defineProperty(window.navigator, "platform", { configurable: true, value: origPlatform });
+    Object.defineProperty(window.navigator, "userAgent", { configurable: true, value: origUa });
   });
 
   // C-1: 裸可打印字符绑定挂在放行白名单命令上不得吞掉正常输入

@@ -202,6 +202,23 @@ function TreeNode({
 
   // --- Keyboard handler ---
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    const isMac =
+      typeof navigator !== "undefined" &&
+      (navigator.platform.startsWith("Mac") || /Macintosh/.test(navigator.userAgent));
+    const macDeleteShortcut =
+      isMac &&
+      e.metaKey &&
+      !e.ctrlKey &&
+      !e.altKey &&
+      !e.shiftKey &&
+      (e.key === "Backspace" || e.key === "ArrowLeft");
+    if (macDeleteShortcut) {
+      if (isRoot) return;
+      e.preventDefault();
+      fsActions.setSelectedPath(node.path);
+      useFsStore.getState().requestDeleteEntry(node.path);
+      return;
+    }
     if (e.key === 'ArrowRight') {
       e.preventDefault();
       if ((isRoot || node.is_dir) && !isExpanded) {
@@ -215,9 +232,6 @@ function TreeNode({
     } else if (e.key === 'Enter') {
       // macOS: Enter renames (Finder-style). KeybindingHost usually handles it in
       // capture phase; local path is a fallback if the global binding is unbound.
-      const isMac =
-        typeof navigator !== "undefined" &&
-        (navigator.platform.startsWith("Mac") || /Macintosh/.test(navigator.userAgent));
       if (isMac) {
         if (isRoot) return;
         e.preventDefault();

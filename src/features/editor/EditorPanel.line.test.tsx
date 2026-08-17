@@ -30,6 +30,7 @@ let fsState: {
   pendingLine: { path: string; line: number } | null;
   setDraft: ReturnType<typeof vi.fn>;
   switchFile: ReturnType<typeof vi.fn>;
+  openFile: ReturnType<typeof vi.fn>;
   closeFile: ReturnType<typeof vi.fn>;
   reloadEditor: ReturnType<typeof vi.fn>;
   dismissStale: ReturnType<typeof vi.fn>;
@@ -86,6 +87,7 @@ beforeEach(() => {
     pendingLine: null,
     setDraft: vi.fn(),
     switchFile: vi.fn(),
+    openFile: vi.fn(),
     closeFile: vi.fn(),
     reloadEditor: vi.fn(),
     dismissStale: vi.fn(),
@@ -96,6 +98,45 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("EditorPanel pending-line targeting", () => {
+  it("double-clicking a file tab re-opens it pinned", () => {
+    const { container } = render(<EditorPanel />);
+    const tab = container.querySelector("[data-tab-index]") as HTMLElement;
+    expect(tab).toBeTruthy();
+    tab.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    expect(fsState.openFile).toHaveBeenCalledWith("/p/a.ts", true);
+  });
+
+  it("maps vertical mouse-wheel movement to horizontal editor-tab scrolling", () => {
+    const { container } = render(<EditorPanel />);
+    const scroller = container.querySelector("[data-editor-tabs-scroller]") as HTMLDivElement;
+    expect(scroller).toBeTruthy();
+    Object.defineProperty(scroller, "scrollWidth", { configurable: true, value: 480 });
+    Object.defineProperty(scroller, "clientWidth", { configurable: true, value: 160 });
+    scroller.scrollLeft = 12;
+    scroller.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 30 }));
+    expect(scroller.scrollLeft).toBe(42);
+  });
+
+  it("scrolls editor tabs to the right when a new tab is added", async () => {
+    const { container, rerender } = render(<EditorPanel />);
+    const scroller = container.querySelector("[data-editor-tabs-scroller]") as HTMLDivElement;
+    expect(scroller).toBeTruthy();
+    Object.defineProperty(scroller, "scrollWidth", { configurable: true, value: 480 });
+    Object.defineProperty(scroller, "clientWidth", { configurable: true, value: 160 });
+    scroller.scrollLeft = 0;
+
+    fsState.openFiles = [
+      ...fsState.openFiles,
+      {
+        path: "/p/b.ts", content: "y", isText: true, size: 1,
+        draft: "y", dirty: false, stale: false, pinned: true,
+      },
+    ];
+    rerender(<EditorPanel />);
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    expect(scroller.scrollLeft).toBe(480);
+  });
+
   it("selects + scrolls to the pending line when the view is created", () => {
     fsState.pendingLine = { path: "/p/a.ts", line: 4 };
     render(<EditorPanel />);

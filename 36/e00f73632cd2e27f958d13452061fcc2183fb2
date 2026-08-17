@@ -1,0 +1,35 @@
+package.json
+  s_014cddfa5685ea::t_164a118ceb70e4 47
+pnpm-lock.yaml
+  s_014cddfa5685ea::t_423742919ad49b 95-97,109,115,173,3710-3714,4433,4438,4442,4446,4473,4475,4477,4479-4481,4488,4490,4495,4497,4502,4504-4505,4507,4517,4519-4520,4522,4526,4528,4548,4550,4553,4555,4558,4560-4561,4566,4568,4570,4572-4573,4577,4579,4582-4584,4596,4604,5049,5059-5060,6442,6446,6816,6997,6999-7000,7005,7008,7013,7018,7029-7031,7066,7068,7153,7162-7164,7540,7547,7565,7569,7575,7578,7583,7588,7593,7597,7602,7604,7606-7609,7614,7620,7625,7633,7642,7648,7888,7891,8112-8113,8117,8232,8238,8242,8300,8303,8305,8311,8314,8374,8376,8404,8406,8420,8425,8431,8433,8435-8436,8438
+src/commands/registry.run.test.ts
+  s_014cddfa5685ea::t_a3dcb862ed7661 12,16-17,19,21,24-26,32-37,42,50-54,61,71,73,76-79,141-173
+src/commands/registry.test.ts
+  s_014cddfa5685ea::t_b0d2f9fe8ce4b1 23
+src/commands/registry.ts
+  s_014cddfa5685ea::t_5a608f31315187 2,11,90-124
+src/features/editor/EditorContextMenu.tsx
+  s_014cddfa5685ea::t_e6e022dc8d9814 2,12,17-18,24,26,74-88,114-123
+src/features/editor/EditorPanel.tsx
+  s_014cddfa5685ea::t_e823478697a042 277,287
+src/features/editor/format.test.ts
+  s_014cddfa5685ea::t_6b840cf78a8faf 1-52
+src/features/editor/format.ts
+  s_014cddfa5685ea::t_2189eded3b75ff 1-103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "36e00f73632cd2e27f958d13452061fcc2183fb2",
+  "prompts": {},
+  "sessions": {
+    "s_014cddfa5685ea": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_014cddfa5685ea",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

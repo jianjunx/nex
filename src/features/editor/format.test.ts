@@ -7,6 +7,8 @@ const prettierFormat = vi.fn(async (text: string, _options?: unknown) => text);
 const rustFormat = vi.fn(async (text: string, _options?: unknown) => text);
 const goFormat = vi.fn((text: string) => text);
 const pythonFormat = vi.fn((text: string, _filename?: string) => text);
+const shellFormat = vi.fn(async (text: string, _options?: unknown) => text);
+const getProcessor = vi.fn((_loader?: unknown) => shellFormat);
 
 vi.mock("prettier/standalone", () => ({
   default: { format: (text: string, options: unknown) => prettierFormat(text, options) },
@@ -19,12 +21,13 @@ vi.mock("prettier/plugins/html", () => ({}));
 vi.mock("prettier/plugins/markdown", () => ({}));
 vi.mock("prettier/plugins/postcss", () => ({}));
 vi.mock("prettier/plugins/yaml", () => ({}));
-vi.mock("prettier-plugin-sh", () => ({ default: {} }));
 vi.mock("prettier-plugin-toml", () => ({ default: {} }));
 vi.mock("prettier-plugin-sql", () => ({ default: {} }));
 vi.mock("@scalar/rust-fmt", () => ({ format: (text: string, options?: unknown) => rustFormat(text, options) }));
 vi.mock("@wasm-fmt/gofmt", () => ({ format: (text: string) => goFormat(text) }));
 vi.mock("@wasm-fmt/ruff_fmt", () => ({ format: (text: string, filename: string) => pythonFormat(text, filename) }));
+vi.mock("sh-syntax", () => ({ getProcessor: (loader: unknown) => getProcessor(loader) }));
+vi.mock("sh-syntax/main.wasm?url", () => ({ default: "/mock/sh-syntax.wasm" }));
 
 import { canFormatPath, formatParserForPath, formatTextForPath } from "./format";
 
@@ -38,7 +41,7 @@ describe("editor format helpers", () => {
     expect(formatParserForPath("/p/a.html")).toBe("html");
     expect(formatParserForPath("/p/a.md")).toBe("markdown");
     expect(formatParserForPath("/p/a.yml")).toBe("yaml");
-    expect(formatParserForPath("/p/a.sh")).toBe("sh");
+    expect(formatParserForPath("/p/a.sh")).toBe("shell");
     expect(formatParserForPath("/p/a.toml")).toBe("toml");
     expect(formatParserForPath("/p/a.sql")).toBe("sql");
     expect(formatParserForPath("/p/a.rs")).toBe("rust");
@@ -61,6 +64,16 @@ describe("editor format helpers", () => {
     expect(prettierFormat).toHaveBeenCalledWith(
       "const   x=1",
       expect.objectContaining({ parser: "typescript", filepath: "a.ts" }),
+    );
+  });
+
+  it("delegates shell scripts to sh-syntax directly", async () => {
+    shellFormat.mockResolvedValueOnce("echo hi\n");
+    await expect(formatTextForPath("/p/a.sh", "echo    hi")).resolves.toBe("echo hi\n");
+    expect(getProcessor).toHaveBeenCalledTimes(1);
+    expect(shellFormat).toHaveBeenCalledWith(
+      "echo    hi",
+      expect.objectContaining({ filepath: "a.sh", print: true }),
     );
   });
 

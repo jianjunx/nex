@@ -64,22 +64,27 @@ export const EntryView = memo(function EntryView({
           <ToolCallCard entry={entry} />
         </div>
       );
-    case "completed_plan":
+    case "completed_plan": {
+      const allCompleted = entry.allCompleted !== false;
       return (
         <div className="max-w-[96%] rounded-[calc(var(--radius-md)+2px)] border border-[color:var(--hairline-soft)] bg-[var(--material-floating)] px-2.5 py-1.5 shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)]">
           <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)] mb-1">
             <ListChecks size={14} />
-            <span>Completed Plan — {entry.entries.length} steps</span>
+            <span>{allCompleted ? "Completed Plan" : "Plan Snapshot"} — {entry.entries.length} steps</span>
           </div>
           <ul className="text-xs space-y-1 text-[var(--text-primary)]">
             {entry.entries.map((e, i) => (
-              <li key={i} className="opacity-70">
+              <li
+                key={i}
+                className={e.status === "completed" ? "opacity-70 line-through" : e.status === "in_progress" ? "text-[var(--accent)]" : ""}
+              >
                 {e.content}
               </li>
             ))}
           </ul>
         </div>
       );
+    }
     case "plan_approval":
       return (
         <div className="max-w-[96%]">

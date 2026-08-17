@@ -81,6 +81,8 @@ export interface ToolCallEntry extends ThreadEntryBase {
 export interface CompletedPlanEntry extends ThreadEntryBase {
   kind: "completed_plan";
   entries: PlanEntry[];
+  /** Whether every step finished as completed before the plan left the top bar. */
+  allCompleted?: boolean;
 }
 
 /** Cursor `cursor/create_plan` — inline approval card (replaces modal). */

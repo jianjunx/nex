@@ -44,7 +44,7 @@ import {
   applySessionUpdate,
   emptySessionMeta,
 } from "../features/agent/thread/applySessionUpdate";
-import type { SessionMeta, ThreadEntry } from "../features/agent/thread/types";
+import type { PlanEntry, SessionMeta, ThreadEntry } from "../features/agent/thread/types";
 import { assistantTextAfterLastUser } from "../features/agent/thread/messagesToThreadEntries";
 import { useConversationStore } from "./conversation.store";
 import { useNotificationStore } from "./notification.store";
@@ -327,6 +327,45 @@ function sessionStillWaiting(
   );
 }
 
+function planEntriesEqual(a: PlanEntry[], b: PlanEntry[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every(
+      (entry, i) =>
+        entry.content === b[i]?.content &&
+        entry.priority === b[i]?.priority &&
+        entry.status === b[i]?.status,
+    )
+  );
+}
+
+/**
+ * 收尾时不要让顶部 PlanBar 悬挂：一旦本轮结束（idle/terminated/cancelled），
+ * 当前 meta.plan 立刻收起；若模型没有显式发出“全 completed”的最后一次 plan
+ * 更新，则把这份最终状态沉到线程底部作为历史快照，而不是继续挂在顶部。
+ */
+function archiveLingeringPlan(
+  s: Pick<AgentStore, "entriesByConversation" | "metaByConversation">,
+  conversationId: string,
+): void {
+  const meta = s.metaByConversation[conversationId];
+  const plan = meta?.plan;
+  if (!plan || plan.length === 0) return;
+  meta.plan = null;
+  const list = s.entriesByConversation[conversationId];
+  if (!list) return;
+  const allCompleted = plan.every((p) => p.status === "completed");
+  const last = list[list.length - 1];
+  if (last?.kind === "completed_plan" && planEntriesEqual(last.entries, plan)) return;
+  list.push({
+    id: crypto.randomUUID(),
+    kind: "completed_plan",
+    timestamp: Date.now(),
+    entries: plan.map((p) => ({ ...p })),
+    allCompleted,
+  });
+}
+
 /** After Cursor plan accept: leave plan/ask for an executable mode and continue. */
 async function handoffPlanToExecute(
   get: () => AgentStore,
@@ -498,6 +537,7 @@ function applyNotificationUpdate(
         kind: "completed_plan",
         timestamp: Date.now(),
         entries: applied.completedPlanSnapshot,
+        allCompleted: true,
       });
     }
     if (applied.metaChanged && meta.currentModeId && meta.currentModeId !== prevMode) {
@@ -913,10 +953,16 @@ export const useAgentStore = create<AgentStore>()(
         }
       }
       // Persist full thread snapshot (thought/tool_call/etc.) so the UI can
-      // restore complete history after restart.
+      // restore complete history after restart. If this turn leaves the session
+      // idle, also sink any still-open top PlanBar into the thread history so
+      // tasks that ended without a final all-completed `todo_write` do not keep
+      // hanging at the top forever.
       set((s) => {
         const list = s.entriesByConversation[session.conversationId];
         if (list) releaseCompletedImagePayloads(list);
+        if (s.sessions[session.conversationId] && !sessionStillWaiting(s, sessionId)) {
+          archiveLingeringPlan(s, session.conversationId);
+        }
       });
       const latestEntries = get().entriesByConversation[session.conversationId] ?? entries;
       void conversationReplaceThreadEntries(
@@ -995,6 +1041,7 @@ export const useAgentStore = create<AgentStore>()(
                 }
               }
             }
+            archiveLingeringPlan(s, session.conversationId);
           }
           delete s.permissionQueues[sessionId];
           delete s.planApprovalQueues[sessionId];
@@ -1734,7 +1781,10 @@ export const useAgentStore = create<AgentStore>()(
       onAgentSessionTerminated(({ sessionId }) => {
         set((s) => {
           const session = Object.values(s.sessions).find((ss) => ss.sessionId === sessionId);
-          if (session) delete s.sessions[session.conversationId];
+          if (session) {
+            archiveLingeringPlan(s, session.conversationId);
+            delete s.sessions[session.conversationId];
+          }
           clearSessionQueues(s, sessionId);
         });
       }).then((fn) => {

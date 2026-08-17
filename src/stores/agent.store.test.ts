@@ -759,6 +759,82 @@ describe("cancel marks pending plan cards", () => {
   });
 });
 
+describe("plan finalization", () => {
+  it("sendPrompt 结束且计划未全完成时，收起顶部 PlanBar 并沉到底部历史", async () => {
+    agentSendPrompt.mockResolvedValue({ hadMutations: false });
+    useAgentStore.setState({
+      sessions: {
+        "conv-1": { sessionId: "sid-1", conversationId: "conv-1", status: "running" },
+      },
+      metaByConversation: {
+        "conv-1": {
+          modes: [],
+          currentModeId: null,
+          models: [],
+          currentModelId: null,
+          configOptions: [],
+          availableCommands: [],
+          plan: [
+            { content: "Inspect", priority: "medium", status: "completed" },
+            { content: "Edit", priority: "medium", status: "in_progress" },
+          ],
+          contextUsage: null,
+        },
+      },
+      entriesByConversation: {
+        "conv-1": [{ id: "u1", kind: "user_message", text: "do it", timestamp: 1 }],
+      },
+    });
+
+    await useAgentStore.getState().sendPrompt("sid-1", [{ type: "text", text: "do it" }]);
+
+    const state = useAgentStore.getState();
+    expect(state.metaByConversation["conv-1"]?.plan).toBeNull();
+    const convEntries = state.entriesByConversation["conv-1"] ?? [];
+    const last = convEntries[convEntries.length - 1];
+    expect(last?.kind).toBe("completed_plan");
+    if (last?.kind === "completed_plan") {
+      expect(last.allCompleted).toBe(false);
+      expect(last.entries.map((e) => e.status)).toEqual(["completed", "in_progress"]);
+    }
+  });
+
+  it("cancel 也会把悬挂计划沉到底部历史", async () => {
+    useAgentStore.setState({
+      sessions: {
+        "conv-1": { sessionId: "sid-1", conversationId: "conv-1", status: "waiting" },
+      },
+      metaByConversation: {
+        "conv-1": {
+          modes: [],
+          currentModeId: null,
+          models: [],
+          currentModelId: null,
+          configOptions: [],
+          availableCommands: [],
+          plan: [{ content: "Still running", priority: "medium", status: "in_progress" }],
+          contextUsage: null,
+        },
+      },
+      entriesByConversation: {
+        "conv-1": [{ id: "u1", kind: "user_message", text: "stop", timestamp: 1 }],
+      },
+    });
+
+    await useAgentStore.getState().cancel("sid-1");
+
+    const state = useAgentStore.getState();
+    expect(state.metaByConversation["conv-1"]?.plan).toBeNull();
+    const convEntries = state.entriesByConversation["conv-1"] ?? [];
+    const last = convEntries[convEntries.length - 1];
+    expect(last?.kind).toBe("completed_plan");
+    if (last?.kind === "completed_plan") {
+      expect(last.allCompleted).toBe(false);
+      expect(last.entries[0]?.status).toBe("in_progress");
+    }
+  });
+});
+
 describe("native auto /review", () => {
   it("mutating turn + autoReview 链式发送 /review（且 /review 自身不再链式）", async () => {
     agentSendPrompt

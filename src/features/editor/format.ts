@@ -6,22 +6,27 @@ type PrettierPluginModule = Record<string, unknown>;
 type RustFmtModule = typeof import("@scalar/rust-fmt");
 type GoFmtModule = typeof import("@wasm-fmt/gofmt");
 type RuffFmtModule = typeof import("@wasm-fmt/ruff_fmt");
+type ShSyntaxModule = typeof import("sh-syntax");
 
 type LoadedPrettier = {
   prettier: PrettierModule;
   plugins: PrettierPluginModule[];
 };
 
+type ShellPrinter = (text: string, options?: Record<string, unknown>) => Promise<string>;
+
 type LanguageFormatter =
   | { kind: "prettier"; parser: string; options?: Record<string, unknown> }
   | { kind: "rust" }
   | { kind: "go" }
-  | { kind: "python" };
+  | { kind: "python" }
+  | { kind: "shell" };
 
 let prettierLoader: Promise<LoadedPrettier> | null = null;
 let rustFmtLoader: Promise<RustFmtModule> | null = null;
 let goFmtLoader: Promise<GoFmtModule> | null = null;
 let ruffFmtLoader: Promise<RuffFmtModule> | null = null;
+let shellFmtLoader: Promise<ShellPrinter> | null = null;
 
 function pluginValue(module: PrettierPluginModule): PrettierPluginModule {
   return "default" in module && module.default && typeof module.default === "object"
@@ -40,17 +45,14 @@ function loadPrettier(): Promise<LoadedPrettier> {
       import("prettier/plugins/markdown"),
       import("prettier/plugins/postcss"),
       import("prettier/plugins/yaml"),
-      import("prettier-plugin-sh"),
       import("prettier-plugin-toml"),
       import("prettier-plugin-sql"),
-    ]).then(
-      ([prettier, estree, babel, typescript, html, markdown, postcss, yaml, sh, toml, sql]) => ({
-        prettier,
-        plugins: [estree, babel, typescript, html, markdown, postcss, yaml, sh, toml, sql].map(
-          pluginValue,
-        ),
-      }),
-    );
+    ]).then(([prettier, estree, babel, typescript, html, markdown, postcss, yaml, toml, sql]) => ({
+      prettier,
+      plugins: [estree, babel, typescript, html, markdown, postcss, yaml, toml, sql].map(
+        pluginValue,
+      ),
+    }));
   }
   return prettierLoader;
 }
@@ -68,6 +70,20 @@ function loadGoFmt(): Promise<GoFmtModule> {
 function loadRuffFmt(): Promise<RuffFmtModule> {
   if (!ruffFmtLoader) ruffFmtLoader = import("@wasm-fmt/ruff_fmt");
   return ruffFmtLoader;
+}
+
+function loadShellFmt(): Promise<ShellPrinter> {
+  if (shellFmtLoader) return shellFmtLoader;
+  shellFmtLoader = import("sh-syntax").then((shSyntax: ShSyntaxModule) => {
+    // `sh-syntax` 0.6 exposes `getProcessor` rather than the older
+    // `processor` export expected by prettier-plugin-sh. Use the library
+    // directly so Vite dep optimization doesn't choke on that mismatch.
+    const getWasm = () => import("sh-syntax/main.wasm?url").then((m) => fetch(m.default));
+    const processor = shSyntax.getProcessor(getWasm);
+    return (text: string, options: Record<string, unknown> = {}) =>
+      processor(text, { ...options, print: true }) as Promise<string>;
+  });
+  return shellFmtLoader;
 }
 
 function formatterForPath(path: string): LanguageFormatter | null {
@@ -114,7 +130,7 @@ function formatterForPath(path: string): LanguageFormatter | null {
     case "bash":
     case "zsh":
     case "fish":
-      return { kind: "prettier", parser: "sh" };
+      return { kind: "shell" };
     case "toml":
       return { kind: "prettier", parser: "toml" };
     case "sql":
@@ -182,6 +198,10 @@ export async function formatTextForPath(path: string, text: string): Promise<str
     case "python": {
       const ruff = await loadRuffFmt();
       return Promise.resolve(ruff.format(text, fileBasename(path)));
+    }
+    case "shell": {
+      const shellfmt = await loadShellFmt();
+      return shellfmt(text, { filepath: fileBasename(path) });
     }
   }
 }

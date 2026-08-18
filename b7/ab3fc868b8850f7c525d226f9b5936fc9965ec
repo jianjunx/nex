@@ -1,0 +1,31 @@
+src/features/agent/ComposerEditor.tsx
+  s_d7532bd9be6e7d::t_d6fc33a2cadb6a 33,90
+src/features/agent/thread/UserMessageBubble.test.tsx
+  s_d7532bd9be6e7d::t_2a110b2b848520 6-9,66,74-75
+src/features/agent/thread/UserMessageBubble.tsx
+  s_d7532bd9be6e7d::t_27a9e87602185e 11-12,41,58-65
+src/features/editor/format.test.ts
+  s_d7532bd9be6e7d::t_4ad0254ef2a508 27-34
+src/features/editor/format.ts
+  s_d7532bd9be6e7d::t_cd85d3921dc5d2 7-8,66-71,76-81
+src/features/files/FileIcon.test.tsx
+  s_d7532bd9be6e7d::t_2f4346c44e5bcf 1-54
+src/features/files/FileIcon.tsx
+  s_d7532bd9be6e7d::t_35f069ae5992b8 4-10,12,16-26,28-42,66,73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "b7ab3fc868b8850f7c525d226f9b5936fc9965ec",
+  "prompts": {},
+  "sessions": {
+    "s_d7532bd9be6e7d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_d7532bd9be6e7d",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+src-tauri/src/agent/native/memory.rs
+  s_bba4e5ec16532f::t_a7b69066953e16 198-202,205-207
+  s_bba4e5ec16532f::t_d0a1e9d737e9d5 517-535
+  s_bba4e5ec16532f::t_1673d05ff0b3d6 280-348
+  s_bba4e5ec16532f::t_cf8c698b41ddda 516
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "d2cca8972d7f82c0452b36785e1f89330b704538",
+  "prompts": {},
+  "sessions": {
+    "s_bba4e5ec16532f": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "a6a598a1-442b-4f02-9604-be31b4c584c1",
+        "model": "grok-4.5"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

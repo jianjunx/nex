@@ -1,0 +1,76 @@
+src/features/agent/thread/applySessionUpdate.test.ts
+  s_bba4e5ec16532f::t_98dac1b520aacc 272-315
+src/stores/agent.store.test.ts
+  s_bba4e5ec16532f::t_97f558b2578af3 237
+  s_bba4e5ec16532f::t_c6a16c3bf468b4 70
+  s_bba4e5ec16532f::t_5a28bc4b4a65b9 215-217,219-221,231-236,238-254,256-277,310-311
+  s_bba4e5ec16532f::t_6d859e604d9e1c 218,222-224,255
+  s_bba4e5ec16532f::t_e5165bc0277476 278-309
+  s_bba4e5ec16532f::t_9953014eb96c50 57
+  s_bba4e5ec16532f::t_3eaf0c45b74109 44
+  s_bba4e5ec16532f::t_568a88a3d5481b 22
+  s_bba4e5ec16532f::t_84e5c3dd5cdcb4 225-230
+src/stores/agent.store.ts
+  s_bba4e5ec16532f::t_77a9d84ecfe3b6 957,964,971,987
+  s_bba4e5ec16532f::t_2e9022874e3821 1690,1698
+  s_bba4e5ec16532f::t_852fbbb403bebd 481-527
+  s_bba4e5ec16532f::t_e79a5691015737 573,588-589,591-592
+  s_bba4e5ec16532f::t_864a9177bc7212 832
+  s_bba4e5ec16532f::t_4df19e87996536 46
+  s_bba4e5ec16532f::t_67da2f293bd5b8 529-533
+  s_bba4e5ec16532f::t_070fc9e03841f6 991,1000-1007,1012-1014,1016-1021
+  s_bba4e5ec16532f::t_04919a9ca10967 1070,1082-1085
+  s_bba4e5ec16532f::t_0f0cfca7ebaf39 914-915
+  s_bba4e5ec16532f::t_b835117ce3cf50 967-969,978-980
+  s_bba4e5ec16532f::t_10339521b415cb 528
+src-tauri/src/agent/types.rs
+  s_bba4e5ec16532f::t_58a2dbcdeb86fe 16-19
+  s_bba4e5ec16532f::t_a7442a838daf18 191-194
+src-tauri/src/agent/native/session.rs
+  s_bba4e5ec16532f::t_8fbc7018968b1b 454-463
+  s_bba4e5ec16532f::t_8ecbf91216279d 1492-1546
+  s_bba4e5ec16532f::t_6a48acfe477726 43-50
+src/bridge/tauri.ts
+  s_bba4e5ec16532f::t_346a8b56637788 227
+src-tauri/src/agent/acp_adapter.rs
+  s_bba4e5ec16532f::t_961b51a78916a1 12
+  s_bba4e5ec16532f::t_2860e78a6e0f93 237
+  s_bba4e5ec16532f::t_e86528e2c37ac8 367-377
+  s_bba4e5ec16532f::t_e6db1aa6b91d84 1751
+  s_bba4e5ec16532f::t_eb337b88706e03 341
+  s_bba4e5ec16532f::t_e87fb505567d95 628-643
+  s_bba4e5ec16532f::t_4f5f8c23097e32 1508
+  s_bba4e5ec16532f::t_55a24752a3ac31 37-78
+  s_bba4e5ec16532f::t_93e6e5d417a595 1540
+  s_bba4e5ec16532f::t_ba2dc9500ff0e3 2209
+  s_bba4e5ec16532f::t_b98b1fbb3a997d 518-525
+  s_bba4e5ec16532f::t_f8d9892a9bb495 389-392
+src-tauri/src/agent/native/memory.rs
+  s_bba4e5ec16532f::t_2c27cf6aa57c52 431,434,436
+  s_bba4e5ec16532f::t_eb1569e159b1cb 204-207
+src/features/agent/thread/applySessionUpdate.ts
+  s_bba4e5ec16532f::t_c3cd2d9560a536 144,308-312,321,332,342,351,358,363
+  s_bba4e5ec16532f::t_0660f54960eac6 136
+  s_bba4e5ec16532f::t_3bdfc82020890a 130-131,135,137-143
+  s_bba4e5ec16532f::t_3b6987bbde9683 219
+  s_bba4e5ec16532f::t_2e3e451aa2371c 159,162,172,180-185
+  s_bba4e5ec16532f::t_c89d65ec11f98d 145
+src/bridge/events.ts
+  s_bba4e5ec16532f::t_ac7b0db207f604 19-20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "c9b4f83f2b1e820562a847c27dfdf1211c32fef1",
+  "prompts": {},
+  "sessions": {
+    "s_bba4e5ec16532f": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "a6a598a1-442b-4f02-9604-be31b4c584c1",
+        "model": "grok-4.5"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

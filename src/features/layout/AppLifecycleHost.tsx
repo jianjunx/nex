@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { appExitNow, onAppExitRequested } from "@/bridge/tauri";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -76,15 +77,48 @@ export function AppLifecycleHost() {
     };
   }, []);
 
+  // macOS Cmd+Q exits the whole app without going through a single window's
+  // close-request path. The backend emits `app-exit-requested` after
+  // preventing that native quit so the frontend can reuse the same busy-task
+  // confirmation UX as the window close button.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    void onAppExitRequested(() => {
+      if (hasBusySessions()) {
+        setQuitOpen(true);
+        return;
+      }
+      void appExitNow().catch(() => {
+        void getCurrentWindow().destroy().catch(() => window.close());
+      });
+    })
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {
+        /* non-tauri / platforms that never emit this event */
+      });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
   const confirmQuit = async () => {
     setQuitting(true);
     try {
-      // destroy() bypasses beforeunload — flush mid-turn thread snapshots
-      // here so interrupted conversations keep their history on next launch.
+      // flush snapshots before a hard quit so interrupted conversations keep
+      // their history on next launch.
       await useAgentStore.getState().flushThreadSnapshots();
-      await getCurrentWindow().destroy();
+      await appExitNow();
     } catch {
-      window.close();
+      try {
+        await getCurrentWindow().destroy();
+      } catch {
+        window.close();
+      }
     } finally {
       setQuitting(false);
       setQuitOpen(false);

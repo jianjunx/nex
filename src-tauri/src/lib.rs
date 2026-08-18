@@ -1,4 +1,4 @@
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 pub mod agent;
 mod commands;
@@ -114,6 +114,7 @@ pub fn run() {
             commands::update_cmds::update_check_latest,
             commands::update_cmds::update_download_and_install,
             commands::update_cmds::open_external,
+            commands::app_cmds::app_exit_now,
         ])
         .setup(|app| {
             #[cfg(target_os = "windows")]
@@ -155,6 +156,18 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::ExitRequested {
+                code: None,
+                api,
+                ..
+            } = event
+            {
+                api.prevent_exit();
+                let _ = app.emit("app-exit-requested", ());
+            }
+        });
 }

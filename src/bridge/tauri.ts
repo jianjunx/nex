@@ -786,8 +786,16 @@ export async function openExternal(url: string): Promise<void> {
   return invoke(COMMANDS.OPEN_EXTERNAL, { url });
 }
 
+export async function appExitNow(): Promise<void> {
+  return invoke(COMMANDS.APP_EXIT_NOW);
+}
+
 export function onUpdateDownloadProgress(cb: (payload: UpdateDownloadProgressPayload) => void): Promise<UnlistenFn> {
   return listen(EVENTS.UPDATE_DOWNLOAD_PROGRESS, (e) => cb(e.payload as UpdateDownloadProgressPayload));
+}
+
+export function onAppExitRequested(cb: () => void): Promise<UnlistenFn> {
+  return listen(EVENTS.APP_EXIT_REQUESTED, () => cb());
 }
 
 // --- Event Listeners ---

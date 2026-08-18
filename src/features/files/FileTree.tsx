@@ -18,6 +18,20 @@ function uniqueByPath<T extends { path: string }>(nodes: T[] | undefined): T[] {
   return nodes.filter((n) => (seen.has(n.path) ? false : (seen.add(n.path), true)));
 }
 
+function focusVisibleTreeRelative(currentEl: HTMLElement, delta: -1 | 1): void {
+  const container = currentEl.closest("[data-file-tree]");
+  if (!(container instanceof HTMLElement)) return;
+  const items = Array.from(container.querySelectorAll<HTMLElement>("[role='treeitem']"));
+  const index = items.indexOf(currentEl);
+  if (index < 0) return;
+  const next = items[index + delta];
+  if (!next) return;
+  const nextPath = next.dataset.dirPath ?? next.dataset.filePath ?? null;
+  if (nextPath) fsActions.setSelectedPath(nextPath);
+  next.focus();
+  next.scrollIntoView?.({ block: "nearest" });
+}
+
 // Stable action references (zustand actions never change identity): passing
 // these down instead of re-created closures lets memo() actually skip work.
 const fsActions = {
@@ -219,7 +233,13 @@ function TreeNode({
       useFsStore.getState().requestDeleteEntry(node.path);
       return;
     }
-    if (e.key === 'ArrowRight') {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      focusVisibleTreeRelative(e.currentTarget as HTMLElement, 1);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      focusVisibleTreeRelative(e.currentTarget as HTMLElement, -1);
+    } else if (e.key === 'ArrowRight') {
       e.preventDefault();
       if ((isRoot || node.is_dir) && !isExpanded) {
         expandDir(node.path);

@@ -155,6 +155,7 @@ describe("ProjectRail", () => {
     expect(p1?.getAttribute("aria-label")).toContain("Agent 运行中");
     expect(p2?.getAttribute("aria-label")).toContain("Agent 等待中");
     expect(p1?.querySelector("span")?.className).toContain("animate-pulse");
+    expect(p1?.querySelector("span")?.className).toContain("nex-project-running-rotate");
     expect(p1?.querySelector("span")?.className).toContain("text-[var(--success)]");
     expect(p1?.querySelector("span")?.className).toContain("font-bold");
     expect(p2?.querySelector("span")?.className).toContain("animate-pulse");

@@ -96,4 +96,5 @@ export const COMMANDS = {
   UPDATE_CHECK_LATEST: "update_check_latest",
   UPDATE_DOWNLOAD_AND_INSTALL: "update_download_and_install",
   OPEN_EXTERNAL: "open_external",
+  APP_EXIT_NOW: "app_exit_now",
 } as const;

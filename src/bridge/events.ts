@@ -11,6 +11,7 @@ export const EVENTS = {
   FS_CHANGED: "fs-changed",
   GIT_CREDENTIAL_REQUEST: "git-credential-request",
   UPDATE_DOWNLOAD_PROGRESS: "update-download-progress",
+  APP_EXIT_REQUESTED: "app-exit-requested",
 } as const;
 
 export interface AgentNotificationPayload {

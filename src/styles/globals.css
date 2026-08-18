@@ -465,6 +465,21 @@ html, body {
 }
 /* Search panel micro-interactions (Plan 5) — restraint: 150ms, no new deps. */
 
+@keyframes nex-project-running-rotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.nex-project-running-rotate {
+  animation: nex-project-running-rotate 5.8s linear infinite;
+  transform-origin: center;
+  will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) {
+  .nex-project-running-rotate {
+    animation: none;
+  }
+}
+
 /* 结果行 stagger 渐显；animation-delay 由行内样式按索引给出（上限前 20 条）。 */
 @keyframes search-stagger-in {
   from { opacity: 0; transform: translateY(2px); }

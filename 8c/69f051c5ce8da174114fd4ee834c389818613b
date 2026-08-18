@@ -1,0 +1,43 @@
+src-tauri/src/commands/app_cmds.rs
+  s_3f88193f9ac0b0::t_536b415c2a208f 1-6
+src-tauri/src/commands/mod.rs
+  s_3f88193f9ac0b0::t_312b9350bb0de6 2
+src-tauri/src/lib.rs
+  s_3f88193f9ac0b0::t_1e017cc7f866ff 1,117,159-172
+src/bridge/commands.ts
+  s_3f88193f9ac0b0::t_281f7afb45488e 99
+src/bridge/events.ts
+  s_3f88193f9ac0b0::t_1e5ce799450b33 14
+src/bridge/tauri.ts
+  s_3f88193f9ac0b0::t_dd02e1470539c6 789-792,797-800
+src/features/files/FileTree.test.tsx
+  s_3f88193f9ac0b0::t_d3aff6f27d4e01 1-112
+src/features/files/FileTree.tsx
+  s_3f88193f9ac0b0::t_ac1a8984ba59cb 21-34,236-242
+src/features/layout/AppLifecycleHost.test.tsx
+  s_3f88193f9ac0b0::t_d12f589fff0ceb 1-151
+src/features/layout/AppLifecycleHost.tsx
+  s_3f88193f9ac0b0::t_dbefabe99d5dfa 3,80-108,112-113,115,117-121
+src/features/projects/ProjectRail.test.tsx
+  s_3f88193f9ac0b0::t_6fd390122500ba 158
+src/features/projects/ProjectRail.tsx
+  s_3f88193f9ac0b0::t_186a5485c4e78e 118,120
+src/styles/globals.css
+  s_3f88193f9ac0b0::t_990ceade248df0 468-482
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "8c69f051c5ce8da174114fd4ee834c389818613b",
+  "prompts": {},
+  "sessions": {
+    "s_3f88193f9ac0b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_3f88193f9ac0b0",
+        "model": "unknown"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

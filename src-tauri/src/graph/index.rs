@@ -41,12 +41,12 @@ fn build_inner(cwd: &Path, only: Option<&[PathBuf]>) -> Result<BuildStats, Strin
         .canonicalize()
         .map_err(|e| format!("cannot resolve workspace: {e}"))?;
     let cfg = GraphConfig::load(&cwd);
-    let store = Store::open(&cwd)?;
     let mut stats = BuildStats::default();
     let gitignore = load_gitignore(&cwd);
 
     if let Some(paths) = only {
         let mut seen = HashSet::new();
+        let mut to_index = Vec::new();
         for raw in paths {
             let abs = if raw.is_absolute() {
                 raw.clone()
@@ -60,6 +60,15 @@ fn build_inner(cwd: &Path, only: Option<&[PathBuf]>) -> Result<BuildStats, Strin
             if !seen.insert(rel.clone()) {
                 continue;
             }
+            to_index.push((abs, rel));
+        }
+        // Watcher can still deliver `.nex/cache` writes; opening sqlite /
+        // rewriting meta.json here would retrigger the same batch forever.
+        if to_index.is_empty() {
+            return Ok(stats);
+        }
+        let store = Store::open(&cwd)?;
+        for (abs, rel) in to_index {
             stats.scanned += 1;
             if abs.is_file() {
                 match index_one(&store, &cwd, &abs, &rel, &cfg) {
@@ -75,6 +84,8 @@ fn build_inner(cwd: &Path, only: Option<&[PathBuf]>) -> Result<BuildStats, Strin
         write_meta(&store, &cwd, &stats)?;
         return Ok(stats);
     }
+
+    let store = Store::open(&cwd)?;
 
     let mut live = HashSet::new();
     let walker = WalkBuilder::new(&cwd)
@@ -351,5 +362,24 @@ mod tests {
             )
             .unwrap();
         assert_eq!(beta, 0);
+    }
+
+    #[test]
+    fn cache_only_invalidate_does_not_rewrite_meta() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().canonicalize().unwrap();
+        std::fs::create_dir_all(cwd.join("src")).unwrap();
+        std::fs::write(cwd.join("src/lib.rs"), "pub fn alpha() {}\n").unwrap();
+        build_project(&cwd).unwrap();
+        let meta_path = cwd.join(".nex/cache/graph/meta.json");
+        let before = std::fs::read(&meta_path).unwrap();
+
+        let stats = update_paths(&cwd, &[cwd.join(".nex/cache/graph/index.sqlite")]).unwrap();
+        assert_eq!(stats.scanned, 0);
+        let after = std::fs::read(&meta_path).unwrap();
+        assert_eq!(
+            before, after,
+            "cache-only invalidate must not rewrite meta.json"
+        );
     }
 }

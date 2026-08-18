@@ -6,6 +6,11 @@
 //! `git-status-changed` so the frontend can refresh the file tree and git
 //! status. Debounced batches, not raw events, keep noisy edits (agent
 //! writes, build output) from flooding the frontend.
+//!
+//! Batches that only touch Nex-generated cache/archive (`.nex/cache`,
+//! `.nex-archive`) are dropped: those writes are not workspace edits, and
+//! forwarding them would refresh git status in a loop when the code graph
+//! indexer writes sqlite/meta.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -101,6 +106,10 @@ impl WatcherManager {
                             .flat_map(|e| e.event.paths.iter())
                             .map(|p| p.to_string_lossy().into_owned())
                             .collect();
+                        let paths = user_facing_paths(&paths);
+                        if paths.is_empty() {
+                            return;
+                        }
                         let _ = app.emit(
                             FS_CHANGED_EVENT,
                             FsChangedPayload { project_path: emit_path.clone(), paths: paths.clone() },
@@ -141,5 +150,58 @@ impl WatcherManager {
     pub fn unwatch_except(&self, keep_path: &str) {
         let mut watchers = self.watchers.lock().unwrap();
         watchers.retain(|path, _| path == keep_path);
+    }
+}
+
+/// Paths the UI / git panel / graph indexer should see.
+///
+/// Drops Nex-generated cache and archive writes so they cannot retrigger
+/// git refresh or a graph `write_meta` loop.
+fn user_facing_paths(paths: &[String]) -> Vec<String> {
+    paths
+        .iter()
+        .filter(|p| !is_nex_internal_path(p))
+        .cloned()
+        .collect()
+}
+
+/// True for Nex-generated cache/archive paths (absolute or relative, `/` or `\`).
+fn is_nex_internal_path(path: &str) -> bool {
+    let n = path.replace('\\', "/");
+    n.contains("/.nex/cache/")
+        || n.ends_with("/.nex/cache")
+        || n.starts_with(".nex/cache/")
+        || n == ".nex/cache"
+        || n.contains("/.nex-archive/")
+        || n.ends_with("/.nex-archive")
+        || n.starts_with(".nex-archive/")
+        || n == ".nex-archive"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nex_cache_and_archive_are_internal() {
+        assert!(is_nex_internal_path("/proj/.nex/cache/graph/index.sqlite"));
+        assert!(is_nex_internal_path("/proj/.nex/cache/graph/index.sqlite-wal"));
+        assert!(is_nex_internal_path("/proj/.nex/cache"));
+        assert!(is_nex_internal_path(r"C:\proj\.nex\cache\graph\meta.json"));
+        assert!(is_nex_internal_path("/proj/.nex-archive/foo"));
+        assert!(is_nex_internal_path(".nex/cache/graph/meta.json"));
+        assert!(!is_nex_internal_path("/proj/.nex/rules/foo.md"));
+        assert!(!is_nex_internal_path("/proj/.nex/mcp.json"));
+        assert!(!is_nex_internal_path("/proj/src/lib.rs"));
+    }
+
+    #[test]
+    fn user_paths_drops_internal_only_batches() {
+        let mixed = user_facing_paths(&[
+            "/p/.nex/cache/graph/index.sqlite".into(),
+            "/p/src/a.rs".into(),
+        ]);
+        assert_eq!(mixed, vec!["/p/src/a.rs"]);
+        assert!(user_facing_paths(&["/p/.nex/cache/x".into()]).is_empty());
     }
 }

@@ -103,7 +103,7 @@ export function AboutSection() {
         <p className="mt-2 text-xs text-[var(--text-tertiary)]" data-testid="update-status">
           {status === "up-to-date" && info && <>已是最新版本（v{info.latest_version}）。</>}
           {status === "available" && info && (
-            <>发现新版本 v{info.latest_version}，点击右侧按钮下载；完成后会自动退出并安装，安装完自动打开。</>
+            <>发现新版本 v{info.latest_version}，点击右侧按钮下载；完成后会自动退出并安装。若安装未弹出，请查看应用数据目录下 <code className="text-[11px]">updater/install-and-relaunch.log</code>。</>
           )}
           {status === "error" && <span className="text-red-500">{error ?? "检查更新失败"}</span>}
           {status === "idle" && <>启动时会自动检查一次更新。</>}

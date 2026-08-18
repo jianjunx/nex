@@ -3,9 +3,10 @@
 //! The app has no updater signing infrastructure, so this is a lightweight
 //! flow: query the latest published GitHub release, compare semver, download
 //! the platform installer asset with progress events, then replace the running
-//! app. Windows waits for this process to exit, then launches NSIS. macOS
-//! waits, copies the `.app` out of the `.dmg` over the running bundle, and
-//! relaunches — Finder drag-install is only a fallback when not running from
+//! app. Windows waits for this process to exit, then launches NSIS via a
+//! breakaway helper script (must survive Tauri's job object on parent exit).
+//! macOS waits, copies the `.app` out of the `.dmg` over the running bundle,
+//! and relaunches — Finder drag-install is only a fallback when not running from
 //! a bundle (e.g. `tauri dev`).
 //!
 //! Unauthenticated clients share a 60 req/h IP quota on `api.github.com`
@@ -205,12 +206,44 @@ echo "nex update done $(date)"
     )
 }
 
-/// PowerShell: wait until this pid exits, then start the NSIS installer.
+/// PowerShell helper script: wait until Nex exits, then launch the NSIS installer.
+/// Writes to `$Log` so a silent failure is diagnosable under
+/// `%APPDATA%\\com.nex.app\\updater\\install-and-relaunch.log`.
 #[cfg(any(target_os = "windows", test))]
-fn windows_wait_and_start_ps(pid: u32, installer: &Path) -> String {
-    let path = installer.to_string_lossy().replace('\'', "''");
+fn windows_install_script(pid: u32, installer: &Path, log: &Path) -> String {
+    let installer_q = installer.to_string_lossy().replace('\'', "''");
+    let log_q = log.to_string_lossy().replace('\'', "''");
     format!(
-        "Wait-Process -Id {pid} -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 800; $p = '{path}'; for ($i = 0; $i -lt 5; $i++) {{ try {{ Start-Process -LiteralPath $p; exit 0 }} catch {{ Start-Sleep -Milliseconds (500 * ($i + 1)) }} }}"
+        r#"$ErrorActionPreference = 'Stop'
+$NexPid = {pid}
+$Installer = '{installer_q}'
+$Log = '{log_q}'
+function Write-Log([string]$Message) {{
+  "$(Get-Date -Format o) $Message" | Add-Content -LiteralPath $Log -Encoding UTF8
+}}
+try {{
+  Write-Log "nex update helper start pid=$PID nexPid=$NexPid"
+  $n = 0
+  while ($n -lt 300) {{
+    if (-not (Get-Process -Id $NexPid -ErrorAction SilentlyContinue)) {{ break }}
+    $n++
+    Start-Sleep -Milliseconds 200
+  }}
+  if ($n -ge 300) {{
+    Write-Log "timeout waiting for nex pid=$NexPid; launching installer anyway"
+  }}
+  Start-Sleep -Milliseconds 800
+  if (-not (Test-Path -LiteralPath $Installer)) {{
+    Write-Log "installer missing: $Installer"
+    exit 1
+  }}
+  $proc = Start-Process -LiteralPath $Installer -PassThru
+  Write-Log "installer started pid=$($proc.Id) path=$Installer"
+}} catch {{
+  Write-Log "error: $_"
+  exit 1
+}}
+"#
     )
 }
 
@@ -594,17 +627,56 @@ pub async fn update_download_and_install(
 
 #[cfg(target_os = "windows")]
 fn spawn_windows_installer(dest: &Path) -> Result<(), NexError> {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-    const DETACHED_PROCESS: u32 = 0x0000_0008;
-    let ps = windows_wait_and_start_ps(std::process::id(), dest);
-    std::process::Command::new("powershell")
-        .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &ps])
-        .creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS)
-        .spawn()
-        .map_err(|e| NexError::Internal(format!("启动安装程序失败: {e}")))?;
-    Ok(())
+    let dir = dest
+        .parent()
+        .ok_or_else(|| NexError::Internal("更新目录无效".into()))?;
+    let script_path = dir.join("install-and-relaunch.ps1");
+    let log_path = dir.join("install-and-relaunch.log");
+    let script = windows_install_script(std::process::id(), dest, &log_path);
+    std::fs::write(&script_path, script)
+        .map_err(|e| NexError::Internal(format!("写入更新脚本失败: {e}")))?;
+
+    let script_arg = script_path.to_string_lossy().into_owned();
+
+    fn spawn_helper(script_arg: &str, breakaway: bool) -> std::io::Result<std::process::Child> {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+        let mut flags = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS;
+        if breakaway {
+            flags |= CREATE_BREAKAWAY_FROM_JOB;
+        }
+        // `cmd /C start` returns immediately; the helper outlives Nex.
+        std::process::Command::new("cmd")
+            .args([
+                "/C",
+                "start",
+                "",
+                "/min",
+                "powershell.exe",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-WindowStyle",
+                "Hidden",
+                "-File",
+                script_arg,
+            ])
+            .creation_flags(flags)
+            .spawn()
+    }
+
+    match spawn_helper(&script_arg, true) {
+        Ok(_) => Ok(()),
+        Err(e) if e.raw_os_error() == Some(5) => spawn_helper(&script_arg, false).map_err(|e2| {
+            NexError::Internal(format!(
+                "启动安装程序失败: {e2}（breakaway 被拒绝: {e}）"
+            ))
+        }),
+        Err(e) => Err(NexError::Internal(format!("启动安装程序失败: {e}"))),
+    }
 }
 
 /// Returns true when a helper was spawned and the app should exit.
@@ -833,11 +905,17 @@ mod tests {
     }
 
     #[test]
-    fn windows_ps_waits_for_pid_and_escapes_quotes() {
-        let ps = windows_wait_and_start_ps(7, Path::new(r"C:\Users\O'Brien\Nex-setup.exe"));
-        assert!(ps.contains("Wait-Process -Id 7"));
-        assert!(ps.contains("Start-Process -LiteralPath"));
-        assert!(ps.contains(r"C:\Users\O''Brien\Nex-setup.exe"));
+    fn windows_script_waits_polls_and_logs() {
+        let script = windows_install_script(
+            42,
+            Path::new(r"C:\Users\O'Brien\Nex-setup.exe"),
+            Path::new(r"C:\Users\O'Brien\AppData\Roaming\com.nex.app\updater\install.log"),
+        );
+        assert!(script.contains("$NexPid = 42"));
+        assert!(script.contains(r"C:\Users\O''Brien\Nex-setup.exe"));
+        assert!(script.contains("Get-Process -Id $NexPid"));
+        assert!(script.contains("Start-Process -LiteralPath $Installer"));
+        assert!(script.contains("Write-Log"));
     }
 
     #[test]

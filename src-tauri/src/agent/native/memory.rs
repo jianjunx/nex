@@ -201,6 +201,10 @@ impl WorkingMemory {
             return false;
         }
         self.set_goal(next);
+        // A new user request is a new task. Stale todos from the previous
+        // goal otherwise keep steering the model into answering the old
+        // question after the user has already moved on.
+        self.active_todos.clear();
         true
     }
 
@@ -424,9 +428,12 @@ mod tests {
     fn new_request_replaces_stale_goal() {
         let mut m = WorkingMemory::new();
         m.set_goal("修复登录");
+        m.replace_active_todos(["改登录页".to_string()]);
         assert!(m.set_goal_for_request("实现导出"));
         assert_eq!(m.goal, vec!["实现导出"]);
+        assert!(m.active_todos.is_empty());
         assert!(!m.set_goal_for_request("实现导出"));
+        assert!(m.active_todos.is_empty());
     }
 
     #[test]

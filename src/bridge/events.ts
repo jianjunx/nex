@@ -16,6 +16,8 @@ export const EVENTS = {
 
 export interface AgentNotificationPayload {
   sessionId: string;
+  /** Backend prompt generation; late events with an older seq stay in that turn. */
+  promptSeq?: number;
   update: unknown; // SessionUpdate (ACP)
 }
 

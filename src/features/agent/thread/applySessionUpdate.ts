@@ -127,9 +127,20 @@ function mapPlanEntries(raw: unknown): PlanEntry[] {
 }
 
 /** Only continue the trailing assistant bubble; anything after it (tools, user, …) starts a new one. */
-function lastAssistant(entries: ThreadEntry[]): AssistantMessageEntry | null {
-  const last = entries[entries.length - 1];
+function lastAssistantBefore(entries: ThreadEntry[], insertAt: number): AssistantMessageEntry | null {
+  const last = entries[insertAt - 1];
   return last?.kind === "assistant_message" ? last : null;
+}
+
+/** Insert stream updates before a newer user message that already landed. */
+export function streamInsertIndex(entries: ThreadEntry[], streamUserMessageId?: string | null): number {
+  if (!streamUserMessageId) return entries.length;
+  const start = entries.findIndex((e) => e.id === streamUserMessageId);
+  if (start < 0) return entries.length;
+  for (let i = start + 1; i < entries.length; i++) {
+    if (entries[i].kind === "user_message") return i;
+  }
+  return entries.length;
 }
 
 function findTool(entries: ThreadEntry[], toolCallId: string): ToolCallEntry | null {
@@ -145,9 +156,10 @@ function appendAssistantChunk(
   isThought: boolean,
   text: string,
   now: number,
+  insertAt: number,
 ): void {
   if (!text) return;
-  const last = lastAssistant(entries);
+  const last = lastAssistantBefore(entries, insertAt);
   if (last) {
     const chunk = last.chunks[last.chunks.length - 1];
     if (chunk && chunk.type === (isThought ? "thought" : "message")) {
@@ -157,7 +169,7 @@ function appendAssistantChunk(
     last.chunks.push(isThought ? { type: "thought", text } : { type: "message", text });
     return;
   }
-  entries.push({
+  entries.splice(insertAt, 0, {
     id: crypto.randomUUID(),
     kind: "assistant_message",
     timestamp: now,
@@ -165,7 +177,12 @@ function appendAssistantChunk(
   });
 }
 
-function upsertToolCall(entries: ThreadEntry[], update: Record<string, unknown>, now: number): void {
+function upsertToolCall(
+  entries: ThreadEntry[],
+  update: Record<string, unknown>,
+  now: number,
+  insertAt: number,
+): void {
   const toolCallId =
     typeof update.toolCallId === "string"
       ? update.toolCallId
@@ -199,7 +216,7 @@ function upsertToolCall(entries: ThreadEntry[], update: Record<string, unknown>,
     return;
   }
 
-  entries.push({
+  entries.splice(insertAt, 0, {
     id: crypto.randomUUID(),
     kind: "tool_call",
     timestamp: now,
@@ -288,6 +305,11 @@ export interface ApplyResult {
   completedPlanSnapshot: PlanEntry[] | null;
 }
 
+export interface ApplySessionUpdateOptions {
+  /** User message that started the in-flight prompt; later user bubbles stay after this turn. */
+  streamUserMessageId?: string | null;
+}
+
 /**
  * Applies one ACP SessionUpdate (JSON) onto thread entries + session meta.
  * Mutates `entries` / `meta` in place (Immer-friendly).
@@ -296,6 +318,7 @@ export function applySessionUpdate(
   entries: ThreadEntry[],
   meta: SessionMeta,
   update: unknown,
+  opts?: ApplySessionUpdateOptions,
 ): ApplyResult {
   const result: ApplyResult = {
     entriesChanged: false,
@@ -306,6 +329,7 @@ export function applySessionUpdate(
   const u = update as Record<string, unknown>;
   const kind = u.sessionUpdate;
   const now = Date.now();
+  const insertAt = streamInsertIndex(entries, opts?.streamUserMessageId);
 
   switch (kind) {
     case "user_message_chunk":
@@ -315,7 +339,7 @@ export function applySessionUpdate(
     case "agent_message_chunk": {
       const text = contentBlockText(u.content);
       if (text) {
-        appendAssistantChunk(entries, false, text, now);
+        appendAssistantChunk(entries, false, text, now, insertAt);
         result.entriesChanged = true;
       }
       return result;
@@ -324,19 +348,19 @@ export function applySessionUpdate(
     case "agent_thought_chunk": {
       const text = contentBlockText(u.content);
       if (text) {
-        appendAssistantChunk(entries, true, text, now);
+        appendAssistantChunk(entries, true, text, now, insertAt);
         result.entriesChanged = true;
       }
       return result;
     }
 
     case "tool_call":
-      upsertToolCall(entries, u, now);
+      upsertToolCall(entries, u, now, insertAt);
       result.entriesChanged = true;
       return result;
 
     case "tool_call_update":
-      upsertToolCall(entries, u, now);
+      upsertToolCall(entries, u, now, insertAt);
       result.entriesChanged = true;
       return result;
 

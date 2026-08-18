@@ -40,6 +40,14 @@ const SIGNATURE_WINDOW: usize = 8;
 const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 /// Subagent final answers larger than this go to disk behind a stable ref.
 const SUBAGENT_INLINE_LIMIT: usize = 20_000;
+/// Visible fallback when the model ends a tool round with no text and no
+/// further calls. Without this the thread just goes idle after a tool card.
+const EMPTY_AFTER_TOOLS_NOTICE: &str =
+    "本轮已结束（模型未继续调用工具）。若任务尚未完成，请再发一条消息继续。";
+/// Wrap-up turn produced no text. Distinct from the old hard-stop banner.
+const EMPTY_WRAP_UP_NOTICE: &str =
+    "本轮步数已用尽且模型未给出收尾说明。若任务尚未完成，请再发一条消息继续。";
+const EMPTY_REPLY_NOTICE: &str = "模型没有返回可见回复，本轮已结束。";
 
 /// OpenCode-aligned wrap-up when a configured `max_steps` cap is hit: tools are
 /// disabled and the model must summarize progress + recommend next steps.
@@ -443,6 +451,16 @@ pub async fn run_turn(
         if wrap_up || calls.is_empty() {
             if !text.trim().is_empty() {
                 messages.push(ChatMessage::assistant(text));
+            } else {
+                let notice = if wrap_up {
+                    EMPTY_WRAP_UP_NOTICE
+                } else if steps > 0 {
+                    EMPTY_AFTER_TOOLS_NOTICE
+                } else {
+                    EMPTY_REPLY_NOTICE
+                };
+                emit_text(env, notice).await;
+                messages.push(ChatMessage::assistant(notice.to_string()));
             }
             return acp::StopReason::EndTurn;
         }
@@ -1467,6 +1485,61 @@ mod tests {
                 assert!(kinds.contains(&"tool_call"));
                 assert!(kinds.contains(&"tool_update"));
                 assert!(kinds.contains(&"text"));
+            })
+            .await;
+    }
+
+    /// After tools, an empty model reply used to go idle with no visible
+    /// message. Surface a recovery notice so the thread doesn't look stuck.
+    #[tokio::test(flavor = "current_thread")]
+    async fn empty_reply_after_tools_emits_visible_notice() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let tmp = tempfile::tempdir().unwrap();
+                std::fs::write(tmp.path().join("x.txt"), "hello").unwrap();
+                let provider = ScriptedProvider {
+                    turns: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
+                        vec![
+                            Chunk::ToolCall(NativeToolCall {
+                                id: "call_1".into(),
+                                name: "read_file".into(),
+                                arguments: serde_json::json!({"path": "x.txt"}),
+                            }),
+                            done(),
+                        ],
+                        vec![done()],
+                    ])),
+                    tools_nonempty: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+                };
+                let (env, nots, _perms) = make_env(provider, tmp.path(), false);
+                let mut messages = vec![ChatMessage::system("sys")];
+                let stop =
+                    run_turn(&env, &mut messages, Content::Text("读一下 x.txt".into())).await;
+                assert!(matches!(stop, acp::StopReason::EndTurn));
+                let last = messages
+                    .last()
+                    .and_then(|m| m.content.as_ref())
+                    .and_then(Content::as_text)
+                    .unwrap_or("");
+                assert!(
+                    last.contains("模型未继续调用工具"),
+                    "empty post-tool stop must leave a visible notice, got {last:?}"
+                );
+                for _ in 0..200 {
+                    let has_notice = nots.borrow().iter().any(|u| match u {
+                        acp::SessionUpdate::AgentMessageChunk(c) => match &c.content {
+                            acp::ContentBlock::Text(t) => t.text.contains("模型未继续调用工具"),
+                            _ => false,
+                        },
+                        _ => false,
+                    });
+                    if has_notice {
+                        return;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+                panic!("notice was persisted but never streamed to the client");
             })
             .await;
     }

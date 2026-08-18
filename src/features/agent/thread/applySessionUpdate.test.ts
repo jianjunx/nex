@@ -269,4 +269,48 @@ describe("applySessionUpdate", () => {
       expect(entries[2].chunks).toEqual([{ type: "message", text: "已按你的要求改完。" }]);
     }
   });
+
+  it("late chunks for an older user turn stay before a newer user message", () => {
+    const entries: ThreadEntry[] = [
+      { id: "u-old", kind: "user_message", text: "上一题", timestamp: 1 },
+      {
+        id: "a-old",
+        kind: "assistant_message",
+        timestamp: 2,
+        chunks: [{ type: "message", text: "先做这个" }],
+      },
+      { id: "u-new", kind: "user_message", text: "新问题", timestamp: 3 },
+    ];
+    const meta = emptySessionMeta();
+    applySessionUpdate(
+      entries,
+      meta,
+      { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "，再改文件" } },
+      { streamUserMessageId: "u-old" },
+    );
+    applySessionUpdate(
+      entries,
+      meta,
+      {
+        sessionUpdate: "tool_call",
+        toolCallId: "t-old",
+        title: "edit",
+        kind: "edit",
+        status: "in_progress",
+      },
+      { streamUserMessageId: "u-old" },
+    );
+
+    expect(entries.map((e) => e.kind)).toEqual([
+      "user_message",
+      "assistant_message",
+      "tool_call",
+      "user_message",
+    ]);
+    if (entries[1].kind === "assistant_message") {
+      expect(entries[1].chunks).toEqual([{ type: "message", text: "先做这个，再改文件" }]);
+    }
+    if (entries[2].kind === "tool_call") expect(entries[2].toolCallId).toBe("t-old");
+    if (entries[3].kind === "user_message") expect(entries[3].text).toBe("新问题");
+  });
 });

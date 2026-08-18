@@ -9,7 +9,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use agent_client_protocol::{self as acp, Agent as _};
@@ -33,6 +33,48 @@ const AGENT_PERMISSION_REQUEST_EVENT: &str = "agent-permission-request";
 const AGENT_PLAN_APPROVAL_REQUEST_EVENT: &str = "agent-plan-approval-request";
 const AGENT_ASK_QUESTION_REQUEST_EVENT: &str = "agent-ask-question-request";
 const AGENT_SESSION_TERMINATED_EVENT: &str = "agent-session-terminated";
+
+/// Per-session prompt generation stamped onto `agent-notification` events.
+/// Incremented at `send_prompt` start so late UI events stay bound to the
+/// turn that produced them after a newer user message is already on screen.
+static PROMPT_SEQS: OnceLock<Mutex<HashMap<String, AtomicU64>>> = OnceLock::new();
+
+fn prompt_seqs() -> &'static Mutex<HashMap<String, AtomicU64>> {
+    PROMPT_SEQS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn bump_prompt_seq(session_key: &str) -> u64 {
+    prompt_seqs()
+        .lock()
+        .unwrap()
+        .entry(session_key.to_string())
+        .or_insert_with(|| AtomicU64::new(0))
+        .fetch_add(1, Ordering::SeqCst)
+        + 1
+}
+
+fn current_prompt_seq(session_key: &str) -> u64 {
+    prompt_seqs()
+        .lock()
+        .unwrap()
+        .get(session_key)
+        .map(|seq| seq.load(Ordering::SeqCst))
+        .unwrap_or(0)
+}
+
+fn clear_prompt_seq(session_key: &str) {
+    prompt_seqs().lock().unwrap().remove(session_key);
+}
+
+fn stop_reason_name(reason: acp::StopReason) -> &'static str {
+    match reason {
+        acp::StopReason::EndTurn => "end_turn",
+        acp::StopReason::MaxTokens => "max_tokens",
+        acp::StopReason::MaxTurnRequests => "max_turn_requests",
+        acp::StopReason::Refusal => "refusal",
+        acp::StopReason::Cancelled => "cancelled",
+    }
+}
 
 /// Cap for `cursor/generate_image` file reads / embedded payloads (base64 of this).
 const MAX_GENERATED_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
@@ -192,13 +234,7 @@ struct NexAcpClient {
 impl acp::Client for NexAcpClient {
     async fn session_notification(&self, args: acp::SessionNotification) -> acp::Result<()> {
         let update = serde_json::to_value(&args.update).unwrap_or(serde_json::Value::Null);
-        let _ = self.app.emit(
-            AGENT_NOTIFICATION_EVENT,
-            AgentNotification {
-                session_id: self.session_key.clone(),
-                update,
-            },
-        );
+        self.emit_session_update(update);
         Ok(())
     }
 
@@ -302,13 +338,7 @@ impl acp::Client for NexAcpClient {
         // arrive here; forward the inner `update` so the frontend reducer sees it.
         if method == "session/update" {
             let update = params.get("update").cloned().unwrap_or(params);
-            let _ = self.app.emit(
-                AGENT_NOTIFICATION_EVENT,
-                AgentNotification {
-                    session_id: self.session_key.clone(),
-                    update,
-                },
-            );
+            self.emit_session_update(update);
             return Ok(());
         }
 
@@ -334,6 +364,17 @@ impl acp::Client for NexAcpClient {
 }
 
 impl NexAcpClient {
+    fn emit_session_update(&self, update: serde_json::Value) {
+        let _ = self.app.emit(
+            AGENT_NOTIFICATION_EVENT,
+            AgentNotification {
+                session_id: self.session_key.clone(),
+                prompt_seq: current_prompt_seq(&self.session_key),
+                update,
+            },
+        );
+    }
+
     fn emit_plan_from_todos(&self, todos: &[CursorTodoDto]) {
         let entries: Vec<serde_json::Value> = todos
             .iter()
@@ -345,16 +386,10 @@ impl NexAcpClient {
                 })
             })
             .collect();
-        let _ = self.app.emit(
-            AGENT_NOTIFICATION_EVENT,
-            AgentNotification {
-                session_id: self.session_key.clone(),
-                update: serde_json::json!({
-                    "sessionUpdate": "plan",
-                    "entries": entries,
-                }),
-            },
-        );
+        self.emit_session_update(serde_json::json!({
+            "sessionUpdate": "plan",
+            "entries": entries,
+        }));
     }
 
     fn apply_cursor_todos(&self, params: &serde_json::Value) -> Vec<CursorTodoDto> {
@@ -480,20 +515,14 @@ impl NexAcpClient {
                 "content": { "type": "text", "text": format!("duration: {ms}ms") },
             }));
         }
-        let _ = self.app.emit(
-            AGENT_NOTIFICATION_EVENT,
-            AgentNotification {
-                session_id: self.session_key.clone(),
-                update: serde_json::json!({
-                    "sessionUpdate": "tool_call",
-                    "toolCallId": tool_call_id,
-                    "title": description,
-                    "kind": "other",
-                    "status": status,
-                    "content": content,
-                }),
-            },
-        );
+        self.emit_session_update(serde_json::json!({
+            "sessionUpdate": "tool_call",
+            "toolCallId": tool_call_id,
+            "title": description,
+            "kind": "other",
+            "status": status,
+            "content": content,
+        }));
         // Keep RPC outcome aligned with the tool card status.
         let mut outcome = serde_json::json!({
             "outcome": if completed { "completed" } else { "started" }
@@ -596,28 +625,22 @@ impl NexAcpClient {
         }
 
         let file_path = file_path.expect("file_path set above");
-        let _ = self.app.emit(
-            AGENT_NOTIFICATION_EVENT,
-            AgentNotification {
-                session_id: self.session_key.clone(),
-                update: serde_json::json!({
-                    "sessionUpdate": "tool_call",
-                    "toolCallId": tool_call_id,
-                    "title": description,
-                    "kind": "other",
-                    "status": "completed",
-                    "content": [{
-                        "type": "content",
-                        "content": {
-                            "type": "image",
-                            "mimeType": mime,
-                            "data": data,
-                            "uri": file_path,
-                        }
-                    }],
-                }),
-            },
-        );
+        self.emit_session_update(serde_json::json!({
+            "sessionUpdate": "tool_call",
+            "toolCallId": tool_call_id,
+            "title": description,
+            "kind": "other",
+            "status": "completed",
+            "content": [{
+                "type": "content",
+                "content": {
+                    "type": "image",
+                    "mimeType": mime,
+                    "data": data,
+                    "uri": file_path,
+                }
+            }],
+        }));
         serde_json::json!({
             "outcome": {
                 "outcome": "generated",
@@ -1482,6 +1505,7 @@ impl AcpSessionManager {
                 "a prompt is already in flight for this session".to_string(),
             ));
         }
+        bump_prompt_seq(session_id);
         let prompt = prompt_blocks_to_acp(blocks);
         let agent_session_id = handle.agent_session_id.clone();
         let result = run_acp({
@@ -1513,6 +1537,7 @@ impl AcpSessionManager {
             .cloned();
         Ok(super::types::PromptResultDto {
             had_mutations,
+            stop_reason: stop_reason_name(resp.stop_reason).to_string(),
             context_stats,
         })
     }
@@ -1723,6 +1748,7 @@ impl AcpSessionManager {
         );
         self.resolve_session_plan_approvals(session_id, PlanApprovalOutcome::Cancelled);
         self.resolve_session_ask_questions(session_id, AskQuestionOutcome::Cancelled);
+        clear_prompt_seq(session_id);
         self.sessions.lock().unwrap().remove(session_id);
     }
 
@@ -2180,6 +2206,7 @@ async fn run_acp_session<W, R>(
     }
 
     sessions.lock().unwrap().remove(&session_key);
+    clear_prompt_seq(&session_key);
     let _ = app.emit(
         AGENT_SESSION_TERMINATED_EVENT,
         AgentSessionTerminated {

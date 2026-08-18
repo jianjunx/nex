@@ -13,6 +13,10 @@ pub struct AgentNotification {
     /// Nex-side session key (the id returned by `agent_create_session`), not
     /// the agent-internal session id.
     pub session_id: String,
+    /// Monotonic per-session prompt generation. Frontend uses this to keep
+    /// late `session/update` events inside the turn that produced them, even
+    /// when a newer user message is already on the thread.
+    pub prompt_seq: u64,
     /// Serialized session update (e.g. an ACP `SessionUpdate`).
     pub update: serde_json::Value,
 }
@@ -184,6 +188,10 @@ pub struct PromptResultDto {
     /// this turn (`write_file` / `edit_file` / `multi_edit`). Used to gate
     /// auto-`/review`; bash-only turns stay false.
     pub had_mutations: bool,
+    /// ACP stop reason (`end_turn` / `max_tokens` / `cancelled` / …).
+    /// The prompt RPC itself succeeds on cancel; the client must not treat
+    /// `cancelled` as a completed turn.
+    pub stop_reason: String,
     /// Per-turn context-engine telemetry. Present for the native agent;
     /// omitted for external ACP agents that do not populate `_meta.contextStats`.
     #[serde(skip_serializing_if = "Option::is_none")]

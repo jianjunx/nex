@@ -43,6 +43,7 @@ import {
   applyPermissionRequestToEntries,
   applySessionUpdate,
   emptySessionMeta,
+  streamInsertIndex,
 } from "../features/agent/thread/applySessionUpdate";
 import type { PlanEntry, SessionMeta, ThreadEntry } from "../features/agent/thread/types";
 import { assistantTextAfterLastUser } from "../features/agent/thread/messagesToThreadEntries";
@@ -477,6 +478,59 @@ function patchPrefs(
 const pendingNotificationsBySessionId = new Map<string, unknown[]>();
 /** Cap per sessionId so a stuck/orphan agent cannot grow the buffer unboundedly. */
 const MAX_PENDING_UPDATES_PER_SESSION = 8;
+/** `${sessionId}:${promptSeq}` → user message id that started that prompt. */
+const promptTurnAnchors = new Map<string, string>();
+/** Per-conversation sendPrompt generation; older RPCs must not finish a newer turn. */
+const promptGenerationByConversation = new Map<string, number>();
+
+function bumpPromptGeneration(conversationId: string): number {
+  const next = (promptGenerationByConversation.get(conversationId) ?? 0) + 1;
+  promptGenerationByConversation.set(conversationId, next);
+  return next;
+}
+
+function rememberTurnAnchor(
+  sessionId: string,
+  promptSeq: number | undefined,
+  entries: ThreadEntry[],
+): string | undefined {
+  if (!promptSeq || promptSeq <= 0) return undefined;
+  const key = `${sessionId}:${promptSeq}`;
+  const existing = promptTurnAnchors.get(key);
+  if (existing) return existing;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
+    if (entry.kind === "user_message") {
+      promptTurnAnchors.set(key, entry.id);
+      pruneTurnAnchors(sessionId);
+      return entry.id;
+    }
+  }
+  return undefined;
+}
+
+function pruneTurnAnchors(sessionId: string): void {
+  const prefix = `${sessionId}:`;
+  const keys = [...promptTurnAnchors.keys()].filter((k) => k.startsWith(prefix));
+  if (keys.length <= 8) return;
+  keys.sort((a, b) => Number(a.slice(prefix.length)) - Number(b.slice(prefix.length)));
+  for (const key of keys.slice(0, keys.length - 8)) promptTurnAnchors.delete(key);
+}
+
+function clearPromptTracking(conversationId: string, sessionId?: string): void {
+  promptGenerationByConversation.delete(conversationId);
+  if (!sessionId) return;
+  const prefix = `${sessionId}:`;
+  for (const key of [...promptTurnAnchors.keys()]) {
+    if (key.startsWith(prefix)) promptTurnAnchors.delete(key);
+  }
+}
+
+/** Test-only: module maps survive Zustand reset. */
+export function resetAgentPromptTrackingForTests(): void {
+  promptTurnAnchors.clear();
+  promptGenerationByConversation.clear();
+}
 
 /** Only meta catalogs that must survive the create-session race. Drop stream chunks. */
 function isBufferableSessionUpdate(update: unknown): boolean {
@@ -516,6 +570,7 @@ function applyNotificationUpdate(
   get: () => AgentStore,
   sessionId: string,
   update: unknown,
+  promptSeq?: number,
 ): void {
   const session = Object.values(get().sessions).find((ss) => ss.sessionId === sessionId);
   if (!session) return;
@@ -530,9 +585,11 @@ function applyNotificationUpdate(
     const entries = s.entriesByConversation[session.conversationId];
     const meta = s.metaByConversation[session.conversationId];
     const prevMode = meta.currentModeId;
-    const applied = applySessionUpdate(entries, meta, update);
+    const streamUserMessageId = rememberTurnAnchor(sessionId, promptSeq, entries);
+    const applied = applySessionUpdate(entries, meta, update, { streamUserMessageId });
     if (applied.completedPlanSnapshot) {
-      entries.push({
+      const insertAt = streamInsertIndex(entries, streamUserMessageId);
+      entries.splice(insertAt, 0, {
         id: crypto.randomUUID(),
         kind: "completed_plan",
         timestamp: Date.now(),
@@ -772,6 +829,7 @@ export const useAgentStore = create<AgentStore>()(
         if (liveSessionId) {
           pendingNotificationsBySessionId.delete(liveSessionId);
         }
+        clearPromptTracking(conversationId, liveSessionId);
         set((s) => {
           delete s.sessions[conversationId];
           delete s.entriesByConversation[conversationId];
@@ -853,6 +911,8 @@ export const useAgentStore = create<AgentStore>()(
     removeConversationEntries: (ids) => {
       set((s) => {
         for (const id of ids) {
+          const liveSessionId = s.sessions[id]?.sessionId;
+          clearPromptTracking(id, liveSessionId);
           delete s.entriesByConversation[id];
           delete s.metaByConversation[id];
           delete s.pendingMessagesByConversation[id];
@@ -894,31 +954,41 @@ export const useAgentStore = create<AgentStore>()(
         });
         return;
       }
+      const promptGen = bumpPromptGeneration(session.conversationId);
       set((s) => {
         s.sessions[session.conversationId].status = "running";
         clearConversationError(s, session.conversationId);
       });
       let promptFailed = false;
       let hadMutations = false;
+      let stopReason = "end_turn";
       try {
         const result = await agentSendPrompt(sessionId, blocks);
+        if (promptGenerationByConversation.get(session.conversationId) !== promptGen) {
+          return;
+        }
         hadMutations = !!result?.hadMutations;
+        if (result?.stopReason) stopReason = result.stopReason;
         if (result?.contextStats) {
           set((s) => {
             s.contextStatsByConversation[session.conversationId] = result.contextStats!;
           });
         }
       } catch (err) {
+        if (promptGenerationByConversation.get(session.conversationId) !== promptGen) {
+          return;
+        }
         promptFailed = true;
         set((s) => {
           setConversationError(s, session.conversationId, errorMessage(err));
         });
       }
 
+      const cancelled = stopReason === "cancelled";
       const entries = get().entriesByConversation[session.conversationId] ?? [];
       // Never synthesize a "turn completed" assistant message when the
       // prompt itself failed — that would disguise an error as success.
-      if (!promptFailed) {
+      if (!promptFailed && !cancelled) {
         const assistantText = assistantTextAfterLastUser(entries);
         if (assistantText) {
           void useConversationStore.getState().persistMessage(
@@ -927,28 +997,28 @@ export const useAgentStore = create<AgentStore>()(
             assistantText,
           );
         } else {
-          // Agents like Cursor may finish a turn with only tool cards and no
-          // agent_message_chunk. Surface an explicit completion so the thread
-          // doesn't look stuck after status returns to idle.
+          const notice =
+            stopReason === "max_tokens"
+              ? "（本回合因达到 token 限制而结束）"
+              : stopReason === "max_turn_requests"
+                ? "（本回合已达到最大请求次数）"
+                : stopReason === "refusal"
+                  ? "（模型拒绝继续本回合）"
+                  : "（本回合已完成）";
           set((s) => {
             const list = s.entriesByConversation[session.conversationId];
             if (!list) return;
             const last = list[list.length - 1];
-            if (last?.kind === "user_message") {
-              list.push({
-                id: crypto.randomUUID(),
-                kind: "assistant_message",
-                timestamp: Date.now(),
-                chunks: [{ type: "message", text: "（本回合已完成，未返回文本消息）" }],
-              });
-            } else if (last?.kind === "tool_call") {
-              list.push({
-                id: crypto.randomUUID(),
-                kind: "assistant_message",
-                timestamp: Date.now(),
-                chunks: [{ type: "message", text: "（本回合已完成）" }],
-              });
+            if (last?.kind === "assistant_message") {
+              const lastChunk = last.chunks[last.chunks.length - 1];
+              if (lastChunk?.type === "message" && lastChunk.text.includes("本回合")) return;
             }
+            list.push({
+              id: crypto.randomUUID(),
+              kind: "assistant_message",
+              timestamp: Date.now(),
+              chunks: [{ type: "message", text: notice }],
+            });
           });
         }
       }
@@ -997,6 +1067,7 @@ export const useAgentStore = create<AgentStore>()(
       const wasReview = /^\/review(?:\s|$)/i.test(promptText);
       if (
         !promptFailed &&
+        !cancelled &&
         isNative &&
         get().nativeAutoReview &&
         hadMutations &&
@@ -1008,8 +1079,10 @@ export const useAgentStore = create<AgentStore>()(
         return;
       }
 
-      // Auto-process next queued message if session returned to idle
-      if (get().sessions[session.conversationId]?.status === "idle") {
+      // Auto-process next queued message if session returned to idle.
+      // Cancelled turns stay idle until the user sends again — auto-draining
+      // the queue after Stop looks like the cancelled task continued.
+      if (!cancelled && get().sessions[session.conversationId]?.status === "idle") {
         void get().processNextPending(session.conversationId);
       }
     },
@@ -1614,7 +1687,7 @@ export const useAgentStore = create<AgentStore>()(
 
       void get().refreshNativeAutoReview();
 
-      onAgentNotification(({ sessionId, update }) => {
+      onAgentNotification(({ sessionId, update, promptSeq }) => {
         const session = Object.values(get().sessions).find((ss) => ss.sessionId === sessionId);
         if (!session) {
           // SessionId not registered yet (createSession still in flight) — buffer
@@ -1622,7 +1695,7 @@ export const useAgentStore = create<AgentStore>()(
           enqueuePendingNotification(sessionId, update, get);
           return;
         }
-        applyNotificationUpdate(set, get, sessionId, update);
+        applyNotificationUpdate(set, get, sessionId, update, promptSeq);
       }).then((fn) => {
         if (disposed) fn();
         else unlistenNotification = fn;

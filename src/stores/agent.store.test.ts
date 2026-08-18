@@ -19,7 +19,7 @@ const nativeAgentGetConfig = vi.fn().mockResolvedValue({
   agent: { maxSteps: 0, contextWindow: 0, bashTimeoutSecs: 120, maxSubagentConcurrency: 6, autoReview: false },
 });
 let permissionHandler: ((payload: unknown) => void) | null = null;
-let notificationHandler: ((payload: { sessionId: string; update: unknown }) => void) | null = null;
+let notificationHandler: ((payload: { sessionId: string; update: unknown; promptSeq?: number }) => void) | null = null;
 
 vi.mock("../bridge/tauri", () => ({
   agentListServers: (...args: unknown[]) => agentListServers(...args),
@@ -41,7 +41,7 @@ vi.mock("../bridge/tauri", () => ({
   conversationReplaceThreadEntries: (...args: unknown[]) => conversationReplaceThreadEntries(...args),
   conversationAppendMessage: vi.fn(),
   nativeAgentGetConfig: (...args: unknown[]) => nativeAgentGetConfig(...args),
-  onAgentNotification: (cb: (payload: { sessionId: string; update: unknown }) => void) => {
+  onAgentNotification: (cb: (payload: { sessionId: string; update: unknown; promptSeq?: number }) => void) => {
     notificationHandler = cb;
     return Promise.resolve(() => {});
   },
@@ -54,7 +54,7 @@ vi.mock("../bridge/tauri", () => ({
   onAgentSessionTerminated: () => Promise.resolve(() => {}),
 }));
 
-import { useAgentStore } from "./agent.store";
+import { resetAgentPromptTrackingForTests, useAgentStore } from "./agent.store";
 import { useConversationStore } from "./conversation.store";
 
 const SERVER = { id: "s1", name: "测试智能体", version: "1.0", description: "", icon: null, kind: "registry" };
@@ -67,6 +67,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   permissionHandler = null;
   notificationHandler = null;
+  resetAgentPromptTrackingForTests();
   // 每例前把打点相关字段重置回初始态（store 为单例）。
   useAgentStore.setState({
     servers: [],
@@ -208,6 +209,103 @@ describe("agent.store pending message bounds", () => {
     expect(state.entriesByConversation["conv-b"]).toEqual([
       expect.objectContaining({ text: "项目B历史" }),
     ]);
+  });
+});
+
+describe("agent.store turn isolation", () => {
+  it("旧 prompt 收尾不会把新问题标成已完成，也不会把状态打回 idle", async () => {
+    let releaseA!: (value: { hadMutations: boolean; stopReason: string }) => void;
+    let releaseB!: (value: { hadMutations: boolean; stopReason: string }) => void;
+    const firstRpc = new Promise<{ hadMutations: boolean; stopReason: string }>((resolve) => {
+      releaseA = resolve;
+    });
+    const secondRpc = new Promise<{ hadMutations: boolean; stopReason: string }>((resolve) => {
+      releaseB = resolve;
+    });
+    const rpcQueue = [firstRpc, secondRpc];
+    agentSendPrompt.mockImplementation(() => {
+      const next = rpcQueue.shift();
+      if (!next) return Promise.resolve({ hadMutations: false, stopReason: "end_turn" });
+      return next;
+    });
+
+    useAgentStore.setState({
+      sessions: {
+        "conv-1": { sessionId: "sid-1", conversationId: "conv-1", status: "idle" },
+      },
+      entriesByConversation: {
+        "conv-1": [{ id: "u-a", kind: "user_message", text: "上一题", timestamp: 1 }],
+      },
+    });
+
+    const first = useAgentStore.getState().sendPrompt("sid-1", [{ type: "text", text: "上一题" }]);
+    useAgentStore.getState().appendUserMessage("conv-1", "新问题");
+    const second = useAgentStore.getState().sendPrompt("sid-1", [{ type: "text", text: "新问题" }]);
+
+    releaseA({ hadMutations: false, stopReason: "cancelled" });
+    await first;
+
+    const mid = useAgentStore.getState();
+    expect(mid.sessions["conv-1"]?.status).toBe("running");
+    const midText = (mid.entriesByConversation["conv-1"] ?? [])
+      .filter((e) => e.kind === "assistant_message")
+      .flatMap((e) => (e.kind === "assistant_message" ? e.chunks.map((c) => c.text) : []));
+    expect(midText.join("")).not.toContain("本回合已完成");
+
+    releaseB({ hadMutations: false, stopReason: "end_turn" });
+    await second;
+  });
+
+  it("cancelled 收尾不会自动把排队的下一条发出去", async () => {
+    agentSendPrompt.mockResolvedValue({ hadMutations: false, stopReason: "cancelled" });
+    useAgentStore.setState({
+      sessions: {
+        "conv-1": { sessionId: "sid-1", conversationId: "conv-1", status: "running" },
+      },
+      entriesByConversation: {
+        "conv-1": [{ id: "u1", kind: "user_message", text: "上一题", timestamp: 1 }],
+      },
+      pendingMessagesByConversation: {},
+    });
+    useAgentStore.getState().enqueuePendingMessage("conv-1", [{ type: "text", text: "新问题" }], "新问题");
+
+    await useAgentStore.getState().sendPrompt("sid-1", [{ type: "text", text: "上一题" }]);
+
+    expect(agentSendPrompt).toHaveBeenCalledTimes(1);
+    expect(useAgentStore.getState().pendingMessagesByConversation["conv-1"]).toHaveLength(1);
+    expect(useAgentStore.getState().sessions["conv-1"]?.status).toBe("idle");
+  });
+
+  it("旧回合迟到的 stream 事件不会接到新问题后面", () => {
+    listenersTeardown = useAgentStore.getState().initListeners();
+    expect(notificationHandler).toBeTruthy();
+    useAgentStore.setState({
+      sessions: {
+        "conv-1": { sessionId: "sid-1", conversationId: "conv-1", status: "running" },
+      },
+      entriesByConversation: {
+        "conv-1": [{ id: "u-old", kind: "user_message", text: "上一题", timestamp: 1 }],
+      },
+    });
+
+    notificationHandler!({
+      sessionId: "sid-1",
+      promptSeq: 1,
+      update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "先答上一题" } },
+    });
+    useAgentStore.getState().appendUserMessage("conv-1", "新问题");
+    notificationHandler!({
+      sessionId: "sid-1",
+      promptSeq: 1,
+      update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "的后续" } },
+    });
+
+    const kinds = (useAgentStore.getState().entriesByConversation["conv-1"] ?? []).map((e) => {
+      if (e.kind === "user_message") return `user:${e.text}`;
+      if (e.kind === "assistant_message") return `assistant:${e.chunks.map((c) => c.text).join("")}`;
+      return e.kind;
+    });
+    expect(kinds).toEqual(["user:上一题", "assistant:先答上一题的后续", "user:新问题"]);
   });
 });
 

@@ -224,6 +224,7 @@ export interface ContextStatsDto {
 
 export interface PromptResultDto {
   hadMutations: boolean;
+  stopReason?: string;
   contextStats?: ContextStatsDto | null;
 }
 

@@ -1,0 +1,25 @@
+src-tauri/src/watcher.rs
+  s_f4eecb441e4507::t_afd09b4dfbcb4a 109-112
+  s_f4eecb441e4507::t_387e8f49447a10 9-13
+  s_f4eecb441e4507::t_bfbb8536053ad0 155-207
+src-tauri/src/graph/index.rs
+  s_f4eecb441e4507::t_8f4671cd2b0272 366-384
+  s_f4eecb441e4507::t_34c7805ea04970 49,63-71,88
+  s_f4eecb441e4507::t_c4cc8c1bf0c0dc 89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "940de3e9217d7ce464df39b3a1e6f5c6c73ca8c6",
+  "prompts": {},
+  "sessions": {
+    "s_f4eecb441e4507": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "6383ee13-296f-4d05-b5a7-8fd510dd4c25",
+        "model": "grok-4.6"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

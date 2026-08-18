@@ -1,4 +1,6 @@
-use tauri::{Emitter, Manager};
+#[cfg(target_os = "macos")]
+use tauri::Emitter;
+use tauri::Manager;
 
 pub mod agent;
 mod commands;
@@ -180,5 +182,7 @@ pub fn run() {
                 api.prevent_exit();
                 let _ = app.emit("app-exit-requested", ());
             }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
         });
 }

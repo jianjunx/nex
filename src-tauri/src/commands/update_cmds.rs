@@ -670,11 +670,13 @@ fn spawn_windows_installer(dest: &Path) -> Result<(), NexError> {
 
     match spawn_helper(&script_arg, true) {
         Ok(_) => Ok(()),
-        Err(e) if e.raw_os_error() == Some(5) => spawn_helper(&script_arg, false).map_err(|e2| {
-            NexError::Internal(format!(
-                "启动安装程序失败: {e2}（breakaway 被拒绝: {e}）"
-            ))
-        }),
+        Err(e) if e.raw_os_error() == Some(5) => spawn_helper(&script_arg, false)
+            .map(|_| ())
+            .map_err(|e2| {
+                NexError::Internal(format!(
+                    "启动安装程序失败: {e2}（breakaway 被拒绝: {e}）"
+                ))
+            }),
         Err(e) => Err(NexError::Internal(format!("启动安装程序失败: {e}"))),
     }
 }

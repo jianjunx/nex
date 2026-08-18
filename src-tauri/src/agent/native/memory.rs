@@ -195,8 +195,16 @@ impl WorkingMemory {
     /// Records the goal for a new user request. Follow-up work can be a new
     /// task, so unlike the old placeholder-only helper this replaces a stale
     /// previous goal while avoiding no-op rewrites for identical text.
+    ///
+    /// Resume-only utterances (`继续`, `continue`, …) keep the live goal and
+    /// `active_todos`: after a disconnect the user typically says that to
+    /// pick up the unfinished list, and wiping it would make the agent start
+    /// over or drift.
     pub fn set_goal_for_request(&mut self, goal: impl Into<String>) -> bool {
         let next = goal.into();
+        if is_continuation_request(&next) {
+            return false;
+        }
         if self.goal.first().map(String::as_str) == Some(next.as_str()) {
             return false;
         }
@@ -268,6 +276,75 @@ pub fn recover_from_history(history: &[crate::agent::native::provider::ChatMessa
     }
     None
 }
+
+/// True when the user is asking to resume the current task rather than start
+/// a new one. Conservative: extra task content (`继续写测试`) is a new request.
+pub fn is_continuation_request(text: &str) -> bool {
+    let normalized = normalize_continuation(text);
+    !normalized.is_empty() && CONTINUATION_PHRASES.contains(&normalized.as_str())
+}
+
+fn normalize_continuation(text: &str) -> String {
+    let stripped = text.trim().trim_matches(is_continuation_punct).trim();
+    let mut out = String::with_capacity(stripped.len());
+    let mut prev_space = false;
+    for c in stripped.chars() {
+        if c.is_whitespace() {
+            if !prev_space {
+                out.push(' ');
+                prev_space = true;
+            }
+            continue;
+        }
+        prev_space = false;
+        out.push(if c.is_ascii_alphabetic() {
+            c.to_ascii_lowercase()
+        } else {
+            c
+        });
+    }
+    out
+}
+
+fn is_continuation_punct(c: char) -> bool {
+    matches!(
+        c,
+        '。' | '．' | '.' | '！' | '!' | '？' | '?' | '…' | '~' | '～' | '，' | ','
+    )
+}
+
+/// Resume-only utterances after [`normalize_continuation`]. Keep this list
+/// tight so a redirected follow-up is still treated as a new task.
+const CONTINUATION_PHRASES: &[&str] = &[
+    "继续",
+    "请继续",
+    "继续吧",
+    "继续呀",
+    "接着",
+    "接着做",
+    "接着来",
+    "接着干",
+    "继续执行",
+    "继续任务",
+    "继续工作",
+    "继续刚才的",
+    "继续刚才的任务",
+    "继续上次",
+    "继续上次的",
+    "继续上次的任务",
+    "从中断的地方继续",
+    "从停下的地方继续",
+    "从上次停下的地方继续",
+    "接着上次",
+    "continue",
+    "please continue",
+    "continue please",
+    "keep going",
+    "resume",
+    "go on",
+    "pick up where you left off",
+    "pick up where we left off",
+];
 
 fn push_unique(v: &mut Vec<String>, item: String) {
     if v.iter().any(|x| x == &item) {
@@ -433,6 +510,26 @@ mod tests {
         assert_eq!(m.goal, vec!["实现导出"]);
         assert!(m.active_todos.is_empty());
         assert!(!m.set_goal_for_request("实现导出"));
+        assert!(m.active_todos.is_empty());
+    }
+
+    #[test]
+    fn continuation_request_keeps_goal_and_todos() {
+        let mut m = WorkingMemory::new();
+        m.set_goal("实现导出");
+        m.replace_active_todos(["写实现".to_string(), "跑测试".to_string()]);
+
+        for utterance in ["继续", "请继续。", "continue", "Keep going", "从中断的地方继续"] {
+            assert!(
+                !m.set_goal_for_request(utterance),
+                "{utterance} must not count as a new task"
+            );
+            assert_eq!(m.goal, vec!["实现导出"]);
+            assert_eq!(m.active_todos, vec!["写实现", "跑测试"]);
+        }
+
+        assert!(m.set_goal_for_request("继续写测试"));
+        assert_eq!(m.goal, vec!["继续写测试"]);
         assert!(m.active_todos.is_empty());
     }
 

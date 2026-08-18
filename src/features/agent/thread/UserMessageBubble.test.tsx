@@ -3,8 +3,10 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { UserMessageBubble } from "./UserMessageBubble";
-import { USER_MESSAGE_COLLAPSE_HEIGHT } from "./stickyUserMessage";
+import {
+  USER_MESSAGE_COLLAPSE_HEIGHT,
+} from "./stickyUserMessage";
+import { USER_MESSAGE_EXPANDED_MAX_HEIGHT, UserMessageBubble } from "./UserMessageBubble";
 import type { UserMessageEntry } from "./types";
 
 const ENTRY: UserMessageEntry = {
@@ -61,7 +63,7 @@ describe("UserMessageBubble", () => {
     expect((body as HTMLElement).style.maxHeight).toBe(`${USER_MESSAGE_COLLAPSE_HEIGHT}px`);
   });
 
-  it("展开后去掉高度限制并显示收起", () => {
+  it("展开后高度封顶到 360px 并显示收起", () => {
     vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(400);
     const onToggle = vi.fn();
     const { container } = render(
@@ -69,7 +71,8 @@ describe("UserMessageBubble", () => {
     );
     expect(screen.getByRole("button", { name: "收起" })).toBeTruthy();
     const body = container.querySelector("[data-user-msg-body]") as HTMLElement;
-    expect(body.style.maxHeight).toBe("");
+    expect(body.style.maxHeight).toBe(`${USER_MESSAGE_EXPANDED_MAX_HEIGHT}px`);
+    expect(body.className).toContain("overflow-y-auto");
     fireEvent.click(screen.getByRole("button", { name: "收起" }));
     expect(onToggle).toHaveBeenCalledOnce();
   });

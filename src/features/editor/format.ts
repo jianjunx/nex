@@ -4,8 +4,8 @@ import { fileBasename } from "./pathUtils";
 type PrettierModule = typeof import("prettier/standalone");
 type PrettierPluginModule = Record<string, unknown>;
 type RustFmtModule = typeof import("@scalar/rust-fmt");
-type GoFmtModule = typeof import("@wasm-fmt/gofmt");
-type RuffFmtModule = typeof import("@wasm-fmt/ruff_fmt");
+type GoFmtModule = typeof import("@wasm-fmt/gofmt/vite");
+type RuffFmtModule = typeof import("@wasm-fmt/ruff_fmt/vite");
 type ShSyntaxModule = typeof import("sh-syntax");
 
 type LoadedPrettier = {
@@ -63,12 +63,22 @@ function loadRustFmt(): Promise<RustFmtModule> {
 }
 
 function loadGoFmt(): Promise<GoFmtModule> {
-  if (!goFmtLoader) goFmtLoader = import("@wasm-fmt/gofmt");
+  if (!goFmtLoader) {
+    goFmtLoader = import("@wasm-fmt/gofmt/vite").then(async (gofmt) => {
+      await gofmt.default();
+      return gofmt;
+    });
+  }
   return goFmtLoader;
 }
 
 function loadRuffFmt(): Promise<RuffFmtModule> {
-  if (!ruffFmtLoader) ruffFmtLoader = import("@wasm-fmt/ruff_fmt");
+  if (!ruffFmtLoader) {
+    ruffFmtLoader = import("@wasm-fmt/ruff_fmt/vite").then(async (ruff) => {
+      await ruff.default();
+      return ruff;
+    });
+  }
   return ruffFmtLoader;
 }
 

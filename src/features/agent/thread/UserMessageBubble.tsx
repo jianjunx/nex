@@ -8,6 +8,8 @@ import { ThreadImageThumb } from "./ThreadImageThumb";
 import { USER_MESSAGE_COLLAPSE_HEIGHT } from "./stickyUserMessage";
 import type { UserMessageEntry } from "./types";
 
+export const USER_MESSAGE_EXPANDED_MAX_HEIGHT = 360;
+
 /**
  * 用户气泡：超长内容折叠到 150px，由父级控制展开态以便列表实例与吸顶克隆共用。
  */
@@ -36,6 +38,7 @@ export function UserMessageBubble({
   }, [measure, entry.text, entry.images, expanded]);
 
   const collapsed = overflows && !expanded;
+  const expandedScrollable = overflows && expanded;
 
   return (
     <div className="ml-auto flex min-w-0 max-w-[80%] justify-end">
@@ -52,8 +55,14 @@ export function UserMessageBubble({
             <div
               ref={bodyRef}
               data-user-msg-body=""
-              className={collapsed ? "overflow-hidden" : undefined}
-              style={collapsed ? { maxHeight: USER_MESSAGE_COLLAPSE_HEIGHT } : undefined}
+              className={collapsed ? "overflow-hidden" : expandedScrollable ? "overflow-y-auto" : undefined}
+              style={
+                collapsed
+                  ? { maxHeight: USER_MESSAGE_COLLAPSE_HEIGHT }
+                  : expandedScrollable
+                    ? { maxHeight: USER_MESSAGE_EXPANDED_MAX_HEIGHT }
+                    : undefined
+              }
             >
               {entry.images && entry.images.length > 0 && (
                 <div className="mb-2 flex flex-wrap gap-2">

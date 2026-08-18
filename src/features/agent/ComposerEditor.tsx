@@ -30,7 +30,7 @@ import {
 } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { fileBasename } from "../editor/pathUtils";
-import { fileIconUrl } from "../files/FileIcon";
+import { fileIconUrl, replaceWithFallbackIcon } from "../files/FileIcon";
 import { findTokenDeletionRange, findTokenRanges } from "./composerTokens";
 
 export interface ComposerEditorHandle {
@@ -87,6 +87,7 @@ class TokenWidget extends WidgetType {
 
     const img = document.createElement("img");
     img.src = fileIconUrl(fileBasename(this.path));
+    img.onerror = () => replaceWithFallbackIcon(img);
     img.alt = "";
     img.draggable = false;
     img.className = "composer-token-icon";

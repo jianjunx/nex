@@ -24,8 +24,14 @@ vi.mock("prettier/plugins/yaml", () => ({}));
 vi.mock("prettier-plugin-toml", () => ({ default: {} }));
 vi.mock("prettier-plugin-sql", () => ({ default: {} }));
 vi.mock("@scalar/rust-fmt", () => ({ format: (text: string, options?: unknown) => rustFormat(text, options) }));
-vi.mock("@wasm-fmt/gofmt", () => ({ format: (text: string) => goFormat(text) }));
-vi.mock("@wasm-fmt/ruff_fmt", () => ({ format: (text: string, filename: string) => pythonFormat(text, filename) }));
+vi.mock("@wasm-fmt/gofmt/vite", () => ({
+  default: vi.fn(async () => ({})),
+  format: (text: string) => goFormat(text),
+}));
+vi.mock("@wasm-fmt/ruff_fmt/vite", () => ({
+  default: vi.fn(async () => ({})),
+  format: (text: string, filename: string) => pythonFormat(text, filename),
+}));
 vi.mock("sh-syntax", () => ({ getProcessor: (loader: unknown) => getProcessor(loader) }));
 vi.mock("sh-syntax/main.wasm?url", () => ({ default: "/mock/sh-syntax.wasm" }));
 

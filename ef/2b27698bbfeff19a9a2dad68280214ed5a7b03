@@ -1,0 +1,24 @@
+src-tauri/src/commands/update_cmds.rs
+  s_f4eecb441e4507::t_3d34609bb8f604 630-679
+  s_f4eecb441e4507::t_d7f99983fdf01d 6-9
+  s_f4eecb441e4507::t_a4ff715808b3f2 908-918
+  s_f4eecb441e4507::t_69651af13db4c5 209-211,213-215,217-246
+src/features/settings/sections/AboutSection.tsx
+  s_f4eecb441e4507::t_3669e4d49a6f54 106
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "ef2b27698bbfeff19a9a2dad68280214ed5a7b03",
+  "prompts": {},
+  "sessions": {
+    "s_f4eecb441e4507": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "6383ee13-296f-4d05-b5a7-8fd510dd4c25",
+        "model": "grok-4.6"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

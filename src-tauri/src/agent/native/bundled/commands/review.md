@@ -4,6 +4,8 @@ argument-hint: optional path or PR focus
 ---
 Review the current working tree (or the paths noted below) like a careful code reviewer.
 
+Start with `code_graph` `action=impact` to see the blast radius, then read the high-risk symbols.
+
 Focus on:
 - Correctness bugs and edge cases
 - Security / data-loss risks

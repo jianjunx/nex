@@ -44,9 +44,12 @@ pub async fn fs_watch_start(
     project_path: String,
 ) -> Result<(), NexError> {
     let mgr = state.watcher_manager.clone();
+    let graph = state.graph.clone();
     tauri::async_runtime::spawn_blocking(move || {
         mgr.unwatch_except(&project_path);
-        mgr.watch(app, &project_path)
+        mgr.watch(app, &project_path)?;
+        graph.ensure(Path::new(&project_path));
+        Ok(())
     })
     .await
     .map_err(|e| NexError::FileSystem(format!("fs_watch_start join: {e}")))?

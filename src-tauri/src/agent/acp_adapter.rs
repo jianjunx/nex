@@ -1412,6 +1412,7 @@ impl AcpSessionManager {
         cwd: &str,
         path_env: std::ffi::OsString,
         config_path: std::path::PathBuf,
+        graph: Option<crate::graph::GraphHandle>,
     ) -> Result<CreateSessionResult, NexError> {
         let session_slot = reserve_session_slot(&self.active_sessions)?;
         let session_key = uuid::Uuid::new_v4().to_string();
@@ -1423,6 +1424,7 @@ impl AcpSessionManager {
         let thread_cwd = cwd.to_string();
         let thread_conversation_id = conversation_id.to_string();
         let thread_path_env = path_env;
+        let thread_graph = graph;
         let thread_sessions = Arc::clone(&self.sessions);
         let thread_pending = Arc::clone(&self.pending_permissions);
         let thread_plans = Arc::clone(&self.pending_plan_approvals);
@@ -1453,6 +1455,7 @@ impl AcpSessionManager {
                         thread_conversation_id,
                         thread_path_env,
                         config_path,
+                        thread_graph,
                         thread_pending,
                         thread_plans,
                         thread_questions,
@@ -1904,6 +1907,7 @@ async fn run_session_native(
     conversation_id: String,
     path_env: std::ffi::OsString,
     config_path: std::path::PathBuf,
+    graph: Option<crate::graph::GraphHandle>,
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
     pending_plan_approvals: Arc<Mutex<HashMap<String, PendingPlanApproval>>>,
     pending_ask_questions: Arc<Mutex<HashMap<String, PendingAskQuestion>>>,
@@ -1917,7 +1921,7 @@ async fn run_session_native(
     // `agent_end` is driven by the agent's connection.
     let (client_end, agent_end) = tokio::io::duplex(64 * 1024);
 
-    let agent = NexNativeAgent::new(config_path, path_env);
+    let agent = NexNativeAgent::with_graph(config_path, path_env, graph);
 
     // Split the agent endpoint into read/write halves and build the agent side.
     let (agent_read, agent_write) = tokio::io::split(agent_end);

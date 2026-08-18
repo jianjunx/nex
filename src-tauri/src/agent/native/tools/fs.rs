@@ -295,6 +295,7 @@ mod tests {
             mutations: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             mode_id: None,
             memory: super::super::test_memory_handle(),
+            graph: None,
         }
     }
 

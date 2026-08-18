@@ -354,6 +354,7 @@ mod tests {
             mutations: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             mode_id: None,
             memory: super::super::test_memory_handle(),
+            graph: None,
         };
 
         let out = History
@@ -406,6 +407,7 @@ mod tests {
             mutations: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             mode_id: None,
             memory: super::super::test_memory_handle(),
+            graph: None,
         };
         let scoped = History
             .execute(
@@ -471,6 +473,7 @@ mod tests {
             mutations: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             mode_id: None,
             memory: super::super::test_memory_handle(),
+            graph: None,
         };
         let out = History
             .execute(serde_json::json!({"query": "payment"}), &ctx)

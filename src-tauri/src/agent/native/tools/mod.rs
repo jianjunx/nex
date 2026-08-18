@@ -7,6 +7,7 @@
 pub mod bash;
 pub mod checkpoint;
 pub mod fs;
+pub mod graph;
 pub mod history;
 pub mod jobs;
 pub mod mcp;
@@ -55,6 +56,8 @@ pub struct ToolCtx {
     /// tracked state (file write, tool error, etc.). The harness renders it
     /// back into the transcript just before each provider request.
     pub memory: Rc<RefCell<WorkingMemory>>,
+    /// Per-process code graph. `None` in unit tests that don't exercise it.
+    pub graph: Option<crate::graph::GraphHandle>,
 }
 
 /// Tools that rewrite workspace files. Auto-`/review` triggers only when at
@@ -75,6 +78,26 @@ pub fn mutations_include_workspace_edit(log: &[String]) -> bool {
 /// memory is not exercised (subagents, MCP proxies, mock tool contexts).
 pub fn test_memory_handle() -> Rc<RefCell<WorkingMemory>> {
     Rc::new(RefCell::new(WorkingMemory::new()))
+}
+
+#[cfg(test)]
+impl ToolCtx {
+    /// Minimal sandboxed context for tool unit tests (no graph, no harness).
+    pub fn for_tests(cwd: PathBuf) -> Self {
+        let archive_dir = cwd.join(".nex-archive");
+        Self {
+            cwd,
+            bash_timeout: Duration::from_secs(30),
+            path_env: std::env::var_os("PATH").unwrap_or_default(),
+            archive_dir,
+            jobs: Rc::new(RefCell::new(jobs::JobTable::default())),
+            harness: None,
+            mutations: Rc::new(RefCell::new(Vec::new())),
+            mode_id: None,
+            memory: test_memory_handle(),
+            graph: None,
+        }
+    }
 }
 
 /// Ensure the working-memory block is present after the system prompt and
@@ -149,6 +172,7 @@ impl ToolRegistry {
                 Box::new(search::Grep),
                 Box::new(search::Glob),
                 Box::new(search::Ls),
+                Box::new(graph::CodeGraph),
                 Box::new(spreadsheet::ReadSpreadsheet),
                 Box::new(bash::Bash),
                 Box::new(todo::TodoWrite),
@@ -512,7 +536,8 @@ mod tests {
         assert!(names.contains(&"load_skill".to_string()));
         assert!(names.contains(&"switch_mode".to_string()));
         assert!(names.contains(&"task".to_string()));
-        assert_eq!(names.len(), 22);
+        assert!(names.contains(&"code_graph".to_string()));
+        assert_eq!(names.len(), 23);
 
         // Subagents see everything except orchestration + mode tools.
         let sub: Vec<_> = ToolRegistry::subagents()
@@ -520,7 +545,7 @@ mod tests {
             .iter()
             .map(|s| s.function.name.clone())
             .collect();
-        assert_eq!(sub.len(), 18);
+        assert_eq!(sub.len(), 19);
         assert!(sub.contains(&"load_skill".to_string()));
         assert!(!sub.contains(&"task".to_string()));
         assert!(!sub.contains(&"fleet".to_string()));
@@ -581,7 +606,7 @@ mod tests {
         let hash = hex(Sha256::digest(&bytes));
         eprintln!("canonical schema sha256: {hash}");
         assert_eq!(
-            hash, "6e1701c1264fe69fe916c5dad17f33bd183aca91c7633b8340307a52bcf4a5ef",
+            hash, "0af38d5df7931cecc47e4dadfef4aecb1f2d4588ace6fed4946e8d44f66debc7",
             "tool schema drift detected; update the snapshot intentionally"
         );
     }

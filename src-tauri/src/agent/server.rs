@@ -29,6 +29,7 @@ use super::registry::{RegistryEntry, RegistryStore};
 use super::shell_env::ShellEnv;
 use super::types::{CreateSessionResult, PromptBlock};
 use crate::error::NexError;
+use crate::graph::GraphHandle;
 
 /// Registry agent ids exposed in the New-Conversation picker this phase.
 const WHITELISTED_REGISTRY_IDS: &[&str] = &["claude-acp", "codex-acp", "cursor"];
@@ -168,6 +169,7 @@ pub struct AgentSessionManager {
     project_envs: Arc<super::project_env::ProjectEnvCache>,
     /// App data dir; hosts `nex-agent.json` for the built-in native agent.
     app_data_dir: PathBuf,
+    graph: GraphHandle,
 }
 
 impl AgentSessionManager {
@@ -175,6 +177,7 @@ impl AgentSessionManager {
         app_data_dir: &Path,
         shell_env: Arc<ShellEnv>,
         project_envs: Arc<super::project_env::ProjectEnvCache>,
+        graph: GraphHandle,
     ) -> Self {
         // Shell-env loader must already have been kicked off by the caller
         // (shared with TerminalManager) before node resolution starts.
@@ -206,6 +209,7 @@ impl AgentSessionManager {
             shell_env,
             project_envs,
             app_data_dir: app_data_dir.to_path_buf(),
+            graph,
         }
     }
 
@@ -238,7 +242,14 @@ impl AgentSessionManager {
         if matches!(target, SessionTarget::Native) {
             return self
                 .acp
-                .create_native_session(app, conversation_id, cwd, shell_path, self.app_data_dir.clone())
+                .create_native_session(
+                    app,
+                    conversation_id,
+                    cwd,
+                    shell_path,
+                    self.app_data_dir.clone(),
+                    Some(self.graph.clone()),
+                )
                 .await;
         }
         let spec = match target {

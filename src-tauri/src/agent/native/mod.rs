@@ -117,6 +117,7 @@ struct NativeInner {
     /// so the user's workspace and git status stay clean.
     archive_root: PathBuf,
     default_path_env: OsString,
+    graph: Option<crate::graph::GraphHandle>,
 }
 
 /// A cloneable handle to the shared native-agent state. The instance handed to
@@ -128,6 +129,14 @@ pub struct NexNativeAgent {
 
 impl NexNativeAgent {
     pub fn new(config_path: PathBuf, default_path_env: OsString) -> Self {
+        Self::with_graph(config_path, default_path_env, None)
+    }
+
+    pub fn with_graph(
+        config_path: PathBuf,
+        default_path_env: OsString,
+        graph: Option<crate::graph::GraphHandle>,
+    ) -> Self {
         let archive_root = config_path
             .parent()
             .map(|p| p.to_path_buf())
@@ -140,6 +149,7 @@ impl NexNativeAgent {
                 config_path,
                 archive_root,
                 default_path_env,
+                graph,
             }),
         }
     }
@@ -828,6 +838,7 @@ impl acp::Agent for NexNativeAgent {
                     mode_id: session.handles.mode_id.clone(),
                     mutations: Rc::new(RefCell::new(Vec::new())),
                     memory: session.memory.clone(),
+                    graph: self.inner.graph.clone(),
                 });
 
                 let env = TurnEnv {
@@ -855,6 +866,7 @@ impl acp::Agent for NexNativeAgent {
                         harness: Some(harness),
                         mode_id: Some(session.handles.mode_id.clone()),
                         memory: session.memory.clone(),
+                        graph: self.inner.graph.clone(),
                     },
                     context_window: cfg.context_window_for(&model_id),
                     usage: RefCell::new(provider::Usage::default()),

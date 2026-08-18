@@ -10,6 +10,7 @@ mod state;
 pub mod terminal;
 mod watcher;
 mod win_process;
+pub mod graph;
 
 use agent::AgentSessionManager;
 use db::Database;
@@ -143,11 +144,21 @@ pub fn run() {
             shell_env.try_trigger_lazy_load();
             let project_envs = agent::project_env::ProjectEnvCache::new();
 
+            let watcher_manager = WatcherManager::new();
+            let graph = crate::graph::GraphService::new();
+            watcher_manager.subscribe(graph.fs_listener());
+
             app.manage(AppState {
                 db: Arc::new(db),
                 terminal_manager: TerminalManager::new(),
-                agent_manager: AgentSessionManager::new(&app_data_dir, shell_env, project_envs),
-                watcher_manager: WatcherManager::new(),
+                agent_manager: AgentSessionManager::new(
+                    &app_data_dir,
+                    shell_env,
+                    project_envs,
+                    graph.handle(),
+                ),
+                watcher_manager,
+                graph,
             });
 
             // In-memory git credential broker for the GUI auth dialog

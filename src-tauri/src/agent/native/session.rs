@@ -144,6 +144,8 @@ pub struct SubagentHarness {
     /// Parent working memory. Child discoveries/edits are session state, not
     /// disposable side effects of an isolated transcript.
     pub memory: Rc<RefCell<super::memory::WorkingMemory>>,
+    /// Shared with the parent so subagents can query the same index.
+    pub graph: Option<crate::graph::GraphHandle>,
 }
 
 /// Runs one isolated subagent turn and returns only its final answer. Huge
@@ -172,6 +174,7 @@ pub async fn run_subagent(harness: &SubagentHarness, task: &str) -> Result<Strin
         // Parent mode is not mutable from subagents (`switch_mode` is filtered out).
         mode_id: None,
         memory: harness.memory.clone(),
+        graph: harness.graph.clone(),
     };
     let env = TurnEnv {
         conn: harness.conn.clone(),
@@ -1332,6 +1335,7 @@ mod tests {
                 mutations: Rc::new(RefCell::new(Vec::new())),
                 mode_id: Some(mode_id),
                 memory: crate::agent::native::tools::test_memory_handle(),
+                graph: None,
             },
             context_window: 0,
             usage: RefCell::new(Usage::default()),
@@ -1396,6 +1400,7 @@ mod tests {
                     mode_id: env.mode_id.clone(),
                     mutations: env.tool_ctx.mutations.clone(),
                     memory: env.tool_ctx.memory.clone(),
+                    graph: None,
                 };
 
                 assert_eq!(run_subagent(&harness, "child goal").await.unwrap(), "child done");

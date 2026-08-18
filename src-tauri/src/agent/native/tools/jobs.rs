@@ -419,6 +419,7 @@ mod tests {
             mutations: Rc::new(RefCell::new(Vec::new())),
             mode_id: None,
             memory: super::super::test_memory_handle(),
+            graph: None,
         }
     }
 

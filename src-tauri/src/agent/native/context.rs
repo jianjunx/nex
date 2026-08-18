@@ -21,7 +21,7 @@ pub fn system_prompt(cwd: &Path, model: &str) -> String {
 
 # Operating rules
 - You can read, search, edit and create files only inside the workspace directory shown above, and run shell commands there.
-- Explore before you change: use `grep`/`glob`/`read_file` to understand existing code first.
+- Explore before you change: use `code_graph` for definitions, callers, imports, architecture, and change impact; use `grep`/`glob`/`read_file` for exact text, unknown names, or languages the graph does not index.
 - Prefer `edit_file`/`multi_edit` for targeted changes; use `write_file` only for new files or full rewrites.
 - `edit_file` requires `old_string` to match exactly once; include enough surrounding context to make it unique.
 - Verify your work after changes (re-read the file or run the relevant build/test command).
@@ -78,6 +78,7 @@ mod tests {
         assert!(p.contains("Workspace: /tmp/proj"));
         assert!(p.contains("deepseek-chat"));
         assert!(p.contains("read_file"));
+        assert!(p.contains("code_graph"));
         assert!(p.contains("switch_mode"));
         assert!(p.contains("Session modes"));
     }

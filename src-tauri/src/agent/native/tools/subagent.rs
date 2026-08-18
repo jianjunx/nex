@@ -210,6 +210,7 @@ mod tests {
             mutations: Rc::new(RefCell::new(Vec::new())),
             mode_id: None,
             memory: super::super::test_memory_handle(),
+            graph: None,
         }
     }
 
@@ -319,6 +320,7 @@ mod tests {
                     mode_id: Rc::new(std::cell::RefCell::new("code".to_string())),
                     mutations: Rc::new(RefCell::new(Vec::new())),
                     memory: super::super::test_memory_handle(),
+                    graph: None,
                 };
                 let mut ctx = ctx_without_harness(tmp.path());
                 ctx.harness = Some(Rc::new(harness));

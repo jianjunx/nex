@@ -46,24 +46,37 @@ pub struct GitStatusChangedPayload {
 
 type ProjectDebouncer = Debouncer<RecommendedWatcher, RecommendedCache>;
 
+/// Host-side listener invoked with (project_path, changed_paths) after each
+/// debounced batch. Used by the code graph indexer; UI still gets events.
+pub type FsChangedListener = Arc<dyn Fn(&str, &[String]) + Send + Sync>;
+
 /// Manages one debounced watcher per project path.
 ///
 /// Dropping a `Debouncer` from the map stops its watcher thread.
 pub struct WatcherManager {
     watchers: Arc<Mutex<HashMap<String, ProjectDebouncer>>>,
+    listeners: Arc<Mutex<Vec<FsChangedListener>>>,
 }
 
 impl Clone for WatcherManager {
     fn clone(&self) -> Self {
         Self {
             watchers: Arc::clone(&self.watchers),
+            listeners: Arc::clone(&self.listeners),
         }
     }
 }
 
 impl WatcherManager {
     pub fn new() -> Self {
-        Self { watchers: Arc::new(Mutex::new(HashMap::new())) }
+        Self {
+            watchers: Arc::new(Mutex::new(HashMap::new())),
+            listeners: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    pub fn subscribe(&self, listener: FsChangedListener) {
+        self.listeners.lock().unwrap().push(listener);
     }
 
     /// Starts watching `project_path` recursively; no-op if already watched.
@@ -76,6 +89,7 @@ impl WatcherManager {
         }
 
         let emit_path = project_path.to_string();
+        let listeners = Arc::clone(&self.listeners);
         let mut debouncer = new_debouncer(
             Duration::from_millis(500),
             None,
@@ -89,12 +103,15 @@ impl WatcherManager {
                             .collect();
                         let _ = app.emit(
                             FS_CHANGED_EVENT,
-                            FsChangedPayload { project_path: emit_path.clone(), paths },
+                            FsChangedPayload { project_path: emit_path.clone(), paths: paths.clone() },
                         );
                         let _ = app.emit(
                             GIT_STATUS_CHANGED_EVENT,
                             GitStatusChangedPayload { project_path: emit_path.clone() },
                         );
+                        for listener in listeners.lock().unwrap().iter() {
+                            listener(&emit_path, &paths);
+                        }
                     }
                     Err(errors) => {
                         for error in errors {

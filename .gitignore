@@ -26,6 +26,9 @@ dist-ssr
 # Playwright MCP scratch snapshots
 .playwright-mcp/
 
+# Superpowers SDD working notes (task reports, not product docs)
+.superpowers/
+
 # WorkBuddy local memory
 .workbuddy/
 

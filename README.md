@@ -1,90 +1,133 @@
 # Nex
 
-Nex 是一个桌面端 **Agent 集成环境**：通过 [ACP（Agent Client Protocol）](https://github.com/zed-industries/agent-client-protocol) 将 Claude Code、Codex、Cursor CLI、Opencode 等 Agent 开发工具统一接入同一个工作台。功能定位类似 Zed 的 Agent 模式，界面采用苹果液态玻璃（Liquid Glass）设计语言，基于 [Tauri 2](https://tauri.app/) 构建，跨平台。
+Nex 是跨平台桌面 **Agent 工作台**（[Tauri 2](https://tauri.app/)）。核心是进程内 **Nex Agent**（OpenAI 兼容 Provider、工具、Skills、MCP、Code Graph）；同时也通过 [ACP](https://github.com/zed-industries/agent-client-protocol) 接入 Claude Code、Codex、Cursor CLI、Opencode 等外部 Agent。界面是 macOS Pro 风格的深色材质工作台。
+
+当前发布 **1.1.9** · [Releases](https://github.com/jianjunx/nex/releases) · [源码](https://github.com/jianjunx/nex)
 
 ![界面布局](docs/layout.png)
 
-## 主要功能
+## 功能
 
-- **ACP Agent 集成** — 内置 Claude Code / Codex / Cursor CLI / Opencode 四种 Agent 配置；流式输出、工具调用摘要、权限请求弹窗审批（按会话排队，FIFO）。
-- **多项目 × 多会话** — 左上角切换项目；每个项目可创建多个 Agent 对话标签页，多个 Agent 可同时执行任务，切换项目 / 对话不中断正在运行的任务；关闭标签页即终止对应 Agent 进程。
-- **Git 集成** — 状态列表（分支、ahead/behind）、文件 diff 查看、暂存 / 取消暂存、提交、历史日志。
-- **内置终端** — 多标签页 PTY 终端（xterm.js），随窗口自适应尺寸，支持创建 / 切换 / 终止。
-- **文件浏览** — 项目目录树（懒展开）+ 文件预览弹窗（自动识别文本 / 二进制）。
-- **外部变更自动刷新** — 文件 / Git 监听器（防抖 500ms）在外部修改后自动刷新目录树与 Git 状态。
-- **会话持久化** — 项目与会话列表存入本地 SQLite，重启后可恢复（v1 暂不持久化聊天消息内容）。
+### Nex Agent
+
+已内置，不依赖外部 CLI。设置 → **Nex 智能体** 配置 Provider / 模型 / 推理力度 / MCP / Skills。
+
+- **能力** — 多模型、推理力度、视觉；会话模式 `code` / `ask` / `plan` / `auto`。
+- **工具** — 读写/编辑文件、grep / glob / ls、bash（可后台任务）、todo、checkpoint / rewind、spreadsheet、MCP 代理、子 Agent（`task` / `fleet`）。
+- **Code Graph** — 进程内 tree-sitter 索引（TS/JS、Python、Rust、Go、Java），存在 `<项目>/.nex/cache/graph/`。Agent 用 `code_graph` 查定义、调用关系、影响范围。
+- **上下文** — 按模型窗口做硬预算；超长 tool 输出归档可回读；结构化摘要 + session working memory。
+- **Skills / 斜杠命令 / 规则** — Claude 兼容 `SKILL.md`；首次使用把内置技能和命令写到 `~/.nex`（已有文件不覆盖）。
+- **MCP** — `~/.nex/mcp.json` 与 `<cwd>/.nex/mcp.json` 合并；设置里可探测、启用/禁用。
+- **指令** — `~/.nex/rules/`、项目 `.nex/rules/`、根目录 `AGENTS.md`（没有则 `CLAUDE.md`）。
+
+内置斜杠命令：`/commit` `/review` `/explain` `/fix` `/test` `/optimize`。  
+内置技能：`git-commit`、`code-review`、`debug`、`refactor`、`create-skill`、`install-skill`。
+
+### ACP 外部 Agent
+
+从开放 ACP registry 解析启动规格；自管 Node.js 运行时（≥22）与 npm 包缓存，按 `<node> <bin>` 拉起，**不走 `npx`**。系统 PATH 里已有的 CLI 也可直接用。
+
+### 工作台
+
+- **多项目 × 多会话** — 左侧项目栏切换；每个项目多个对话页签；多个 Agent 可同时跑，切项目 / 对话不打断进行中的任务。项目下拉可看到最近活跃会话。
+- **会话 UI** — 流式输出、思考块、工具卡片、Plan 审批、Ask 问答、权限请求按会话 FIFO 排队。Composer 支持 `@[文件]` 引用、图片粘贴/附件、斜杠命令。
+- **通知** — Agent 需要确认时（尤其是收起的项目）从左上角弹出，点击跳到对应会话。
+- **持久化** — 项目、会话、消息写入本地 SQLite；重启后恢复打开的页签与对话内容。
+
+### 编辑器与文件
+
+- 文件树（懒展开、文件图标）+ CodeMirror 多标签编辑器。
+- 自动保存、查找/替换、按阈值换行、多语言格式化（Prettier / rustfmt / gofmt / ruff / shell 等）。
+- 新建 / 重命名 / 复制 / 剪切 / 粘贴（重名自动加「副本」）/ 删除；可撤销；会话里的路径可点开编辑器。
+- 外部文件变更防抖刷新（500ms）；`.nex/cache` 等内部写入不会刷 Git 状态。
+
+### Git
+
+状态、ahead/behind、Push、暂存/提交、文件 diff（可在编辑器里看）、分支切换、fetch / pull / push、clone、merge、stash、操作日志与错误详情弹窗。
+
+### 搜索与终端
+
+- 项目内文本搜索 + 替换；点结果跳到编辑器并高亮该行。
+- 多标签 PTY 终端（xterm.js）；可配 Shell、字号、字体、回滚行数；`Ctrl+\`` 显示/隐藏。
+
+### 设置与更新
+
+设置（`Ctrl+,`）：外观（浅色/深色）、编辑器、终端、Nex 智能体（Provider / MCP / Skills）、快捷键录制、布局重置、关于。  
+启动可检查更新，右下角横幅跳到「关于」下载安装包。快捷键可自定义并持久化。
+
+## 扩展目录
+
+| 位置 | 用途 |
+|------|------|
+| `~/.nex/skills/` | 用户技能（Claude 兼容 `SKILL.md`） |
+| `~/.nex/commands/` | 全局斜杠命令 `*.md` |
+| `~/.nex/rules/` | 全局规则，注入每个会话 |
+| `~/.nex/mcp.json` | 全局 MCP 服务器 |
+| `<项目>/.nex/rules/` | 项目规则 |
+| `<项目>/.nex/mcp.json` | 项目 MCP |
+| `<项目>/.nex/cache/graph/` | Code Graph 索引（已 gitignore） |
+| `<项目>/AGENTS.md` 或 `CLAUDE.md` | 项目给 Agent 的说明 |
+
+Nex Agent 配置（含 API Key）在应用数据目录的 `nex-agent.json`。SQLite 也在同一目录（如 macOS `~/Library/Application Support/com.nex.app/`，Windows `%APPDATA%\com.nex.app\nex.db`）。
 
 ## 技术栈
 
 | 层 | 技术 |
 |---|---|
-| 前端 | React 19 · TypeScript · Vite 8 · Tailwind CSS 4 · Zustand 5 (+ immer) · Framer Motion · xterm.js · lucide-react |
-| 后端（Rust） | Tauri 2 · tokio · agent-client-protocol 0.1 · git2 · portable-pty · rusqlite (bundled) · notify (防抖监听) · ignore |
-| 存储 | SQLite（rusqlite，位于系统应用数据目录，如 Windows `%APPDATA%\com.nex.app\nex.db`） |
+| 前端 | React 19 · TypeScript · Vite 8 · Tailwind CSS 4 · Zustand 5 · CodeMirror 6 · xterm.js · Radix |
+| 后端 | Tauri 2 · Rust 2021 · tokio · agent-client-protocol · git2 · portable-pty · rusqlite · notify · tree-sitter |
+| 存储 | SQLite（应用数据目录） |
 
-## 项目结构
+## 仓库结构
 
 ```
-src/                    前端
-  features/             按功能划分：agent / files / git / layout / projects / terminal
-  stores/               Zustand 状态仓库（project / conversation / agent / fs / git / terminal / ui）
-  bridge/               Tauri 命令与事件的类型化封装（COMMANDS / EVENTS 常量与 Rust 一一对应）
-  ui/                   液态玻璃基础组件（GlassButton / GlassModal / GlassTab …）
-src-tauri/src/          Rust 后端
-  acp/                  ACP 会话管理（每会话独立线程 + LocalSet，权限请求往返）
-  db/ fs/ git/ terminal/  各功能模块
-  watcher.rs            文件 / Git 防抖监听
-  commands/             Tauri 命令层
-docs/                   PRD 与界面设计（prd.md / layout.png）
+src/                      前端
+  features/               agent / editor / files / git / layout / projects / search / settings / terminal / updater
+  stores/                 Zustand
+  bridge/                 Tauri 命令与事件的类型化封装
+  commands/               快捷键注册与执行
+  components/ui/          共享原语
+src-tauri/src/            Rust 后端
+  agent/                  ACP 适配、包缓存、自管 Node、内置 Nex Agent
+  graph/                  Code Graph 索引
+  commands/ db/ fs/ git/ terminal/
+  watcher.rs              文件防抖监听
+docs/                     产品文档
+CLAUDE.md                 开发约定（实现细节以这里为准）
 ```
 
-## 快速开始
+## 开发
 
-### 环境要求
+### 环境
 
-- **Node.js ≥ 20.19**（Vite 8 要求 ^20.19 || ≥22.12）并启用 corepack：`corepack enable`
-- **Rust 稳定版工具链**（≥ 1.77.2）
-- **Tauri 2 系统依赖**：Windows 10/11 自带 WebView2；Linux / macOS 的依赖见 [Tauri 官方指南](https://tauri.app/start/prerequisites/)
-- **至少一个支持 ACP 的 Agent CLI**（按需安装其一即可）：
-  - Claude Code（`claude --acp`）· Codex（`codex --acp`）· Cursor CLI（`cursor --acp`）· Opencode（`opencode --acp`）
+- **Node.js** `^20.19 || ≥22.12`（Vite 8）+ `corepack enable`；Agent 运行时要求 **Node ≥ 22**
+- **Rust** 稳定版 ≥ 1.77.2
+- **Tauri 2 系统依赖**：Windows 10/11 自带 WebView2；其余见 [Tauri 前置条件](https://tauri.app/start/prerequisites/)
 
-### 安装与运行
+### 命令
 
 ```bash
-pnpm install             # 安装前端依赖
-pnpm tauri dev           # 开发模式（Vite HMR + Rust 热重载）
-pnpm build:installer     # 一键打安装包（等同 tauri build；产物在 src-tauri/target/release/bundle/）
+pnpm install
+pnpm tauri dev            # 或 pnpm dev:app
+pnpm test                 # vitest
+cd src-tauri && cargo test
+pnpm lint
+cd src-tauri && cargo clippy --tests
+pnpm tauri build          # 或 pnpm build:installer；产物在 src-tauri/target/release/bundle/
 ```
 
-仅前端：
+仅调前端界面（没有 Tauri API）：`pnpm dev`。
 
-```bash
-pnpm dev            # 浏览器中调试界面（Tauri API 调用不可用）
-pnpm build          # 类型检查 + 生产构建
-pnpm lint           # oxlint
-```
+### 使用
 
-### 测试
+1. 打开本地项目文件夹。
+2. 顶栏 **+** 新建对话：默认用 **Nex Agent**（需在 **设置 → Nex 智能体** 配好 Provider），或选外部 ACP Agent。
+3. 在 Composer 里对话；权限请求在弹窗里允许 / 拒绝。
+4. 右侧 **文件 / Git / 搜索**，左下角展开终端。
 
-```bash
-cd src-tauri && cargo test    # Rust 集成测试（数据库 / 文件系统）
-pnpm lint                     # 静态检查
-```
-
-### 使用流程
-
-1. 左上角 **打开项目**（选择本地文件夹）；
-2. 顶栏点击 **+** 新建对话，选择 Agent 后 **Create**（需要对应 CLI 已安装并在 PATH 中）；
-3. 在对话区与 Agent 交互；遇到权限请求时在弹窗中选择允许 / 拒绝；
-4. 右侧面板切换 **文件 / Git / 搜索**，左下角图标可展开 **终端** 区域。
-
-## 已知限制（v1）
-
-- 聊天消息内容不持久化（重启后恢复会话列表，对话内容为空）。
-- 关闭标签页时若 Agent 正处于回合中，进程在回合结束后才被回收。
-- Windows Smart App Control 可能间歇性拦截 cargo 构建脚本（os error 4551），重试即可。
+Windows Smart App Control 可能间歇拦截 cargo 构建脚本（os error 4551），重试即可。
 
 ## 文档
 
-- [产品需求文档](docs/prd.md)
-- [界面布局设计](docs/layout.png)
+- [开发约定与架构](CLAUDE.md)
+- [文档索引](docs/README.md)

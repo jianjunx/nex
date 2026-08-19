@@ -1,0 +1,88 @@
+src-tauri/src/agent/native/budget.rs
+  s_bb48bc118b1822::t_47cd233c16de5c 179-198
+  s_bb48bc118b1822::t_8cc20331714b3d 381-472
+src/stores/agent.store.test.ts
+  s_bb48bc118b1822::t_9f144bce4a4388 459-461
+  s_bb48bc118b1822::t_69109fadc18178 479
+  s_bb48bc118b1822::t_e4a1f8b0da1d25 341-417
+  s_bb48bc118b1822::t_a60b25ffeabe5f 90-91
+src/features/agent/ContextUsageRing.test.ts
+  s_bb48bc118b1822::t_9464bbafe27b75 1-3,8
+  s_bb48bc118b1822::t_ca4477e276ffc5 77-105,111-112,115-120
+  s_bb48bc118b1822::t_564608d61246b8 6
+  s_bb48bc118b1822::t_4f61bc8bdac795 106-110
+  s_bb48bc118b1822::t_8ffaa680793e9c 113-114
+  s_bb48bc118b1822::t_3844b21eccef1a 5
+src/features/agent/AgentComposer.tsx
+  s_bb48bc118b1822::t_30907432aa8774 218
+  s_bb48bc118b1822::t_befc14f98f6eb0 952-956
+  s_bb48bc118b1822::t_a8399ccbca2ae6 172,176-179
+  s_bb48bc118b1822::t_c49bfd5e0b2389 20
+src-tauri/src/fs/search.rs
+  s_bb48bc118b1822::t_429a5e5181f355 173,175-176,184,197-201,203-215,226-228,232,237-242,247-256
+  s_bb48bc118b1822::t_315e01b86f4f4e 41-101,257
+  s_bb48bc118b1822::t_8952cd9710706d 258
+src-tauri/tests/fs_test.rs
+  s_bb48bc118b1822::t_4bfba49c0b913d 52
+  s_bb48bc118b1822::t_1466f89c9c4ed8 121,123-148
+src/features/projects/activateProject.ts
+  s_bb48bc118b1822::t_52390e5b85a225 42-54
+src/features/terminal/TerminalPanel.tsx
+  s_bb48bc118b1822::t_c26e305017940b 127-130,134
+  s_bb48bc118b1822::t_c2082171d64463 96-99,102-105
+  s_bb48bc118b1822::t_58597440cc3f66 25
+  s_bb48bc118b1822::t_82a978a1e43b42 178-179,185,191
+  s_bb48bc118b1822::t_801e72c083c978 11
+  s_bb48bc118b1822::t_eeff5b58d3c624 24
+  s_bb48bc118b1822::t_a1f14d2c8e44e9 238
+src/stores/agent.store.ts
+  s_bb48bc118b1822::t_788dc392697db5 68-73,75
+  s_bb48bc118b1822::t_7578d01f825c08 244-250
+  s_bb48bc118b1822::t_038b3c01298921 788
+  s_bb48bc118b1822::t_0a91851e618ce6 856
+  s_bb48bc118b1822::t_d9ac201751dbad 166-169
+  s_bb48bc118b1822::t_01f227b30aca4b 939
+  s_bb48bc118b1822::t_fa965eec2d426b 993-1002
+src-tauri/src/agent/native/compact.rs
+  s_bb48bc118b1822::t_6bd8c41c86dd18 596-599,630-643
+  s_bb48bc118b1822::t_677685a40670f1 644-645
+src-tauri/src/agent/native/session.rs
+  s_bb48bc118b1822::t_2cc280e6f2a783 2332-2334,2336-2342,2344-2345,2350
+src/stores/conversation.store.test.ts
+  s_bb48bc118b1822::t_71a34f64f3f885 49,51-52
+src/features/projects/activateProject.test.ts
+  s_bb48bc118b1822::t_7644d23f70b7c2 1-88
+src/stores/composerDrafts.ts
+  s_bb48bc118b1822::t_9e90c7db92def8 38,45-49,53-54
+  s_bb48bc118b1822::t_dae5fc621aad37 9-10
+src/stores/terminal.store.ts
+  s_bb48bc118b1822::t_d896b30ce3e965 62-69
+src/features/projects/ProjectSelector.test.tsx
+  s_bb48bc118b1822::t_3cb58f56f0ad93 145-150
+src/features/agent/ContextUsageRing.tsx
+  s_bb48bc118b1822::t_568fad686e8bba 65-90,94
+  s_bb48bc118b1822::t_601477d02757dd 3
+  s_bb48bc118b1822::t_ee43416b3cb544 98
+  s_bb48bc118b1822::t_5605370a596b8d 183,188-194
+  s_bb48bc118b1822::t_28f23c007c7730 195
+src/stores/composerDrafts.test.ts
+  s_bb48bc118b1822::t_790e8ccecc6492 30,42-49,52,56-60
+src/stores/terminal.store.test.ts
+  s_bb48bc118b1822::t_df9cd0bfe86a2d 1-47
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "22dca4d8f4f2540114753dcfc7ec8aa098abe704",
+  "prompts": {},
+  "sessions": {
+    "s_bb48bc118b1822": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "74a76dc2-a2eb-4c61-ad86-07069250b0d3",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

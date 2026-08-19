@@ -2329,20 +2329,25 @@ mod tests {
         );
         assert_eq!(compact::estimate_tokens(&disabled), before);
 
-        // Active window: the loop walks Snip -> Compact -> Force and bails
-        // on no-progress. For a transcript that is *only* user + tool
-        // messages the Snip tier is the only tier that can save anything;
-        // we just need to verify the loop ran at least once.
+        // Active window: pre-emptive compaction can already trigger once the
+        // transcript crosses the 60/80/90 window thresholds, even before the
+        // prompt exceeds `prompt_budget`.
         let mut active = msgs.clone();
-        let budget = budget::resolve(16_384, 4096, 2048);
+        let used = compact::estimate_tokens(&active);
+        let budget = budget::ContextBudget {
+            model_window: (used * 100) / 85,
+            reserved_response: 0,
+            safety_margin: 0,
+            prompt_budget: used + 10_000,
+        };
         assert!(
-            compact::estimate_tokens(&active) > budget.prompt_budget,
-            "fixture must actually exceed the budget"
+            compact::estimate_tokens(&active) < budget.prompt_budget,
+            "fixture should stay under prompt budget so only pre-emptive compaction runs"
         );
         let outcome = budget::enforce(&mut active, budget, tmp.path());
         assert!(
             outcome.passes >= 1,
-            "subagent with context_window>0 must compact"
+            "subagent with context_window>0 must compact once the window threshold is crossed"
         );
         assert!(
             compact::estimate_tokens(&active) < before,

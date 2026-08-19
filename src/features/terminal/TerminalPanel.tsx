@@ -8,6 +8,7 @@ import {
   getReplay,
   setLiveSink,
   selectProjectSessions,
+  selectProjectActiveSessionId,
 } from "../../stores/terminal.store";
 import { useSettingsStore } from "../../stores/settings.store";
 import { useProjectStore } from "../../stores/project.store";
@@ -20,7 +21,8 @@ export function TerminalPanel() {
   const hostRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const allSessions = useTerminalStore((s) => s.sessions);
-  const activeSessionId = useTerminalStore((s) => s.activeSessionId);
+  const activeProjectId = useProjectStore((s) => s.activeProjectId);
+  const visibleSessionId = useTerminalStore((s) => selectProjectActiveSessionId(s, activeProjectId));
   const loading = useTerminalStore((s) => s.loading);
   const error = useTerminalStore((s) => s.error);
   const create = useTerminalStore((s) => s.create);
@@ -31,7 +33,6 @@ export function TerminalPanel() {
   const settingsVersion = useTerminalStore((s) => s.settingsVersion);
   const terminalShell = useSettingsStore((s) => s.terminalShell);
   const projects = useProjectStore((s) => s.projects);
-  const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const project = projects.find((p) => p.id === activeProjectId);
   const sessions = selectProjectSessions(allSessions, activeProjectId);
 
@@ -92,12 +93,16 @@ export function TerminalPanel() {
     // Read the session at call time via getState() — never capture
     // activeSessionId/write/resize from render scope (stale closures).
     term.onData((data) => {
-      const { activeSessionId, write } = useTerminalStore.getState();
-      if (activeSessionId) write(activeSessionId, data);
+      const state = useTerminalStore.getState();
+      const projectId = useProjectStore.getState().activeProjectId;
+      const sessionId = selectProjectActiveSessionId(state, projectId);
+      if (sessionId) state.write(sessionId, data);
     });
     term.onResize(({ cols, rows }) => {
-      const { activeSessionId, resize } = useTerminalStore.getState();
-      if (activeSessionId) resize(activeSessionId, cols, rows);
+      const state = useTerminalStore.getState();
+      const projectId = useProjectStore.getState().activeProjectId;
+      const sessionId = selectProjectActiveSessionId(state, projectId);
+      if (sessionId) state.resize(sessionId, cols, rows);
     });
 
     // Paste via the paste event's clipboardData (user-gesture, no permission
@@ -119,13 +124,14 @@ export function TerminalPanel() {
     // tabs buffer only (their replay runs on switch). getState() at call
     // time — never capture activeSessionId.
     setLiveSink((id, data) => {
-      const { activeSessionId, sessions } = useTerminalStore.getState();
-      if (activeSessionId !== id) return;
+      const state = useTerminalStore.getState();
+      const pid = useProjectStore.getState().activeProjectId;
+      const visibleId = selectProjectActiveSessionId(state, pid);
+      if (visibleId !== id) return;
       // Ignore stray output if the active session no longer matches the
       // project this panel instance was keyed for (belt-and-suspenders with
       // key={activeProjectId} remounts).
-      const session = sessions.find((s) => s.id === id);
-      const pid = useProjectStore.getState().activeProjectId;
+      const session = state.sessions.find((s) => s.id === id);
       if (session && pid && session.projectId !== pid) return;
       term.write(data);
     });
@@ -169,20 +175,20 @@ export function TerminalPanel() {
     const term = xtermRef.current;
     if (!term) return;
     term.reset();
-    if (!activeSessionId) return;
-    term.write(getReplay(activeSessionId));
+    if (!visibleSessionId) return;
+    term.write(getReplay(visibleSessionId));
     // Fit after the session is active so onResize can push cols/rows to the
     // PTY (the mount-time fit often ran with no activeSessionId).
     try {
       const { cols, rows } = term;
       if (cols > 0 && rows > 0) {
-        useTerminalStore.getState().resize(activeSessionId, cols, rows);
+        useTerminalStore.getState().resize(visibleSessionId, cols, rows);
       }
     } catch {
       /* ignore */
     }
     term.focus();
-  }, [activeSessionId, settingsVersion]);
+  }, [visibleSessionId, settingsVersion]);
 
   useEffect(() => {
     if (!project) return;
@@ -229,7 +235,7 @@ export function TerminalPanel() {
             key={s.id}
             type="button"
             onClick={() => setActive(s.id)}
-            className={`nex-interactive-chrome flex items-center gap-1.5 px-2.5 py-0.5 text-xs rounded-[var(--radius-md)] border ${s.id === activeSessionId ? "border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-elevated)_80%,transparent)] text-[var(--text-primary)] shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)]" : "border-transparent text-[var(--text-tertiary)] hover:bg-[color:color-mix(in_srgb,var(--material-floating)_72%,transparent)] hover:text-[var(--text-secondary)]"}`}
+            className={`nex-interactive-chrome flex items-center gap-1.5 px-2.5 py-0.5 text-xs rounded-[var(--radius-md)] border ${s.id === visibleSessionId ? "border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-elevated)_80%,transparent)] text-[var(--text-primary)] shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)]" : "border-transparent text-[var(--text-tertiary)] hover:bg-[color:color-mix(in_srgb,var(--material-floating)_72%,transparent)] hover:text-[var(--text-secondary)]"}`}
           >
             <span className="truncate max-w-[120px]">{s.title}</span>
             <span

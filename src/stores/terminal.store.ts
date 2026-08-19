@@ -59,6 +59,14 @@ export function selectProjectSessions(
   return list.length === 0 ? EMPTY_SESSIONS : list;
 }
 
+export function selectProjectActiveSessionId(
+  s: Pick<TerminalStore, "sessions" | "activeSessionByProject">,
+  projectId: string | null | undefined,
+): string | null {
+  if (!projectId) return null;
+  return pickActiveForProject(s.sessions, projectId, s.activeSessionByProject[projectId]);
+}
+
 // Per-session output ring buffers, kept OUTSIDE zustand state: output arrives
 // at keystroke frequency, and routing it through immer would draft the whole
 // store and re-render every subscriber per chunk. The app-scope listener

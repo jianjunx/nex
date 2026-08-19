@@ -176,6 +176,26 @@ pub fn enforce_with_memory(
     let mut tokens = compact::TokenEstimateCache::default();
     let mut used = tokens.estimate(messages);
     outcome.initial_tokens = used;
+
+    let preemptive_tier = match compact::decide(used, budget.model_window) {
+        compact::CompactLevel::None => None,
+        compact::CompactLevel::Snip => Some(compact::StepTier::Snip),
+        compact::CompactLevel::Compact => Some(compact::StepTier::Compact),
+        compact::CompactLevel::Force => Some(compact::StepTier::Force),
+    };
+    if let Some(tier) = preemptive_tier {
+        let step = compact::apply_tier(messages, tier, archive_dir);
+        if step.snipped > 0 || step.folded > 0 || step.archive_file.is_some() {
+            outcome.passes += 1;
+            outcome.total_snipped += step.snipped;
+            outcome.total_folded += step.folded;
+            if let Some(p) = step.archive_file {
+                outcome.archive_files.push(p);
+            }
+            used = tokens.estimate(messages);
+        }
+    }
+
     if used <= budget.prompt_budget {
         outcome.final_tokens = used;
         return outcome;
@@ -356,6 +376,98 @@ mod tests {
             .and_then(crate::agent::native::provider::Content::as_text)
             .unwrap();
         assert!(summary_text.starts_with(crate::agent::native::compact::SUMMARY_MARKER));
+    }
+
+    #[test]
+    fn enforce_preemptively_snips_above_sixty_percent_window() {
+        let big = "z".repeat(8_000);
+        let mut msgs: Vec<ChatMessage> = vec![ChatMessage::system("sys")];
+        for i in 0..6 {
+            msgs.push(ChatMessage::user(format!("u{i}")));
+            msgs.push(ChatMessage::tool_result(format!("t{i}"), &big));
+        }
+        let used = compact::estimate_tokens(&msgs);
+        let budget = ContextBudget {
+            model_window: used + (used / 2),
+            reserved_response: 0,
+            safety_margin: 0,
+            prompt_budget: used + (used / 2),
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let outcome = enforce(&mut msgs, budget, tmp.path());
+        assert_eq!(compact::decide(outcome.initial_tokens, budget.model_window), compact::CompactLevel::Snip);
+        assert!(outcome.passes >= 1);
+        assert!(outcome.total_snipped > 0);
+        assert!(outcome.final_tokens < outcome.initial_tokens);
+        assert!(outcome.final_tokens <= budget.prompt_budget);
+    }
+
+    #[test]
+    fn enforce_preemptively_compacts_above_eighty_percent_window() {
+        let big = "z".repeat(8_000);
+        let mut msgs: Vec<ChatMessage> = vec![ChatMessage::system("sys")];
+        for i in 0..10 {
+            msgs.push(ChatMessage::user(format!("user {i} {}", "u".repeat(200))));
+            msgs.push(ChatMessage::assistant(format!("assistant {i} {}", "a".repeat(200))));
+            msgs.push(ChatMessage::tool_result(format!("t{i}"), &big));
+        }
+        let used = compact::estimate_tokens(&msgs);
+        let budget = ContextBudget {
+            model_window: (used * 100) / 85,
+            reserved_response: 0,
+            safety_margin: 0,
+            prompt_budget: used + 10_000,
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let outcome = enforce(&mut msgs, budget, tmp.path());
+        assert_eq!(compact::decide(outcome.initial_tokens, budget.model_window), compact::CompactLevel::Compact);
+        assert!(outcome.passes >= 1);
+        assert!(outcome.total_folded > 0 || outcome.total_snipped > 0);
+        assert!(outcome.final_tokens < outcome.initial_tokens);
+        assert!(outcome.final_tokens <= budget.prompt_budget);
+    }
+
+    #[test]
+    fn enforce_preemptively_forces_above_ninety_percent_window() {
+        let big = "z".repeat(8_000);
+        let mut msgs: Vec<ChatMessage> = vec![ChatMessage::system("sys")];
+        for i in 0..12 {
+            msgs.push(ChatMessage::user(format!("user {i} {}", "u".repeat(200))));
+            msgs.push(ChatMessage::assistant(format!("assistant {i} {}", "a".repeat(200))));
+            msgs.push(ChatMessage::tool_result(format!("t{i}"), &big));
+        }
+        let used = compact::estimate_tokens(&msgs);
+        let budget = ContextBudget {
+            model_window: (used * 100) / 95,
+            reserved_response: 0,
+            safety_margin: 0,
+            prompt_budget: used + 10_000,
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let outcome = enforce(&mut msgs, budget, tmp.path());
+        assert_eq!(compact::decide(outcome.initial_tokens, budget.model_window), compact::CompactLevel::Force);
+        assert!(outcome.passes >= 1);
+        assert!(outcome.total_folded > 0 || outcome.total_snipped > 0);
+        assert!(outcome.final_tokens < outcome.initial_tokens);
+        assert!(outcome.final_tokens <= budget.prompt_budget);
+    }
+
+    #[test]
+    fn enforce_stays_noop_below_sixty_percent_window() {
+        let mut msgs: Vec<ChatMessage> = vec![ChatMessage::system("sys")];
+        msgs.push(ChatMessage::user("small request"));
+        let used = compact::estimate_tokens(&msgs);
+        let budget = ContextBudget {
+            model_window: used * 2,
+            reserved_response: 0,
+            safety_margin: 0,
+            prompt_budget: used * 2,
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let outcome = enforce(&mut msgs, budget, tmp.path());
+        assert_eq!(compact::decide(outcome.initial_tokens, budget.model_window), compact::CompactLevel::None);
+        assert_eq!(outcome.passes, 0);
+        assert_eq!(outcome.final_tokens, outcome.initial_tokens);
     }
 
     #[test]

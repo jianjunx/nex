@@ -46,11 +46,10 @@ describe("conversation.store project-scoped tabs", () => {
     });
   });
 
-  it("selectProjectOpenTabs returns a stable empty array reference", () => {
+  it("selectProjectActiveTabId returns null for missing projects", () => {
     const s = useConversationStore.getState();
-    expect(selectProjectOpenTabs(s, null)).toBe(selectProjectOpenTabs(s, undefined));
-    expect(selectProjectOpenTabs(s, "missing")).toBe(selectProjectOpenTabs(s, "also-missing"));
-    expect(selectProjectOpenTabs(s, "missing")).toEqual([]);
+    expect(selectProjectActiveTabId(s, null)).toBeNull();
+    expect(selectProjectActiveTabId(s, "missing")).toBeNull();
   });
 
   it("createConversation writes tabs for that project only", async () => {

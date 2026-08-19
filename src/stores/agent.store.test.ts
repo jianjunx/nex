@@ -87,6 +87,8 @@ beforeEach(() => {
     pendingAskQuestion: null,
     entriesByConversation: {},
     pendingMessagesByConversation: {},
+    contextStatsByConversation: {},
+    cacheHitHistoryByConversation: {},
     nativeAutoReview: false,
   });
   useConversationStore.setState({ conversationsByProject: {} });
@@ -336,6 +338,83 @@ describe("agent.store conversation-scoped errors", () => {
   });
 });
 
+describe("agent.store cache-hit history", () => {
+  it("stores a recent cache-hit sample when contextStats arrive", async () => {
+    agentSendPrompt.mockResolvedValue({
+      hadMutations: false,
+      contextStats: {
+        schemaVersion: 3,
+        initialTokens: 10,
+        finalTokens: 8,
+        compactionPasses: 0,
+        snippedMessages: 0,
+        foldedMessages: 0,
+        archiveFilesWritten: 0,
+        toolResults: 0,
+        partialToolResults: 0,
+        cacheHitTokens: 12,
+        promptTokens: 20,
+        contextWindow: 200_000,
+        usedSummaryFallback: false,
+        overBudget: false,
+      },
+    });
+    useAgentStore.setState({
+      sessions: {
+        "conv-1": { sessionId: "sid-1", conversationId: "conv-1", status: "idle" },
+      },
+      entriesByConversation: {
+        "conv-1": [{ id: "u1", kind: "user_message", text: "hello", timestamp: 1 }],
+      },
+    });
+
+    await useAgentStore.getState().sendPrompt("sid-1", [{ type: "text", text: "hello" }]);
+
+    const history = useAgentStore.getState().cacheHitHistoryByConversation["conv-1"];
+    expect(history).toHaveLength(1);
+    expect(history?.[0]).toEqual(
+      expect.objectContaining({ cacheHitTokens: 12, promptTokens: 20 }),
+    );
+  });
+
+  it("trims cache-hit history to the recent bound", async () => {
+    useAgentStore.setState({
+      sessions: {
+        "conv-1": { sessionId: "sid-1", conversationId: "conv-1", status: "idle" },
+      },
+      entriesByConversation: {
+        "conv-1": [{ id: "u1", kind: "user_message", text: "hello", timestamp: 1 }],
+      },
+    });
+    for (let i = 0; i < 7; i += 1) {
+      agentSendPrompt.mockResolvedValueOnce({
+        hadMutations: false,
+        contextStats: {
+          schemaVersion: 3,
+          initialTokens: 10,
+          finalTokens: 8,
+          compactionPasses: 0,
+          snippedMessages: 0,
+          foldedMessages: 0,
+          archiveFilesWritten: 0,
+          toolResults: 0,
+          partialToolResults: 0,
+          cacheHitTokens: i,
+          promptTokens: 10 + i,
+          contextWindow: 200_000,
+          usedSummaryFallback: false,
+          overBudget: false,
+        },
+      });
+      await useAgentStore.getState().sendPrompt("sid-1", [{ type: "text", text: `hello ${i}` }]);
+    }
+
+    const history = useAgentStore.getState().cacheHitHistoryByConversation["conv-1"];
+    expect(history).toHaveLength(6);
+    expect(history?.map((x) => x.cacheHitTokens)).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+});
+
 describe("agent.store removeSession cleanup", () => {
   it("drops persisted/session-scoped leftovers when a conversation is closed", async () => {
     useAgentStore.setState({
@@ -377,6 +456,9 @@ describe("agent.store removeSession cleanup", () => {
           overBudget: false,
         },
       },
+      cacheHitHistoryByConversation: {
+        "conv-1": [{ cacheHitTokens: 10, promptTokens: 20, timestamp: 1 }],
+      },
       pendingMessagesByConversation: {
         "conv-1": [{ id: "p1", blocks: [{ type: "text", text: "queued" }], text: "queued" }],
       },
@@ -394,6 +476,7 @@ describe("agent.store removeSession cleanup", () => {
     expect(state.metaByConversation["conv-1"]).toBeUndefined();
     expect(state.sessionPrefsByConversation["conv-1"]).toBeUndefined();
     expect(state.contextStatsByConversation["conv-1"]).toBeUndefined();
+    expect(state.cacheHitHistoryByConversation["conv-1"]).toBeUndefined();
     expect(state.pendingMessagesByConversation["conv-1"]).toBeUndefined();
     expect(state.errorsByConversation["conv-1"]).toBeUndefined();
   });

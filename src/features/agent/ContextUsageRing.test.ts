@@ -1,6 +1,11 @@
+/**
+ * @vitest-environment jsdom
+ */
 import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { createElement } from "react";
 import type { ContextStatsDto } from "../../bridge/tauri";
-import { fmtTokens, resolveContextRingUsage } from "./ContextUsageRing";
+import { ContextUsageRing, fmtTokens, resolveContextRingUsage, summarizeRecentCacheHits } from "./ContextUsageRing";
 
 function stats(partial: Partial<ContextStatsDto>): ContextStatsDto {
   return {
@@ -67,5 +72,49 @@ describe("resolveContextRingUsage", () => {
 
   it("returns null when nothing is known", () => {
     expect(resolveContextRingUsage(null, undefined)).toBeNull();
+  });
+});
+
+describe("summarizeRecentCacheHits", () => {
+  it("computes a token-weighted summary", () => {
+    expect(
+      summarizeRecentCacheHits([
+        { cacheHitTokens: 90, promptTokens: 100, timestamp: 1 },
+        { cacheHitTokens: 10, promptTokens: 100, timestamp: 2 },
+        { cacheHitTokens: 20, promptTokens: 50, timestamp: 3 },
+      ]),
+    ).toEqual({ sampleCount: 3, cacheHitTokens: 120, promptTokens: 250 });
+  });
+
+  it("ignores zero-prompt samples", () => {
+    expect(
+      summarizeRecentCacheHits([
+        { cacheHitTokens: 50, promptTokens: 0, timestamp: 1 },
+        { cacheHitTokens: 20, promptTokens: 40, timestamp: 2 },
+      ]),
+    ).toEqual({ sampleCount: 1, cacheHitTokens: 20, promptTokens: 40 });
+  });
+
+  it("returns null when no usable samples remain", () => {
+    expect(summarizeRecentCacheHits([{ cacheHitTokens: 50, promptTokens: 0, timestamp: 1 }])).toBeNull();
+  });
+});
+
+describe("ContextUsageRing", () => {
+  it("renders this-turn and recent cache-hit labels", () => {
+    render(
+      createElement(ContextUsageRing, {
+        usage: { used: 30_000, total: 200_000, tokens: [] },
+        stats: stats({ cacheHitTokens: 12_000, promptTokens: 20_000 }),
+        recentCacheHitSummary: { sampleCount: 3, cacheHitTokens: 48_000, promptTokens: 100_000 },
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "上下文用量 30K / 200K" }));
+
+    expect(screen.getByText("缓存命中（本轮）")).toBeTruthy();
+    expect(screen.getByText("12K / 20K (60%)")).toBeTruthy();
+    expect(screen.getByText("缓存命中（近 3 轮）")).toBeTruthy();
+    expect(screen.getByText("48K / 100K (48%)")).toBeTruthy();
   });
 });

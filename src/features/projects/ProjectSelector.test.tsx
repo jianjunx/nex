@@ -142,4 +142,10 @@ describe("ProjectSelector dropdown", () => {
     expect(screen.queryByTitle("Agent 运行中")).toBeNull();
     expect(screen.queryByTitle("Agent 等待中")).toBeNull();
   });
+
+  it("renders project rows without a leading monogram badge", () => {
+    openDropdown();
+    const alphaRow = screen.getByRole("menuitem", { name: /alpha/i });
+    expect(alphaRow.textContent?.trim().startsWith("alpha")).toBe(true);
+  });
 });

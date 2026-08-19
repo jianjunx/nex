@@ -1,5 +1,6 @@
 import { Popover } from "radix-ui";
 import type { ContextStatsDto } from "../../bridge/tauri";
+import type { CacheHitSample } from "../../stores/agent.store";
 import type { ContextUsage } from "./thread/types";
 
 /** Compact token count: 30000 → 30K, 200000 → 200K, 1234 → 1.2K. */
@@ -61,13 +62,40 @@ function cacheHitLabel(stats: ContextStatsDto): string {
   return `${fmtTokens(hit)} / ${fmtTokens(prompt)} (${pct}%)`;
 }
 
+export interface CacheHitSummary {
+  sampleCount: number;
+  cacheHitTokens: number;
+  promptTokens: number;
+}
+
+export function summarizeRecentCacheHits(samples: CacheHitSample[]): CacheHitSummary | null {
+  let cacheHitTokens = 0;
+  let promptTokens = 0;
+  let sampleCount = 0;
+  for (const sample of samples) {
+    if (sample.promptTokens <= 0) continue;
+    cacheHitTokens += sample.cacheHitTokens;
+    promptTokens += sample.promptTokens;
+    sampleCount += 1;
+  }
+  if (sampleCount === 0 || promptTokens <= 0) return null;
+  return { sampleCount, cacheHitTokens, promptTokens };
+}
+
+function cacheHitSummaryLabel(summary: CacheHitSummary | null): string {
+  if (!summary) return "—";
+  const pct = Math.round((summary.cacheHitTokens / summary.promptTokens) * 100);
+  return `${fmtTokens(summary.cacheHitTokens)} / ${fmtTokens(summary.promptTokens)} (${pct}%)`;
+}
+
 interface Props {
   usage: ContextUsage;
   stats?: ContextStatsDto | null;
+  recentCacheHitSummary?: CacheHitSummary | null;
 }
 
 /** Composer 模式切换前的上下文用量环；点击展开后右侧显示 30K / 200K。 */
-export function ContextUsageRing({ usage, stats }: Props) {
+export function ContextUsageRing({ usage, stats, recentCacheHitSummary }: Props) {
   const { used, total, tokens } = usage;
   const ratio = total > 0 ? Math.min(1, used / total) : 0;
   const color = ringColor(ratio);
@@ -152,9 +180,17 @@ export function ContextUsageRing({ usage, stats }: Props) {
         {stats && (
           <div className="mt-2 space-y-1 border-t border-[color:var(--hairline-soft)] pt-2">
             <div className="flex items-center justify-between text-xs">
-              <span className="text-[var(--text-secondary)]">缓存命中</span>
+              <span className="text-[var(--text-secondary)]">缓存命中（本轮）</span>
               <span className="font-mono tabular-nums text-[var(--text-primary)]">
                 {cacheHitLabel(stats)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-[var(--text-secondary)]">
+                缓存命中（近 {recentCacheHitSummary?.sampleCount ?? 0} 轮）
+              </span>
+              <span className="font-mono tabular-nums text-[var(--text-primary)]">
+                {cacheHitSummaryLabel(recentCacheHitSummary ?? null)}
               </span>
             </div>
             <div className="flex items-center justify-between gap-2 text-xs">

@@ -49,7 +49,7 @@ fn test_write_file_atomic_round_trip() {
 }
 
 // ---- Plan 5: search options -----------------------------------------
-use nex_lib::fs::search::{compile_pattern, search, SearchOptions};
+use nex_lib::fs::search::{search, SearchOptions};
 
 fn opts(case_sensitive: bool, whole_word: bool, regex: bool) -> SearchOptions {
     SearchOptions { case_sensitive, whole_word, regex }
@@ -118,18 +118,36 @@ fn test_search_options_combine() {
 }
 
 #[test]
-fn test_search_invalid_regex_is_validation_error() {
+fn test_search_fuzzy_filename_matches_abbreviation() {
     let dir = tempdir().unwrap();
-    search_fixture(dir.path());
-    let err = search(dir.path(), "[unclosed", Some(opts(false, false, true))).unwrap_err();
-    let msg = format!("{err}");
-    assert!(msg.contains("无效的正则表达式"), "unexpected: {msg}");
-    assert!(msg.contains("[unclosed"));
-    // compile_pattern 同样可直测
-    assert!(compile_pattern("(", &opts(false, false, true)).is_err());
+    fs::write(dir.path().join("components.json"), "{}\n").unwrap();
+    fs::write(dir.path().join("compose.js"), "console.log('x');\n").unwrap();
+
+    let results = search(dir.path(), "cmpjs", None).unwrap();
+    assert!(results.iter().any(|m| m.name == "components.json" && m.line.is_none()));
 }
 
-// ---- Plan 5: search & replace (disk) --------------------------------
+#[test]
+fn test_search_filename_hits_rank_before_content_hits() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("components.json"), "{}\n").unwrap();
+    fs::write(dir.path().join("notes.txt"), "cmpjs appears in content\n").unwrap();
+
+    let results = search(dir.path(), "cmpjs", None).unwrap();
+    assert_eq!(results.first().map(|m| (m.name.as_str(), m.line)), Some(("components.json", None)));
+    assert!(results.iter().any(|m| m.name == "notes.txt" && m.line == Some(1)));
+}
+
+#[test]
+fn test_search_prefers_stronger_filename_match_ordering() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("components.json"), "{}\n").unwrap();
+    fs::write(dir.path().join("my-components.json.backup"), "{}\n").unwrap();
+
+    let results = search(dir.path(), "components.json", None).unwrap();
+    assert_eq!(results.first().map(|m| m.name.as_str()), Some("components.json"));
+}
+
 use nex_lib::fs::search::{apply_replace, search_replace};
 
 #[test]

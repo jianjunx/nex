@@ -38,6 +38,67 @@ const MAX_CONTENT_FILE_SIZE: u64 = 1024 * 1024;
 /// Matched lines are truncated to this many characters.
 const MAX_LINE_LEN: usize = 200;
 
+fn normalize_fuzzy_text(text: &str) -> String {
+    text.replace('\\', "/").to_lowercase()
+}
+
+fn fuzzy_score(query: &str, target: &str) -> Option<i64> {
+    let q = normalize_fuzzy_text(query);
+    let t = normalize_fuzzy_text(target);
+    if q.is_empty() {
+        return Some(0);
+    }
+    if t == q {
+        return Some(10_000);
+    }
+    if t.starts_with(&q) {
+        return Some(5_000 - (t.len() as i64 - q.len() as i64));
+    }
+    if let Some(index) = t.find(&q) {
+        return Some(1_000 - index as i64);
+    }
+
+    let chars: Vec<(usize, char)> = t.char_indices().collect();
+    let mut ti = 0usize;
+    let mut score = 0i64;
+    let mut prev_index: Option<usize> = None;
+    for ch in q.chars() {
+        let mut found = None;
+        while ti < chars.len() {
+            let (idx, current) = chars[ti];
+            ti += 1;
+            if current == ch {
+                found = Some(idx);
+                break;
+            }
+        }
+        let idx = found?;
+        score += 10;
+        if let Some(prev) = prev_index {
+            if idx == prev + 1 {
+                score += 5;
+            }
+        }
+        if idx == 0 || matches!(t[..idx].chars().last(), Some('-' | '_' | '/' | '.')) {
+            score += 8;
+        }
+        prev_index = Some(idx);
+    }
+    score -= t.chars().count() as i64;
+    Some(score)
+}
+
+fn fuzzy_name_score(query: &str, name: &str, relative_path: &str) -> Option<i64> {
+    let name_score = fuzzy_score(query, name).map(|score| score + 1_000_000);
+    let path_score = fuzzy_score(query, relative_path);
+    match (name_score, path_score) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }
+}
+
 /// Compile query + options into one `regex::Regex`: plain queries become
 /// `regex::escape(query)`; whole-word wraps `\b(?:…)\b`; case-insensitivity
 /// prepends `(?i)`. The three compose naturally in that order. An invalid
@@ -109,7 +170,10 @@ pub fn search(
     }
     let opts = options.unwrap_or_default();
     let re = compile_pattern(query, &opts)?;
+    let fuzzy_name_search = !opts.case_sensitive && !opts.whole_word && !opts.regex;
     let mut results = Vec::new();
+    let mut file_name_hits: Vec<(i64, SearchMatch)> = Vec::new();
+    let mut content_hits = Vec::new();
     let walker = WalkBuilder::new(project_path)
         .hidden(true) // skip dotfiles/dirs (notably .git)
         .git_ignore(true)
@@ -117,7 +181,7 @@ pub fn search(
         .build();
 
     for entry in walker.flatten() {
-        if results.len() >= MAX_RESULTS {
+        if !fuzzy_name_search && results.len() >= MAX_RESULTS {
             break;
         }
         let path = entry.path();
@@ -130,8 +194,25 @@ pub fn search(
         }
         let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
         let path_str = path.to_string_lossy().to_string();
+        let relative_path = path
+            .strip_prefix(project_path)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
 
-        if re.is_match(&name) {
+        if fuzzy_name_search {
+            if let Some(score) = fuzzy_name_score(query, &name, &relative_path) {
+                file_name_hits.push((
+                    score,
+                    SearchMatch {
+                        path: path_str.clone(),
+                        name: name.clone(),
+                        line: None,
+                        text: String::new(),
+                    },
+                ));
+            }
+        } else if re.is_match(&name) {
             results.push(SearchMatch { path: path_str, name, line: None, text: String::new() });
             continue;
         }
@@ -142,18 +223,37 @@ pub fn search(
         // Non-UTF-8 (binary) files fail to read as text and are skipped.
         let Ok(content) = std::fs::read_to_string(path) else { continue };
         for (idx, line) in content.lines().enumerate() {
-            if results.len() >= MAX_RESULTS {
+            if (!fuzzy_name_search && results.len() >= MAX_RESULTS)
+                || (fuzzy_name_search && content_hits.len() >= MAX_RESULTS)
+            {
                 break;
             }
             if re.is_match(line) {
-                results.push(SearchMatch {
+                let hit = SearchMatch {
                     path: path_str.clone(),
                     name: name.clone(),
                     line: Some(idx as u32 + 1),
                     text: line.trim().chars().take(MAX_LINE_LEN).collect(),
-                });
+                };
+                if fuzzy_name_search {
+                    content_hits.push(hit);
+                } else {
+                    results.push(hit);
+                }
             }
         }
+    }
+
+    if fuzzy_name_search {
+        file_name_hits.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.path.cmp(&b.1.path)));
+        results.extend(
+            file_name_hits
+                .into_iter()
+                .take(MAX_RESULTS)
+                .map(|(_, hit)| hit),
+        );
+        let remaining = MAX_RESULTS.saturating_sub(results.len());
+        results.extend(content_hits.into_iter().take(remaining));
     }
 
     Ok(results)

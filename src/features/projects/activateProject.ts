@@ -39,13 +39,18 @@ export async function activateProject(project: Project): Promise<void> {
     fsWatchStart(project.path).catch(() => {}),
   ]);
 
-  // Match the project selector: make its most recently active open tab active.
-  const convs = useConversationStore.getState().conversationsByProject[project.id] ?? [];
-  const latestId = [...convs].sort((a, b) => b.updated_at - a.updated_at)[0]?.id;
-  if (
-    latestId &&
-    (useConversationStore.getState().tabsByProject[project.id] ?? []).includes(latestId)
-  ) {
-    useConversationStore.getState().switchTab(latestId);
+  const convState = useConversationStore.getState();
+  const openTabs = convState.tabsByProject[project.id] ?? [];
+  const activeTabId = convState.activeTabByProject[project.id] ?? null;
+  if (activeTabId && openTabs.includes(activeTabId)) {
+    return;
+  }
+
+  const convs = convState.conversationsByProject[project.id] ?? [];
+  const latestId = [...convs]
+    .filter((c) => openTabs.includes(c.id))
+    .sort((a, b) => b.updated_at - a.updated_at)[0]?.id;
+  if (latestId) {
+    convState.switchTab(latestId);
   }
 }

@@ -17,7 +17,7 @@ import {
 import { fsSearch, fsReadFile, type PromptBlock, type SearchMatch, type SessionTarget } from "../../bridge/tauri";
 import { ComposerOptionMenu } from "./ComposerOptionMenu";
 import { ComposerGroupedOptionMenu } from "./ComposerGroupedOptionMenu";
-import { ContextUsageRing, resolveContextRingUsage } from "./ContextUsageRing";
+import { ContextUsageRing, resolveContextRingUsage, summarizeRecentCacheHits } from "./ContextUsageRing";
 import { BranchSelector } from "../git/BranchSelector";
 import { useGitStore } from "../../stores/git.store";
 import { useDragDropStore } from "../../stores/dragDrop.store";
@@ -169,9 +169,14 @@ export function AgentComposer() {
   const sendPendingNow = useAgentStore((s) => s.sendPendingNow);
 
   const contextStatsByConversation = useAgentStore((s) => s.contextStatsByConversation);
+  const cacheHitHistoryByConversation = useAgentStore((s) => s.cacheHitHistoryByConversation);
   const session = activeTabId ? sessions[activeTabId] : null;
   const meta = activeTabId ? metaByConversation[activeTabId] : null;
   const contextStats = activeTabId ? contextStatsByConversation[activeTabId] : undefined;
+  const recentCacheHitSummary = useMemo(
+    () => summarizeRecentCacheHits(activeTabId ? (cacheHitHistoryByConversation[activeTabId] ?? []) : []),
+    [activeTabId, cacheHitHistoryByConversation],
+  );
   const contextRingUsage = resolveContextRingUsage(meta?.contextUsage, contextStats);
   const isStarting = session?.status === "starting";
   const isRunning = session?.status === "running" || session?.status === "waiting";
@@ -210,7 +215,7 @@ export function AgentComposer() {
       atQuery,
       (h) => {
         const parts = mentionDisplayParts(h.path, project?.path);
-        return `${parts.name} ${parts.dir}${parts.name}`;
+        return `${parts.name} ${parts.dir} ${parts.name}`;
       },
       24,
     );
@@ -944,7 +949,11 @@ export function AgentComposer() {
                 />
               )}
               {session?.sessionId && contextRingUsage && (
-                <ContextUsageRing usage={contextRingUsage} stats={contextStats} />
+                <ContextUsageRing
+                  usage={contextRingUsage}
+                  stats={contextStats}
+                  recentCacheHitSummary={recentCacheHitSummary}
+                />
               )}
               {session?.sessionId && meta && (() => {
                 const configOpts = (meta.configOptions ?? []).filter((o) => o.options.length > 0);

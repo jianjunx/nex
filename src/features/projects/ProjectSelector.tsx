@@ -31,11 +31,6 @@ const isMac = platform.startsWith("Mac") || /Macintosh/.test(ua);
 const ITEM_HIGHLIGHT =
   "focus:bg-[var(--overlay-hover)] focus:text-[var(--text-primary)] data-[highlighted]:bg-[var(--overlay-hover)]";
 
-function projectMonogram(name: string): string {
-  const first = Array.from(name.trim())[0];
-  return first ? first.toUpperCase() : "?";
-}
-
 /** 运行中会话数量角标（0 时隐藏）。 */
 function RunningCountBadge({ projectId }: { projectId: string }) {
   const sessions = useAgentStore((s) => s.sessions);
@@ -188,17 +183,6 @@ export function ProjectSelector() {
                   : "text-[var(--text-secondary)]",
               )}
             >
-              <span
-                aria-hidden
-                className={cn(
-                  "mt-px flex size-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[11px] font-semibold",
-                  isActive
-                    ? "bg-[color-mix(in_srgb,var(--accent)_18%,transparent)] text-[var(--accent)]"
-                    : "border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_66%,transparent)] text-[var(--text-secondary)]",
-                )}
-              >
-                {projectMonogram(p.name)}
-              </span>
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="flex min-w-0 items-center gap-1.5">
                   <span className={cn("truncate text-[13px] leading-tight", isActive && "font-medium")}>

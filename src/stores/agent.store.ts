@@ -65,7 +65,14 @@ export interface PendingMessage {
   images?: { mimeType: string; data: string }[];
 }
 
+export interface CacheHitSample {
+  cacheHitTokens: number;
+  promptTokens: number;
+  timestamp: number;
+}
+
 const MAX_PENDING_MESSAGES_PER_CONVERSATION = 8;
+const CACHE_HIT_HISTORY_MAX = 6;
 // Base64 characters are a close upper bound for the retained image payload.
 // Individual attachments are limited separately; this caps accumulation while
 // a long-running turn keeps accepting queued messages.
@@ -156,6 +163,10 @@ interface AgentStore {
   error: string | null;
   /** Dismissible Composer errors, isolated to the conversation that caused them. */
   errorsByConversation: Record<string, string>;
+  /** Latest backend context stats per conversation (debug/observability). */
+  contextStatsByConversation: Record<string, import("../bridge/tauri").ContextStatsDto>;
+  /** Recent cache-hit samples per conversation for smoothing in the composer UI. */
+  cacheHitHistoryByConversation: Record<string, CacheHitSample[]>;
 
   createSession: (conversationId: string, target: SessionTarget, cwd: string) => Promise<string>;
   removeSession: (conversationId: string) => Promise<void>;
@@ -197,8 +208,6 @@ interface AgentStore {
   clearErrorForConversation: (conversationId: string) => void;
   /** Cached from nex-agent.json; used to chain `/review` after mutating turns. */
   nativeAutoReview: boolean;
-  /** Latest backend context stats per conversation (debug/observability). */
-  contextStatsByConversation: Record<string, import("../bridge/tauri").ContextStatsDto>;
   /** Refresh `nativeAutoReview` from disk (call after settings save). */
   refreshNativeAutoReview: () => Promise<void>;
   /** Queue a message for later sending when the session is starting or busy. */
@@ -230,6 +239,13 @@ function clearConversationError(
   conversationId: string,
 ): void {
   delete s.errorsByConversation[conversationId];
+}
+
+function pushCacheHitSample(samples: CacheHitSample[], sample: CacheHitSample): CacheHitSample[] {
+  const next = samples.concat(sample);
+  return next.length <= CACHE_HIT_HISTORY_MAX
+    ? next
+    : next.slice(next.length - CACHE_HIT_HISTORY_MAX);
 }
 
 function setConversationError(
@@ -769,6 +785,7 @@ export const useAgentStore = create<AgentStore>()(
     errorsByConversation: {},
     nativeAutoReview: false,
     contextStatsByConversation: {},
+    cacheHitHistoryByConversation: {},
 
     createSession: async (conversationId, target, cwd) => {
       set((s) => {
@@ -836,6 +853,7 @@ export const useAgentStore = create<AgentStore>()(
           delete s.metaByConversation[conversationId];
           delete s.sessionPrefsByConversation[conversationId];
           delete s.contextStatsByConversation[conversationId];
+          delete s.cacheHitHistoryByConversation[conversationId];
           // Drop queued-but-unsent messages and any permission queues so a
           // removed conversation leaves no orphaned state behind.
           delete s.pendingMessagesByConversation[conversationId];
@@ -918,6 +936,7 @@ export const useAgentStore = create<AgentStore>()(
           delete s.pendingMessagesByConversation[id];
           delete s.sessionPrefsByConversation[id];
           delete s.contextStatsByConversation[id];
+          delete s.cacheHitHistoryByConversation[id];
           clearConversationError(s, id);
         }
       });
@@ -971,7 +990,16 @@ export const useAgentStore = create<AgentStore>()(
         if (result?.stopReason) stopReason = result.stopReason;
         if (result?.contextStats) {
           set((s) => {
-            s.contextStatsByConversation[session.conversationId] = result.contextStats!;
+            const stats = result.contextStats!;
+            s.contextStatsByConversation[session.conversationId] = stats;
+            s.cacheHitHistoryByConversation[session.conversationId] = pushCacheHitSample(
+              s.cacheHitHistoryByConversation[session.conversationId] ?? [],
+              {
+                cacheHitTokens: stats.cacheHitTokens,
+                promptTokens: stats.promptTokens,
+                timestamp: Date.now(),
+              },
+            );
           });
         }
       } catch (err) {

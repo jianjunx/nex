@@ -593,19 +593,10 @@ pub struct StepOutcome {
 /// `tier` overrides the level inferred from transcript size so the caller
 /// can walk `Snip -> Compact -> Force` deliberately.
 ///
-/// Idempotent: a no-op when `prompt_budget` is already satisfied.
-pub fn step(
-    messages: &mut [ChatMessage],
-    prompt_budget: u64,
-    tier: StepTier,
-    archive_dir: &Path,
-) -> StepOutcome {
-    if prompt_budget == 0 {
-        return StepOutcome::default();
-    }
-    if estimate_tokens(messages) <= prompt_budget {
-        return StepOutcome::default();
-    }
+/// Apply one explicit tier regardless of the current prompt budget. Used for
+/// pre-emptive compaction once the transcript crosses the 60/80/90 window
+/// thresholds.
+pub fn apply_tier(messages: &mut [ChatMessage], tier: StepTier, archive_dir: &Path) -> StepOutcome {
     let force = tier == StepTier::Force;
     match tier.as_level() {
         CompactLevel::None | CompactLevel::Snip => {
@@ -634,6 +625,22 @@ pub fn step(
             CompactArchiveResult::ArchiveFailed => StepOutcome::default(),
         },
     }
+}
+
+/// Idempotent: a no-op when `prompt_budget` is already satisfied.
+pub fn step(
+    messages: &mut [ChatMessage],
+    prompt_budget: u64,
+    tier: StepTier,
+    archive_dir: &Path,
+) -> StepOutcome {
+    if prompt_budget == 0 {
+        return StepOutcome::default();
+    }
+    if estimate_tokens(messages) <= prompt_budget {
+        return StepOutcome::default();
+    }
+    apply_tier(messages, tier, archive_dir)
 }
 
 #[cfg(test)]

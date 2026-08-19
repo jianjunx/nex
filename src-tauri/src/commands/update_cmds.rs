@@ -3,9 +3,10 @@
 //! The app has no updater signing infrastructure, so this is a lightweight
 //! flow: query the latest published GitHub release, compare semver, download
 //! the platform installer asset with progress events, then replace the running
-//! app. Windows waits for this process to exit, then launches NSIS via a
-//! breakaway helper script (must survive Tauri's job object on parent exit).
-//! macOS waits, copies the `.app` out of the `.dmg` over the running bundle,
+//! app. Windows waits for this process to exit, then runs the NSIS installer
+//! silently (`/S /R`) via a breakaway helper script (must survive Tauri's
+//! job object on parent exit). `/R` asks Tauri's NSIS template to relaunch
+//! the app after install completes. macOS waits, copies the `.app` out of the `.dmg` over the running bundle,
 //! and relaunches — Finder drag-install is only a fallback when not running from
 //! a bundle (e.g. `tauri dev`).
 //!
@@ -206,23 +207,44 @@ echo "nex update done $(date)"
     )
 }
 
-/// PowerShell helper script: wait until Nex exits, then launch the NSIS installer.
-/// Writes to `$Log` so a silent failure is diagnosable under
-/// `%APPDATA%\\com.nex.app\\updater\\install-and-relaunch.log`.
+/// PowerShell helper script: wait until Nex exits, then silently install
+/// (`/S /R`) and relaunch via Tauri's NSIS template. If `/R` does not start
+/// Nex, falls back to launching `nex_exe` (then registry InstallLocation).
+/// Writes to `$Log` under `%APPDATA%\\com.nex.app\\updater\\install-and-relaunch.log`.
 #[cfg(any(target_os = "windows", test))]
-fn windows_install_script(pid: u32, installer: &Path, log: &Path) -> String {
+fn windows_install_script(pid: u32, installer: &Path, nex_exe: &Path, log: &Path) -> String {
     let installer_q = installer.to_string_lossy().replace('\'', "''");
+    let nex_exe_q = nex_exe.to_string_lossy().replace('\'', "''");
     let log_q = log.to_string_lossy().replace('\'', "''");
     format!(
         r#"$ErrorActionPreference = 'Stop'
 $NexPid = {pid}
 $Installer = '{installer_q}'
+$NexExe = '{nex_exe_q}'
 $Log = '{log_q}'
 function Write-Log([string]$Message) {{
   "$(Get-Date -Format o) $Message" | Add-Content -LiteralPath $Log -Encoding UTF8
 }}
+function Start-NexFallback {{
+  if (Test-Path -LiteralPath $NexExe) {{
+    Write-Log "relaunch fallback: $NexExe"
+    Start-Process -LiteralPath $NexExe
+    return
+  }}
+  $regPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\com.nex.app'
+  $installDir = (Get-ItemProperty -LiteralPath $regPath -Name InstallLocation -ErrorAction SilentlyContinue).InstallLocation
+  if ($installDir) {{
+    $candidate = Join-Path $installDir.TrimEnd('\') 'nex.exe'
+    if (Test-Path -LiteralPath $candidate) {{
+      Write-Log "relaunch fallback via registry: $candidate"
+      Start-Process -LiteralPath $candidate
+      return
+    }}
+  }}
+  Write-Log "relaunch fallback skipped: no nex.exe at $NexExe or under $regPath"
+}}
 try {{
-  Write-Log "nex update helper start pid=$PID nexPid=$NexPid"
+  Write-Log "nex update helper start pid=$PID nexPid=$NexPid nexExe=$NexExe"
   $n = 0
   while ($n -lt 300) {{
     if (-not (Get-Process -Id $NexPid -ErrorAction SilentlyContinue)) {{ break }}
@@ -237,8 +259,19 @@ try {{
     Write-Log "installer missing: $Installer"
     exit 1
   }}
-  $proc = Start-Process -LiteralPath $Installer -PassThru
-  Write-Log "installer started pid=$($proc.Id) path=$Installer"
+  $proc = Start-Process -LiteralPath $Installer -ArgumentList '/S','/R' -Wait -PassThru
+  Write-Log "installer finished exitCode=$($proc.ExitCode) path=$Installer"
+  if ($proc.ExitCode -ne 0) {{
+    Write-Log "installer failed exitCode=$($proc.ExitCode)"
+    exit $proc.ExitCode
+  }}
+  Start-Sleep -Milliseconds 1500
+  $running = Get-Process -Name 'nex' -ErrorAction SilentlyContinue
+  if ($running) {{
+    Write-Log "nex already running after install (pid=$($running.Id))"
+  }} else {{
+    Start-NexFallback
+  }}
 }} catch {{
   Write-Log "error: $_"
   exit 1
@@ -632,7 +665,9 @@ fn spawn_windows_installer(dest: &Path) -> Result<(), NexError> {
         .ok_or_else(|| NexError::Internal("更新目录无效".into()))?;
     let script_path = dir.join("install-and-relaunch.ps1");
     let log_path = dir.join("install-and-relaunch.log");
-    let script = windows_install_script(std::process::id(), dest, &log_path);
+    let nex_exe = std::env::current_exe()
+        .map_err(|e| NexError::Internal(format!("无法定位当前程序: {e}")))?;
+    let script = windows_install_script(std::process::id(), dest, &nex_exe, &log_path);
     std::fs::write(&script_path, script)
         .map_err(|e| NexError::Internal(format!("写入更新脚本失败: {e}")))?;
 
@@ -911,12 +946,20 @@ mod tests {
         let script = windows_install_script(
             42,
             Path::new(r"C:\Users\O'Brien\Nex-setup.exe"),
+            Path::new(r"C:\Users\O'Brien\AppData\Local\Programs\com.nex.app\nex.exe"),
             Path::new(r"C:\Users\O'Brien\AppData\Roaming\com.nex.app\updater\install.log"),
         );
         assert!(script.contains("$NexPid = 42"));
         assert!(script.contains(r"C:\Users\O''Brien\Nex-setup.exe"));
+        assert!(script.contains(r"C:\Users\O''Brien\AppData\Local\Programs\com.nex.app\nex.exe"));
         assert!(script.contains("Get-Process -Id $NexPid"));
         assert!(script.contains("Start-Process -LiteralPath $Installer"));
+        assert!(script.contains("ArgumentList '/S','/R'"));
+        assert!(script.contains("-Wait -PassThru"));
+        assert!(script.contains("if ($proc.ExitCode -ne 0)"));
+        assert!(script.contains("Get-Process -Name 'nex'"));
+        assert!(script.contains("Start-NexFallback"));
+        assert!(script.contains("Uninstall\\com.nex.app"));
         assert!(script.contains("Write-Log"));
     }
 

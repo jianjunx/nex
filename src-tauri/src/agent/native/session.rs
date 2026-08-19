@@ -158,9 +158,13 @@ pub async fn run_subagent(harness: &SubagentHarness, task: &str) -> Result<Strin
     // The child shares operational memory so file discoveries, mutations and
     // tool errors flow back to the parent. Its task goal and scratch todo list,
     // however, are transcript-local and must not replace the parent's state.
-    let (parent_goal, parent_todos) = {
+    let (parent_goal, parent_anchor, parent_todos) = {
         let memory = harness.memory.borrow();
-        (memory.goal.clone(), memory.active_todos.clone())
+        (
+            memory.goal.clone(),
+            memory.task_anchor.clone(),
+            memory.active_todos.clone(),
+        )
     };
     let tool_ctx = ToolCtx {
         cwd: harness.cwd.clone(),
@@ -202,6 +206,7 @@ pub async fn run_subagent(harness: &SubagentHarness, task: &str) -> Result<Strin
     {
         let mut memory = harness.memory.borrow_mut();
         memory.goal = parent_goal;
+        memory.task_anchor = parent_anchor;
         memory.active_todos = parent_todos;
     }
     let answer = final_answer(&messages);
@@ -1527,6 +1532,7 @@ mod tests {
                 {
                     let mut memory = env.tool_ctx.memory.borrow_mut();
                     memory.set_goal("parent goal");
+                    memory.task_anchor = Some("Parent/index".to_string());
                     memory.replace_active_todos(["parent todo".to_string()]);
                 }
                 let registry = Rc::new(ToolRegistry::subagents());
@@ -1553,11 +1559,12 @@ mod tests {
                 };
 
                 assert_eq!(
-                    run_subagent(&harness, "child goal").await.unwrap(),
+                    run_subagent(&harness, "child goal\nChild/index").await.unwrap(),
                     "child done"
                 );
                 let memory = harness.memory.borrow();
                 assert_eq!(memory.goal, vec!["parent goal"]);
+                assert_eq!(memory.task_anchor.as_deref(), Some("Parent/index"));
                 assert_eq!(memory.active_todos, vec!["parent todo"]);
                 assert!(memory.files_changed.iter().any(|path| path == "child.txt"));
                 assert!(!harness.mutations.borrow().is_empty());

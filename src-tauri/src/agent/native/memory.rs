@@ -238,16 +238,18 @@ impl WorkingMemory {
         if is_continuation_request(&next) {
             return false;
         }
-        if self.goal.first().map(String::as_str) == Some(next.as_str())
-            && self.task_anchor == anchor
-        {
+        let same_goal = self.goal.first().map(String::as_str) == Some(next.as_str());
+        let same_anchor = self.task_anchor == anchor;
+        if same_goal && same_anchor {
             return false;
         }
         self.set_goal(next);
         self.task_anchor = anchor;
-        // A new user request can still revise the current plan. Clear stale
-        // todos so the model does not blindly continue an old checklist.
-        self.active_todos.clear();
+        // Same-target refinement should keep the current checklist. Only a real
+        // task switch drops todos, and that flows through `rebind_current_task`.
+        if !same_anchor {
+            self.active_todos.clear();
+        }
         true
     }
 
@@ -604,6 +606,25 @@ mod tests {
         assert!(m.active_todos.is_empty());
         assert!(!m.set_request_focus("实现导出", Some("Export/index".to_string())));
         assert!(m.active_todos.is_empty());
+    }
+
+    #[test]
+    fn same_target_refinement_keeps_active_todos() {
+        let mut m = WorkingMemory::new();
+        m.set_goal("结算关系列表按编码合并单元格");
+        m.task_anchor = Some("SettlementRelation/index".to_string());
+        m.replace_active_todos(["实现合并逻辑".to_string(), "补测试".to_string()]);
+
+        assert!(m.set_request_focus(
+            "同页补充规则：仅连续且编码相同的行才合并",
+            Some("SettlementRelation/index".to_string())
+        ));
+        assert_eq!(
+            m.goal,
+            vec!["同页补充规则：仅连续且编码相同的行才合并"]
+        );
+        assert_eq!(m.task_anchor.as_deref(), Some("SettlementRelation/index"));
+        assert_eq!(m.active_todos, vec!["实现合并逻辑", "补测试"]);
     }
 
     #[test]

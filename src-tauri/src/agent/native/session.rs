@@ -24,7 +24,7 @@ use super::provider::{
 use super::stats;
 use super::tools::todo::{parse_todos, TodoStatus};
 use super::tools::{truncate_output, ToolCtx, ToolRegistry, PARTIAL_MARKER};
-use super::{budget, context};
+use super::{budget, context, memory};
 
 /// Read-only tool calls in one round run concurrently, capped by this.
 const PARALLEL_BATCH_LIMIT: usize = 8;
@@ -249,6 +249,15 @@ fn brief_summary(args: &serde_json::Value) -> String {
     s.chars().take(100).collect()
 }
 
+/// Binding extracted from the incoming user request. Lets the harness tell a
+/// strong same-thread task pivot from same-target elaboration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RequestBinding {
+    goal_text: String,
+    anchor: Option<String>,
+    explicit_continuation: bool,
+}
+
 /// Runs one prompt turn end-to-end and returns the ACP stop reason.
 pub async fn run_turn(
     env: &TurnEnv,
@@ -257,10 +266,15 @@ pub async fn run_turn(
 ) -> acp::StopReason {
     // Every real user request can start a new task. Extract text from both
     // plain and multimodal turns (skipping the injected mode preamble), then
-    // replace the stale goal unless this is an internal slash-command turn.
-    if let Some(goal) = goal_from_content(&content) {
-        if !goal.starts_with('/') {
-            env.tool_ctx.memory.borrow_mut().set_goal_for_request(goal);
+    // decide whether this is a strong task pivot or same-target elaboration.
+    if let Some(binding) = request_binding_from_content(&content) {
+        if !binding.goal_text.starts_with('/') {
+            let mut mem = env.tool_ctx.memory.borrow_mut();
+            if !binding.explicit_continuation && is_strong_task_rebind(&mem, &binding) {
+                mem.rebind_current_task(binding.goal_text, binding.anchor);
+            } else {
+                mem.set_request_focus(binding.goal_text, binding.anchor);
+            }
         }
     }
     messages.push(ChatMessage::user_content(content));
@@ -285,12 +299,7 @@ pub async fn run_turn(
         );
         let outcome = {
             let mem = env.tool_ctx.memory.borrow();
-            budget::enforce_with_memory(
-                messages,
-                budget,
-                &env.tool_ctx.archive_dir,
-                Some(&mem),
-            )
+            budget::enforce_with_memory(messages, budget, &env.tool_ctx.archive_dir, Some(&mem))
         };
         {
             let mut s = env.stats.borrow_mut();
@@ -319,10 +328,7 @@ pub async fn run_turn(
 
         // Refresh or re-insert the working-memory block. Byte-stable when
         // the state didn't change, so prefix cache stays warm.
-        crate::agent::native::tools::ensure_working_memory(
-            messages,
-            &env.tool_ctx.memory.borrow(),
-        );
+        crate::agent::native::tools::ensure_working_memory(messages, &env.tool_ctx.memory.borrow());
 
         if outcome.over_budget {
             let notice = "上下文超出模型窗口，压缩后仍无法放入本轮请求。请开新会话，或在设置里提高该模型的上下文窗口。";
@@ -497,8 +503,8 @@ pub async fn run_turn(
         // Same tool names, arguments, and results seen in the recent window
         // means the model is looping even if each call returned `Ok`. A
         // changing result is a new signature and does not match.
-        let repeated_success = recent_signatures.contains(&round_signature)
-            && results.iter().any(Result::is_ok);
+        let repeated_success =
+            recent_signatures.contains(&round_signature) && results.iter().any(Result::is_ok);
         for (call, result) in calls.iter().zip(results) {
             messages.push(ChatMessage::tool_result(
                 call.id.clone(),
@@ -542,19 +548,128 @@ pub async fn run_turn(
     }
 }
 
-fn goal_from_content(content: &Content) -> Option<String> {
+fn request_binding_from_content(content: &Content) -> Option<RequestBinding> {
     let text = match content {
-        Content::Text(text) => Some(text.as_str()),
-        Content::Parts(parts) => parts
-            .iter()
-            .filter(|part| part.typ == "text")
-            .filter_map(|part| part.text.as_deref())
-            .find(|text| !text.trim_start().starts_with("[Mode:")),
-    }?;
+        Content::Text(text) => text.clone(),
+        Content::Parts(parts) => {
+            let joined = parts
+                .iter()
+                .filter(|part| part.typ == "text")
+                .filter_map(|part| part.text.as_deref())
+                .filter(|text| !text.trim_start().starts_with("[Mode:"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if joined.trim().is_empty() {
+                return None;
+            }
+            joined
+        }
+    };
+    request_binding_from_text(&text)
+}
+
+fn request_binding_from_text(text: &str) -> Option<RequestBinding> {
     let trimmed = text.trim();
-    let first_line = trimmed.lines().next().unwrap_or(trimmed).trim();
-    let goal: String = first_line.chars().take(160).collect();
-    (!goal.is_empty()).then_some(goal)
+    if trimmed.is_empty() {
+        return None;
+    }
+    let explicit_continuation = memory::is_continuation_request(trimmed);
+    let mut lines = trimmed
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with("[Mode:"));
+    let first_line = lines.next()?;
+    let mut goal_source = vec![first_line];
+    for line in lines.take(2) {
+        if goal_source.join(" ").chars().count() >= 160 {
+            break;
+        }
+        goal_source.push(line);
+    }
+    let goal_text: String = goal_source.join(" ").chars().take(160).collect();
+    let anchor = extract_request_anchor(trimmed);
+    Some(RequestBinding {
+        goal_text,
+        anchor,
+        explicit_continuation,
+    })
+}
+
+fn extract_request_anchor(text: &str) -> Option<String> {
+    let mut best: Option<String> = None;
+    for raw in text.split(|c: char| {
+        c.is_whitespace()
+            || matches!(
+                c,
+                '，' | ','
+                    | '。'
+                    | ';'
+                    | '；'
+                    | ':'
+                    | '：'
+                    | '('
+                    | ')'
+                    | '（'
+                    | '）'
+                    | '['
+                    | ']'
+                    | '【'
+                    | '】'
+                    | '"'
+                    | '\''
+            )
+    }) {
+        let token =
+            raw.trim_matches(|c: char| matches!(c, '`' | '“' | '”' | '<' | '>' | '《' | '》'));
+        if token.is_empty() {
+            continue;
+        }
+        if token.contains('/') {
+            let normalized =
+                token.trim_matches(|c: char| matches!(c, '.' | '!' | '?' | '。' | '！' | '？'));
+            if normalized.split('/').all(valid_anchor_segment) {
+                return Some(normalized.to_string());
+            }
+        }
+        if looks_like_object_anchor(token) {
+            best.get_or_insert_with(|| token.to_string());
+        }
+    }
+    best
+}
+
+fn valid_anchor_segment(segment: &str) -> bool {
+    !segment.is_empty()
+        && segment
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+}
+
+fn looks_like_object_anchor(token: &str) -> bool {
+    let mut has_upper = false;
+    let mut has_lower = false;
+    for c in token.chars() {
+        if c.is_ascii_uppercase() {
+            has_upper = true;
+        } else if c.is_ascii_lowercase() {
+            has_lower = true;
+        } else if !c.is_ascii_digit() && !matches!(c, '_' | '-' | '.') {
+            return false;
+        }
+    }
+    has_upper && has_lower
+}
+
+fn is_strong_task_rebind(memory: &memory::WorkingMemory, binding: &RequestBinding) -> bool {
+    if binding.explicit_continuation {
+        return false;
+    }
+    match (memory.task_anchor.as_deref(), binding.anchor.as_deref()) {
+        (Some(current), Some(next)) if current != next => true,
+        (Some(_), Some(_)) => false,
+        (None, Some(_)) => !memory.goal.is_empty(),
+        _ => false,
+    }
 }
 
 /// Compact fingerprint of one tool-call round. The raw data never leaves this
@@ -672,11 +787,7 @@ async fn execute_tool(env: &TurnEnv, call: &NativeToolCall) -> Result<String, St
     )
     .await;
 
-    if let Some(err) = call
-        .arguments
-        .get(PARSE_ERROR_KEY)
-        .and_then(|v| v.as_str())
-    {
+    if let Some(err) = call.arguments.get(PARSE_ERROR_KEY).and_then(|v| v.as_str()) {
         return finish_tool(env, &call_id, false, err).await;
     }
 
@@ -699,8 +810,7 @@ async fn execute_tool(env: &TurnEnv, call: &NativeToolCall) -> Result<String, St
         }
         let allow_key = permission_allow_key(&call.name, &call.arguments);
         if !env.auto_approve() && !env.auto_allow.borrow().contains(&allow_key) {
-            match request_permission(env, &call_id, &title, kind, &call.name, &call.arguments)
-                .await
+            match request_permission(env, &call_id, &title, kind, &call.name, &call.arguments).await
             {
                 PermissionDecision::Allowed { always } => {
                     if always {
@@ -734,7 +844,12 @@ async fn execute_tool(env: &TurnEnv, call: &NativeToolCall) -> Result<String, St
             mem.resolve_tool_errors(&call.name);
         }
         match result.as_ref() {
-            Ok(_) if matches!(call.name.as_str(), "write_file" | "edit_file" | "multi_edit") => {
+            Ok(_)
+                if matches!(
+                    call.name.as_str(),
+                    "write_file" | "edit_file" | "multi_edit"
+                ) =>
+            {
                 if let Some(path) = call.arguments.get("path").and_then(|v| v.as_str()) {
                     mem.record_file_changed(path);
                 }
@@ -1344,6 +1459,40 @@ mod tests {
         (env, notifications, permission_requests)
     }
 
+    #[test]
+    fn request_binding_detects_anchor_and_continuation() {
+        let binding = request_binding_from_text(
+            "结算关系页面列表需要根据结算关系编码这个字段值相同来合并单元格\nSettlementRelation/index",
+        )
+        .expect("binding");
+        assert_eq!(binding.anchor.as_deref(), Some("SettlementRelation/index"));
+        assert!(!binding.explicit_continuation);
+
+        let cont = request_binding_from_text("继续").expect("continuation binding");
+        assert!(cont.explicit_continuation);
+    }
+
+    #[test]
+    fn strong_task_rebind_requires_different_anchor() {
+        let mut mem = crate::agent::native::memory::WorkingMemory::new();
+        mem.set_goal("修旧模块");
+        mem.task_anchor = Some("SettlementRelationRuleConfig/form".to_string());
+
+        let next = RequestBinding {
+            goal_text: "按编码合并单元格".to_string(),
+            anchor: Some("SettlementRelation/index".to_string()),
+            explicit_continuation: false,
+        };
+        assert!(is_strong_task_rebind(&mem, &next));
+
+        let same = RequestBinding {
+            goal_text: "补充字段清单".to_string(),
+            anchor: Some("SettlementRelationRuleConfig/form".to_string()),
+            explicit_continuation: false,
+        };
+        assert!(!is_strong_task_rebind(&mem, &same));
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn subagent_restores_parent_goal_and_todos_but_keeps_workspace_memory() {
         let local = tokio::task::LocalSet::new();
@@ -1403,7 +1552,10 @@ mod tests {
                     graph: None,
                 };
 
-                assert_eq!(run_subagent(&harness, "child goal").await.unwrap(), "child done");
+                assert_eq!(
+                    run_subagent(&harness, "child goal").await.unwrap(),
+                    "child done"
+                );
                 let memory = harness.memory.borrow();
                 assert_eq!(memory.goal, vec!["parent goal"]);
                 assert_eq!(memory.active_todos, vec!["parent todo"]);
@@ -1857,10 +2009,7 @@ mod tests {
                 let stop = run_turn(&env, &mut messages, Content::Text("提权".into())).await;
                 assert!(matches!(stop, acp::StopReason::EndTurn));
                 assert_eq!(env.mode_id.borrow().as_str(), "ask");
-                assert!(
-                    *perms.borrow() >= 1,
-                    "ask→auto must request confirmation"
-                );
+                assert!(*perms.borrow() >= 1, "ask→auto must request confirmation");
             })
             .await;
     }

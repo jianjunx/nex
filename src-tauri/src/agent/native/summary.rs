@@ -62,7 +62,9 @@ pub fn render_session_summary(
         }
     }
     if let Some(r) = archive_ref {
-        s.push_str(&format!("Archived details: archive ref {r}; use `history` to search it.\n"));
+        s.push_str(&format!(
+            "Archived details: archive ref {r}; use `history` to search it.\n"
+        ));
     }
     s
 }
@@ -71,16 +73,28 @@ pub fn render_session_summary(
 /// budget loop has to splice a prefix replacement and we already know the
 /// live task state — much higher fidelity than [`render_fallback_summary`].
 pub fn render_from_memory(memory: &crate::agent::native::memory::WorkingMemory) -> String {
-    let facts: Vec<String> = if memory.state_notes.is_empty() {
-        Vec::new()
-    } else {
-        memory
-            .state_notes
-            .lines()
-            .filter(|l| !l.trim().is_empty())
-            .map(|l| l.trim().to_string())
-            .collect()
-    };
+    let mut facts: Vec<String> = Vec::new();
+    if let Some(anchor) = memory.task_anchor.as_deref() {
+        facts.push(format!("Current task anchor: {anchor}"));
+    }
+    if !memory.state_notes.is_empty() {
+        facts.extend(
+            memory
+                .state_notes
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|l| l.trim().to_string()),
+        );
+    }
+    if !memory.recent_task_switches.is_empty() {
+        facts.push("Recent task switches (diagnostic only):".to_string());
+        facts.extend(
+            memory
+                .recent_task_switches
+                .iter()
+                .map(|entry| format!("- {entry}")),
+        );
+    }
     let inspected: Vec<(String, String)> = memory
         .files_inspected
         .iter()
@@ -119,7 +133,11 @@ pub fn render_fallback_summary(messages: &[ChatMessage]) -> String {
         let Some(text) = msg.content.as_ref().and_then(Content::as_text) else {
             continue;
         };
-        let line = text.lines().find(|l| !l.trim().is_empty()).unwrap_or(text).trim();
+        let line = text
+            .lines()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or(text)
+            .trim();
         if !line.is_empty() {
             goal.push(line.chars().take(160).collect());
             break;
@@ -134,7 +152,11 @@ pub fn render_fallback_summary(messages: &[ChatMessage]) -> String {
     for msg in messages {
         if msg.role == "tool" {
             saw_tool_call = true;
-            let text = msg.content.as_ref().and_then(Content::as_text).unwrap_or("");
+            let text = msg
+                .content
+                .as_ref()
+                .and_then(Content::as_text)
+                .unwrap_or("");
             if text.starts_with("ERROR:") || text.contains("exit code:") {
                 saw_tool_error = true;
             }
@@ -191,14 +213,19 @@ mod tests {
     }
 
     #[test]
-    fn render_from_memory_includes_goal_and_files() {
+    fn render_from_memory_includes_anchor_and_switch_history() {
         let mut m = crate::agent::native::memory::WorkingMemory::new();
         m.set_goal("ship v1");
+        m.task_anchor = Some("SettlementRelation/index".to_string());
         m.record_file_changed("src/main.rs");
         m.record_open_question("verify cache");
+        m.recent_task_switches
+            .push("SettlementRelationRuleConfig/form -> SettlementRelation/index".to_string());
         let s = render_from_memory(&m);
         assert!(s.contains(SUMMARY_MARKER));
         assert!(s.contains("ship v1"));
+        assert!(s.contains("Current task anchor: SettlementRelation/index"));
+        assert!(s.contains("SettlementRelationRuleConfig/form -> SettlementRelation/index"));
         assert!(s.contains("src/main.rs"));
         assert!(s.contains("verify cache"));
     }

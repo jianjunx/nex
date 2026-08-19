@@ -39,18 +39,24 @@ pub enum MemoryTrigger {
     GoalUpdated,
 }
 
-/// Structured memory state for one session. All fields are append-only-ish:
-/// the harness merges into them; no field ever grows unbounded.
+/// Structured memory state for one session. Current-task fields are replaced
+/// when the harness detects a strong task pivot; bounded history is kept only
+/// to help later diagnosis explain where context diverged.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkingMemory {
     /// Highest-priority slot: what the session is trying to accomplish.
     /// One short sentence is enough; we don't restate the user prompt.
     pub goal: Vec<String>,
-    /// Files inspected this session (no contents — the model can re-read).
+    /// Optional page/object anchor for the active task (for example
+    /// `SettlementRelation/index`). Helps the harness tell same-domain task
+    /// pivots from same-target elaboration.
+    #[serde(default)]
+    pub task_anchor: Option<String>,
+    /// Files inspected for the active task (no contents — the model can re-read).
     pub files_inspected: Vec<String>,
     /// Files the session actually modified.
     pub files_changed: Vec<String>,
-    /// Open questions the model is actively tracking.
+    /// Open questions the model is actively tracking for the active task.
     pub open_questions: Vec<String>,
     /// The current todo list supplied by `todo_write`. Unlike ad-hoc open
     /// questions, that tool replaces the entire list, so completed/cancelled
@@ -62,6 +68,11 @@ pub struct WorkingMemory {
     /// Kept short on purpose; the block is for live reasoning, not for
     /// archiving everything.
     pub state_notes: String,
+    /// Bounded task-transition breadcrumbs. These are diagnostic-only: the
+    /// model should use them to explain why a thread drifted, not to treat old
+    /// tasks as still active instructions.
+    #[serde(default)]
+    pub recent_task_switches: Vec<String>,
     /// Schema version so future migrations can detect the on-disk shape.
     pub version: u32,
 }
@@ -74,16 +85,18 @@ impl Default for WorkingMemory {
 
 impl WorkingMemory {
     /// Bump the schema version when changing the serialised layout.
-    pub const VERSION: u32 = 2;
+    pub const VERSION: u32 = 3;
 
     pub fn new() -> Self {
         Self {
             goal: Vec::new(),
+            task_anchor: None,
             files_inspected: Vec::new(),
             files_changed: Vec::new(),
             open_questions: Vec::new(),
             active_todos: Vec::new(),
             state_notes: String::new(),
+            recent_task_switches: Vec::new(),
             version: Self::VERSION,
         }
     }
@@ -103,6 +116,10 @@ impl WorkingMemory {
             }
             if line == "Goal:" {
                 section = Some("goal");
+                continue;
+            }
+            if line == "Task anchor:" {
+                section = Some("anchor");
                 continue;
             }
             if line == "Changed files:" {
@@ -125,15 +142,30 @@ impl WorkingMemory {
                 section = Some("notes");
                 continue;
             }
+            if line == "Recent task switches:" {
+                section = Some("switches");
+                continue;
+            }
             if line.starts_with("[memory updated") {
                 break;
             }
             match section {
                 Some("goal") if line.starts_with("- ") => memory.goal.push(line[2..].to_string()),
-                Some("changed") if line.starts_with("- ") => memory.files_changed.push(line[2..].to_string()),
-                Some("inspected") if line.starts_with("- ") => memory.files_inspected.push(line[2..].to_string()),
-                Some("open") if line.starts_with("- ") => memory.open_questions.push(line[2..].to_string()),
-                Some("todos") if line.starts_with("- ") => memory.active_todos.push(line[2..].to_string()),
+                Some("anchor") if line.starts_with("- ") => {
+                    memory.task_anchor = Some(line[2..].to_string())
+                }
+                Some("changed") if line.starts_with("- ") => {
+                    memory.files_changed.push(line[2..].to_string())
+                }
+                Some("inspected") if line.starts_with("- ") => {
+                    memory.files_inspected.push(line[2..].to_string())
+                }
+                Some("open") if line.starts_with("- ") => {
+                    memory.open_questions.push(line[2..].to_string())
+                }
+                Some("todos") if line.starts_with("- ") => {
+                    memory.active_todos.push(line[2..].to_string())
+                }
                 Some("notes") => {
                     if memory.state_notes.is_empty() {
                         memory.state_notes.push_str(line);
@@ -141,6 +173,9 @@ impl WorkingMemory {
                         memory.state_notes.push('\n');
                         memory.state_notes.push_str(line);
                     }
+                }
+                Some("switches") if line.starts_with("- ") => {
+                    memory.recent_task_switches.push(line[2..].to_string())
                 }
                 _ => {}
             }
@@ -164,14 +199,18 @@ impl WorkingMemory {
     }
 
     pub fn record_tool_error(&mut self, summary: impl Into<String>) {
-        push_unique(&mut self.open_questions, format!("tool error: {}", summary.into()));
+        push_unique(
+            &mut self.open_questions,
+            format!("tool error: {}", summary.into()),
+        );
     }
 
     /// A successful retry of a tool resolves its prior error reminders. Keep
     /// errors from other tools: they may still need attention.
     pub fn resolve_tool_errors(&mut self, tool_name: &str) {
         let prefix = format!("tool error: {tool_name}:");
-        self.open_questions.retain(|question| !question.starts_with(&prefix));
+        self.open_questions
+            .retain(|question| !question.starts_with(&prefix));
     }
 
     /// Replaces the todo-derived portion of memory. `todo_write` is a full
@@ -192,28 +231,60 @@ impl WorkingMemory {
         self.goal.push(goal.into());
     }
 
-    /// Records the goal for a new user request. Follow-up work can be a new
-    /// task, so unlike the old placeholder-only helper this replaces a stale
-    /// previous goal while avoiding no-op rewrites for identical text.
-    ///
-    /// Resume-only utterances (`继续`, `continue`, …) keep the live goal and
-    /// `active_todos`: after a disconnect the user typically says that to
-    /// pick up the unfinished list, and wiping it would make the agent start
-    /// over or drift.
-    pub fn set_goal_for_request(&mut self, goal: impl Into<String>) -> bool {
+    /// Records the goal for a new user request while preserving current-task
+    /// context. This is for same-target elaboration, not strong task pivots.
+    pub fn set_request_focus(&mut self, goal: impl Into<String>, anchor: Option<String>) -> bool {
         let next = goal.into();
         if is_continuation_request(&next) {
             return false;
         }
-        if self.goal.first().map(String::as_str) == Some(next.as_str()) {
+        if self.goal.first().map(String::as_str) == Some(next.as_str())
+            && self.task_anchor == anchor
+        {
             return false;
         }
         self.set_goal(next);
-        // A new user request is a new task. Stale todos from the previous
-        // goal otherwise keep steering the model into answering the old
-        // question after the user has already moved on.
+        self.task_anchor = anchor;
+        // A new user request can still revise the current plan. Clear stale
+        // todos so the model does not blindly continue an old checklist.
         self.active_todos.clear();
         true
+    }
+
+    /// Records a strong task rebind inside the same session. Clears active
+    /// task-scoped steering state while keeping workspace history such as
+    /// changed files and a bounded switch trail for later diagnosis.
+    pub fn rebind_current_task(&mut self, goal: impl Into<String>, anchor: Option<String>) -> bool {
+        let next = goal.into();
+        if is_continuation_request(&next) {
+            return false;
+        }
+        if self.goal.first().map(String::as_str) == Some(next.as_str())
+            && self.task_anchor == anchor
+        {
+            return false;
+        }
+        let from = focus_label(
+            self.task_anchor.as_deref(),
+            self.goal.first().map(String::as_str),
+        );
+        let to = focus_label(anchor.as_deref(), Some(next.as_str()));
+        if !from.is_empty() && !to.is_empty() && from != to {
+            push_unique(&mut self.recent_task_switches, format!("{from} -> {to}"));
+        }
+        self.set_goal(next);
+        self.task_anchor = anchor;
+        self.files_inspected.clear();
+        self.open_questions.clear();
+        self.active_todos.clear();
+        self.state_notes.clear();
+        true
+    }
+
+    /// Backward-compatible helper used by older call sites/tests. Equivalent
+    /// to setting the current request focus without an anchor.
+    pub fn set_goal_for_request(&mut self, goal: impl Into<String>) -> bool {
+        self.set_request_focus(goal, None)
     }
 
     /// Replace the boot placeholder with the first real user request.
@@ -258,7 +329,9 @@ pub fn fingerprint(memory: &WorkingMemory) -> String {
 
 /// Recover memory from a stored transcript by scanning for the latest
 /// rendered working-memory assistant block.
-pub fn recover_from_history(history: &[crate::agent::native::provider::ChatMessage]) -> Option<WorkingMemory> {
+pub fn recover_from_history(
+    history: &[crate::agent::native::provider::ChatMessage],
+) -> Option<WorkingMemory> {
     for msg in history.iter().rev() {
         if msg.role != "assistant" {
             continue;
@@ -357,12 +430,19 @@ fn push_unique(v: &mut Vec<String>, item: String) {
     }
 }
 
+fn focus_label(anchor: Option<&str>, goal: Option<&str>) -> String {
+    if let Some(anchor) = anchor.filter(|anchor| !anchor.trim().is_empty()) {
+        return anchor.to_string();
+    }
+    goal.unwrap_or("").trim().chars().take(80).collect()
+}
+
 /// Render the memory block to be spliced into the live transcript as a
 /// stable assistant message. The format is byte-stable across turns so it
 /// doesn't perturb the provider's prefix cache unless the content
 /// actually changed.
 pub fn render(memory: &WorkingMemory) -> String {
-    let mut s = String::with_capacity(512);
+    let mut s = String::with_capacity(640);
     s.push_str(MARKER);
     s.push('\n');
     if !memory.goal.is_empty() {
@@ -370,6 +450,10 @@ pub fn render(memory: &WorkingMemory) -> String {
         for g in &memory.goal {
             s.push_str(&format!("- {g}\n"));
         }
+    }
+    if let Some(anchor) = memory.task_anchor.as_deref() {
+        s.push_str("Task anchor:\n");
+        s.push_str(&format!("- {anchor}\n"));
     }
     if !memory.files_changed.is_empty() {
         s.push_str("Changed files:\n");
@@ -399,6 +483,12 @@ pub fn render(memory: &WorkingMemory) -> String {
         s.push_str("State notes:\n");
         s.push_str(memory.state_notes.trim_end());
         s.push('\n');
+    }
+    if !memory.recent_task_switches.is_empty() {
+        s.push_str("Recent task switches:\n");
+        for switch in &memory.recent_task_switches {
+            s.push_str(&format!("- {switch}\n"));
+        }
     }
     s.push_str("[memory updated; do not re-render unless a hook updates this block]\n");
     if s.len() > MEMORY_TOTAL_BYTES {
@@ -467,10 +557,12 @@ mod tests {
     fn render_caps_total_block_bytes() {
         let mut m = WorkingMemory::new();
         m.goal = vec!["g".repeat(4000)];
+        m.task_anchor = Some("SettlementRelation/index".repeat(24));
         m.files_inspected = vec!["p".repeat(400); 16];
         m.files_changed = vec!["c".repeat(400); 16];
         m.open_questions = vec!["q".repeat(200); 16];
         m.state_notes = "n".repeat(MAX_NOTES_BYTES);
+        m.recent_task_switches = vec!["a -> b".repeat(32); 8];
         let rendered = render(&m);
         assert!(
             rendered.len() <= MEMORY_TOTAL_BYTES + 32,
@@ -506,11 +598,38 @@ mod tests {
         let mut m = WorkingMemory::new();
         m.set_goal("修复登录");
         m.replace_active_todos(["改登录页".to_string()]);
-        assert!(m.set_goal_for_request("实现导出"));
+        assert!(m.set_request_focus("实现导出", Some("Export/index".to_string())));
         assert_eq!(m.goal, vec!["实现导出"]);
+        assert_eq!(m.task_anchor.as_deref(), Some("Export/index"));
         assert!(m.active_todos.is_empty());
-        assert!(!m.set_goal_for_request("实现导出"));
+        assert!(!m.set_request_focus("实现导出", Some("Export/index".to_string())));
         assert!(m.active_todos.is_empty());
+    }
+
+    #[test]
+    fn strong_rebind_clears_task_scoped_state_and_records_switch() {
+        let mut m = WorkingMemory::new();
+        m.set_goal("修复 SettlementRelationRuleConfig/form 回显");
+        m.task_anchor = Some("SettlementRelationRuleConfig/form".to_string());
+        m.record_file_inspected("rule.tsx");
+        m.record_open_question("xmSelect 时序为何不稳定");
+        m.replace_active_todos(["修回显".to_string()]);
+        m.append_note("旧模块上下文");
+
+        assert!(m.rebind_current_task(
+            "结算关系列表按编码合并单元格",
+            Some("SettlementRelation/index".to_string())
+        ));
+        assert_eq!(m.goal, vec!["结算关系列表按编码合并单元格"]);
+        assert_eq!(m.task_anchor.as_deref(), Some("SettlementRelation/index"));
+        assert!(m.files_inspected.is_empty());
+        assert!(m.open_questions.is_empty());
+        assert!(m.active_todos.is_empty());
+        assert!(m.state_notes.is_empty());
+        assert_eq!(
+            m.recent_task_switches,
+            vec!["SettlementRelationRuleConfig/form -> SettlementRelation/index"]
+        );
     }
 
     #[test]
@@ -519,7 +638,13 @@ mod tests {
         m.set_goal("实现导出");
         m.replace_active_todos(["写实现".to_string(), "跑测试".to_string()]);
 
-        for utterance in ["继续", "请继续。", "continue", "Keep going", "从中断的地方继续"] {
+        for utterance in [
+            "继续",
+            "请继续。",
+            "continue",
+            "Keep going",
+            "从中断的地方继续",
+        ] {
             assert!(
                 !m.set_goal_for_request(utterance),
                 "{utterance} must not count as a new task"
@@ -551,17 +676,22 @@ mod tests {
     fn parse_and_recover_rendered_memory() {
         let mut m = WorkingMemory::new();
         m.set_goal("ship v1");
+        m.task_anchor = Some("src/index.ts".to_string());
         m.record_file_inspected("src/main.rs");
         m.record_file_changed("src/app.rs");
         m.record_open_question("verify cache ratio");
         m.append_note("user prefers Chinese responses");
+        m.recent_task_switches
+            .push("auth/login -> billing/list".to_string());
         let rendered = render(&m);
         let parsed = WorkingMemory::parse_rendered(&rendered).expect("memory block");
         assert_eq!(parsed.goal, m.goal);
+        assert_eq!(parsed.task_anchor, m.task_anchor);
         assert_eq!(parsed.files_inspected, m.files_inspected);
         assert_eq!(parsed.files_changed, m.files_changed);
         assert_eq!(parsed.open_questions, m.open_questions);
         assert_eq!(parsed.state_notes, m.state_notes);
+        assert_eq!(parsed.recent_task_switches, m.recent_task_switches);
 
         let history = vec![
             crate::agent::native::provider::ChatMessage::system("sys"),
@@ -569,6 +699,8 @@ mod tests {
         ];
         let recovered = recover_from_history(&history).expect("recovered memory");
         assert_eq!(recovered.goal, m.goal);
+        assert_eq!(recovered.task_anchor, m.task_anchor);
         assert_eq!(recovered.files_changed, m.files_changed);
+        assert_eq!(recovered.recent_task_switches, m.recent_task_switches);
     }
 }

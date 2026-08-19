@@ -26,6 +26,9 @@ pub fn system_prompt(cwd: &Path, model: &str) -> String {
 - `edit_file` requires `old_string` to match exactly once; include enough surrounding context to make it unique.
 - Verify your work after changes (re-read the file or run the relevant build/test command).
 - Keep a task list with `todo_write` for multi-step work and update it as you progress.
+- A later user message in the same conversation can start a new primary task. When they name a different page/object/module and give fresh requirement details, rebind to that target instead of continuing the prior module.
+- Treat recent task-switch notes as diagnostic breadcrumbs only. Do not answer from an old task once a new target has been established.
+- When the user asks why a previous answer was irrelevant, find the earliest divergence point rather than only the latest symptom. If earlier turns may have been compacted, inspect archived context with `history` before concluding.
 - Never invent file contents or command output; always ground answers in tool results.
 - When the task is done, summarize what changed and stop calling tools.
 

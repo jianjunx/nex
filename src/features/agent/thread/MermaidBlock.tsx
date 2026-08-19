@@ -1,11 +1,7 @@
 import { Component, useEffect, useId, useState, type ReactNode } from "react";
 import mermaid from "mermaid";
-
-// Initialize once at module load. `startOnLoad: false` — we render imperatively
-// via `mermaid.render()`. `securityLevel: "strict"` disables clickable nodes
-// and inline event handlers in the rendered SVG so untrusted agent output
-// can't smuggle XSS vectors.
-mermaid.initialize({ startOnLoad: false, theme: "neutral", securityLevel: "strict" });
+import { useSettingsStore } from "../../../stores/settings.store";
+import { mermaidConfigFor } from "./mermaidTheme";
 
 interface MermaidBlockProps {
   code: string;
@@ -30,6 +26,7 @@ class MermaidErrorBoundary extends Component<
 }
 
 export function MermaidBlock({ code }: MermaidBlockProps) {
+  const theme = useSettingsStore((s) => s.theme);
   // `useId` may contain colons (e.g. `:r0:`) which break the CSS selector
   // Mermaid uses internally to inject the rendered SVG.
   const idBase = useId().replace(/:/g, "_");
@@ -40,6 +37,7 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
     let cancelled = false;
     setSvg(null);
     setErr(null);
+    mermaid.initialize(mermaidConfigFor(theme));
     mermaid
       .render(`mmd-${idBase}`, code)
       .then(({ svg }) => {
@@ -51,7 +49,7 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
     return () => {
       cancelled = true;
     };
-  }, [code, idBase]);
+  }, [code, idBase, theme]);
 
   if (err) {
     // Mermaid couldn't parse the source — fall back to the raw fenced code

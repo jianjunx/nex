@@ -189,6 +189,96 @@ describe("agent.store pending message bounds", () => {
     );
   });
 
+  it("立即发送会先取消当前任务，等后端 prompt 槽位释放后再发送", async () => {
+    let releaseFirst!: (value: { hadMutations: boolean; stopReason: string }) => void;
+    const firstRpc = new Promise<{ hadMutations: boolean; stopReason: string }>((resolve) => {
+      releaseFirst = resolve;
+    });
+    agentSendPrompt.mockImplementationOnce(() => firstRpc);
+    agentSendPrompt.mockResolvedValue({ hadMutations: false, stopReason: "end_turn" });
+
+    useAgentStore.setState({
+      sessions: {
+        "conv-1": { sessionId: "sid-1", conversationId: "conv-1", status: "running" },
+      },
+      pendingMessagesByConversation: {
+        "conv-1": [
+          {
+            id: "pending-1",
+            blocks: [{ type: "text", text: "插队问题" }],
+            text: "插队问题",
+            enqueuedAt: 1,
+          },
+        ],
+      },
+      entriesByConversation: {
+        "conv-1": [{ id: "u1", kind: "user_message", text: "上一题", timestamp: 1 }],
+      },
+    });
+
+    void useAgentStore.getState().sendPrompt("sid-1", [{ type: "text", text: "上一题" }]);
+    const sendNow = useAgentStore.getState().sendPendingNow("conv-1", "pending-1");
+
+    await vi.waitFor(() => {
+      expect(agentCancel).toHaveBeenCalledWith("sid-1");
+    });
+    expect(agentSendPrompt).toHaveBeenCalledTimes(1);
+
+    releaseFirst({ hadMutations: false, stopReason: "cancelled" });
+    await sendNow;
+
+    expect(agentSendPrompt).toHaveBeenCalledTimes(2);
+    expect(agentSendPrompt).toHaveBeenLastCalledWith("sid-1", [{ type: "text", text: "插队问题" }]);
+    expect(useAgentStore.getState().pendingMessagesByConversation["conv-1"]).toBeUndefined();
+    expect(useAgentStore.getState().errorsByConversation["conv-1"]).toBeUndefined();
+  });
+
+  it("立即发送等待期间被移除则不会发送", async () => {
+    let releaseFirst!: (value: { hadMutations: boolean; stopReason: string }) => void;
+    const firstRpc = new Promise<{ hadMutations: boolean; stopReason: string }>((resolve) => {
+      releaseFirst = resolve;
+    });
+
+    agentSendPrompt.mockImplementationOnce(() => firstRpc);
+    agentSendPrompt.mockResolvedValue({ hadMutations: false, stopReason: "end_turn" });
+
+    useAgentStore.setState({
+      sessions: {
+        "conv-1": { sessionId: "sid-1", conversationId: "conv-1", status: "running" },
+      },
+      pendingMessagesByConversation: {
+        "conv-1": [
+          {
+            id: "pending-1",
+            blocks: [{ type: "text", text: "插队问题" }],
+            text: "插队问题",
+            enqueuedAt: 1,
+          },
+        ],
+      },
+      entriesByConversation: {
+        "conv-1": [{ id: "u1", kind: "user_message", text: "上一题", timestamp: 1 }],
+      },
+    });
+
+    void useAgentStore.getState().sendPrompt("sid-1", [{ type: "text", text: "上一题" }]);
+    const sendNow = useAgentStore.getState().sendPendingNow("conv-1", "pending-1");
+
+    await vi.waitFor(() => {
+      expect(agentCancel).toHaveBeenCalledWith("sid-1");
+    });
+
+    // 模拟用户在“等待后端 prompt 槽位释放”期间移除该待发消息。
+    useAgentStore.getState().removePendingMessage("conv-1", "pending-1");
+
+    releaseFirst({ hadMutations: false, stopReason: "cancelled" });
+    await sendNow;
+
+    // 只应完成“上一题”的取消链路，不应发送第二条插队消息。
+    expect(agentSendPrompt).toHaveBeenCalledTimes(1);
+    expect(useAgentStore.getState().pendingMessagesByConversation["conv-1"]).toBeUndefined();
+  });
+
   it("切项目裁剪缓存时会保留 live 会话的线程，不会把正在运行的会话直接清空", () => {
     useAgentStore.setState({
       sessions: {

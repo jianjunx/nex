@@ -504,6 +504,30 @@ const MAX_PENDING_UPDATES_PER_SESSION = 8;
 const promptTurnAnchors = new Map<string, string>();
 /** Per-conversation sendPrompt generation; older RPCs must not finish a newer turn. */
 const promptGenerationByConversation = new Map<string, number>();
+/** Tracks in-flight agentSendPrompt RPCs (backend prompt_in_flight guard). */
+const inFlightPromptBySessionId = new Map<string, Promise<void>>();
+
+function waitForInFlightPrompt(sessionId: string): Promise<void> {
+  const pending = inFlightPromptBySessionId.get(sessionId);
+  return pending ? pending.catch(() => {}) : Promise.resolve();
+}
+
+async function withInFlightPrompt<T>(sessionId: string, rpc: () => Promise<T>): Promise<T> {
+  await waitForInFlightPrompt(sessionId);
+  let release!: () => void;
+  const slot = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  inFlightPromptBySessionId.set(sessionId, slot);
+  try {
+    return await rpc();
+  } finally {
+    release();
+    if (inFlightPromptBySessionId.get(sessionId) === slot) {
+      inFlightPromptBySessionId.delete(sessionId);
+    }
+  }
+}
 
 function bumpPromptGeneration(conversationId: string): number {
   const next = (promptGenerationByConversation.get(conversationId) ?? 0) + 1;
@@ -552,6 +576,7 @@ function clearPromptTracking(conversationId: string, sessionId?: string): void {
 export function resetAgentPromptTrackingForTests(): void {
   promptTurnAnchors.clear();
   promptGenerationByConversation.clear();
+  inFlightPromptBySessionId.clear();
   clearIdleHibernateStateForTests();
 }
 
@@ -1075,7 +1100,7 @@ export const useAgentStore = create<AgentStore>()(
       let hadMutations = false;
       let stopReason = "end_turn";
       try {
-        const result = await agentSendPrompt(sessionId, blocks);
+        const result = await withInFlightPrompt(sessionId, () => agentSendPrompt(sessionId, blocks));
         if (promptGenerationByConversation.get(session.conversationId) !== promptGen) {
           return;
         }
@@ -1643,31 +1668,34 @@ export const useAgentStore = create<AgentStore>()(
       const session = state.sessions[conversationId];
       if (!session?.sessionId) return;
 
-      // Cancel current running task if any
-      if (session.status === "running" || session.status === "waiting") {
-        try {
-          await agentCancel(session.sessionId);
-        } catch {
-          /* best-effort cancel */
-        }
-        set((s) => {
-          const sess = s.sessions[conversationId];
-          if (sess) sess.status = "idle";
-        });
-      }
-
-      // Find and remove the specific message from the queue
       const queue = state.pendingMessagesByConversation[conversationId] ?? [];
       const idx = queue.findIndex((m) => m.id === messageId);
       if (idx === -1) return;
-      const pending = queue[idx];
+      // NOTE: 不要在这里缓存 `pending`。用户可能在等待过程中移除该消息，
+      // 若继续用缓存对象发出会违背“立即发送”按钮的直觉。
+
+      // Preempt the current turn: invalidate its UI side-effects, cancel, then
+      // wait for the backend prompt slot (prompt_in_flight) before sending.
+      if (session.status === "running" || session.status === "waiting") {
+        bumpPromptGeneration(conversationId);
+        await get().cancel(session.sessionId);
+      }
+      await waitForInFlightPrompt(session.sessionId);
+
+      // 等后端 prompt 槽释放后再二次确认队列里仍存在该 messageId。
+      // 这样就不会出现“等待期间被移除但仍被发送”的竞态。
+      const stateAfterWait = get();
+      const queueAfterWait = stateAfterWait.pendingMessagesByConversation[conversationId] ?? [];
+      const idxAfterWait = queueAfterWait.findIndex((m) => m.id === messageId);
+      if (idxAfterWait === -1) return;
+      const pending = queueAfterWait[idxAfterWait];
+
       set((s) => {
         const q = s.pendingMessagesByConversation[conversationId];
-        if (q) {
-          s.pendingMessagesByConversation[conversationId] = q.filter((m) => m.id !== messageId);
-          if (s.pendingMessagesByConversation[conversationId].length === 0) {
-            delete s.pendingMessagesByConversation[conversationId];
-          }
+        if (!q) return;
+        s.pendingMessagesByConversation[conversationId] = q.filter((m) => m.id !== messageId);
+        if (s.pendingMessagesByConversation[conversationId].length === 0) {
+          delete s.pendingMessagesByConversation[conversationId];
         }
       });
 

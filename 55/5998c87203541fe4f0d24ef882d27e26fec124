@@ -1,0 +1,27 @@
+src/stores/agent.store.ts
+  s_d1c467a688e6bf::t_b08847bcc0c0da 1674-1675,1684-1691
+  s_d1c467a688e6bf::t_8315699f7fe94f 507,515-526,529
+  s_d1c467a688e6bf::t_73f6ae1615f84a 1676-1683,1692,1695-1698
+  s_d1c467a688e6bf::t_8dd95d24c9c71f 579
+  s_d1c467a688e6bf::t_24f9ae6ee5adf8 508-514,527-528,530
+  s_d1c467a688e6bf::t_ccffa451c996a2 1103
+src/stores/agent.store.test.ts
+  s_d1c467a688e6bf::t_c73bdb73790931 192-235
+  s_d1c467a688e6bf::t_669447f4ce1d03 236-281
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "555998c87203541fe4f0d24ef882d27e26fec124",
+  "prompts": {},
+  "sessions": {
+    "s_d1c467a688e6bf": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "28fb0d5e-4ada-404a-a2cb-a7fd5e5af048",
+        "model": "default"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

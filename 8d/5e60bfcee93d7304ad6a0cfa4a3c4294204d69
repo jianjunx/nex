@@ -1,0 +1,19 @@
+src/features/agent/ContextUsageRing.tsx
+  s_d1c467a688e6bf::t_3c676f56dc0c3e 145,183-184,192
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "8d5e60bfcee93d7304ad6a0cfa4a3c4294204d69",
+  "prompts": {},
+  "sessions": {
+    "s_d1c467a688e6bf": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "28fb0d5e-4ada-404a-a2cb-a7fd5e5af048",
+        "model": "default"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

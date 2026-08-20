@@ -1,0 +1,33 @@
+src/stores/agent.store.ts
+  s_97abfe22634c66::t_6aa03f8d141b9e 174-176
+  s_97abfe22634c66::t_d95300c6ae1d8f 1177
+  s_97abfe22634c66::t_3efcaabc24f7c4 1069
+  s_97abfe22634c66::t_ca18cb4ffd813f 173,177-178
+  s_97abfe22634c66::t_148419ae789b1f 1981
+  s_97abfe22634c66::t_ada3c0e1708acb 852-853
+  s_97abfe22634c66::t_4ccf68c2d85498 881
+  s_97abfe22634c66::t_f485cc66a7a183 1254
+  s_97abfe22634c66::t_bb407c60e1d5d7 897-922,924-925
+  s_97abfe22634c66::t_4585d435aae4b6 555-609
+src/features/projects/activateProject.ts
+  s_97abfe22634c66::t_c0059d09c9a202 32-33
+src/stores/agent.store.test.ts
+  s_97abfe22634c66::t_dedbfebe096eb4 57
+  s_97abfe22634c66::t_997fb5058fef7d 418-523
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "7689a7cbe6cfcab2104e4f888126686720ae54f1",
+  "prompts": {},
+  "sessions": {
+    "s_97abfe22634c66": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "0b0c7696-e0a2-42db-93cd-21b4a6d0e718",
+        "model": "default"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

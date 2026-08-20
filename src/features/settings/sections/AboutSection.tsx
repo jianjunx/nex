@@ -8,6 +8,18 @@ import { SECTION_HEADER } from "./_shared";
 
 const GITHUB_REPO_URL = "https://github.com/jianjunx/nex";
 
+const platform = typeof navigator !== "undefined" ? navigator.platform : "";
+const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+const isWindows = platform.startsWith("Win") || ua.includes("Windows");
+const isMac = platform.startsWith("Mac") || /Macintosh/.test(ua);
+
+/** Platform-specific copy for the post-download install/relaunch step. */
+function updateInstallHint(): string {
+  if (isWindows) return "完成后会自动退出、静默安装并重新打开";
+  if (isMac) return "完成后会自动退出、替换应用并重新打开";
+  return "完成后会自动退出并完成更新，然后重新打开";
+}
+
 /** lucide 已移除品牌图标，内置 GitHub mark。 */
 function GithubIcon({ size = 15 }: { size?: number }) {
   return (
@@ -103,11 +115,11 @@ export function AboutSection() {
         <p className="mt-2 text-xs text-[var(--text-tertiary)]" data-testid="update-status">
           {status === "up-to-date" && info && <>已是最新版本（v{info.latest_version}）。</>}
           {status === "available" && info && (
-            <>发现新版本 v{info.latest_version}，点击右侧按钮下载；完成后会自动退出并安装。若安装未弹出，请查看应用数据目录下 <code className="text-[11px]">updater/install-and-relaunch.log</code>。</>
+            <>发现新版本 v{info.latest_version}，点击右侧按钮下载；{updateInstallHint()}。若未成功，请查看应用数据目录下 <code className="text-[11px]">updater/install-and-relaunch.log</code>。</>
           )}
           {status === "error" && <span className="text-red-500">{error ?? "检查更新失败"}</span>}
           {status === "idle" && <>启动时会自动检查一次更新。</>}
-          {downloading && <>正在下载安装包，完成后将自动退出并完成安装。</>}
+          {downloading && <>正在下载安装包，{updateInstallHint()}。</>}
         </p>
       </div>
     </section>

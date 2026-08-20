@@ -18,13 +18,13 @@ use agent_client_protocol::{self as acp};
 
 use super::provider::{
     ensure_unique_tool_call_ids, ChatMessage, ChatRequest, ChatToolCall, ChatToolCallFunction,
-    Chunk, Content, NativeToolCall, Provider, ReasoningControl, StopReasonKind, ToolSpec, Usage,
-    PARSE_ERROR_KEY,
+    Chunk, Content, ContentPart, NativeToolCall, Provider, ReasoningControl, StopReasonKind,
+    ToolSpec, Usage, PARSE_ERROR_KEY,
 };
 use super::stats;
 use super::tools::todo::{parse_todos, TodoStatus};
 use super::tools::{truncate_output, ToolCtx, ToolRegistry, PARTIAL_MARKER};
-use super::{budget, context, memory};
+use super::{budget, compact, context, memory};
 
 /// Read-only tool calls in one round run concurrently, capped by this.
 const PARALLEL_BATCH_LIMIT: usize = 8;
@@ -48,6 +48,11 @@ const EMPTY_AFTER_TOOLS_NOTICE: &str =
 const EMPTY_WRAP_UP_NOTICE: &str =
     "本轮步数已用尽且模型未给出收尾说明。若任务尚未完成，请再发一条消息继续。";
 const EMPTY_REPLY_NOTICE: &str = "模型没有返回可见回复，本轮已结束。";
+/// Internal nudge when the model parrots a harness-maintained transcript block.
+const HARNESS_ECHO_NUDGE: &str = "[Nex harness] `[nex:working-memory]` and `[nex:summary]` blocks are system-maintained. Do NOT output or paraphrase them. Continue the user's task by calling tools or giving a normal answer grounded in tool results.";
+const HARNESS_ECHO_MAX_RETRIES: u32 = 2;
+/// Prepended to bare continuation utterances so resumed sessions keep working.
+const CONTINUATION_NUDGE: &str = "[Resume] Continue the active task from the working-memory Goal. Use tools to make progress. Do NOT output or paraphrase `[nex:working-memory]` or `[nex:summary]` blocks.\n\n";
 
 /// OpenCode-aligned wrap-up when a configured `max_steps` cap is hit: tools are
 /// disabled and the model must summarize progress + recommend next steps.
@@ -272,20 +277,27 @@ pub async fn run_turn(
     // Every real user request can start a new task. Extract text from both
     // plain and multimodal turns (skipping the injected mode preamble), then
     // decide whether this is a strong task pivot or same-target elaboration.
-    if let Some(binding) = request_binding_from_content(&content) {
+    let binding = request_binding_from_content(&content);
+    if let Some(ref binding) = binding {
         if !binding.goal_text.starts_with('/') {
             let mut mem = env.tool_ctx.memory.borrow_mut();
-            if !binding.explicit_continuation && is_strong_task_rebind(&mem, &binding) {
-                mem.rebind_current_task(binding.goal_text, binding.anchor);
+            if !binding.explicit_continuation && is_strong_task_rebind(&mem, binding) {
+                mem.rebind_current_task(binding.goal_text.clone(), binding.anchor.clone());
             } else {
-                mem.set_request_focus(binding.goal_text, binding.anchor);
+                mem.set_request_focus(binding.goal_text.clone(), binding.anchor.clone());
             }
         }
     }
+    let content = if binding.as_ref().is_some_and(|b| b.explicit_continuation) {
+        prepend_continuation_nudge(content)
+    } else {
+        content
+    };
     messages.push(ChatMessage::user_content(content));
 
     let mut steps = 0u32;
     let mut no_progress = 0u32;
+    let mut harness_echo_retries = 0u32;
     let mut recent_signatures: VecDeque<u64> = VecDeque::with_capacity(SIGNATURE_WINDOW);
     loop {
         if env.cancelled.get() {
@@ -410,7 +422,9 @@ pub async fn run_turn(
             match chunk {
                 Chunk::Text(t) => {
                     text.push_str(&t);
-                    emit_text(env, &t).await;
+                    if !looks_like_harness_prefix(&text) {
+                        emit_text(env, &t).await;
+                    }
                 }
                 Chunk::Thinking(t) => emit_thought(env, &t).await,
                 Chunk::ToolCall(c) => {
@@ -463,6 +477,17 @@ pub async fn run_turn(
 
         // Wrap-up or natural end: persist assistant text and finish the turn.
         if wrap_up || calls.is_empty() {
+            if !text.trim().is_empty() && is_harness_block_echo(&text) && !wrap_up {
+                if harness_echo_retries < HARNESS_ECHO_MAX_RETRIES {
+                    harness_echo_retries += 1;
+                    messages.push(ChatMessage::user(HARNESS_ECHO_NUDGE.to_string()));
+                    continue;
+                }
+                let notice = EMPTY_AFTER_TOOLS_NOTICE;
+                emit_text(env, notice).await;
+                messages.push(ChatMessage::assistant(notice.to_string()));
+                return acp::StopReason::EndTurn;
+            }
             if !text.trim().is_empty() {
                 messages.push(ChatMessage::assistant(text));
             } else {
@@ -674,6 +699,48 @@ fn is_strong_task_rebind(memory: &memory::WorkingMemory, binding: &RequestBindin
         (Some(_), Some(_)) => false,
         (None, Some(_)) => !memory.goal.is_empty(),
         _ => false,
+    }
+}
+
+/// True when assistant text mimics a harness-maintained transcript block.
+fn is_harness_block_echo(text: &str) -> bool {
+    let t = text.trim_start();
+    t.starts_with(memory::MARKER) || t.starts_with(compact::SUMMARY_MARKER)
+}
+
+/// True while streamed text may still be building toward a harness block prefix.
+fn looks_like_harness_prefix(text: &str) -> bool {
+    let t = text.trim_start();
+    if t.is_empty() {
+        return false;
+    }
+    for marker in [memory::MARKER, compact::SUMMARY_MARKER] {
+        if t.starts_with(marker) || marker.starts_with(t) {
+            return true;
+        }
+    }
+    false
+}
+
+fn prepend_continuation_nudge(content: Content) -> Content {
+    match content {
+        Content::Text(text) => Content::Text(format!("{CONTINUATION_NUDGE}{text}")),
+        Content::Parts(mut parts) => {
+            let mut inserted = false;
+            for part in parts.iter_mut() {
+                if part.typ == "text" {
+                    if let Some(text) = part.text.as_mut() {
+                        text.insert_str(0, CONTINUATION_NUDGE);
+                        inserted = true;
+                        break;
+                    }
+                }
+            }
+            if !inserted {
+                parts.insert(0, ContentPart::text(CONTINUATION_NUDGE));
+            }
+            Content::Parts(parts)
+        }
     }
 }
 
@@ -1496,6 +1563,58 @@ mod tests {
             explicit_continuation: false,
         };
         assert!(!is_strong_task_rebind(&mem, &same));
+    }
+
+    #[test]
+    fn is_harness_block_echo_detects_markers() {
+        assert!(is_harness_block_echo("[nex:working-memory]\nGoal:\n- x\n"));
+        assert!(is_harness_block_echo("  [nex:summary] session summary\n"));
+        assert!(!is_harness_block_echo("正常回复"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn harness_echo_retries_instead_of_end_turn() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let tmp = tempfile::tempdir().unwrap();
+                let echo = format!(
+                    "{}\nGoal:\n- stale goal\n",
+                    crate::agent::native::memory::MARKER
+                );
+                let provider = ScriptedProvider {
+                    turns: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
+                        vec![text_chunk(&echo), done()],
+                        vec![text_chunk("继续改代码"), done()],
+                    ])),
+                    tools_nonempty: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+                };
+                let (env, _, _) = make_env(provider, tmp.path(), false);
+                let mut messages = vec![ChatMessage::system("sys")];
+                let stop = run_turn(&env, &mut messages, Content::Text("继续".into())).await;
+                assert!(matches!(stop, acp::StopReason::EndTurn));
+                assert!(
+                    messages
+                        .iter()
+                        .any(|m| m.role == "assistant"
+                            && m.content
+                                .as_ref()
+                                .and_then(Content::as_text)
+                                == Some("继续改代码")),
+                    "expected real assistant reply after harness-echo retry"
+                );
+                assert!(
+                    !messages.iter().any(|m| {
+                        m.role == "assistant"
+                            && m.content
+                                .as_ref()
+                                .and_then(Content::as_text)
+                                .is_some_and(|t| t.contains("stale goal"))
+                    }),
+                    "model harness echo must not be persisted"
+                );
+            })
+            .await;
     }
 
     #[tokio::test(flavor = "current_thread")]

@@ -329,27 +329,30 @@ pub fn fingerprint(memory: &WorkingMemory) -> String {
     render(memory)
 }
 
-/// Recover memory from a stored transcript by scanning for the latest
-/// rendered working-memory assistant block.
+/// Recover memory from the canonical harness slot in a stored transcript.
+///
+/// Working memory is always spliced immediately after the system prompt.
+/// Scanning from the tail would let a model-echoed `[nex:working-memory]`
+/// block overwrite the real state on session load.
 pub fn recover_from_history(
     history: &[crate::agent::native::provider::ChatMessage],
 ) -> Option<WorkingMemory> {
-    for msg in history.iter().rev() {
-        if msg.role != "assistant" {
-            continue;
-        }
-        let Some(text) = msg
-            .content
-            .as_ref()
-            .and_then(crate::agent::native::provider::Content::as_text)
-        else {
-            continue;
-        };
-        if let Some(memory) = WorkingMemory::parse_rendered(text) {
-            return Some(memory);
-        }
+    let mut idx = 0usize;
+    if history.first().is_some_and(|m| m.role == "system") {
+        idx = 1;
     }
-    None
+    let msg = history.get(idx)?;
+    if msg.role != "assistant" {
+        return None;
+    }
+    let text = msg
+        .content
+        .as_ref()
+        .and_then(crate::agent::native::provider::Content::as_text)?;
+    if !text.starts_with(MARKER) {
+        return None;
+    }
+    WorkingMemory::parse_rendered(text)
 }
 
 /// True when the user is asking to resume the current task rather than start
@@ -723,5 +726,28 @@ mod tests {
         assert_eq!(recovered.task_anchor, m.task_anchor);
         assert_eq!(recovered.files_changed, m.files_changed);
         assert_eq!(recovered.recent_task_switches, m.recent_task_switches);
+    }
+
+    #[test]
+    fn recover_from_history_ignores_model_echo_at_tail() {
+        let mut real = WorkingMemory::new();
+        real.set_goal("ship v1");
+        real.task_anchor = Some("src/index.ts".to_string());
+        real.record_file_changed("src/app.rs");
+        let canonical = render(&real);
+
+        let echo = WorkingMemory::new();
+        let echo_block = render(&echo);
+
+        let history = vec![
+            crate::agent::native::provider::ChatMessage::system("sys"),
+            crate::agent::native::provider::ChatMessage::assistant(canonical),
+            crate::agent::native::provider::ChatMessage::user("继续"),
+            crate::agent::native::provider::ChatMessage::assistant(echo_block),
+        ];
+        let recovered = recover_from_history(&history).expect("recovered memory");
+        assert_eq!(recovered.goal, vec!["ship v1"]);
+        assert_eq!(recovered.task_anchor.as_deref(), Some("src/index.ts"));
+        assert_eq!(recovered.files_changed, vec!["src/app.rs"]);
     }
 }

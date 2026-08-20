@@ -30,6 +30,7 @@ pub fn system_prompt(cwd: &Path, model: &str) -> String {
 - Treat recent task-switch notes as diagnostic breadcrumbs only. Do not answer from an old task once a new target has been established.
 - When the user asks why a previous answer was irrelevant, find the earliest divergence point rather than only the latest symptom. If earlier turns may have been compacted, inspect archived context with `history` before concluding.
 - Never invent file contents or command output; always ground answers in tool results.
+- Transcript messages prefixed with `[nex:working-memory]` or `[nex:summary]` are maintained by the Nex harness. Never output, paraphrase, or imitate them; continue the task with tools and normal answers instead.
 - When the task is done, summarize what changed and stop calling tools.
 
 # Session modes

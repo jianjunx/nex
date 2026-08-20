@@ -142,7 +142,7 @@ export function ContextUsageRing({ usage, stats, recentCacheHitSummary }: Props)
         side="top"
         align="end"
         sideOffset={8}
-        className="z-[70] w-56 rounded-[calc(var(--radius-md)+2px)] border border-[color:var(--hairline-soft)] bg-[var(--material-floating)] p-3 nex-material-floating"
+        className="z-[70] w-64 rounded-[calc(var(--radius-md)+2px)] border border-[color:var(--hairline-soft)] bg-[var(--material-floating)] p-3 nex-material-floating"
       >
         <div className="text-xs font-semibold text-[var(--text-primary)]">上下文用量</div>
         {total > 0 ? (
@@ -180,8 +180,8 @@ export function ContextUsageRing({ usage, stats, recentCacheHitSummary }: Props)
         {stats && (
           <div className="mt-2 space-y-1 border-t border-[color:var(--hairline-soft)] pt-2">
             <div className="flex items-center justify-between text-xs">
-              <span className="text-[var(--text-secondary)]">缓存命中（本轮）</span>
-              <span className="font-mono tabular-nums text-[var(--text-primary)]">
+              <span className="text-[var(--text-secondary)] whitespace-nowrap">缓存命中（本轮）</span>
+              <span className="font-mono tabular-nums text-[var(--text-primary)] whitespace-nowrap">
                 {cacheHitLabel(stats)}
               </span>
             </div>
@@ -189,7 +189,7 @@ export function ContextUsageRing({ usage, stats, recentCacheHitSummary }: Props)
               <span className="text-[var(--text-secondary)]">
                 缓存命中（近 {recentCacheHitSummary?.sampleCount ?? 0} 轮）
               </span>
-              <span className="font-mono tabular-nums text-[var(--text-primary)]">
+              <span className="font-mono tabular-nums text-[var(--text-primary)] whitespace-nowrap">
                 {cacheHitSummaryLabel(recentCacheHitSummary ?? null)}
               </span>
             </div>

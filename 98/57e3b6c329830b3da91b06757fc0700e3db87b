@@ -1,0 +1,34 @@
+src-tauri/src/agent/native/memory.rs
+  s_fd12443f6b9c4b::t_ea4f04ebc9bc46 332-336,340-355
+  s_fd12443f6b9c4b::t_7b6cdd703e2115 745
+  s_fd12443f6b9c4b::t_d8de4c10686000 730-744,746-752
+src-tauri/src/agent/native/session.rs
+  s_fd12443f6b9c4b::t_7c28549d06ada4 425-427
+  s_fd12443f6b9c4b::t_4fc4c010da5b04 1568-1611,1613,1615-1619
+  s_fd12443f6b9c4b::t_1c006faa8dd80d 1612,1614
+  s_fd12443f6b9c4b::t_e200078681a02a 740
+  s_fd12443f6b9c4b::t_c8f5ead1b72a1e 21-22
+  s_fd12443f6b9c4b::t_f551d933239a1d 480-490
+  s_fd12443f6b9c4b::t_1f5ddcb669f09f 27
+  s_fd12443f6b9c4b::t_0f5e5c4eb06158 705-739,741-746
+  s_fd12443f6b9c4b::t_85b9268471f5ca 51-55
+  s_fd12443f6b9c4b::t_cf955ab922c3ff 280-281,284-285,287,291-295,300
+src-tauri/src/agent/native/context.rs
+  s_fd12443f6b9c4b::t_6850937a2cafb6 33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "9857e3b6c329830b3da91b06757fc0700e3db87b",
+  "prompts": {},
+  "sessions": {
+    "s_fd12443f6b9c4b": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "557f8717-5321-44e2-a95c-df19aab3fcad",
+        "model": "default"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

@@ -29,7 +29,8 @@ export async function activateProject(project: Project): Promise<void> {
   useFsStore.getState().switchSearchProject(project.id);
 
   // Keep only the destination project's session data hydrated; its tabs and
-  // thread entries are restored below.
+  // thread entries are restored below. Live ACP sessions (any project) stay
+  // connected so switching back does not pay another handshake.
   const keep = new Set(useConversationStore.getState().tabsByProject[project.id] ?? []);
   useAgentStore.getState().pruneEntriesExcept(keep);
 

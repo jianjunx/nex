@@ -54,7 +54,7 @@ vi.mock("../bridge/tauri", () => ({
   onAgentSessionTerminated: () => Promise.resolve(() => {}),
 }));
 
-import { resetAgentPromptTrackingForTests, useAgentStore } from "./agent.store";
+import { resetAgentPromptTrackingForTests, SESSION_IDLE_HIBERNATE_MS, useAgentStore } from "./agent.store";
 import { useConversationStore } from "./conversation.store";
 
 const SERVER = { id: "s1", name: "测试智能体", version: "1.0", description: "", icon: null, kind: "registry" };
@@ -412,6 +412,112 @@ describe("agent.store cache-hit history", () => {
     const history = useAgentStore.getState().cacheHitHistoryByConversation["conv-1"];
     expect(history).toHaveLength(6);
     expect(history?.map((x) => x.cacheHitTokens)).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+});
+
+describe("agent.store session hibernate", () => {
+  function idleSession(conversationId: string, sessionId: string) {
+    return { sessionId, conversationId, status: "idle" as const };
+  }
+
+  it("closes the ACP handle but keeps thread and prefs", async () => {
+    useAgentStore.setState({
+      sessions: {
+        "conv-1": idleSession("conv-1", "sid-1"),
+      },
+      entriesByConversation: {
+        "conv-1": [{ id: "e1", kind: "user_message", text: "hi", timestamp: 1 }],
+      },
+      sessionPrefsByConversation: {
+        "conv-1": { modeId: "agent", authMode: "allow" },
+      },
+      metaByConversation: {
+        "conv-1": {
+          modes: [],
+          currentModeId: "agent",
+          models: [],
+          currentModelId: null,
+          configOptions: [],
+          availableCommands: [],
+          plan: null,
+          contextUsage: null,
+        },
+      },
+    });
+
+    await useAgentStore.getState().hibernateSession("conv-1");
+
+    expect(agentCloseSession).toHaveBeenCalledWith("sid-1");
+    const state = useAgentStore.getState();
+    expect(state.sessions["conv-1"]).toBeUndefined();
+    expect(state.entriesByConversation["conv-1"]).toHaveLength(1);
+    expect(state.sessionPrefsByConversation["conv-1"]?.modeId).toBe("agent");
+    expect(state.metaByConversation["conv-1"]?.currentModeId).toBe("agent");
+  });
+
+  it("does not close a running session", async () => {
+    useAgentStore.setState({
+      sessions: {
+        "conv-1": { sessionId: "sid-1", conversationId: "conv-1", status: "running" },
+      },
+    });
+
+    await useAgentStore.getState().hibernateSession("conv-1");
+
+    expect(agentCloseSession).not.toHaveBeenCalled();
+    expect(useAgentStore.getState().sessions["conv-1"]?.sessionId).toBe("sid-1");
+  });
+
+  it("idles out a connected session after the hibernate timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      agentCreateSession.mockResolvedValue({
+        sessionId: "sid-1",
+        modes: null,
+        models: null,
+        configOptions: null,
+        availableCommands: null,
+      });
+      await useAgentStore.getState().createSession("conv-1", { type: "native" }, "/tmp");
+      expect(useAgentStore.getState().sessions["conv-1"]?.sessionId).toBe("sid-1");
+
+      await vi.advanceTimersByTimeAsync(SESSION_IDLE_HIBERNATE_MS);
+
+      expect(agentCloseSession).toHaveBeenCalledWith("sid-1");
+      expect(useAgentStore.getState().sessions["conv-1"]).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("createSession after hibernate does not get dropped by the stale close", async () => {
+    let releaseClose: () => void = () => {};
+    agentCloseSession.mockImplementation(
+      () => new Promise<void>((resolve) => {
+        releaseClose = resolve;
+      }),
+    );
+
+    useAgentStore.setState({
+      sessions: {
+        "conv-1": idleSession("conv-1", "sid-old"),
+      },
+    });
+
+    const hibernate = useAgentStore.getState().hibernateSession("conv-1");
+    agentCreateSession.mockResolvedValue({
+      sessionId: "sid-new",
+      modes: null,
+      models: null,
+      configOptions: null,
+      availableCommands: null,
+    });
+    const created = useAgentStore.getState().createSession("conv-1", { type: "native" }, "/tmp");
+    releaseClose();
+    await hibernate;
+    await created;
+
+    expect(useAgentStore.getState().sessions["conv-1"]?.sessionId).toBe("sid-new");
   });
 });
 

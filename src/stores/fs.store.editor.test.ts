@@ -117,22 +117,67 @@ describe("fs.store multi-tab editor", () => {
     expect(setEditorVisible).toHaveBeenCalledWith(false);
   });
 
-  it("syncExternalChange marks dirty stale and reloads clean", async () => {
+  it("syncExternalChange marks dirty stale only when disk truly diverges", async () => {
     fsReadFile.mockResolvedValueOnce({ is_text: true, content: "a", size: 1 });
     await useFsStore.getState().openFile("/p/a.ts");
     useFsStore.getState().setDraft("edit");
+    fsReadFile.mockResolvedValueOnce({ is_text: true, content: "external", size: 8 });
     await useFsStore.getState().syncExternalChange(["/p/a.ts"]);
     expect(useFsStore.getState().openFiles[0].stale).toBe(true);
 
     // clean file silent reload
     useFsStore.setState((s) => {
       s.openFiles[0].draft = "a";
+      s.openFiles[0].content = "a";
       s.openFiles[0].dirty = false;
       s.openFiles[0].stale = false;
     });
     fsReadFile.mockResolvedValueOnce({ is_text: true, content: "disk", size: 4 });
     await useFsStore.getState().syncExternalChange(["/p/a.ts"]);
     expect(useFsStore.getState().openFiles[0].draft).toBe("disk");
+  });
+
+  it("syncExternalChange ignores autosave echo while user kept typing", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    fsReadFile.mockResolvedValueOnce({ is_text: true, content: "a", size: 1 });
+    await useFsStore.getState().openFile("/p/a.ts");
+    useFsStore.getState().setDraft("saved");
+    fsWriteFile.mockResolvedValueOnce(undefined);
+    await useFsStore.getState().saveFile();
+    // 继续输入：dirty 再次为 true，但磁盘仍是刚写的内容。
+    useFsStore.getState().setDraft("saved+more");
+    // 宽限期过后再收到 watcher（autosave 回声晚到）。
+    await vi.advanceTimersByTimeAsync(700);
+    fsReadFile.mockResolvedValueOnce({ is_text: true, content: "saved", size: 5 });
+    await useFsStore.getState().syncExternalChange(["/p/a.ts"]);
+    const f = useFsStore.getState().openFiles[0];
+    expect(f.stale).toBe(false);
+    expect(f.dirty).toBe(true);
+    expect(f.draft).toBe("saved+more");
+    vi.useRealTimers();
+  });
+
+  it("syncExternalChange does not mark stale when disk still matches known snapshot", async () => {
+    fsReadFile.mockResolvedValueOnce({ is_text: true, content: "a", size: 1 });
+    await useFsStore.getState().openFile("/p/a.ts");
+    useFsStore.getState().setDraft("edit");
+    // 磁盘未变（误报 watcher / 无实质变更）
+    fsReadFile.mockResolvedValueOnce({ is_text: true, content: "a", size: 1 });
+    await useFsStore.getState().syncExternalChange(["/p/a.ts"]);
+    expect(useFsStore.getState().openFiles[0].stale).toBe(false);
+    expect(useFsStore.getState().openFiles[0].draft).toBe("edit");
+  });
+
+  it("syncExternalChange adopts disk when it already matches draft", async () => {
+    fsReadFile.mockResolvedValueOnce({ is_text: true, content: "a", size: 1 });
+    await useFsStore.getState().openFile("/p/a.ts");
+    useFsStore.getState().setDraft("same");
+    fsReadFile.mockResolvedValueOnce({ is_text: true, content: "same", size: 4 });
+    await useFsStore.getState().syncExternalChange(["/p/a.ts"]);
+    const f = useFsStore.getState().openFiles[0];
+    expect(f.stale).toBe(false);
+    expect(f.dirty).toBe(false);
+    expect(f.content).toBe("same");
   });
 
   it("autosaves dirty active file after 1500ms when enabled", async () => {

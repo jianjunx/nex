@@ -14,13 +14,45 @@ import {
 import { focusSearchQueryProject } from "./searchProjectQuery";
 
 // 自写盘时间戳：watcher 对自己写入（含自动保存）触发的事件不得误报为
-// 外部修改（「文件在磁盘上已被修改」黄条）。宽限期需比 watcher 事件
-// 延迟略大即可（通常 <100ms），过长会吞掉真实的外部修改。
+// 外部修改（「文件在磁盘上已被修改」黄条）。宽限期只作短路径优化
+// （跳过立刻到来的回声读盘）；真正判冲突靠下方 LAST_DISK 内容比对。
 const SELF_WRITE_AT = new Map<string, number>();
 const SELF_WRITE_GRACE_MS = 600;
-function noteSelfWrite(path: string): void {
+/** 该路径上一次由本应用加载/写盘确认过的磁盘文本快照。 */
+const LAST_DISK_BY_PATH = new Map<string, string>();
+
+function noteSelfWrite(path: string, written: string): void {
   SELF_WRITE_AT.set(path, Date.now());
+  LAST_DISK_BY_PATH.set(path, written);
 }
+
+function noteKnownDisk(path: string, content: string): void {
+  LAST_DISK_BY_PATH.set(path, content);
+}
+
+function clearDiskTracking(path: string): void {
+  SELF_WRITE_AT.delete(path);
+  LAST_DISK_BY_PATH.delete(path);
+}
+
+function retargetDiskTracking(fromPath: string, toPath: string): void {
+  if (fromPath === toPath) return;
+  const writtenAt = SELF_WRITE_AT.get(fromPath);
+  if (writtenAt != null) {
+    SELF_WRITE_AT.set(toPath, writtenAt);
+    SELF_WRITE_AT.delete(fromPath);
+  }
+  const disk = LAST_DISK_BY_PATH.get(fromPath);
+  if (disk != null) {
+    LAST_DISK_BY_PATH.set(toPath, disk);
+    LAST_DISK_BY_PATH.delete(fromPath);
+  }
+}
+
+function lastKnownDisk(path: string, fallback: string | null): string {
+  return LAST_DISK_BY_PATH.get(path) ?? fallback ?? "";
+}
+
 function isRecentSelfWrite(path: string): boolean {
   const at = SELF_WRITE_AT.get(path);
   if (at == null) return false;
@@ -35,6 +67,7 @@ function isRecentSelfWrite(path: string): boolean {
 /** Test-only hook: clear the self-write grace bookkeeping. */
 export function __resetSelfWriteForTest() {
   SELF_WRITE_AT.clear();
+  LAST_DISK_BY_PATH.clear();
 }
 
 export { clearAllAutoSaveTimers };
@@ -151,7 +184,7 @@ export type EditorFile = {
   size: number;
   draft: string;          // editable text (== content until the user types)
   dirty: boolean;         // draft !== disk snapshot
-  stale: boolean;         // file changed on disk while dirty
+  stale: boolean;         // disk diverged from draft AND last known snapshot while dirty
   pinned: boolean;        // true = permanent tab, false = preview (replaced on next single-click)
   /** 存在即为只读 diff 标签：合成路径（diff: 前缀）、永久固定、永不 dirty、不进冷恢复持久化。 */
   diff?: DiffPayload;
@@ -397,13 +430,16 @@ export const useFsStore = create<FsStore>()(
           // Preview mode: replace the first unpinned tab if one exists.
           const previewIndex = get().openFiles.findIndex((f) => !f.pinned);
           if (previewIndex >= 0) {
+            const replacedPath = get().openFiles[previewIndex]!.path;
+            const loaded = result.content ?? "";
+            noteKnownDisk(filePath, loaded);
             set((s) => {
               s.openFiles[previewIndex] = {
                 path: filePath,
                 content: result.content ?? null,
                 isText: result.is_text,
                 size: result.size,
-                draft: result.content ?? "",
+                draft: loaded,
                 dirty: false,
                 stale: false,
                 pinned: false,
@@ -411,17 +447,20 @@ export const useFsStore = create<FsStore>()(
               s.activePath = filePath;
               if (line != null) s.pendingLine = { path: filePath, line };
             });
+            if (replacedPath !== filePath) clearDiskTracking(replacedPath);
             useUiStore.getState().setEditorVisible(true);
             return;
           }
         }
+        const loaded = result.content ?? "";
+        noteKnownDisk(filePath, loaded);
         set((s) => {
           s.openFiles.push({
             path: filePath,
             content: result.content ?? null,
             isText: result.is_text,
             size: result.size,
-            draft: result.content ?? "",
+            draft: loaded,
             dirty: false,
             stale: false,
             pinned: pin,
@@ -500,6 +539,7 @@ export const useFsStore = create<FsStore>()(
         }
       });
 
+      clearDiskTracking(filePath);
       if (get().openFiles.length === 0) {
         useUiStore.getState().setEditorVisible(false);
       }
@@ -599,6 +639,7 @@ export const useFsStore = create<FsStore>()(
               if (s.openFiles.length === 0) s.activePath = null;
               else s.activePath = s.openFiles[Math.min(i, s.openFiles.length - 1)]!.path;
             });
+            clearDiskTracking(path);
           } else {
             await get().closeFile(path);
           }
@@ -651,6 +692,7 @@ export const useFsStore = create<FsStore>()(
             s.openFiles[openIndex].path = newPath;
             if (s.activePath === path) s.activePath = newPath;
           });
+          retargetDiskTracking(path, newPath);
         }
         // Update expanded dirs
         const dirs = new Set(get().expandedDirs);
@@ -713,6 +755,7 @@ export const useFsStore = create<FsStore>()(
               s.openFiles[openIndex].path = newPath;
               if (s.activePath === src) s.activePath = newPath;
             });
+            retargetDiskTracking(src, newPath);
           }
           // Refresh source parent before move
           const srcParent = src.replace(/[/\\][^/\\]*$/, "");
@@ -778,6 +821,7 @@ export const useFsStore = create<FsStore>()(
                 s.openFiles[openIndex].path = entry.fromPath;
                 if (s.activePath === entry.toPath) s.activePath = entry.fromPath;
               });
+              retargetDiskTracking(entry.toPath, entry.fromPath);
             }
             const dirs = new Set(get().expandedDirs);
             if (dirs.has(entry.toPath)) {
@@ -798,6 +842,7 @@ export const useFsStore = create<FsStore>()(
                 s.openFiles[openIndex].path = restored;
                 if (s.activePath === entry.path) s.activePath = restored;
               });
+              retargetDiskTracking(entry.path, restored);
             }
             refresh.add(parentDirOf(entry.path));
             refresh.add(entry.fromDir);
@@ -813,7 +858,7 @@ export const useFsStore = create<FsStore>()(
             const name = entry.path.replace(/^.*[/\\]/, "");
             await fsCreateFile(parent, name);
             await fsWriteFile(entry.path, entry.content);
-            noteSelfWrite(entry.path);
+            noteSelfWrite(entry.path, entry.content);
             refresh.add(parent);
             break;
           }
@@ -853,8 +898,8 @@ export const useFsStore = create<FsStore>()(
       set((s) => { s.loading = true; s.error = null; });
       try {
         await fsWriteFile(cur.path, intendedDraft);
-        // 自己的写入会触发 watcher 事件——记入宽限名单防止误报外部修改。
-        noteSelfWrite(cur.path);
+        // 自己的写入会触发 watcher 事件——记入宽限 + 内容快照，避免误报。
+        noteSelfWrite(cur.path, intendedDraft);
         // Only clear dirty if the path is still open and draft still matches
         // the write intent (user may have kept typing during the write).
         set((s) => {
@@ -874,28 +919,62 @@ export const useFsStore = create<FsStore>()(
     },
 
     syncExternalChange: async (paths) => {
-      // 自己刚写盘的文件（自动保存等）不算外部修改，直接跳过。
+      // 刚写盘的回声可先跳过读盘；宽限期外一律按内容比对（彻底消掉 autosave 误报）。
       const external = paths.filter((p) => !isRecentSelfWrite(p));
-      const affected = get().openFiles.filter((f) => external.includes(f.path));
+      const affected = get().openFiles.filter(
+        (f) => !f.diff && external.includes(f.path),
+      );
       for (const cur of affected) {
-        if (cur.dirty) {
-          // Unsaved edits: keep them, surface the stale banner instead.
-          set((s) => {
-            const f = findOpenFile(s.openFiles, cur.path);
-            if (f) f.stale = true;
-          });
-          continue;
-        }
-        // Clean file: silently pick up the new disk content.
         try {
           const result = await fsReadFile(cur.path);
+          const disk = result.content ?? "";
+          // 读盘期间用户可能继续输入/保存——用最新 live 状态判定。
+          const live = findOpenFile(get().openFiles, cur.path);
+          if (!live || live.diff) continue;
+          const known = lastKnownDisk(cur.path, live.content);
+
+          if (disk === live.draft) {
+            // 磁盘与编辑器一致：采纳为干净快照（含「外部改成了你正在写的内容」）。
+            noteKnownDisk(cur.path, disk);
+            set((s) => {
+              const f = findOpenFile(s.openFiles, cur.path);
+              if (!f) return;
+              f.content = disk;
+              f.draft = disk;
+              f.isText = result.is_text;
+              f.size = result.size;
+              f.dirty = false;
+              f.stale = false;
+            });
+            continue;
+          }
+
+          if (disk === known) {
+            // 磁盘仍是我们上次加载/写盘的内容——autosave/手动保存回声，保留 draft。
+            set((s) => {
+              const f = findOpenFile(s.openFiles, cur.path);
+              if (f) f.stale = false;
+            });
+            continue;
+          }
+
+          // 磁盘相对 draft 与已知快照都变了：真外部冲突。
+          if (live.dirty) {
+            set((s) => {
+              const f = findOpenFile(s.openFiles, cur.path);
+              if (f) f.stale = true;
+            });
+            continue;
+          }
+          noteKnownDisk(cur.path, disk);
           set((s) => {
             const f = findOpenFile(s.openFiles, cur.path);
             if (!f || f.dirty) return;
-            f.content = result.content ?? null;
-            f.draft = result.content ?? "";
+            f.content = disk;
+            f.draft = disk;
             f.isText = result.is_text;
             f.size = result.size;
+            f.stale = false;
           });
         } catch {
           // Reload failure is non-fatal; keep showing the old content.
@@ -910,12 +989,14 @@ export const useFsStore = create<FsStore>()(
       if (!cur || cur.diff) return; // diff 标签无对应磁盘文件，重载会产生无效读取错误
       try {
         const result = await fsReadFile(cur.path);
+        const loaded = result.content ?? "";
+        noteKnownDisk(cur.path, loaded);
         // Unconditional: the draft is discarded whatever it contained.
         set((s) => {
           const f = findOpenFile(s.openFiles, cur.path);
           if (!f) return;
           f.content = result.content ?? null;
-          f.draft = result.content ?? "";
+          f.draft = loaded;
           f.isText = result.is_text;
           f.size = result.size;
           f.dirty = false;

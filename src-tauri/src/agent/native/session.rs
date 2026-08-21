@@ -49,7 +49,7 @@ const EMPTY_WRAP_UP_NOTICE: &str =
     "本轮步数已用尽且模型未给出收尾说明。若任务尚未完成，请再发一条消息继续。";
 const EMPTY_REPLY_NOTICE: &str = "模型没有返回可见回复，本轮已结束。";
 /// Internal nudge when the model parrots a harness-maintained transcript block.
-const HARNESS_ECHO_NUDGE: &str = "[Nex harness] `[nex:working-memory]` and `[nex:summary]` blocks are system-maintained. Do NOT output or paraphrase them. Continue the user's task by calling tools or giving a normal answer grounded in tool results.";
+const HARNESS_ECHO_NUDGE: &str = "[Nex harness] `[nex:working-memory]` and `[nex:summary]` blocks are system-maintained. Do NOT output or paraphrase them — including after other prose. Continue the user's task by calling tools or giving a normal answer grounded in tool results.";
 const HARNESS_ECHO_MAX_RETRIES: u32 = 2;
 /// Prepended to bare continuation utterances so resumed sessions keep working.
 const CONTINUATION_NUDGE: &str = "[Resume] Continue the active task from the working-memory Goal. Use tools to make progress. Do NOT output or paraphrase `[nex:working-memory]` or `[nex:summary]` blocks.\n\n";
@@ -392,6 +392,10 @@ pub async fn run_turn(
 
         // Consume one provider stream: accumulate text + complete tool calls.
         let mut text = String::new();
+        // Bytes of `text` already shown to the user. Must track emit progress
+        // separately from `text.len()` so ambiguous harness-prefix holdback can
+        // flush once the continuation proves it was ordinary prose (e.g. `arr[0]`).
+        let mut emitted_len = 0usize;
         let mut calls: Vec<NativeToolCall> = Vec::new();
         let mut provider_error: Option<String> = None;
         let mut provider_stop = StopReasonKind::EndTurn;
@@ -422,8 +426,13 @@ pub async fn run_turn(
             match chunk {
                 Chunk::Text(t) => {
                     text.push_str(&t);
-                    if !looks_like_harness_prefix(&text) {
-                        emit_text(env, &t).await;
+                    // Suppress harness markers even when the model prefixes
+                    // them with real prose (common "plan mode" stall).
+                    if let Some((delta, new_emitted)) =
+                        streamable_assistant_delta(&text, emitted_len)
+                    {
+                        emitted_len = new_emitted;
+                        emit_text(env, &delta).await;
                     }
                 }
                 Chunk::Thinking(t) => emit_thought(env, &t).await,
@@ -477,19 +486,27 @@ pub async fn run_turn(
 
         // Wrap-up or natural end: persist assistant text and finish the turn.
         if wrap_up || calls.is_empty() {
-            if !text.trim().is_empty() && is_harness_block_echo(&text) && !wrap_up {
+            // Pure echo OR prose+harness dump: strip the harness tail and retry
+            // so the turn does not idle after restating working-memory.
+            if !text.trim().is_empty() && needs_harness_echo_retry(&text) && !wrap_up {
                 if harness_echo_retries < HARNESS_ECHO_MAX_RETRIES {
                     harness_echo_retries += 1;
                     messages.push(ChatMessage::user(HARNESS_ECHO_NUDGE.to_string()));
                     continue;
+                }
+                let cleaned = strip_harness_tail(&text);
+                if !cleaned.trim().is_empty() {
+                    messages.push(ChatMessage::assistant(cleaned));
+                    return acp::StopReason::EndTurn;
                 }
                 let notice = EMPTY_AFTER_TOOLS_NOTICE;
                 emit_text(env, notice).await;
                 messages.push(ChatMessage::assistant(notice.to_string()));
                 return acp::StopReason::EndTurn;
             }
-            if !text.trim().is_empty() {
-                messages.push(ChatMessage::assistant(text));
+            let cleaned = strip_harness_tail(&text);
+            if !cleaned.trim().is_empty() {
+                messages.push(ChatMessage::assistant(cleaned));
             } else {
                 let notice = if wrap_up {
                     EMPTY_WRAP_UP_NOTICE
@@ -702,10 +719,31 @@ fn is_strong_task_rebind(memory: &memory::WorkingMemory, binding: &RequestBindin
     }
 }
 
-/// True when assistant text mimics a harness-maintained transcript block.
+/// Byte offset of the first harness marker in `text`, if any.
+fn find_harness_marker(text: &str) -> Option<usize> {
+    [memory::MARKER, compact::SUMMARY_MARKER]
+        .into_iter()
+        .filter_map(|m| text.find(m))
+        .min()
+}
+
+/// Drop a trailing harness block the model pasted after real prose.
+fn strip_harness_tail(text: &str) -> String {
+    match find_harness_marker(text) {
+        Some(idx) => text[..idx].trim_end().to_string(),
+        None => text.to_string(),
+    }
+}
+
+/// True when assistant text is (or starts as) a harness-maintained block.
 fn is_harness_block_echo(text: &str) -> bool {
     let t = text.trim_start();
     t.starts_with(memory::MARKER) || t.starts_with(compact::SUMMARY_MARKER)
+}
+
+/// True when the model echoed a harness block alone or after other prose.
+fn needs_harness_echo_retry(text: &str) -> bool {
+    is_harness_block_echo(text) || find_harness_marker(text).is_some()
 }
 
 /// True while streamed text may still be building toward a harness block prefix.
@@ -720,6 +758,59 @@ fn looks_like_harness_prefix(text: &str) -> bool {
         }
     }
     false
+}
+
+/// How many trailing bytes might still be an incomplete harness marker prefix.
+fn harness_ambiguous_suffix_len(text: &str) -> usize {
+    let mut hold = 0usize;
+    for marker in [memory::MARKER, compact::SUMMARY_MARKER] {
+        let max = marker.len().saturating_sub(1).min(text.len());
+        for len in (1..=max).rev() {
+            if text.ends_with(&marker[..len]) {
+                hold = hold.max(len);
+                break;
+            }
+        }
+    }
+    hold
+}
+
+/// Portion of the accumulated stream that is newly safe to show the user.
+///
+/// `emitted_len` is how much of `full` was already shown. Returns
+/// `(delta, new_emitted_len)` so ambiguous harness-prefix holdback can flush
+/// once the continuation disambiguates (e.g. `arr` + `[` + `0]` → `arr[0]`).
+///
+/// Also suppresses pure harness echoes and cuts emission at the first complete
+/// marker when the model appends a memory/summary dump after prose.
+fn streamable_assistant_delta(full: &str, emitted_len: usize) -> Option<(String, usize)> {
+    if is_harness_block_echo(full) {
+        return None;
+    }
+    if looks_like_harness_prefix(full) && find_harness_marker(full).is_none() {
+        return None;
+    }
+
+    let emit_end = match find_harness_marker(full) {
+        Some(idx) => idx,
+        None => full.len().saturating_sub(harness_ambiguous_suffix_len(full)),
+    };
+    if emitted_len >= emit_end {
+        return None;
+    }
+
+    let mut start = emitted_len;
+    let mut end = emit_end;
+    while start < full.len() && !full.is_char_boundary(start) {
+        start += 1;
+    }
+    while end > start && !full.is_char_boundary(end) {
+        end -= 1;
+    }
+    if start >= end {
+        return None;
+    }
+    Some((full[start..end].to_string(), end))
 }
 
 fn prepend_continuation_nudge(content: Content) -> Content {
@@ -1570,6 +1661,53 @@ mod tests {
         assert!(is_harness_block_echo("[nex:working-memory]\nGoal:\n- x\n"));
         assert!(is_harness_block_echo("  [nex:summary] session summary\n"));
         assert!(!is_harness_block_echo("正常回复"));
+        assert!(needs_harness_echo_retry(
+            "先进入 plan。\n\n[nex:working-memory]\nGoal:\n- x\n"
+        ));
+        assert_eq!(
+            strip_harness_tail("先进入 plan。\n\n[nex:working-memory]\nGoal:\n- x\n"),
+            "先进入 plan。"
+        );
+    }
+
+    #[test]
+    fn streamable_assistant_delta_suppresses_harness_tail() {
+        let prose = "这是个比较大的改动，我先进入 plan mode。\n\n";
+        let marker = crate::agent::native::memory::MARKER;
+        let full = format!("{prose}{marker}\nGoal:\n- ship proxy\n");
+        let (delta, emitted) = streamable_assistant_delta(&full, 0).expect("prose");
+        assert_eq!(delta, prose);
+        assert_eq!(emitted, prose.len());
+        assert!(streamable_assistant_delta(&full, emitted).is_none());
+
+        // Hold back an incomplete marker suffix mid-stream.
+        let partial = format!("{prose}{}", &marker[..8]);
+        let (delta, emitted) = streamable_assistant_delta(&partial, 0).expect("prose only");
+        assert_eq!(delta, prose);
+        assert_eq!(emitted, prose.len());
+        assert!(streamable_assistant_delta(&partial, emitted).is_none());
+    }
+
+    #[test]
+    fn streamable_assistant_delta_flushes_held_bracket() {
+        // Regression: holdback must use an emit cursor, not buffer length —
+        // otherwise `arr` + `[` + `0]` becomes `arr0]` in the UI.
+        let mut emitted = 0usize;
+        let mut visible = String::new();
+
+        let step = |buf: &str, emitted: &mut usize, visible: &mut String| {
+            if let Some((delta, next)) = streamable_assistant_delta(buf, *emitted) {
+                *emitted = next;
+                visible.push_str(&delta);
+            }
+        };
+
+        step("arr", &mut emitted, &mut visible);
+        assert_eq!(visible, "arr");
+        step("arr[", &mut emitted, &mut visible);
+        assert_eq!(visible, "arr", "lone '[' is ambiguous harness prefix");
+        step("arr[0]", &mut emitted, &mut visible);
+        assert_eq!(visible, "arr[0]");
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1612,6 +1750,55 @@ mod tests {
                                 .is_some_and(|t| t.contains("stale goal"))
                     }),
                     "model harness echo must not be persisted"
+                );
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn prose_plus_harness_echo_retries_instead_of_idle() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let tmp = tempfile::tempdir().unwrap();
+                let contaminated = format!(
+                    "这是个比较大的改动，我先进入 plan mode。\n\n{}\nGoal:\n- proxy service\n[memory updated; do not re-render unless a hook updates this block]\n",
+                    crate::agent::native::memory::MARKER
+                );
+                let provider = ScriptedProvider {
+                    turns: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
+                        vec![text_chunk(&contaminated), done()],
+                        vec![text_chunk("具体计划：1) 拆配置 2) 起 HTTP 服务"), done()],
+                    ])),
+                    tools_nonempty: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+                };
+                let (env, _, _) = make_env(provider, tmp.path(), false);
+                let mut messages = vec![ChatMessage::system("sys")];
+                let stop = run_turn(
+                    &env,
+                    &mut messages,
+                    Content::Text("改造成独立代理服务".into()),
+                )
+                .await;
+                assert!(matches!(stop, acp::StopReason::EndTurn));
+                assert!(
+                    messages.iter().any(|m| {
+                        m.role == "assistant"
+                            && m.content.as_ref().and_then(Content::as_text).is_some_and(|t| {
+                                t.contains("具体计划") && !t.contains(crate::agent::native::memory::MARKER)
+                            })
+                    }),
+                    "expected real plan after prose+harness retry"
+                );
+                assert!(
+                    !messages.iter().any(|m| {
+                        m.role == "assistant"
+                            && m.content
+                                .as_ref()
+                                .and_then(Content::as_text)
+                                .is_some_and(|t| t.contains("proxy service") && t.contains("Goal:"))
+                    }),
+                    "contaminated harness dump must not be persisted as the answer"
                 );
             })
             .await;

@@ -1,0 +1,31 @@
+src-tauri/src/agent/native/context.rs
+  s_0a7bd42b0ab673::t_3b2aa9c5cc0b45 33
+src-tauri/src/agent/native/session.rs
+  s_0a7bd42b0ab673::t_2adbd6e0389f50 395-398,431-434
+  s_0a7bd42b0ab673::t_32570f5e0dd8da 778,780-786,798,802,813
+  s_0a7bd42b0ab673::t_9cd80863703304 429-430,435
+  s_0a7bd42b0ab673::t_dce72309ee2639 722-738,744-748,763-777,779,787-797,799-801,803-812,814
+  s_0a7bd42b0ab673::t_ff229dc9105f3e 489-491,497-501,507-509
+  s_0a7bd42b0ab673::t_591e0f8370b186 1664-1677,1682-1684,1758-1802
+  s_0a7bd42b0ab673::t_4f99866503488a 52
+  s_0a7bd42b0ab673::t_541b266dc72dfb 1678-1681,1685-1710,1805
+  s_0a7bd42b0ab673::t_b4e189d1b809fe 815
+  s_0a7bd42b0ab673::t_8d7dc69d69dafe 1803-1804
+  s_0a7bd42b0ab673::t_c959475bbe9ae7 1806
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "7a98435b0bf5a3a2f39a0966ce8e34712bf15d4d",
+  "prompts": {},
+  "sessions": {
+    "s_0a7bd42b0ab673": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "a0c12485-5424-4133-8d68-7638b4ef2c7c",
+        "model": "default"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

@@ -344,6 +344,7 @@ html, body {
     flex: none;
     background: transparent;
     z-index: 2;
+    touch-action: none;
   }
   .nex-handle-col {
     width: 4px;
@@ -352,6 +353,14 @@ html, body {
   .nex-handle-row {
     height: 4px;
     cursor: row-resize;
+  }
+  /* Width is pointer-driven. `duration-*` on these nodes interpolates width
+     and makes the splitter jump instead of tracking the cursor. */
+  .nex-layout-pane {
+    transition: none;
+  }
+  html[data-nex-resizing] .nex-layout-pane {
+    animation: none !important;
   }
   .nex-handle-col::after,
   .nex-handle-row::after {

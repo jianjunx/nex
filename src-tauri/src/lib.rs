@@ -22,9 +22,49 @@ use std::sync::Arc;
 use terminal::pty::TerminalManager;
 use watcher::WatcherManager;
 
+fn nex_log_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
+    use tauri_plugin_log::{Target, TargetKind};
+    let mut targets = Vec::new();
+    if let Some(dir) = agent::native::home::nex_home().map(|h| h.join("logs")) {
+        let _ = std::fs::create_dir_all(&dir);
+        targets.push(Target::new(TargetKind::Folder {
+            path: dir,
+            file_name: Some("nex".into()),
+        }));
+    } else {
+        targets.push(Target::new(TargetKind::LogDir {
+            file_name: Some("nex".into()),
+        }));
+    }
+    #[cfg(debug_assertions)]
+    targets.push(Target::new(TargetKind::Stdout));
+
+    tauri_plugin_log::Builder::new()
+        .targets(targets)
+        .level(log::LevelFilter::Info)
+        .level_for("reqwest", log::LevelFilter::Warn)
+        .level_for("hyper", log::LevelFilter::Warn)
+        .level_for("hyper_util", log::LevelFilter::Warn)
+        .level_for("h2", log::LevelFilter::Warn)
+        .level_for("rustls", log::LevelFilter::Warn)
+        .max_file_size(5 * 1024 * 1024)
+        .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(5))
+        .format(|out, message, record| {
+            out.finish(format_args!(
+                "{}[{}][{}] {}",
+                chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
+                record.level(),
+                record.target(),
+                message
+            ))
+        })
+        .build()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(nex_log_plugin())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
@@ -114,6 +154,7 @@ pub fn run() {
             commands::agent_cmds::native_agent_delete_skill,
             commands::agent_cmds::native_agent_set_skill_enabled,
             commands::agent_cmds::native_agent_open_skills_dir,
+            commands::agent_cmds::native_agent_open_logs_dir,
             commands::update_cmds::update_check_latest,
             commands::update_cmds::update_download_and_install,
             commands::update_cmds::open_external,

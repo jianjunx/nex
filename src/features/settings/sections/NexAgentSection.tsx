@@ -21,6 +21,7 @@ import {
   nativeAgentListModels,
   nativeAgentListSkills,
   nativeAgentOpenSkillsDir,
+  nativeAgentOpenLogsDir,
   nativeAgentProbeMcp,
   nativeAgentProbeReasoning,
   nativeAgentSetConfig,
@@ -437,6 +438,26 @@ export function NexAgentSection() {
 
       {tab === "advanced" && (
         <div className="space-y-4">
+          <div className="flex items-center justify-between gap-3 rounded-[var(--radius-md)] border border-[color:var(--border-subtle)] px-3 py-2.5">
+            <div className="min-w-0 space-y-0.5">
+              <Label className="text-sm">诊断日志</Label>
+              <p className="text-xs text-[var(--text-tertiary)]">
+                卡住、忽然停下或报错时，打开 ~/.nex/logs/nex.log 查看执行时间线（模型流、工具、授权等待、停止原因）。
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="nex-pressable shrink-0"
+              onClick={() => {
+                void nativeAgentOpenLogsDir();
+              }}
+            >
+              <FolderOpen className="size-3.5" />
+              打开日志目录
+            </Button>
+          </div>
           <div className="flex items-center justify-between gap-3 rounded-[var(--radius-md)] border border-[color:var(--border-subtle)] px-3 py-2.5">
             <div className="min-w-0 space-y-0.5">
               <Label htmlFor="nex-auto-review" className="text-sm">任务后自动 Review</Label>

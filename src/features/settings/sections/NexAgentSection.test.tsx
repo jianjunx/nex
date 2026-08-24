@@ -18,6 +18,7 @@ const nativeAgentUpsertMcp = vi.fn();
 const nativeAgentSetSkillEnabled = vi.fn();
 const nativeAgentDeleteSkill = vi.fn();
 const nativeAgentOpenSkillsDir = vi.fn();
+const nativeAgentOpenLogsDir = vi.fn();
 const refreshNativeAutoReview = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("../../../bridge/tauri", () => ({
@@ -28,6 +29,7 @@ vi.mock("../../../bridge/tauri", () => ({
   nativeAgentListModels: (...args: unknown[]) => nativeAgentListModels(...args),
   nativeAgentListSkills: (...args: unknown[]) => nativeAgentListSkills(...args),
   nativeAgentOpenSkillsDir: (...args: unknown[]) => nativeAgentOpenSkillsDir(...args),
+  nativeAgentOpenLogsDir: (...args: unknown[]) => nativeAgentOpenLogsDir(...args),
   nativeAgentProbeMcp: (...args: unknown[]) => nativeAgentProbeMcp(...args),
   nativeAgentProbeReasoning: (...args: unknown[]) => nativeAgentProbeReasoning(...args),
   nativeAgentSetConfig: (...args: unknown[]) => nativeAgentSetConfig(...args),
@@ -374,5 +376,28 @@ describe("NexAgentSection MCP and skills", () => {
     fireEvent.click(screen.getByRole("button", { name: "删除 my-skill" }));
     await waitFor(() => expect(nativeAgentDeleteSkill).toHaveBeenCalledWith("my-skill"));
     await screen.findByText(/暂无技能/);
+  });
+});
+
+describe("NexAgentSection diagnostics", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    nativeAgentGetConfig.mockResolvedValue(structuredClone(baseConfig));
+    nativeAgentSetConfig.mockResolvedValue(undefined);
+    nativeAgentListMcp.mockResolvedValue([]);
+    nativeAgentListSkills.mockResolvedValue([]);
+    nativeAgentOpenLogsDir.mockResolvedValue("/tmp/logs");
+    refreshNativeAutoReview.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("opens the diagnostic log directory from 高级", async () => {
+    render(<NexAgentSection />);
+    fireEvent.click(await screen.findByRole("button", { name: "高级" }));
+    fireEvent.click(screen.getByRole("button", { name: "打开日志目录" }));
+    await waitFor(() => expect(nativeAgentOpenLogsDir).toHaveBeenCalledTimes(1));
   });
 });

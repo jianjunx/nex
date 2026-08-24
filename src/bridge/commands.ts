@@ -44,6 +44,7 @@ export const COMMANDS = {
   NATIVE_AGENT_DELETE_SKILL: "native_agent_delete_skill",
   NATIVE_AGENT_SET_SKILL_ENABLED: "native_agent_set_skill_enabled",
   NATIVE_AGENT_OPEN_SKILLS_DIR: "native_agent_open_skills_dir",
+  NATIVE_AGENT_OPEN_LOGS_DIR: "native_agent_open_logs_dir",
   // Git
   GIT_STATUS: "git_status",
   GIT_DIFF: "git_diff",

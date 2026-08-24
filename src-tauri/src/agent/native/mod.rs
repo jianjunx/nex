@@ -23,6 +23,7 @@ pub mod commands;
 pub mod compact;
 pub mod config;
 pub mod context;
+pub mod diag;
 pub mod home;
 pub mod instructions;
 pub mod mcp;
@@ -384,9 +385,12 @@ impl NexNativeAgent {
             }
             match mcp::McpClient::connect_with_base_env(&name, &server_cfg, &base_env).await {
                 Ok(client) => {
-                    log::info!(
-                        "MCP server `{name}` connected with {} tool(s)",
-                        client.tools.len()
+                    diag::info(
+                        session_id.0.as_ref(),
+                        format!(
+                            "mcp connected `{name}` tools={}",
+                            client.tools.len()
+                        ),
                     );
                     if let Some(s) = self
                         .inner
@@ -397,7 +401,7 @@ impl NexNativeAgent {
                         s.mcp.push(Rc::new(client));
                     }
                 }
-                Err(e) => log::warn!("{e}"),
+                Err(e) => diag::warn(session_id.0.as_ref(), format!("mcp failed `{name}`: {e}")),
             }
         }
 
@@ -535,6 +539,11 @@ impl acp::Agent for NexNativeAgent {
         let slash_commands = self
             .setup_session_extras(&session_id, &cwd, &cfg)
             .await;
+
+        diag::info(
+            session_id.0.as_ref(),
+            format!("session new model={current_model} cwd={}", cwd.display()),
+        );
 
         Ok(acp::NewSessionResponse {
             session_id,
@@ -677,6 +686,10 @@ impl acp::Agent for NexNativeAgent {
                 &format!("未找到模型 {} 对应的供应商配置，请在设置中检查", model_id),
             )
             .await;
+            diag::error(
+                &session_key,
+                format!("model not found: {model_id}"),
+            );
             self.inner
                 .sessions
                 .borrow_mut()
@@ -903,16 +916,18 @@ impl acp::Agent for NexNativeAgent {
                 }
                 // Observability: report the turn's token accounting.
                 let usage = env.usage.borrow().clone();
-                log::info!(
-                    "native agent turn done: prompt_tokens={} completion_tokens={} cache_hit_tokens={}",
-                    usage.prompt_tokens,
-                    usage.completion_tokens,
-                    usage.cache_hit_tokens
+                diag::info(
+                    &session_key,
+                    format!(
+                        "turn usage prompt_tokens={} completion_tokens={} cache_hit_tokens={}",
+                        usage.prompt_tokens, usage.completion_tokens, usage.cache_hit_tokens
+                    ),
                 );
                 (stop, had_mutations, turn_stats)
             }
             None => {
                 // No connection (shouldn't happen in production wiring).
+                diag::error(&session_key, "agent connection not ready");
                 self.emit_text(&args.session_id, "agent 连接未就绪").await;
                 let turn_stats = stats::ContextStats::new();
                 (acp::StopReason::EndTurn, false, turn_stats)
@@ -937,7 +952,10 @@ impl acp::Agent for NexNativeAgent {
         ) {
             // The turn itself completed, but hiding a persistence failure
             // makes a later `session/load` loss look like a successful save.
-            log::error!("failed to persist native-agent session {session_key}: {e}");
+            log::error!(
+                target: crate::agent::native::diag::TARGET,
+                "failed to persist native-agent session {session_key}: {e}"
+            );
             self.emit_text(
                 &args.session_id,
                 "警告：本轮会话记录未能保存，重启后可能无法恢复本次进度。",
@@ -964,6 +982,7 @@ impl acp::Agent for NexNativeAgent {
     }
 
     async fn cancel(&self, args: acp::CancelNotification) -> acp::Result<()> {
+        diag::warn(args.session_id.0.as_ref(), "cancel requested");
         // Prefer handles: the session entry is removed for the whole prompt turn.
         if let Some(h) = self.inner.handles.borrow().get(args.session_id.0.as_ref()) {
             h.cancelled.set(true);

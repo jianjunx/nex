@@ -122,10 +122,24 @@ impl DeepSeekProvider {
                 .body(serde_json::to_vec(&body).unwrap_or_default())
                 .send()
                 .await
-                .map_err(|e| NexError::Agent(format!("model request failed: {e}")))?;
+                .map_err(|e| {
+                    log::error!(
+                        target: crate::agent::native::diag::TARGET,
+                        "http request failed endpoint={} {e}",
+                        self.url()
+                    );
+                    NexError::Agent(format!("model request failed: {e}"))
+                })?;
 
             let status = resp.status();
             if status.is_success() {
+                if attempt > 0 {
+                    log::info!(
+                        target: crate::agent::native::diag::TARGET,
+                        "http {status} after retry attempt={attempt} endpoint={}",
+                        self.url()
+                    );
+                }
                 return Ok(resp);
             }
             // Drain a short error body for the message.
@@ -138,20 +152,31 @@ impl DeepSeekProvider {
             {
                 body.as_object_mut().map(|o| o.remove("reasoning_effort"));
                 self.reasoning_downgraded.store(true, Ordering::Relaxed);
-                log::warn!("endpoint rejected reasoning_effort; retrying without it");
+                log::warn!(
+                    target: crate::agent::native::diag::TARGET,
+                    "endpoint rejected reasoning_effort; retrying without it"
+                );
                 continue;
             }
             let retriable = status.as_u16() == 429 || status.is_server_error();
             if retriable && attempt < MAX_RETRIES {
                 let backoff = RETRY_BASE_MS * 2u64.pow(attempt);
                 log::warn!(
-                    "model API returned {status}; retrying in {backoff}ms ({}/{MAX_RETRIES})",
-                    attempt + 1
+                    target: crate::agent::native::diag::TARGET,
+                    "http {status} retrying in {backoff}ms ({}/{MAX_RETRIES}) endpoint={}",
+                    attempt + 1,
+                    self.url()
                 );
                 tokio::time::sleep(std::time::Duration::from_millis(backoff)).await;
                 attempt += 1;
                 continue;
             }
+            log::error!(
+                target: crate::agent::native::diag::TARGET,
+                "http {status} endpoint={} body={}",
+                self.url(),
+                crate::agent::native::diag::preview(&err_text, 200)
+            );
             return Err(NexError::Agent(super::format_model_http_error(
                 status, &err_text,
             )));
@@ -178,6 +203,14 @@ impl Provider for DeepSeekProvider {
     }
 
     async fn stream(&self, req: ChatRequest) -> Result<ChunkStream, NexError> {
+        log::info!(
+            target: crate::agent::native::diag::TARGET,
+            "http POST {} model={} msgs={} tools={}",
+            self.url(),
+            req.model,
+            req.messages.len(),
+            req.tools.len()
+        );
         let body = self.build_body(&req);
         let resp = self.send_with_retry(&body).await?;
 

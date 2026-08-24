@@ -12,10 +12,11 @@ use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use agent_client_protocol::{self as acp};
 
+use super::diag;
 use super::provider::{
     ensure_unique_tool_call_ids, ChatMessage, ChatRequest, ChatToolCall, ChatToolCallFunction,
     Chunk, Content, ContentPart, NativeToolCall, Provider, ReasoningControl, StopReasonKind,
@@ -38,6 +39,9 @@ const SIGNATURE_WINDOW: usize = 8;
 /// 60s is too tight for reasoners that hold the first token (or do not
 /// stream thinking). The timer resets on every chunk, including thoughts.
 const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+/// While waiting on the model stream or a permission prompt, emit a log line
+/// this often so a hang is visible before the idle abort.
+const WAIT_HEARTBEAT: Duration = Duration::from_secs(30);
 /// Subagent final answers larger than this go to disk behind a stable ref.
 const SUBAGENT_INLINE_LIMIT: usize = 20_000;
 /// Visible fallback when the model ends a tool round with no text and no
@@ -160,6 +164,10 @@ pub async fn run_subagent(harness: &SubagentHarness, task: &str) -> Result<Strin
     if harness.cancelled.get() {
         return Err("cancelled".to_string());
     }
+    diag::info(
+        harness.parent_session_id.0.as_ref(),
+        format!("subagent start task={}", diag::preview(task, 80)),
+    );
     // The child shares operational memory so file discoveries, mutations and
     // tool errors flow back to the parent. Its task goal and scratch todo list,
     // however, are transcript-local and must not replace the parent's state.
@@ -215,6 +223,10 @@ pub async fn run_subagent(harness: &SubagentHarness, task: &str) -> Result<Strin
         memory.active_todos = parent_todos;
     }
     let answer = final_answer(&messages);
+    diag::info(
+        harness.parent_session_id.0.as_ref(),
+        format!("subagent done answer_chars={}", answer.chars().count()),
+    );
     if answer.chars().count() > SUBAGENT_INLINE_LIMIT {
         let _ = std::fs::create_dir_all(&harness.archive_dir);
         let name = format!("subagent-{}.txt", uuid::Uuid::new_v4().simple());
@@ -259,6 +271,36 @@ fn brief_summary(args: &serde_json::Value) -> String {
     s.chars().take(100).collect()
 }
 
+fn sid(env: &TurnEnv) -> &str {
+    env.session_id.0.as_ref()
+}
+
+fn finish_turn(
+    env: &TurnEnv,
+    started: Instant,
+    reason: acp::StopReason,
+    why: &str,
+) -> acp::StopReason {
+    diag::info(
+        sid(env),
+        format!(
+            "turn stop reason={reason:?} why={why} elapsed_ms={}",
+            started.elapsed().as_millis()
+        ),
+    );
+    reason
+}
+
+fn chunk_kind(chunk: &Chunk) -> &'static str {
+    match chunk {
+        Chunk::Text(_) => "text",
+        Chunk::Thinking(_) => "thinking",
+        Chunk::ToolCall(_) => "tool_call",
+        Chunk::Done { .. } => "done",
+        Chunk::Error(_) => "error",
+    }
+}
+
 /// Binding extracted from the incoming user request. Lets the harness tell a
 /// strong same-thread task pivot from same-target elaboration.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -295,13 +337,25 @@ pub async fn run_turn(
     };
     messages.push(ChatMessage::user_content(content));
 
+    let turn_started = Instant::now();
+    diag::info(
+        sid(env),
+        format!(
+            "turn start model={} mode={} max_steps={} msgs={}",
+            env.model,
+            env.mode_id.borrow(),
+            env.max_steps,
+            messages.len()
+        ),
+    );
+
     let mut steps = 0u32;
     let mut no_progress = 0u32;
     let mut harness_echo_retries = 0u32;
     let mut recent_signatures: VecDeque<u64> = VecDeque::with_capacity(SIGNATURE_WINDOW);
     loop {
         if env.cancelled.get() {
-            return acp::StopReason::Cancelled;
+            return finish_turn(env, turn_started, acp::StopReason::Cancelled, "cancelled");
         }
 
         // Budget-driven compression before assembling the request.
@@ -331,15 +385,18 @@ pub async fn run_turn(
             s.context_window = env.context_window;
         }
         if outcome.passes > 0 {
-            log::debug!(
-                "context budget: initial={} final={} budget={} passes={} snipped={} folded={} over_budget={}",
-                outcome.initial_tokens,
-                outcome.final_tokens,
-                budget.prompt_budget,
-                outcome.passes,
-                outcome.total_snipped,
-                outcome.total_folded,
-                outcome.over_budget,
+            diag::info(
+                sid(env),
+                format!(
+                    "compact passes={} initial={} final={} budget={} snipped={} folded={} over_budget={}",
+                    outcome.passes,
+                    outcome.initial_tokens,
+                    outcome.final_tokens,
+                    budget.prompt_budget,
+                    outcome.total_snipped,
+                    outcome.total_folded,
+                    outcome.over_budget,
+                ),
             );
         }
 
@@ -353,7 +410,7 @@ pub async fn run_turn(
             // Persist an assistant turn so the next prompt is not two user
             // messages in a row (the user message was already pushed).
             messages.push(ChatMessage::assistant(notice));
-            return acp::StopReason::EndTurn;
+            return finish_turn(env, turn_started, acp::StopReason::EndTurn, "over_budget");
         }
 
         // Hit the configured step cap: one final text-only turn (OpenCode
@@ -361,6 +418,10 @@ pub async fn run_turn(
         // TurnEnv values from reintroducing an unlimited loop.
         let wrap_up = steps >= env.max_steps.max(1);
         if wrap_up {
+            diag::warn(
+                sid(env),
+                format!("wrap-up step={} max_steps={}", steps, env.max_steps),
+            );
             messages.push(ChatMessage::user(MAX_STEPS_PROMPT));
         }
 
@@ -382,13 +443,37 @@ pub async fn run_turn(
             temperature: None,
         };
 
+        diag::info(
+            sid(env),
+            format!(
+                "stream start step={} wrap_up={} msgs={} tokens={} tools={}",
+                steps + 1,
+                wrap_up,
+                messages.len(),
+                outcome.final_tokens,
+                request.tools.len()
+            ),
+        );
+        // TTFB includes HTTP; idle abort must not — a slow handshake would
+        // otherwise count against STREAM_IDLE_TIMEOUT and cut a live SSE short.
+        let stream_started = Instant::now();
         let mut rx = match env.provider.stream(request).await {
             Ok(rx) => rx,
             Err(e) => {
+                diag::error(
+                    sid(env),
+                    format!("model request failed: {}", e.user_message()),
+                );
                 emit_text(env, &format!("模型请求失败：{}", e.user_message())).await;
-                return acp::StopReason::EndTurn;
+                return finish_turn(
+                    env,
+                    turn_started,
+                    acp::StopReason::EndTurn,
+                    "model_request_failed",
+                );
             }
         };
+        let mut last_chunk_at = Instant::now();
 
         // Consume one provider stream: accumulate text + complete tool calls.
         let mut text = String::new();
@@ -399,30 +484,73 @@ pub async fn run_turn(
         let mut calls: Vec<NativeToolCall> = Vec::new();
         let mut provider_error: Option<String> = None;
         let mut provider_stop = StopReasonKind::EndTurn;
+        let mut saw_chunk = false;
         loop {
             if env.cancelled.get() {
                 drop(rx);
-                return acp::StopReason::Cancelled;
+                return finish_turn(
+                    env,
+                    turn_started,
+                    acp::StopReason::Cancelled,
+                    "cancelled_during_stream",
+                );
             }
-            let chunk = match tokio::time::timeout(STREAM_IDLE_TIMEOUT, rx.recv()).await {
+            let chunk = match tokio::time::timeout(WAIT_HEARTBEAT, rx.recv()).await {
                 Ok(Some(chunk)) => chunk,
                 Ok(None) => break,
                 Err(_) => {
-                    drop(rx);
-                    if !text.trim().is_empty() {
-                        messages.push(ChatMessage::assistant(text));
+                    let idle = last_chunk_at.elapsed();
+                    if idle >= STREAM_IDLE_TIMEOUT {
+                        drop(rx);
+                        if !text.trim().is_empty() {
+                            messages.push(ChatMessage::assistant(text));
+                        }
+                        diag::error(
+                            sid(env),
+                            format!(
+                                "stream idle abort after_s={} first_chunk={}",
+                                idle.as_secs(),
+                                saw_chunk
+                            ),
+                        );
+                        emit_text(
+                            env,
+                            &format!(
+                                "模型流超过 {} 秒没有新的输出，本轮已中止。",
+                                STREAM_IDLE_TIMEOUT.as_secs()
+                            ),
+                        )
+                        .await;
+                        return finish_turn(
+                            env,
+                            turn_started,
+                            acp::StopReason::EndTurn,
+                            "stream_idle_timeout",
+                        );
                     }
-                    emit_text(
-                        env,
-                        &format!(
-                            "模型流超过 {} 秒没有新的输出，本轮已中止。",
-                            STREAM_IDLE_TIMEOUT.as_secs()
+                    diag::warn(
+                        sid(env),
+                        format!(
+                            "stream idle_s={} waiting first_chunk={}",
+                            idle.as_secs(),
+                            !saw_chunk
                         ),
-                    )
-                    .await;
-                    return acp::StopReason::EndTurn;
+                    );
+                    continue;
                 }
             };
+            if !saw_chunk {
+                diag::info(
+                    sid(env),
+                    format!(
+                        "stream first_chunk kind={} after_ms={}",
+                        chunk_kind(&chunk),
+                        stream_started.elapsed().as_millis()
+                    ),
+                );
+                saw_chunk = true;
+            }
+            last_chunk_at = Instant::now();
             match chunk {
                 Chunk::Text(t) => {
                     text.push_str(&t);
@@ -463,9 +591,21 @@ pub async fn run_turn(
         }
         drop(rx);
 
+        diag::info(
+            sid(env),
+            format!(
+                "stream done step={} reason={provider_stop:?} text_chars={} tools={} elapsed_ms={}",
+                steps + 1,
+                text.len(),
+                calls.len(),
+                stream_started.elapsed().as_millis()
+            ),
+        );
+
         if let Some(e) = provider_error {
+            diag::error(sid(env), format!("stream error: {e}"));
             emit_text(env, &format!("模型流中断：{e}")).await;
-            return acp::StopReason::EndTurn;
+            return finish_turn(env, turn_started, acp::StopReason::EndTurn, "stream_error");
         }
 
         // A `length` finish reason means the model's message may be partial;
@@ -481,7 +621,7 @@ pub async fn run_turn(
             text.push_str(notice);
             messages.push(ChatMessage::assistant(text));
             emit_text(env, notice).await;
-            return acp::StopReason::MaxTokens;
+            return finish_turn(env, turn_started, acp::StopReason::MaxTokens, "max_tokens");
         }
 
         // Wrap-up or natural end: persist assistant text and finish the turn.
@@ -491,22 +631,38 @@ pub async fn run_turn(
             if !text.trim().is_empty() && needs_harness_echo_retry(&text) && !wrap_up {
                 if harness_echo_retries < HARNESS_ECHO_MAX_RETRIES {
                     harness_echo_retries += 1;
+                    diag::warn(
+                        sid(env),
+                        format!("harness echo retry {harness_echo_retries}/{HARNESS_ECHO_MAX_RETRIES}"),
+                    );
                     messages.push(ChatMessage::user(HARNESS_ECHO_NUDGE.to_string()));
                     continue;
                 }
                 let cleaned = strip_harness_tail(&text);
                 if !cleaned.trim().is_empty() {
                     messages.push(ChatMessage::assistant(cleaned));
-                    return acp::StopReason::EndTurn;
+                    return finish_turn(
+                        env,
+                        turn_started,
+                        acp::StopReason::EndTurn,
+                        "harness_echo",
+                    );
                 }
                 let notice = EMPTY_AFTER_TOOLS_NOTICE;
                 emit_text(env, notice).await;
                 messages.push(ChatMessage::assistant(notice.to_string()));
-                return acp::StopReason::EndTurn;
+                return finish_turn(
+                    env,
+                    turn_started,
+                    acp::StopReason::EndTurn,
+                    "empty_after_tools",
+                );
             }
             let cleaned = strip_harness_tail(&text);
             if !cleaned.trim().is_empty() {
                 messages.push(ChatMessage::assistant(cleaned));
+                let why = if wrap_up { "max_steps_wrap_up" } else { "end_turn" };
+                return finish_turn(env, turn_started, acp::StopReason::EndTurn, why);
             } else {
                 let notice = if wrap_up {
                     EMPTY_WRAP_UP_NOTICE
@@ -517,8 +673,15 @@ pub async fn run_turn(
                 };
                 emit_text(env, notice).await;
                 messages.push(ChatMessage::assistant(notice.to_string()));
+                let why = if wrap_up {
+                    "empty_wrap_up"
+                } else if steps > 0 {
+                    "empty_after_tools"
+                } else {
+                    "empty_reply"
+                };
+                return finish_turn(env, turn_started, acp::StopReason::EndTurn, why);
             }
-            return acp::StopReason::EndTurn;
         }
 
         // Record the assistant turn with its tool calls (OpenAI wire format).
@@ -544,6 +707,19 @@ pub async fn run_turn(
 
         // Execute the requested tool calls: consecutive read-only calls run
         // as one parallel batch, mutating ones run serially and get logged.
+        diag::info(
+            sid(env),
+            format!(
+                "tools round step={} count={} names={}",
+                steps + 1,
+                calls.len(),
+                calls
+                    .iter()
+                    .map(|c| c.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+        );
         let results = execute_calls(env, &calls).await;
         let round_signature = tool_round_signature(&calls, &results);
         let all_failed = results.iter().all(Result::is_err);
@@ -559,7 +735,12 @@ pub async fn run_turn(
             ));
         }
         if env.cancelled.get() {
-            return acp::StopReason::Cancelled;
+            return finish_turn(
+                env,
+                turn_started,
+                acp::StopReason::Cancelled,
+                "cancelled_after_tools",
+            );
         }
 
         steps += 1;
@@ -571,6 +752,7 @@ pub async fn run_turn(
         if all_failed || repeated_success {
             no_progress += 1;
             if no_progress == LEASE_WARN_ROUNDS {
+                diag::warn(sid(env), format!("lease warn no_progress={no_progress}"));
                 emit_text(
                     env,
                     "已连续多轮没有实质进展（工具持续失败或重复返回相同结果）。建议换一个思路或先排查失败原因。",
@@ -578,12 +760,13 @@ pub async fn run_turn(
                 .await;
             }
             if no_progress >= LEASE_PAUSE_ROUNDS {
+                diag::warn(sid(env), format!("lease pause no_progress={no_progress}"));
                 emit_text(
                     env,
                     "连续无进展轮次过多，本轮已暂停。请调整策略后重新发起。",
                 )
                 .await;
-                return acp::StopReason::EndTurn;
+                return finish_turn(env, turn_started, acp::StopReason::EndTurn, "lease_pause");
             }
         } else {
             no_progress = 0;
@@ -926,7 +1109,12 @@ async fn execute_read_only_batch(
 async fn execute_tool(env: &TurnEnv, call: &NativeToolCall) -> Result<String, String> {
     let call_id = acp::ToolCallId(Arc::from(call.id.as_str()));
     let tool = env.registry.get(&call.name);
-    let title = format!("{}({})", call.name, brief_args(&call.arguments));
+    let args_preview = brief_args(&call.arguments);
+    let title = format!("{}({})", call.name, args_preview);
+    diag::info(
+        sid(env),
+        format!("tool start {}({})", call.name, args_preview),
+    );
 
     let (kind, read_only) = match tool {
         Some(t) => (t.kind(), t.read_only()),
@@ -951,10 +1139,12 @@ async fn execute_tool(env: &TurnEnv, call: &NativeToolCall) -> Result<String, St
     .await;
 
     if let Some(err) = call.arguments.get(PARSE_ERROR_KEY).and_then(|v| v.as_str()) {
+        diag::warn(sid(env), format!("tool parse error {}: {}", call.name, diag::preview(err, 120)));
         return finish_tool(env, &call_id, false, err).await;
     }
 
     let Some(tool) = tool else {
+        diag::warn(sid(env), format!("unknown tool `{}`", call.name));
         return finish_tool(
             env,
             &call_id,
@@ -969,6 +1159,10 @@ async fn execute_tool(env: &TurnEnv, call: &NativeToolCall) -> Result<String, St
     // keyed by command prefix) or the session runs in `auto` mode.
     if !read_only {
         if env.read_only_mode() {
+            diag::warn(
+                sid(env),
+                format!("tool blocked read-only-mode {}", call.name),
+            );
             return finish_tool(env, &call_id, false, "当前为只读模式，禁止执行写操作/命令").await;
         }
         let allow_key = permission_allow_key(&call.name, &call.arguments);
@@ -992,12 +1186,34 @@ async fn execute_tool(env: &TurnEnv, call: &NativeToolCall) -> Result<String, St
 
     update_status(env, &call_id, acp::ToolCallStatus::InProgress).await;
     let mode_before = env.mode_id.borrow().clone();
+    let exec_started = Instant::now();
     let result = tokio::select! {
         _ = wait_cancelled(env) => {
+            diag::warn(sid(env), format!("tool cancelled {}", call.name));
             return finish_tool(env, &call_id, false, "cancelled").await;
         }
         result = tool.execute(call.arguments.clone(), &env.tool_ctx) => result,
     };
+    match &result {
+        Ok(out) => diag::info(
+            sid(env),
+            format!(
+                "tool done {} ok elapsed_ms={} out_chars={}",
+                call.name,
+                exec_started.elapsed().as_millis(),
+                out.len()
+            ),
+        ),
+        Err(err) => diag::warn(
+            sid(env),
+            format!(
+                "tool done {} err elapsed_ms={} err={}",
+                call.name,
+                exec_started.elapsed().as_millis(),
+                diag::preview(err, 160)
+            ),
+        ),
+    }
 
     // System-driven working-memory updates. The model never rewrites the
     // memory block; the harness observes tool outcomes and folds them in.
@@ -1208,6 +1424,42 @@ async fn wait_cancelled(env: &TurnEnv) {
     }
 }
 
+/// Await `fut`, emitting a heartbeat while blocked. `Err(())` means the user
+/// cancelled the turn — the usual "hang" that is actually a permission popup.
+async fn wait_or_cancel<T>(
+    env: &TurnEnv,
+    waiting_for: &str,
+    fut: impl std::future::Future<Output = T>,
+) -> Result<T, ()> {
+    tokio::pin!(fut);
+    let started = Instant::now();
+    loop {
+        tokio::select! {
+            biased;
+            _ = wait_cancelled(env) => {
+                diag::warn(
+                    sid(env),
+                    format!(
+                        "{waiting_for} cancelled after_s={}",
+                        started.elapsed().as_secs()
+                    ),
+                );
+                return Err(());
+            }
+            value = &mut fut => return Ok(value),
+            _ = tokio::time::sleep(WAIT_HEARTBEAT) => {
+                diag::warn(
+                    sid(env),
+                    format!(
+                        "{waiting_for} still waiting after_s={}",
+                        started.elapsed().as_secs()
+                    ),
+                );
+            }
+        }
+    }
+}
+
 /// Session-scoped always-allow key. Bash is keyed by the command prefix so
 /// "always allow `git status`" does not authorize `rm -rf`.
 fn permission_allow_key(name: &str, args: &serde_json::Value) -> String {
@@ -1272,15 +1524,26 @@ async fn request_mode_elevation_approval(
         meta: None,
     };
 
-    match env.conn.request_permission(request).await {
-        Ok(resp) => match resp.outcome {
+    diag::info(
+        sid(env),
+        format!("permission wait mode {from_mode}->{target_mode}"),
+    );
+    match wait_or_cancel(
+        env,
+        &format!("permission:mode:{from_mode}->{target_mode}"),
+        env.conn.request_permission(request),
+    )
+    .await
+    {
+        Err(()) => PermissionDecision::TurnCancelled,
+        Ok(Ok(resp)) => match resp.outcome {
             acp::RequestPermissionOutcome::Cancelled => PermissionDecision::TurnCancelled,
             acp::RequestPermissionOutcome::Selected { option_id } => match option_id.0.as_ref() {
                 "allow-once" | "allow-always" => PermissionDecision::Allowed { always: false },
                 _ => PermissionDecision::Denied,
             },
         },
-        Err(_) => PermissionDecision::Denied,
+        Ok(Err(_)) => PermissionDecision::Denied,
     }
 }
 
@@ -1336,8 +1599,17 @@ async fn request_permission(
         meta: None,
     };
 
-    match env.conn.request_permission(request).await {
-        Ok(resp) => match resp.outcome {
+    diag::info(sid(env), format!("permission wait tool={tool_name}"));
+    let started = Instant::now();
+    let decision = match wait_or_cancel(
+        env,
+        &format!("permission:{tool_name}"),
+        env.conn.request_permission(request),
+    )
+    .await
+    {
+        Err(()) => PermissionDecision::TurnCancelled,
+        Ok(Ok(resp)) => match resp.outcome {
             acp::RequestPermissionOutcome::Cancelled => PermissionDecision::TurnCancelled,
             acp::RequestPermissionOutcome::Selected { option_id } => match option_id.0.as_ref() {
                 "allow-once" => PermissionDecision::Allowed { always: false },
@@ -1345,9 +1617,22 @@ async fn request_permission(
                 _ => PermissionDecision::Denied,
             },
         },
-        // Client can't answer (e.g. dropped): fail safe.
-        Err(_) => PermissionDecision::Denied,
-    }
+        Ok(Err(_)) => PermissionDecision::Denied,
+    };
+    let outcome = match &decision {
+        PermissionDecision::Allowed { always } if *always => "allow_always",
+        PermissionDecision::Allowed { .. } => "allow_once",
+        PermissionDecision::Denied => "denied",
+        PermissionDecision::TurnCancelled => "cancelled",
+    };
+    diag::info(
+        sid(env),
+        format!(
+            "permission {outcome} tool={tool_name} after_ms={}",
+            started.elapsed().as_millis()
+        ),
+    );
+    decision
 }
 
 async fn emit_text(env: &TurnEnv, text: &str) {

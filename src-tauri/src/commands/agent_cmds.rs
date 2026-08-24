@@ -389,6 +389,15 @@ pub fn native_agent_open_skills_dir() -> Result<String, NexError> {
     Ok(dir.display().to_string())
 }
 
+#[tauri::command]
+pub fn native_agent_open_logs_dir() -> Result<String, NexError> {
+    let dir = crate::agent::native::diag::log_dir()
+        .ok_or_else(|| NexError::Agent("home unavailable".into()))?;
+    let _ = std::fs::create_dir_all(&dir);
+    open_path(&dir)?;
+    Ok(dir.display().to_string())
+}
+
 fn open_path(path: &std::path::Path) -> Result<(), NexError> {
     #[cfg(target_os = "macos")]
     {

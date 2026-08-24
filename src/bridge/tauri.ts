@@ -472,6 +472,10 @@ export async function nativeAgentOpenSkillsDir(): Promise<string> {
   return invoke(COMMANDS.NATIVE_AGENT_OPEN_SKILLS_DIR);
 }
 
+export async function nativeAgentOpenLogsDir(): Promise<string> {
+  return invoke(COMMANDS.NATIVE_AGENT_OPEN_LOGS_DIR);
+}
+
 // --- Git ---
 export interface GitFileChange {
   path: string;

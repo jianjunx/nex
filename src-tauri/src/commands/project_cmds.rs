@@ -1,8 +1,8 @@
-use tauri::State;
-use crate::state::AppState;
-use crate::error::NexError;
-use crate::db::projects::Project;
 use crate::db::conversations::{Conversation, Message, ThreadEntryPersisted};
+use crate::db::projects::Project;
+use crate::error::NexError;
+use crate::state::AppState;
+use tauri::State;
 
 #[tauri::command]
 pub fn project_open(state: State<AppState>, path: String) -> Result<Project, NexError> {
@@ -32,27 +32,46 @@ pub fn project_remove(state: State<AppState>, id: String) -> Result<(), NexError
 }
 
 #[tauri::command]
-pub fn conversation_create(state: State<AppState>, project_id: String, agent_type: String) -> Result<Conversation, NexError> {
+pub fn conversation_create(
+    state: State<AppState>,
+    project_id: String,
+    agent_type: String,
+) -> Result<Conversation, NexError> {
     state.db.create_conversation(&project_id, &agent_type)
 }
 
 #[tauri::command]
-pub fn conversation_list(state: State<AppState>, project_id: String) -> Result<Vec<Conversation>, NexError> {
+pub fn conversation_list(
+    state: State<AppState>,
+    project_id: String,
+) -> Result<Vec<Conversation>, NexError> {
     state.db.list_conversations(&project_id)
 }
 
 #[tauri::command]
-pub fn conversation_get_messages(state: State<AppState>, conversation_id: String, limit: i32, offset: i32) -> Result<Vec<Message>, NexError> {
+pub fn conversation_get_messages(
+    state: State<AppState>,
+    conversation_id: String,
+    limit: i32,
+    offset: i32,
+) -> Result<Vec<Message>, NexError> {
     state.db.get_messages(&conversation_id, limit, offset)
 }
 
 #[tauri::command]
-pub fn conversation_update_title(state: State<AppState>, conversation_id: String, title: String) -> Result<(), NexError> {
+pub fn conversation_update_title(
+    state: State<AppState>,
+    conversation_id: String,
+    title: String,
+) -> Result<(), NexError> {
     state.db.update_conversation_title(&conversation_id, &title)
 }
 
 #[tauri::command]
-pub fn conversation_delete(state: State<AppState>, conversation_id: String) -> Result<(), NexError> {
+pub fn conversation_delete(
+    state: State<AppState>,
+    conversation_id: String,
+) -> Result<(), NexError> {
     state.db.delete_conversation(&conversation_id)
 }
 
@@ -64,7 +83,9 @@ pub fn conversation_append_message(
     content: String,
     tool_summary: Option<String>,
 ) -> Result<Message, NexError> {
-    state.db.append_message(&conversation_id, &role, &content, tool_summary.as_deref())
+    state
+        .db
+        .append_message(&conversation_id, &role, &content, tool_summary.as_deref())
 }
 
 #[tauri::command]

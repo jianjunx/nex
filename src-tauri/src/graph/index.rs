@@ -106,7 +106,9 @@ fn build_inner(cwd: &Path, only: Option<&[PathBuf]>) -> Result<BuildStats, Strin
 
     for entry in walker {
         let Ok(entry) = entry else { continue };
-        let Some(ft) = entry.file_type() else { continue };
+        let Some(ft) = entry.file_type() else {
+            continue;
+        };
         if !ft.is_file() {
             continue;
         }
@@ -207,7 +209,10 @@ fn write_meta(store: &Store, cwd: &Path, stats: &BuildStats) -> Result<(), Strin
         "deleted": stats.deleted,
         "errors": stats.errors,
     });
-    let _ = std::fs::write(paths::meta_path(cwd), serde_json::to_vec_pretty(&sidecar).unwrap_or_default());
+    let _ = std::fs::write(
+        paths::meta_path(cwd),
+        serde_json::to_vec_pretty(&sidecar).unwrap_or_default(),
+    );
     Ok(())
 }
 
@@ -229,12 +234,10 @@ fn should_skip(
     if rel.starts_with(".nex/") {
         return true;
     }
-    if rel.split('/').any(|p| {
-        matches!(
-            p,
-            ".git" | "node_modules" | "target" | "dist" | ".nex"
-        )
-    }) {
+    if rel
+        .split('/')
+        .any(|p| matches!(p, ".git" | "node_modules" | "target" | "dist" | ".nex"))
+    {
         return true;
     }
     if cfg.is_excluded(rel) {
@@ -314,11 +317,9 @@ mod tests {
         let store = Store::open(cwd).unwrap();
         let count: i64 = store
             .conn()
-            .query_row(
-                "SELECT COUNT(*) FROM nodes WHERE name = 'alpha'",
-                [],
-                |r| r.get(0),
-            )
+            .query_row("SELECT COUNT(*) FROM nodes WHERE name = 'alpha'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(count, 1);
         let ignored: i64 = store
@@ -355,11 +356,9 @@ mod tests {
         assert_eq!(gamma, 1);
         let beta: i64 = store
             .conn()
-            .query_row(
-                "SELECT COUNT(*) FROM nodes WHERE name = 'beta'",
-                [],
-                |r| r.get(0),
-            )
+            .query_row("SELECT COUNT(*) FROM nodes WHERE name = 'beta'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(beta, 0);
     }

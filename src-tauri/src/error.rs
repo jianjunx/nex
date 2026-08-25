@@ -11,10 +11,7 @@ pub enum NexError {
     /// the dependency, `hint` is a user-actionable remediation string.
     #[error("Agent not installed ({what}): {hint}")]
     #[serde(rename = "agentNotInstalled")]
-    AgentNotInstalled {
-        what: &'static str,
-        hint: String,
-    },
+    AgentNotInstalled { what: &'static str, hint: String },
     #[error("Git error: {0}")]
     Git(String),
     #[error("Terminal error: {0}")]

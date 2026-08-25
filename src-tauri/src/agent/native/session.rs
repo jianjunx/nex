@@ -633,7 +633,9 @@ pub async fn run_turn(
                     harness_echo_retries += 1;
                     diag::warn(
                         sid(env),
-                        format!("harness echo retry {harness_echo_retries}/{HARNESS_ECHO_MAX_RETRIES}"),
+                        format!(
+                            "harness echo retry {harness_echo_retries}/{HARNESS_ECHO_MAX_RETRIES}"
+                        ),
                     );
                     messages.push(ChatMessage::user(HARNESS_ECHO_NUDGE.to_string()));
                     continue;
@@ -661,7 +663,11 @@ pub async fn run_turn(
             let cleaned = strip_harness_tail(&text);
             if !cleaned.trim().is_empty() {
                 messages.push(ChatMessage::assistant(cleaned));
-                let why = if wrap_up { "max_steps_wrap_up" } else { "end_turn" };
+                let why = if wrap_up {
+                    "max_steps_wrap_up"
+                } else {
+                    "end_turn"
+                };
                 return finish_turn(env, turn_started, acp::StopReason::EndTurn, why);
             } else {
                 let notice = if wrap_up {
@@ -976,7 +982,9 @@ fn streamable_assistant_delta(full: &str, emitted_len: usize) -> Option<(String,
 
     let emit_end = match find_harness_marker(full) {
         Some(idx) => idx,
-        None => full.len().saturating_sub(harness_ambiguous_suffix_len(full)),
+        None => full
+            .len()
+            .saturating_sub(harness_ambiguous_suffix_len(full)),
     };
     if emitted_len >= emit_end {
         return None;
@@ -1139,7 +1147,14 @@ async fn execute_tool(env: &TurnEnv, call: &NativeToolCall) -> Result<String, St
     .await;
 
     if let Some(err) = call.arguments.get(PARSE_ERROR_KEY).and_then(|v| v.as_str()) {
-        diag::warn(sid(env), format!("tool parse error {}: {}", call.name, diag::preview(err, 120)));
+        diag::warn(
+            sid(env),
+            format!(
+                "tool parse error {}: {}",
+                call.name,
+                diag::preview(err, 120)
+            ),
+        );
         return finish_tool(env, &call_id, false, err).await;
     }
 
@@ -2017,13 +2032,8 @@ mod tests {
                 let stop = run_turn(&env, &mut messages, Content::Text("继续".into())).await;
                 assert!(matches!(stop, acp::StopReason::EndTurn));
                 assert!(
-                    messages
-                        .iter()
-                        .any(|m| m.role == "assistant"
-                            && m.content
-                                .as_ref()
-                                .and_then(Content::as_text)
-                                == Some("继续改代码")),
+                    messages.iter().any(|m| m.role == "assistant"
+                        && m.content.as_ref().and_then(Content::as_text) == Some("继续改代码")),
                     "expected real assistant reply after harness-echo retry"
                 );
                 assert!(
@@ -2150,7 +2160,9 @@ mod tests {
                 };
 
                 assert_eq!(
-                    run_subagent(&harness, "child goal\nChild/index").await.unwrap(),
+                    run_subagent(&harness, "child goal\nChild/index")
+                        .await
+                        .unwrap(),
                     "child done"
                 );
                 let memory = harness.memory.borrow();

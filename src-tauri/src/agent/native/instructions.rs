@@ -191,7 +191,10 @@ mod tests {
         let big = "x".repeat((MAX_FILE_BYTES as usize) + 4096);
         write(tmp.path(), "AGENTS.md", &big);
         let block = agents_md_block(tmp.path());
-        assert!(block.contains("truncated"), "oversized file must be truncated");
+        assert!(
+            block.contains("truncated"),
+            "oversized file must be truncated"
+        );
         assert!(block.len() < (MAX_FILE_BYTES as usize) + 4096);
     }
 

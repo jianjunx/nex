@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use super::registry::{RegistryEntry, RegistryBinaryTarget};
+use super::registry::{RegistryBinaryTarget, RegistryEntry};
 use crate::error::NexError;
 
 #[derive(Clone)]
@@ -54,7 +54,8 @@ impl BinaryCache {
             return Ok(exe);
         }
 
-        self.ensure_exact_installed(entry, target, platform_key).await
+        self.ensure_exact_installed(entry, target, platform_key)
+            .await
     }
 
     fn install_dir(&self, entry: &RegistryEntry, platform_key: &str) -> PathBuf {
@@ -76,19 +77,16 @@ impl BinaryCache {
         let install_dir = self.install_dir(entry, platform_key);
         let marker = install_dir.join(".nex-install-ok");
         if install_dir.exists() {
-            std::fs::remove_dir_all(&install_dir).map_err(|e| {
-                NexError::Agent(format!("failed to wipe agent binary dir: {e}"))
-            })?;
+            std::fs::remove_dir_all(&install_dir)
+                .map_err(|e| NexError::Agent(format!("failed to wipe agent binary dir: {e}")))?;
         }
-        std::fs::create_dir_all(&install_dir).map_err(|e| {
-            NexError::Agent(format!("failed to create agent binary dir: {e}"))
-        })?;
+        std::fs::create_dir_all(&install_dir)
+            .map_err(|e| NexError::Agent(format!("failed to create agent binary dir: {e}")))?;
 
         extract_archive(&bytes, &target.archive, &install_dir)?;
 
-        std::fs::write(&marker, "").map_err(|e| {
-            NexError::Agent(format!("failed to write install marker: {e}"))
-        })?;
+        std::fs::write(&marker, "")
+            .map_err(|e| NexError::Agent(format!("failed to write install marker: {e}")))?;
 
         Ok(install_dir.join(&target.cmd))
     }
@@ -109,7 +107,10 @@ impl BinaryCache {
 
         let cache = self.clone();
         tokio::spawn(async move {
-            match cache.ensure_exact_installed(&entry, &target, &platform_key).await {
+            match cache
+                .ensure_exact_installed(&entry, &target, &platform_key)
+                .await
+            {
                 Ok(_) => log::info!(
                     "silently installed binary agent update `{}` ({})",
                     entry.id,
@@ -202,9 +203,11 @@ async fn download_archive(url: &str) -> Result<Vec<u8>, NexError> {
         )));
     }
 
-    response.bytes().await.map(|b| b.to_vec()).map_err(|e| {
-        NexError::Agent(format!("failed to read agent archive body: {e}"))
-    })
+    response
+        .bytes()
+        .await
+        .map(|b| b.to_vec())
+        .map_err(|e| NexError::Agent(format!("failed to read agent archive body: {e}")))
 }
 
 fn verify_sha256(data: &[u8], expected_hex: &str) -> Result<(), NexError> {
@@ -348,11 +351,7 @@ mod tests {
     }
 
     fn seed_binary(cache: &BinaryCache, version: &str, platform: &str, complete: bool) -> PathBuf {
-        let dir = cache
-            .root
-            .join("cursor")
-            .join(version)
-            .join(platform);
+        let dir = cache.root.join("cursor").join(version).join(platform);
         let executable = dir.join("dist-package/cursor-agent");
         std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
         std::fs::write(&executable, "binary").unwrap();
@@ -370,16 +369,14 @@ mod tests {
         let _partial = seed_binary(&cache, "2026.08.11", "darwin-aarch64", false);
 
         let resolved = cache
-            .ensure_installed(
-                &entry("2026.08.11"),
-                &target(None),
-                "darwin-aarch64",
-            )
+            .ensure_installed(&entry("2026.08.11"), &target(None), "darwin-aarch64")
             .await
             .unwrap();
         assert_eq!(resolved, old);
         assert_eq!(
-            cache.newest_installed_version("cursor", "darwin-aarch64").as_deref(),
+            cache
+                .newest_installed_version("cursor", "darwin-aarch64")
+                .as_deref(),
             Some("2026.07.23")
         );
     }

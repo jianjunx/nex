@@ -46,14 +46,8 @@ pub async fn probe_reasoning_levels(
     let url = openai_endpoint(base_url, "chat/completions");
 
     // Phase 1: does the endpoint accept `reasoning_effort` at all?
-    let probe_high = send_probe(
-        &client,
-        &url,
-        api_key,
-        model_id,
-        ProbeBody::Effort("high"),
-    )
-    .await?;
+    let probe_high =
+        send_probe(&client, &url, api_key, model_id, ProbeBody::Effort("high")).await?;
 
     match probe_high {
         Outcome::Auth => {
@@ -69,14 +63,8 @@ pub async fn probe_reasoning_levels(
         Outcome::RejectedParam => {
             // Binary thinking toggle (DeepSeek V4 / MiniMax-M3 style).
             if uses_deepseek_thinking_toggle(model_id) || uses_binary_thinking_toggle(model_id) {
-                let on = send_probe(
-                    &client,
-                    &url,
-                    api_key,
-                    model_id,
-                    ProbeBody::ThinkingEnabled,
-                )
-                .await?;
+                let on = send_probe(&client, &url, api_key, model_id, ProbeBody::ThinkingEnabled)
+                    .await?;
                 let off = send_probe(
                     &client,
                     &url,

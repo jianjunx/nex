@@ -59,10 +59,11 @@ Nex 是跨平台桌面 **Agent 工作台**（[Tauri 2](https://tauri.app/)）。
 
 | 位置 | 用途 |
 |------|------|
-| `~/.nex/skills/` | 用户技能（Claude 兼容 `SKILL.md`） |
+| `~/.nex/skills/` | 全局用户技能（Claude 兼容 `SKILL.md`） |
 | `~/.nex/commands/` | 全局斜杠命令 `*.md` |
 | `~/.nex/rules/` | 全局规则，注入每个会话 |
 | `~/.nex/mcp.json` | 全局 MCP 服务器 |
+| `<项目>/.nex/skills/` | 项目技能（同名覆盖全局） |
 | `<项目>/.nex/rules/` | 项目规则 |
 | `<项目>/.nex/mcp.json` | 项目 MCP |
 | `<项目>/.nex/cache/graph/` | Code Graph 索引（已 gitignore） |

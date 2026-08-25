@@ -324,9 +324,7 @@ impl NexNativeAgent {
                 acp::SessionMode {
                     id: acp::SessionModeId(Arc::from("plan")),
                     name: "Plan".to_string(),
-                    description: Some(
-                        "Read-only research, then a step-by-step plan".to_string(),
-                    ),
+                    description: Some("Read-only research, then a step-by-step plan".to_string()),
                     meta: None,
                 },
                 acp::SessionMode {
@@ -387,10 +385,7 @@ impl NexNativeAgent {
                 Ok(client) => {
                     diag::info(
                         session_id.0.as_ref(),
-                        format!(
-                            "mcp connected `{name}` tools={}",
-                            client.tools.len()
-                        ),
+                        format!("mcp connected `{name}` tools={}", client.tools.len()),
                     );
                     if let Some(s) = self
                         .inner
@@ -509,15 +504,12 @@ impl acp::Agent for NexNativeAgent {
         // Canonicalize the workspace root: the sandbox (`resolve_within`) and
         // every file/bash tool trust this path, and a non-canonical cwd would
         // let a symlinked project root alias the sandbox boundaries.
-        let cwd = args
-            .cwd
-            .canonicalize()
-            .map_err(|e| {
-                acp::Error::invalid_params().with_data(format!(
-                    "cwd `{}` is not a valid workspace directory: {e}",
-                    args.cwd.display()
-                ))
-            })?;
+        let cwd = args.cwd.canonicalize().map_err(|e| {
+            acp::Error::invalid_params().with_data(format!(
+                "cwd `{}` is not a valid workspace directory: {e}",
+                args.cwd.display()
+            ))
+        })?;
         let session = NativeSession {
             cwd: cwd.clone(),
             path_env: self.inner.default_path_env.clone(),
@@ -536,9 +528,7 @@ impl acp::Agent for NexNativeAgent {
             .borrow_mut()
             .insert(session_id.0.to_string(), session);
 
-        let slash_commands = self
-            .setup_session_extras(&session_id, &cwd, &cfg)
-            .await;
+        let slash_commands = self.setup_session_extras(&session_id, &cwd, &cfg).await;
 
         diag::info(
             session_id.0.as_ref(),
@@ -611,8 +601,7 @@ impl acp::Agent for NexNativeAgent {
                 cwd.display()
             ))
         })?;
-        let restored_memory = memory::recover_from_history(&arch.history)
-            .unwrap_or_default();
+        let restored_memory = memory::recover_from_history(&arch.history).unwrap_or_default();
         let session = NativeSession {
             cwd: cwd.clone(),
             path_env: self.inner.default_path_env.clone(),
@@ -670,9 +659,8 @@ impl acp::Agent for NexNativeAgent {
         // `raw_model_id` is the provider's native model name (no composite
         // prefix) and is what actually goes into the API request body.
         let model_id = session.handles.model_id.borrow().clone();
-        let Some((prov_base_url, prov_api_key, raw_model_id, supports_vision)) = cfg
-            .resolve_model(&model_id)
-            .map(|(p, m)| {
+        let Some((prov_base_url, prov_api_key, raw_model_id, supports_vision)) =
+            cfg.resolve_model(&model_id).map(|(p, m)| {
                 (
                     p.base_url.clone(),
                     p.api_key.clone(),
@@ -686,10 +674,7 @@ impl acp::Agent for NexNativeAgent {
                 &format!("未找到模型 {} 对应的供应商配置，请在设置中检查", model_id),
             )
             .await;
-            diag::error(
-                &session_key,
-                format!("model not found: {model_id}"),
-            );
+            diag::error(&session_key, format!("model not found: {model_id}"));
             self.inner
                 .sessions
                 .borrow_mut()
@@ -709,14 +694,11 @@ impl acp::Agent for NexNativeAgent {
                 bundled::ensure_bundled(&home);
             }
             let disabled = &cfg.disabled_skills;
-            let discovered = home::skills_dir()
-                .map(|root| {
-                    skills::discover(&root)
-                        .into_iter()
-                        .filter(|s| !disabled.iter().any(|d| d == &s.name))
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
+            let discovered =
+                skills::discover_for_cwd(Some(&session.cwd), home::skills_dir().as_deref())
+                    .into_iter()
+                    .filter(|s| !disabled.iter().any(|d| d == &s.name))
+                    .collect::<Vec<_>>();
             for block in [
                 skills::catalog_block(&discovered),
                 instructions::rules_block(&session.cwd),
@@ -736,11 +718,9 @@ impl acp::Agent for NexNativeAgent {
                 .memory
                 .borrow_mut()
                 .set_goal(memory::PLACEHOLDER_GOAL);
-            session
-                .history
-                .push(ChatMessage::assistant(memory::render(
-                    &session.memory.borrow(),
-                )));
+            session.history.push(ChatMessage::assistant(memory::render(
+                &session.memory.borrow(),
+            )));
         }
 
         // Build the multimodal user turn from the incoming prompt blocks
@@ -1719,10 +1699,8 @@ mod tests {
         tokio::task::LocalSet::new()
             .run_until(async {
                 let (client_end, agent_end) = tokio::io::duplex(64 * 1024);
-                let agent = NexNativeAgent::new(
-                    dir.clone(),
-                    std::env::var_os("PATH").unwrap_or_default(),
-                );
+                let agent =
+                    NexNativeAgent::new(dir.clone(), std::env::var_os("PATH").unwrap_or_default());
                 let (agent_read, agent_write) = tokio::io::split(agent_end);
                 let (agent_conn, agent_io) = acp::AgentSideConnection::new(
                     agent.clone(),
@@ -1798,10 +1776,7 @@ mod tests {
     );
     fn duplex_pair(config_path: PathBuf) -> DuplexPair {
         let (client_end, agent_end) = tokio::io::duplex(64 * 1024);
-        let agent = NexNativeAgent::new(
-            config_path,
-            std::env::var_os("PATH").unwrap_or_default(),
-        );
+        let agent = NexNativeAgent::new(config_path, std::env::var_os("PATH").unwrap_or_default());
         let (agent_read, agent_write) = tokio::io::split(agent_end);
         let (agent_conn, agent_io) = acp::AgentSideConnection::new(
             agent.clone(),
@@ -2094,7 +2069,9 @@ mod tests {
                     .cloned()
                     .unwrap_or_default();
                 assert!(
-                    meta_cmds.iter().any(|c| c.get("name").and_then(|n| n.as_str()) == Some("review")),
+                    meta_cmds
+                        .iter()
+                        .any(|c| c.get("name").and_then(|n| n.as_str()) == Some("review")),
                     "missing availableCommands in _meta: {:?}",
                     resp.meta
                 );

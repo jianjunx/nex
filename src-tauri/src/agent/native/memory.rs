@@ -622,10 +622,7 @@ mod tests {
             "同页补充规则：仅连续且编码相同的行才合并",
             Some("SettlementRelation/index".to_string())
         ));
-        assert_eq!(
-            m.goal,
-            vec!["同页补充规则：仅连续且编码相同的行才合并"]
-        );
+        assert_eq!(m.goal, vec!["同页补充规则：仅连续且编码相同的行才合并"]);
         assert_eq!(m.task_anchor.as_deref(), Some("SettlementRelation/index"));
         assert_eq!(m.active_todos, vec!["实现合并逻辑", "补测试"]);
     }

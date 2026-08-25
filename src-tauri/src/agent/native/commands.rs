@@ -36,10 +36,16 @@ pub fn discover(cwd: &Path) -> Vec<Command> {
 /// Discovers slash commands for a session, merging in installed skills so
 /// they appear in the Composer's `/` menu (Claude Code behaviour: skills are
 /// invokable as slash commands). Commands win name collisions with skills;
-/// disabled skills (config `disabled_skills`) are skipped. Result is sorted
-/// by name so the published catalog is byte-stable.
+/// project `.nex/skills` override same-name global skills; disabled skills
+/// (config `disabled_skills`) are skipped. Result is sorted by name so the
+/// published catalog is byte-stable.
 pub fn discover_with_skills(cwd: &Path, disabled_skills: &[String]) -> Vec<Command> {
-    discover_with_skills_in(cwd, super::home::commands_dir(), super::home::skills_dir(), disabled_skills)
+    discover_with_skills_in(
+        cwd,
+        super::home::commands_dir(),
+        super::home::skills_dir(),
+        disabled_skills,
+    )
 }
 
 /// `discover_with_skills` with injectable global dirs (tests).
@@ -53,25 +59,23 @@ pub fn discover_with_skills_in(
     for cmd in discover_in(cwd, global_commands) {
         by_name.insert(cmd.name.clone(), cmd);
     }
-    if let Some(root) = skills_root {
-        for skill in super::skills::discover(&root) {
-            if disabled_skills.iter().any(|d| d == &skill.name) {
-                continue;
-            }
-            if by_name.contains_key(&skill.name) {
-                continue;
-            }
-            let body = super::skills::load_body(&root, &skill.name).unwrap_or_default();
-            by_name.insert(
-                skill.name.clone(),
-                Command {
-                    name: skill.name.clone(),
-                    description: skill.description.clone(),
-                    argument_hint: None,
-                    body,
-                },
-            );
+    for skill in super::skills::discover_for_cwd(Some(cwd), skills_root.as_deref()) {
+        if disabled_skills.iter().any(|d| d == &skill.name) {
+            continue;
         }
+        if by_name.contains_key(&skill.name) {
+            continue;
+        }
+        let body = super::skills::load_body_from_dir(&skill.dir).unwrap_or_default();
+        by_name.insert(
+            skill.name.clone(),
+            Command {
+                name: skill.name.clone(),
+                description: skill.description.clone(),
+                argument_hint: None,
+                body,
+            },
+        );
     }
     let mut out: Vec<Command> = by_name.into_values().collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -328,5 +332,41 @@ mod tests {
         let tdd = cmds.iter().find(|c| c.name == "tdd").unwrap();
         assert_eq!(tdd.description, "TDD loop.");
         assert!(tdd.body.contains("RED GREEN REFACTOR"));
+    }
+
+    #[test]
+    fn discover_with_skills_project_skill_overrides_global_skill() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().join("proj");
+        std::fs::create_dir_all(cwd.join(".nex/commands")).unwrap();
+        write(
+            tmp.path(),
+            "skills/tdd/SKILL.md",
+            "---\nname: tdd\ndescription: global tdd\n---\nGLOBAL TDD",
+        );
+        write(
+            &cwd,
+            ".nex/skills/tdd/SKILL.md",
+            "---\nname: tdd\ndescription: project tdd\n---\nPROJECT TDD",
+        );
+        write(
+            &cwd,
+            ".nex/skills/local/SKILL.md",
+            "---\nname: local\ndescription: project-only\n---\nLOCAL BODY",
+        );
+
+        let cmds = discover_with_skills_in(
+            &cwd,
+            Some(tmp.path().join("commands")),
+            Some(tmp.path().join("skills")),
+            &[],
+        );
+        let names: Vec<&str> = cmds.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["local", "tdd"]);
+        let tdd = cmds.iter().find(|c| c.name == "tdd").unwrap();
+        assert_eq!(tdd.description, "project tdd");
+        assert!(tdd.body.contains("PROJECT TDD"));
+        let local = cmds.iter().find(|c| c.name == "local").unwrap();
+        assert!(local.body.contains("LOCAL BODY"));
     }
 }

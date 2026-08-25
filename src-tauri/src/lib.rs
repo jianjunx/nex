@@ -8,11 +8,11 @@ pub mod db;
 mod error;
 pub mod fs;
 pub mod git;
+pub mod graph;
 mod state;
 pub mod terminal;
 mod watcher;
 mod win_process;
-pub mod graph;
 
 use agent::AgentSessionManager;
 use db::Database;
@@ -215,9 +215,7 @@ pub fn run() {
         .run(|app, event| {
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::ExitRequested {
-                code: None,
-                api,
-                ..
+                code: None, api, ..
             } = event
             {
                 api.prevent_exit();

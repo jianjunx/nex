@@ -110,7 +110,10 @@ impl CustomStore {
             }),
             Err(_) => Vec::new(),
         };
-        Self { path, servers: Mutex::new(servers) }
+        Self {
+            path,
+            servers: Mutex::new(servers),
+        }
     }
 
     pub fn list(&self) -> Vec<CustomServer> {
@@ -118,7 +121,12 @@ impl CustomStore {
     }
 
     pub fn find(&self, id: &str) -> Option<CustomServer> {
-        self.servers.lock().unwrap().iter().find(|s| s.id == id).cloned()
+        self.servers
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|s| s.id == id)
+            .cloned()
     }
 
     /// Inserts or replaces (by id) a custom server, then persists.
@@ -194,10 +202,8 @@ impl AgentSessionManager {
 
         // PackageCache awaits `node_runtime.get()` only when an install is
         // actually required (cold cache), so the warm-up race is harmless.
-        let package_cache: Arc<dyn PackageResolver> = Arc::new(PackageCache::new(
-            app_data_dir,
-            node_runtime.clone(),
-        ));
+        let package_cache: Arc<dyn PackageResolver> =
+            Arc::new(PackageCache::new(app_data_dir, node_runtime.clone()));
 
         Self {
             registry: Arc::new(RegistryStore::new(app_data_dir)),
@@ -278,9 +284,10 @@ impl AgentSessionManager {
                 .await?
             }
             SessionTarget::Custom { id } => {
-                let server = self.custom.find(&id).ok_or_else(|| {
-                    NexError::Agent(format!("unknown custom server `{id}`"))
-                })?;
+                let server = self
+                    .custom
+                    .find(&id)
+                    .ok_or_else(|| NexError::Agent(format!("unknown custom server `{id}`")))?;
                 launch::resolve_custom(&server.command, server.env.clone(), cwd, &shell_env)?
             }
             SessionTarget::Native => unreachable!("native target handled above"),
@@ -344,10 +351,7 @@ impl AgentSessionManager {
 
     /// Build a `ServerDescriptor` from a `RegistryEntry`, filling the cached
     /// `installed_version` from the matching npm or binary cache.
-    fn registry_entry_to_descriptor(
-        &self,
-        e: &super::registry::RegistryEntry,
-    ) -> ServerDescriptor {
+    fn registry_entry_to_descriptor(&self, e: &super::registry::RegistryEntry) -> ServerDescriptor {
         let installed_version = if e.distribution.npx.is_some() {
             self.package_cache.newest_installed_version(&e.id)
         } else if e.distribution.binary.is_some() {
@@ -418,7 +422,11 @@ impl AgentSessionManager {
         self.acp.cancel(session_id).await
     }
 
-    pub fn respond_permission(&self, request_id: &str, option_id: Option<String>) -> Result<(), NexError> {
+    pub fn respond_permission(
+        &self,
+        request_id: &str,
+        option_id: Option<String>,
+    ) -> Result<(), NexError> {
         self.acp.respond_permission(request_id, option_id)
     }
 

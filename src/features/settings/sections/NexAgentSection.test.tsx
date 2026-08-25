@@ -19,6 +19,7 @@ const nativeAgentSetSkillEnabled = vi.fn();
 const nativeAgentDeleteSkill = vi.fn();
 const nativeAgentOpenSkillsDir = vi.fn();
 const nativeAgentOpenLogsDir = vi.fn();
+const nativeAgentSetProjectMcpEnabled = vi.fn();
 const refreshNativeAutoReview = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("../../../bridge/tauri", () => ({
@@ -34,6 +35,7 @@ vi.mock("../../../bridge/tauri", () => ({
   nativeAgentProbeReasoning: (...args: unknown[]) => nativeAgentProbeReasoning(...args),
   nativeAgentSetConfig: (...args: unknown[]) => nativeAgentSetConfig(...args),
   nativeAgentSetMcpEnabled: (...args: unknown[]) => nativeAgentSetMcpEnabled(...args),
+  nativeAgentSetProjectMcpEnabled: (...args: unknown[]) => nativeAgentSetProjectMcpEnabled(...args),
   nativeAgentSetSkillEnabled: (...args: unknown[]) => nativeAgentSetSkillEnabled(...args),
   nativeAgentUpsertMcp: (...args: unknown[]) => nativeAgentUpsertMcp(...args),
 }));
@@ -42,6 +44,17 @@ vi.mock("../../../stores/agent.store", () => ({
   useAgentStore: {
     getState: () => ({ refreshNativeAutoReview }),
   },
+}));
+
+let projectState = {
+  projects: [] as { id: string; path: string }[],
+  activeProjectId: null as string | null,
+};
+vi.mock("../../../stores/project.store", () => ({
+  useProjectStore: Object.assign(
+    (sel?: (s: typeof projectState) => unknown) => (sel ? sel(projectState) : projectState),
+    { getState: () => projectState },
+  ),
 }));
 
 import { NexAgentSection } from "./NexAgentSection";
@@ -63,6 +76,8 @@ const baseConfig: NativeAgentConfig = {
 describe("NexAgentSection auto-saving", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    projectState.projects = [];
+    projectState.activeProjectId = null;
     nativeAgentGetConfig.mockResolvedValue(structuredClone(baseConfig));
     nativeAgentSetConfig.mockResolvedValue(undefined);
     nativeAgentListMcp.mockResolvedValue([]);
@@ -254,6 +269,8 @@ const sampleSkill = {
 describe("NexAgentSection MCP and skills", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    projectState.projects = [];
+    projectState.activeProjectId = null;
     nativeAgentGetConfig.mockResolvedValue(structuredClone(baseConfig));
     nativeAgentSetConfig.mockResolvedValue(undefined);
     nativeAgentListMcp.mockResolvedValue([]);
@@ -261,6 +278,7 @@ describe("NexAgentSection MCP and skills", () => {
     nativeAgentProbeMcp.mockResolvedValue("connected:2 tools");
     nativeAgentUpsertMcp.mockResolvedValue(undefined);
     nativeAgentSetMcpEnabled.mockResolvedValue(undefined);
+    nativeAgentSetProjectMcpEnabled.mockResolvedValue(undefined);
     nativeAgentDeleteMcp.mockResolvedValue(undefined);
     nativeAgentSetSkillEnabled.mockResolvedValue(undefined);
     nativeAgentDeleteSkill.mockResolvedValue(undefined);
@@ -298,6 +316,7 @@ describe("NexAgentSection MCP and skills", () => {
     render(<NexAgentSection />);
 
     fireEvent.click(await screen.findByRole("button", { name: "MCP" }));
+    fireEvent.click(await screen.findByRole("button", { name: /项目级/ }));
     expect((await screen.findByText(/环境变量：LD_PRELOAD/)).textContent).toContain(
       "请求头：Authorization",
     );
@@ -377,11 +396,88 @@ describe("NexAgentSection MCP and skills", () => {
     await waitFor(() => expect(nativeAgentDeleteSkill).toHaveBeenCalledWith("my-skill"));
     await screen.findByText(/暂无技能/);
   });
+
+  it("lists project skills and opens the project skills directory", async () => {
+    projectState.projects = [{ id: "p1", path: "/tmp/proj" }];
+    projectState.activeProjectId = "p1";
+    nativeAgentListSkills.mockResolvedValue([
+      {
+        name: "repo-skill",
+        description: "project local",
+        enabled: true,
+        source: "project",
+      },
+    ]);
+    render(<NexAgentSection />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "技能" }));
+    await waitFor(() => expect(nativeAgentListSkills).toHaveBeenCalledWith("/tmp/proj"));
+    expect(screen.queryByText("repo-skill")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /项目级/ }));
+    await screen.findByText("repo-skill");
+    expect(screen.getByText("项目 .nex/skills（同名覆盖系统级）")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "删除 repo-skill" })).toBeNull();
+
+    const projectDirBtn = screen.getByRole("button", { name: "打开目录" });
+    expect((projectDirBtn as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(projectDirBtn);
+    await waitFor(() => expect(nativeAgentOpenSkillsDir).toHaveBeenCalledWith("/tmp/proj"));
+  });
+
+  it("keeps system-level and project-level skills on separate tabs", async () => {
+    projectState.projects = [{ id: "p1", path: "/tmp/proj" }];
+    projectState.activeProjectId = "p1";
+    nativeAgentListSkills.mockResolvedValue([
+      sampleSkill,
+      {
+        name: "repo-skill",
+        description: "project local",
+        enabled: true,
+        source: "project",
+      },
+    ]);
+    render(<NexAgentSection />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "技能" }));
+    await screen.findByText("my-skill");
+    expect(screen.getByText("用户")).toBeTruthy();
+    expect(screen.queryByText("repo-skill")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /项目级/ }));
+    await screen.findByText("repo-skill");
+    expect(screen.queryByText("my-skill")).toBeNull();
+  });
+
+  it("keeps system-level and project-level MCP servers on separate tabs", async () => {
+    nativeAgentListMcp.mockResolvedValue([
+      sampleMcp,
+      {
+        ...sampleMcp,
+        name: "repo-mcp",
+        source: "project",
+        enabled: false,
+      },
+    ]);
+    render(<NexAgentSection />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "MCP" }));
+    await screen.findByText("filesystem");
+    expect(screen.queryByText("repo-mcp")).toBeNull();
+    expect(screen.getByRole("button", { name: /添加 MCP/ })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /项目级/ }));
+    await screen.findByText("repo-mcp");
+    expect(screen.queryByText("filesystem")).toBeNull();
+    expect(screen.queryByRole("button", { name: /添加 MCP/ })).toBeNull();
+  });
 });
 
 describe("NexAgentSection diagnostics", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    projectState.projects = [];
+    projectState.activeProjectId = null;
     nativeAgentGetConfig.mockResolvedValue(structuredClone(baseConfig));
     nativeAgentSetConfig.mockResolvedValue(undefined);
     nativeAgentListMcp.mockResolvedValue([]);

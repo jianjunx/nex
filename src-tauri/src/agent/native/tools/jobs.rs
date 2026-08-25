@@ -185,7 +185,8 @@ impl JobTable {
                                 let excess = out.len() - MAX_JOB_OUTPUT_BYTES;
                                 out.drain(..excess);
                                 if !out.starts_with(JOB_OUTPUT_TRUNCATED) {
-                                    out.splice(0..0, JOB_OUTPUT_TRUNCATED.iter().copied()).count();
+                                    out.splice(0..0, JOB_OUTPUT_TRUNCATED.iter().copied())
+                                        .count();
                                 }
                             }
                         }
@@ -234,7 +235,10 @@ impl Tool for RunInBackground {
     }
     async fn execute(&self, args: serde_json::Value, ctx: &ToolCtx) -> Result<String, String> {
         let command = arg_str(&args, "command")?;
-        let id = ctx.jobs.borrow_mut().spawn(&command, &ctx.cwd, &ctx.path_env)?;
+        let id = ctx
+            .jobs
+            .borrow_mut()
+            .spawn(&command, &ctx.cwd, &ctx.path_env)?;
         Ok(format!(
             "{PARTIAL_MARKER} background job started, output is NOT in this transcript. \
 Use `bash_output(job_id=\"{id}\", offset=0)` to read.\nstarted job `{id}`: {command}"
@@ -299,7 +303,10 @@ impl Tool for BashOutput {
             if tagged.starts_with("(no new output)") {
                 tagged
             } else {
-                tagged.insert_str(0, &format!("{PARTIAL_MARKER} bash_output slice ({status})\n"));
+                tagged.insert_str(
+                    0,
+                    &format!("{PARTIAL_MARKER} bash_output slice ({status})\n"),
+                );
                 tagged
             }
         };

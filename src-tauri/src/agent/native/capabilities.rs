@@ -203,7 +203,9 @@ fn reasoning_levels_from_api(value: &serde_json::Value) -> Option<Vec<String>> {
             .get("mandatory")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        let mut levels = match obj.get("supported_efforts").or_else(|| obj.get("supportedEfforts"))
+        let mut levels = match obj
+            .get("supported_efforts")
+            .or_else(|| obj.get("supportedEfforts"))
         {
             // null → gateway accepts the full effort set
             Some(v) if v.is_null() => KNOWN_EFFORTS

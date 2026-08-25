@@ -170,7 +170,10 @@ fn atomic_replace(tmp: &Path, path: &Path) -> std::io::Result<()> {
 fn sync_parent_dir(parent: &Path) {
     if let Ok(dir) = std::fs::File::open(parent) {
         if let Err(e) = dir.sync_all() {
-            log::warn!("archive directory sync failed for {}: {e}", parent.display());
+            log::warn!(
+                "archive directory sync failed for {}: {e}",
+                parent.display()
+            );
         }
     }
 }
@@ -260,7 +263,11 @@ mod tests {
             reasoning_content: None,
         }];
         strip_images_in_place(&mut history);
-        let text = history[0].content.as_ref().and_then(Content::as_text).unwrap();
+        let text = history[0]
+            .content
+            .as_ref()
+            .and_then(Content::as_text)
+            .unwrap();
         assert!(text.contains("不会保留"));
         assert!(!text.contains("VERY-LARGE-PAYLOAD"));
     }
@@ -283,11 +290,14 @@ mod tests {
         };
         save_at(&path, &first).unwrap();
         save_at(&path, &second).unwrap();
-        let loaded: SessionArchive = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let loaded: SessionArchive =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(loaded.model_id, "model-b");
         assert_eq!(loaded.cwd, PathBuf::from("/tmp/two"));
-        assert!(std::fs::read_dir(tmp.path())
+        assert!(std::fs::read_dir(tmp.path()).unwrap().all(|entry| !entry
             .unwrap()
-            .all(|entry| !entry.unwrap().file_name().to_string_lossy().ends_with(".tmp")));
+            .file_name()
+            .to_string_lossy()
+            .ends_with(".tmp")));
     }
 }

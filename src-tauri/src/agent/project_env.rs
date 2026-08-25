@@ -16,9 +16,9 @@ use std::process::Stdio;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use super::shell_env::ShellEnv;
 #[cfg(not(windows))]
 use super::shell_env::parse_env_nul;
+use super::shell_env::ShellEnv;
 
 const PROJECT_ENV_TIMEOUT: Duration = Duration::from_secs(8);
 
@@ -45,11 +45,7 @@ impl ProjectEnvCache {
 
     /// Full env map for `cwd` (cached). On capture failure returns the
     /// login-shell snapshot so callers still get *something* useful.
-    pub async fn env_for_cwd(
-        &self,
-        cwd: &str,
-        fallback: &ShellEnv,
-    ) -> HashMap<String, String> {
+    pub async fn env_for_cwd(&self, cwd: &str, fallback: &ShellEnv) -> HashMap<String, String> {
         let key = normalize_cwd_key(cwd);
         if let Some(hit) = self.cache.lock().unwrap().get(&key).cloned() {
             return hit;
@@ -69,10 +65,7 @@ impl ProjectEnvCache {
             snap
         };
 
-        self.cache
-            .lock()
-            .unwrap()
-            .insert(key, resolved.clone());
+        self.cache.lock().unwrap().insert(key, resolved.clone());
         resolved
     }
 }
@@ -176,10 +169,7 @@ mod tests {
     #[test]
     fn shell_single_quote_escapes_embedded_quotes() {
         assert_eq!(shell_single_quote("/tmp/foo"), "'/tmp/foo'");
-        assert_eq!(
-            shell_single_quote("/tmp/it's"),
-            "'/tmp/it'\\''s'"
-        );
+        assert_eq!(shell_single_quote("/tmp/it's"), "'/tmp/it'\\''s'");
     }
 
     #[test]

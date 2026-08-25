@@ -74,9 +74,11 @@ impl Store {
     fn migrate(&self) -> Result<(), String> {
         let ver: Option<String> = self
             .conn
-            .query_row("SELECT value FROM meta WHERE key = 'schema_version'", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'schema_version'",
+                [],
+                |r| r.get(0),
+            )
             .optional()
             .map_err(|e| e.to_string())?;
         match ver {
@@ -125,7 +127,13 @@ impl Store {
             .query_row(
                 "SELECT mtime_ms, size, hash FROM files WHERE path = ?1",
                 [path],
-                |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64, r.get::<_, i64>(2)? as u64)),
+                |r| {
+                    Ok((
+                        r.get::<_, i64>(0)? as u64,
+                        r.get::<_, i64>(1)? as u64,
+                        r.get::<_, i64>(2)? as u64,
+                    ))
+                },
             )
             .optional()
             .ok()
@@ -166,7 +174,10 @@ impl Store {
         hash: u64,
         extracted: &ExtractedFile,
     ) -> Result<(), String> {
-        let tx = self.conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| e.to_string())?;
         tx.execute("DELETE FROM facts WHERE src_file = ?1", [path])
             .map_err(|e| e.to_string())?;
         tx.execute("DELETE FROM nodes WHERE file = ?1", [path])

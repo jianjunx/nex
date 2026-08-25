@@ -19,7 +19,11 @@ pub fn git_diff(project_path: String, file: String, staged: bool) -> Result<Stri
 }
 
 #[tauri::command]
-pub fn git_diff_contents(project_path: String, file: String, staged: bool) -> Result<DiffContents, NexError> {
+pub fn git_diff_contents(
+    project_path: String,
+    file: String,
+    staged: bool,
+) -> Result<DiffContents, NexError> {
     repository::get_diff_contents(Path::new(&project_path), &file, staged)
 }
 
@@ -30,9 +34,11 @@ pub fn git_commit_patch(project_path: String, hash: String) -> Result<String, Ne
 
 #[tauri::command]
 pub async fn git_log(project_path: String, limit: usize) -> Result<Vec<CommitInfo>, NexError> {
-    tauri::async_runtime::spawn_blocking(move || repository::get_log(Path::new(&project_path), limit))
-        .await
-        .map_err(|e| NexError::Git(format!("git_log join: {e}")))?
+    tauri::async_runtime::spawn_blocking(move || {
+        repository::get_log(Path::new(&project_path), limit)
+    })
+    .await
+    .map_err(|e| NexError::Git(format!("git_log join: {e}")))?
 }
 
 #[tauri::command]
@@ -52,9 +58,11 @@ pub fn git_commit(project_path: String, message: String) -> Result<String, NexEr
 
 #[tauri::command]
 pub async fn git_list_branches(project_path: String) -> Result<Vec<BranchInfo>, NexError> {
-    tauri::async_runtime::spawn_blocking(move || repository::list_branches(Path::new(&project_path)))
-        .await
-        .map_err(|e| NexError::Git(format!("git_list_branches join: {e}")))?
+    tauri::async_runtime::spawn_blocking(move || {
+        repository::list_branches(Path::new(&project_path))
+    })
+    .await
+    .map_err(|e| NexError::Git(format!("git_list_branches join: {e}")))?
 }
 
 #[tauri::command]

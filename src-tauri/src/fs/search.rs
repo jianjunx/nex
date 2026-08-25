@@ -1,8 +1,8 @@
+use crate::error::NexError;
+use crate::fs::write::write_file;
 use ignore::WalkBuilder;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use crate::error::NexError;
-use crate::fs::write::write_file;
 
 /// One search hit. `line` is `None` for file-name matches and `Some(n)`
 /// (1-based) for content matches; `text` is the matched line (trimmed,
@@ -150,7 +150,9 @@ pub fn search(
             if path == project_path {
                 continue;
             }
-            let Ok(metadata) = entry.metadata() else { continue };
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
             if !metadata.is_file() {
                 continue;
             }
@@ -188,11 +190,17 @@ pub fn search(
         if path == project_path {
             continue;
         }
-        let Ok(metadata) = entry.metadata() else { continue };
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
         if !metadata.is_file() {
             continue;
         }
-        let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
         let path_str = path.to_string_lossy().to_string();
         let relative_path = path
             .strip_prefix(project_path)
@@ -213,7 +221,12 @@ pub fn search(
                 ));
             }
         } else if re.is_match(&name) {
-            results.push(SearchMatch { path: path_str, name, line: None, text: String::new() });
+            results.push(SearchMatch {
+                path: path_str,
+                name,
+                line: None,
+                text: String::new(),
+            });
             continue;
         }
 
@@ -221,7 +234,9 @@ pub fn search(
             continue;
         }
         // Non-UTF-8 (binary) files fail to read as text and are skipped.
-        let Ok(content) = std::fs::read_to_string(path) else { continue };
+        let Ok(content) = std::fs::read_to_string(path) else {
+            continue;
+        };
         for (idx, line) in content.lines().enumerate() {
             if (!fuzzy_name_search && results.len() >= MAX_RESULTS)
                 || (fuzzy_name_search && content_hits.len() >= MAX_RESULTS)
@@ -302,7 +317,9 @@ fn replace_candidates(project_path: &Path) -> Vec<std::path::PathBuf> {
         if path == project_path {
             continue;
         }
-        let Ok(metadata) = entry.metadata() else { continue };
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
         if !metadata.is_file() || metadata.len() > MAX_CONTENT_FILE_SIZE {
             continue;
         }
@@ -320,7 +337,11 @@ pub fn search_replace(
 ) -> Result<ReplacePreview, NexError> {
     let _ = replacement; // preview only counts; the text matters at apply time
     if query.is_empty() {
-        return Ok(ReplacePreview { files: Vec::new(), total: 0, truncated: false });
+        return Ok(ReplacePreview {
+            files: Vec::new(),
+            total: 0,
+            truncated: false,
+        });
     }
     let opts = options.unwrap_or_default();
     let re = compile_pattern(query, &opts)?;
@@ -330,7 +351,9 @@ pub fn search_replace(
 
     for path in replace_candidates(project_path) {
         let budget = MAX_RESULTS - total; // > 0 while the loop runs
-        let Ok(content) = std::fs::read_to_string(&path) else { continue };
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
         let full = re.find_iter(&content).count();
         let add = full.min(budget);
         if full > add {
@@ -349,7 +372,11 @@ pub fn search_replace(
         }
     }
 
-    Ok(ReplacePreview { files, total, truncated })
+    Ok(ReplacePreview {
+        files,
+        total,
+        truncated,
+    })
 }
 
 /// Write the replace to disk via the atomic writer in fs/write.rs.
@@ -373,7 +400,10 @@ pub fn apply_replace(
     limit_per_file: Option<usize>,
 ) -> Result<ReplaceResult, NexError> {
     if query.is_empty() {
-        return Ok(ReplaceResult { files_changed: 0, replacements: 0 });
+        return Ok(ReplaceResult {
+            files_changed: 0,
+            replacements: 0,
+        });
     }
     let opts = options.unwrap_or_default();
     let re = compile_pattern(query, &opts)?;
@@ -393,14 +423,18 @@ pub fn apply_replace(
                 continue;
             }
         }
-        let Ok(content) = std::fs::read_to_string(&path) else { continue };
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
         let cap = per_file.min(budget);
         let mut remaining = cap;
         let mut count = 0usize;
         let replaced = re.replace_all(&content, |caps: &regex::Captures| {
             if remaining == 0 {
                 // Beyond the cap: keep the original match text verbatim.
-                return caps.get(0).map_or(String::new(), |m| m.as_str().to_string());
+                return caps
+                    .get(0)
+                    .map_or(String::new(), |m| m.as_str().to_string());
             }
             remaining -= 1;
             count += 1;
@@ -432,5 +466,8 @@ pub fn apply_replace(
         )));
     }
 
-    Ok(ReplaceResult { files_changed, replacements })
+    Ok(ReplaceResult {
+        files_changed,
+        replacements,
+    })
 }

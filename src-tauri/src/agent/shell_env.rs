@@ -219,7 +219,10 @@ async fn load_shell_env_windows() -> HashMap<String, String> {
 /// only exists there.
 #[cfg_attr(
     not(windows),
-    allow(dead_code, reason = "Windows-only at runtime; cross-platform tests still call it")
+    allow(
+        dead_code,
+        reason = "Windows-only at runtime; cross-platform tests still call it"
+    )
 )]
 pub(crate) fn parse_env_cmd_windows(bytes: &[u8]) -> HashMap<String, String> {
     let mut words: Vec<u16> = Vec::with_capacity(bytes.len() / 2);
@@ -266,10 +269,7 @@ pub fn parse_env_nul(bytes: &[u8]) -> HashMap<String, String> {
         if val.contains(&b'\n') || val.contains(&0) {
             continue;
         }
-        if let (Ok(k), Ok(v)) = (
-            std::str::from_utf8(key),
-            std::str::from_utf8(val),
-        ) {
+        if let (Ok(k), Ok(v)) = (std::str::from_utf8(key), std::str::from_utf8(val)) {
             out.insert(k.to_string(), v.to_string());
         }
     }
@@ -403,7 +403,7 @@ mod tests {
             "PATHEXT=.COM;.EXE;.BAT;.CMD;.VBS",
             "USERPROFILE=C:\\Users\\alice",
             "EMPTY=",
-            "=invalid-key-skipped",  // empty key → skip
+            "=invalid-key-skipped",    // empty key → skip
             "1HOME=starts-with-digit", // POSIX violation → skip
         ]);
         let env = parse_env_cmd_windows(&bytes);
@@ -415,7 +415,10 @@ mod tests {
             env.get("PATHEXT").map(String::as_str),
             Some(".COM;.EXE;.BAT;.CMD;.VBS")
         );
-        assert_eq!(env.get("USERPROFILE").map(String::as_str), Some("C:\\Users\\alice"));
+        assert_eq!(
+            env.get("USERPROFILE").map(String::as_str),
+            Some("C:\\Users\\alice")
+        );
         assert_eq!(env.get("EMPTY").map(String::as_str), Some(""));
         assert!(!env.contains_key("1HOME"));
     }

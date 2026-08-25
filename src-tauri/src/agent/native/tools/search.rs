@@ -3,7 +3,9 @@
 
 use ignore::WalkBuilder;
 
-use super::{arg_str, arg_str_opt, arg_usize, resolve_within, truncate_output, Tool, ToolCtx, PARTIAL_MARKER};
+use super::{
+    arg_str, arg_str_opt, arg_usize, resolve_within, truncate_output, Tool, ToolCtx, PARTIAL_MARKER,
+};
 use agent_client_protocol as acp;
 
 /// Cap on emitted matches/entries.
@@ -289,7 +291,10 @@ mod tests {
             .await
             .unwrap();
         assert!(out.contains("small.txt"));
-        assert!(out.contains("skipped"), "oversized file must be reported: {out}");
+        assert!(
+            out.contains("skipped"),
+            "oversized file must be reported: {out}"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -304,8 +309,14 @@ mod tests {
             .unwrap();
         // Path separator differs by platform (`src/main.rs` vs `src\main.rs`),
         // so assert on the file name rather than a hard-coded separator.
-        assert!(out.contains("main.rs"), "glob must list the .rs file: {out}");
-        assert!(!out.contains("README.md"), "glob must not list non-matches: {out}");
+        assert!(
+            out.contains("main.rs"),
+            "glob must list the .rs file: {out}"
+        );
+        assert!(
+            !out.contains("README.md"),
+            "glob must not list non-matches: {out}"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

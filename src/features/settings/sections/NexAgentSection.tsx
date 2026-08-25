@@ -42,6 +42,7 @@ import { SECTION_HEADER } from "./_shared";
 import { DEFAULT_MCP_JSON, parseMcpServersJson } from "./mcpJson";
 
 type SubTab = "providers" | "mcp" | "skills" | "advanced";
+type ScopeTab = "system" | "project";
 
 function mcpStatusKey(source: NativeMcpServerInfo["source"], name: string): string {
   return `${source}:${name}`;
@@ -196,6 +197,49 @@ const SUB_TABS: { id: SubTab; label: string }[] = [
   { id: "advanced", label: "高级" },
 ];
 
+const SCOPE_TABS: { id: ScopeTab; label: string }[] = [
+  { id: "system", label: "系统级" },
+  { id: "project", label: "项目级" },
+];
+
+function scopeTabClass(active: boolean): string {
+  return `flex-1 rounded-[var(--radius-sm)] px-2 py-1 text-xs transition-colors ${
+    active
+      ? "bg-[var(--accent)]/15 text-[var(--accent)]"
+      : "text-[var(--text-secondary)] hover:bg-[var(--overlay-hover)]"
+  }`;
+}
+
+function ScopeTabBar({
+  value,
+  onChange,
+  systemCount,
+  projectCount,
+}: {
+  value: ScopeTab;
+  onChange: (next: ScopeTab) => void;
+  systemCount: number;
+  projectCount: number;
+}) {
+  return (
+    <div className="flex gap-1 rounded-[var(--radius-md)] border border-[color:var(--border-subtle)] p-0.5">
+      {SCOPE_TABS.map((t) => (
+        <button
+          key={t.id}
+          type="button"
+          onClick={() => onChange(t.id)}
+          className={scopeTabClass(value === t.id)}
+        >
+          {t.label}
+          <span className="ml-1 tabular-nums text-[10px] opacity-70">
+            {t.id === "system" ? systemCount : projectCount}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /**
  * Settings panel for the built-in in-process Nex native agent.
  */
@@ -210,6 +254,7 @@ export function NexAgentSection() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<SubTab>("providers");
+  const [scope, setScope] = useState<ScopeTab>("system");
   const [editor, setEditor] = useState<{ mode: "add" | "edit"; provider: NativeAgentProvider } | null>(null);
 
   const [mcpList, setMcpList] = useState<NativeMcpServerInfo[]>([]);
@@ -239,7 +284,10 @@ export function NexAgentSection() {
 
   const reloadExtras = useCallback(async () => {
     try {
-      const [m, s] = await Promise.all([nativeAgentListMcp(activeProjectPath), nativeAgentListSkills()]);
+      const [m, s] = await Promise.all([
+        nativeAgentListMcp(activeProjectPath),
+        nativeAgentListSkills(activeProjectPath),
+      ]);
       setMcpList(m);
       setSkills(s);
       return m;
@@ -382,6 +430,9 @@ export function NexAgentSection() {
         <McpPane
           list={mcpList}
           status={mcpStatus}
+          projectPath={activeProjectPath}
+          scope={scope}
+          onScopeChange={setScope}
           onRefresh={() => {
             void reloadExtras().then((m) => probeEnabledMcps(m));
           }}
@@ -420,6 +471,9 @@ export function NexAgentSection() {
       {tab === "skills" && (
         <SkillsPane
           list={skills}
+          projectPath={activeProjectPath}
+          scope={scope}
+          onScopeChange={setScope}
           onRefresh={() => void reloadExtras()}
           onToggle={async (name, enabled) => {
             await nativeAgentSetSkillEnabled(name, enabled);
@@ -429,8 +483,8 @@ export function NexAgentSection() {
             await nativeAgentDeleteSkill(name);
             await reloadExtras();
           }}
-          onOpenDir={async () => {
-            await nativeAgentOpenSkillsDir();
+          onOpenDir={async (cwd) => {
+            await nativeAgentOpenSkillsDir(cwd);
             await reloadExtras();
           }}
         />
@@ -1101,6 +1155,9 @@ function mcpStatusLabel(raw: string): string {
 function McpPane({
   list,
   status,
+  projectPath,
+  scope,
+  onScopeChange,
   onRefresh,
   onProbe,
   onToggle,
@@ -1109,24 +1166,48 @@ function McpPane({
 }: {
   list: NativeMcpServerInfo[];
   status: Record<string, string>;
+  projectPath: string | null;
+  scope: ScopeTab;
+  onScopeChange: (next: ScopeTab) => void;
   onRefresh: () => void;
   onProbe: (source: NativeMcpServerInfo["source"], name: string) => void;
   onToggle: (source: NativeMcpServerInfo["source"], name: string, enabled: boolean) => Promise<void>;
   onDelete: (source: NativeMcpServerInfo["source"], name: string) => Promise<void>;
   onAdd: () => void;
 }) {
+  const systemList = list.filter((s) => s.source !== "project");
+  const projectList = list.filter((s) => s.source === "project");
+  const visible = scope === "system" ? systemList : projectList;
+  const projectScope = scope === "project";
+
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-xs text-[var(--text-tertiary)]">全局与当前项目的 MCP 配置</p>
+      <ScopeTabBar
+        value={scope}
+        onChange={onScopeChange}
+        systemCount={systemList.length}
+        projectCount={projectList.length}
+      />
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs text-[var(--text-tertiary)]">
+          {projectScope ? "项目 .nex/mcp.json" : "全局 ~/.nex/mcp.json"}
+        </p>
         <Button size="sm" variant="ghost" onClick={onRefresh}>
           <RefreshCw size={12} /> 刷新
         </Button>
       </div>
-      {list.length === 0 && (
+      {projectScope && !projectPath && (
+        <p className="text-sm text-[var(--text-tertiary)]">请先打开项目，以查看项目级 MCP</p>
+      )}
+      {projectScope && projectPath && visible.length === 0 && (
+        <p className="text-sm text-[var(--text-tertiary)]">
+          当前项目尚未配置 MCP 服务器。在仓库的 .nex/mcp.json 中添加后，可在此批准并探测。
+        </p>
+      )}
+      {!projectScope && visible.length === 0 && (
         <p className="text-sm text-[var(--text-tertiary)]">尚未配置 MCP 服务器</p>
       )}
-      {list.map((s) => {
+      {visible.map((s) => {
         const projectServer = s.source === "project";
         const envKeys = Object.keys(s.env).sort();
         const headerKeys = Object.keys(s.headers).sort();
@@ -1146,9 +1227,6 @@ function McpPane({
           >
             <div className="min-w-0">
               <div className="truncate text-sm font-medium">{s.name}</div>
-              <div className="truncate text-[10px] text-[var(--text-tertiary)]">
-                {projectServer ? "项目 .nex/mcp.json" : "全局 ~/.nex/mcp.json"}
-              </div>
               <div className="truncate text-xs text-[var(--text-tertiary)]">
                 {s.command ?? s.url ?? "—"}
                 {s.args?.length ? ` ${s.args.join(" ")}` : ""}
@@ -1208,9 +1286,11 @@ function McpPane({
           </div>
         );
       })}
-      <Button size="sm" variant="outline" onClick={onAdd}>
-        <Plus size={14} /> 添加 MCP
-      </Button>
+      {!projectScope && (
+        <Button size="sm" variant="outline" onClick={onAdd}>
+          <Plus size={14} /> 添加 MCP
+        </Button>
+      )}
     </div>
   );
 }
@@ -1265,46 +1345,99 @@ function McpEditorDialog({
   );
 }
 
+function skillSourceLabel(source: NativeSkillInfo["source"]): string {
+  if (source === "builtin") return "内置";
+  if (source === "project") return "项目";
+  return "用户";
+}
+
 function SkillsPane({
   list,
+  projectPath,
+  scope,
+  onScopeChange,
   onRefresh,
   onToggle,
   onDelete,
   onOpenDir,
 }: {
   list: NativeSkillInfo[];
+  projectPath: string | null;
+  scope: ScopeTab;
+  onScopeChange: (next: ScopeTab) => void;
   onRefresh: () => void;
   onToggle: (name: string, enabled: boolean) => Promise<void>;
   onDelete: (name: string) => Promise<void>;
-  onOpenDir: () => Promise<void>;
+  onOpenDir: (cwd?: string | null) => Promise<void>;
 }) {
+  const systemList = list.filter((sk) => sk.source !== "project");
+  const projectList = list.filter((sk) => sk.source === "project");
+  const visible = scope === "system" ? systemList : projectList;
+  const projectScope = scope === "project";
+
   return (
     <div className="space-y-3">
+      <ScopeTabBar
+        value={scope}
+        onChange={onScopeChange}
+        systemCount={systemList.length}
+        projectCount={projectList.length}
+      />
       <div className="flex items-center justify-between gap-2">
-        <p className="text-xs text-[var(--text-tertiary)]">全局 ~/.nex/skills</p>
-        <div className="flex gap-1">
+        <p className="text-xs text-[var(--text-tertiary)]">
+          {projectScope ? "项目 .nex/skills（同名覆盖系统级）" : "全局 ~/.nex/skills"}
+        </p>
+        <div className="flex flex-wrap justify-end gap-1">
           <Button size="sm" variant="ghost" onClick={onRefresh}>
             <RefreshCw size={12} /> 刷新
           </Button>
-          <Button size="sm" variant="outline" onClick={() => void onOpenDir()}>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={projectScope && !projectPath}
+            title={
+              projectScope
+                ? projectPath
+                  ? "打开项目 .nex/skills"
+                  : "请先打开项目"
+                : "打开全局 ~/.nex/skills"
+            }
+            onClick={() => {
+              if (projectScope) {
+                if (projectPath) void onOpenDir(projectPath);
+                return;
+              }
+              void onOpenDir();
+            }}
+          >
             <FolderOpen size={12} /> 打开目录
           </Button>
         </div>
       </div>
-      {list.length === 0 && (
+      {projectScope && !projectPath && (
+        <p className="text-sm text-[var(--text-tertiary)]">请先打开项目，以查看项目级技能</p>
+      )}
+      {projectScope && projectPath && visible.length === 0 && (
+        <p className="text-sm text-[var(--text-tertiary)]">
+          当前项目暂无技能（可打开目录添加 SKILL.md）
+        </p>
+      )}
+      {!projectScope && visible.length === 0 && (
         <p className="text-sm text-[var(--text-tertiary)]">暂无技能（可打开目录添加 SKILL.md）</p>
       )}
-      {list.map((sk) => (
+      {visible.map((sk) => (
         <div
-          key={sk.name}
+          key={`${sk.source}:${sk.name}`}
           className="flex items-start justify-between gap-2 rounded-[var(--radius-md)] border border-[color:var(--border-subtle)] px-3 py-2"
         >
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
               <span className="truncate text-sm font-medium">{sk.name}</span>
-              <span className="shrink-0 text-[10px] text-[var(--text-tertiary)]">
-                {sk.source === "builtin" ? "内置" : "用户"}
-              </span>
+              {!projectScope && (
+                <span className="shrink-0 text-[10px] text-[var(--text-tertiary)]">
+                  {skillSourceLabel(sk.source)}
+                </span>
+              )}
             </div>
             {sk.description && (
               <p className="mt-0.5 line-clamp-2 text-xs text-[var(--text-tertiary)]">{sk.description}</p>
@@ -1317,7 +1450,7 @@ function SkillsPane({
               onCheckedChange={(v) => void onToggle(sk.name, v)}
               aria-label={`启用 ${sk.name}`}
             />
-            {sk.source !== "builtin" && (
+            {sk.source === "user" && (
               <Button
                 size="icon-xs"
                 variant="ghost"

@@ -39,7 +39,9 @@ impl Default for TerminalManager {
 
 impl TerminalManager {
     pub fn new() -> Self {
-        Self { sessions: Arc::new(Mutex::new(Vec::new())) }
+        Self {
+            sessions: Arc::new(Mutex::new(Vec::new())),
+        }
     }
 
     /// Create a PTY session in `cwd`.
@@ -209,8 +211,7 @@ impl TerminalManager {
                                         // Truly invalid bytes: emit the
                                         // replacement char(s) and skip them.
                                         Some(len) => {
-                                            let lossy =
-                                                String::from_utf8_lossy(&pending[..len]);
+                                            let lossy = String::from_utf8_lossy(&pending[..len]);
                                             push_out(&lossy);
                                             pending.drain(..len);
                                             continue;
@@ -242,7 +243,9 @@ impl TerminalManager {
             // Ignore emit errors — the window may already be gone.
             let _ = app_clone.emit(
                 TERMINAL_EXITED_EVENT,
-                TerminalExitedPayload { terminal_id: sid.clone() },
+                TerminalExitedPayload {
+                    terminal_id: sid.clone(),
+                },
             );
             // Reap the dead session so the list doesn't grow forever with
             // entries whose shell already exited naturally.
@@ -277,7 +280,12 @@ impl TerminalManager {
             .master
             .lock()
             .unwrap()
-            .resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+            .resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
             .map_err(|e| NexError::Terminal(e.to_string()))?;
         Ok(())
     }
@@ -288,7 +296,10 @@ impl TerminalManager {
         // resize for every other terminal.
         let session = {
             let mut sessions = self.sessions.lock().unwrap();
-            sessions.iter().position(|s| s.id == id).map(|pos| sessions.remove(pos))
+            sessions
+                .iter()
+                .position(|s| s.id == id)
+                .map(|pos| sessions.remove(pos))
         };
         if let Some(session) = session {
             // Terminate the child so the shell process isn't leaked; the

@@ -395,7 +395,10 @@ mod tests {
         };
         let tmp = tempfile::tempdir().unwrap();
         let outcome = enforce(&mut msgs, budget, tmp.path());
-        assert_eq!(compact::decide(outcome.initial_tokens, budget.model_window), compact::CompactLevel::Snip);
+        assert_eq!(
+            compact::decide(outcome.initial_tokens, budget.model_window),
+            compact::CompactLevel::Snip
+        );
         assert!(outcome.passes >= 1);
         assert!(outcome.total_snipped > 0);
         assert!(outcome.final_tokens < outcome.initial_tokens);
@@ -408,7 +411,10 @@ mod tests {
         let mut msgs: Vec<ChatMessage> = vec![ChatMessage::system("sys")];
         for i in 0..10 {
             msgs.push(ChatMessage::user(format!("user {i} {}", "u".repeat(200))));
-            msgs.push(ChatMessage::assistant(format!("assistant {i} {}", "a".repeat(200))));
+            msgs.push(ChatMessage::assistant(format!(
+                "assistant {i} {}",
+                "a".repeat(200)
+            )));
             msgs.push(ChatMessage::tool_result(format!("t{i}"), &big));
         }
         let used = compact::estimate_tokens(&msgs);
@@ -420,7 +426,10 @@ mod tests {
         };
         let tmp = tempfile::tempdir().unwrap();
         let outcome = enforce(&mut msgs, budget, tmp.path());
-        assert_eq!(compact::decide(outcome.initial_tokens, budget.model_window), compact::CompactLevel::Compact);
+        assert_eq!(
+            compact::decide(outcome.initial_tokens, budget.model_window),
+            compact::CompactLevel::Compact
+        );
         assert!(outcome.passes >= 1);
         assert!(outcome.total_folded > 0 || outcome.total_snipped > 0);
         assert!(outcome.final_tokens < outcome.initial_tokens);
@@ -433,7 +442,10 @@ mod tests {
         let mut msgs: Vec<ChatMessage> = vec![ChatMessage::system("sys")];
         for i in 0..12 {
             msgs.push(ChatMessage::user(format!("user {i} {}", "u".repeat(200))));
-            msgs.push(ChatMessage::assistant(format!("assistant {i} {}", "a".repeat(200))));
+            msgs.push(ChatMessage::assistant(format!(
+                "assistant {i} {}",
+                "a".repeat(200)
+            )));
             msgs.push(ChatMessage::tool_result(format!("t{i}"), &big));
         }
         let used = compact::estimate_tokens(&msgs);
@@ -445,7 +457,10 @@ mod tests {
         };
         let tmp = tempfile::tempdir().unwrap();
         let outcome = enforce(&mut msgs, budget, tmp.path());
-        assert_eq!(compact::decide(outcome.initial_tokens, budget.model_window), compact::CompactLevel::Force);
+        assert_eq!(
+            compact::decide(outcome.initial_tokens, budget.model_window),
+            compact::CompactLevel::Force
+        );
         assert!(outcome.passes >= 1);
         assert!(outcome.total_folded > 0 || outcome.total_snipped > 0);
         assert!(outcome.final_tokens < outcome.initial_tokens);
@@ -465,7 +480,10 @@ mod tests {
         };
         let tmp = tempfile::tempdir().unwrap();
         let outcome = enforce(&mut msgs, budget, tmp.path());
-        assert_eq!(compact::decide(outcome.initial_tokens, budget.model_window), compact::CompactLevel::None);
+        assert_eq!(
+            compact::decide(outcome.initial_tokens, budget.model_window),
+            compact::CompactLevel::None
+        );
         assert_eq!(outcome.passes, 0);
         assert_eq!(outcome.final_tokens, outcome.initial_tokens);
     }

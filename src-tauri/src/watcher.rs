@@ -98,34 +98,37 @@ impl WatcherManager {
         let mut debouncer = new_debouncer(
             Duration::from_millis(500),
             None,
-            move |result: DebounceEventResult| {
-                match result {
-                    Ok(events) => {
-                        let paths: Vec<String> = events
-                            .iter()
-                            .flat_map(|e| e.event.paths.iter())
-                            .map(|p| p.to_string_lossy().into_owned())
-                            .collect();
-                        let paths = user_facing_paths(&paths);
-                        if paths.is_empty() {
-                            return;
-                        }
-                        let _ = app.emit(
-                            FS_CHANGED_EVENT,
-                            FsChangedPayload { project_path: emit_path.clone(), paths: paths.clone() },
-                        );
-                        let _ = app.emit(
-                            GIT_STATUS_CHANGED_EVENT,
-                            GitStatusChangedPayload { project_path: emit_path.clone() },
-                        );
-                        for listener in listeners.lock().unwrap().iter() {
-                            listener(&emit_path, &paths);
-                        }
+            move |result: DebounceEventResult| match result {
+                Ok(events) => {
+                    let paths: Vec<String> = events
+                        .iter()
+                        .flat_map(|e| e.event.paths.iter())
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .collect();
+                    let paths = user_facing_paths(&paths);
+                    if paths.is_empty() {
+                        return;
                     }
-                    Err(errors) => {
-                        for error in errors {
-                            log::error!("fs watcher error: {error}");
-                        }
+                    let _ = app.emit(
+                        FS_CHANGED_EVENT,
+                        FsChangedPayload {
+                            project_path: emit_path.clone(),
+                            paths: paths.clone(),
+                        },
+                    );
+                    let _ = app.emit(
+                        GIT_STATUS_CHANGED_EVENT,
+                        GitStatusChangedPayload {
+                            project_path: emit_path.clone(),
+                        },
+                    );
+                    for listener in listeners.lock().unwrap().iter() {
+                        listener(&emit_path, &paths);
+                    }
+                }
+                Err(errors) => {
+                    for error in errors {
+                        log::error!("fs watcher error: {error}");
                     }
                 }
             },
@@ -185,7 +188,9 @@ mod tests {
     #[test]
     fn nex_cache_and_archive_are_internal() {
         assert!(is_nex_internal_path("/proj/.nex/cache/graph/index.sqlite"));
-        assert!(is_nex_internal_path("/proj/.nex/cache/graph/index.sqlite-wal"));
+        assert!(is_nex_internal_path(
+            "/proj/.nex/cache/graph/index.sqlite-wal"
+        ));
         assert!(is_nex_internal_path("/proj/.nex/cache"));
         assert!(is_nex_internal_path(r"C:\proj\.nex\cache\graph\meta.json"));
         assert!(is_nex_internal_path("/proj/.nex-archive/foo"));

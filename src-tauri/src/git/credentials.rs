@@ -76,12 +76,19 @@ impl GitCredentialBroker {
         &self,
         url: &str,
         kind: &str,
-    ) -> (String, tokio::sync::oneshot::Receiver<Option<CredentialAnswer>>) {
+    ) -> (
+        String,
+        tokio::sync::oneshot::Receiver<Option<CredentialAnswer>>,
+    ) {
         let request_id = uuid::Uuid::new_v4().to_string();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.pending.lock().unwrap().insert(
             request_id.clone(),
-            PendingRequest { tx, url: url.to_string(), kind: kind.to_string() },
+            PendingRequest {
+                tx,
+                url: url.to_string(),
+                kind: kind.to_string(),
+            },
         );
         (request_id, rx)
     }
@@ -133,16 +140,25 @@ impl GitCredentialBroker {
             .lock()
             .unwrap()
             .remove(request_id)
-            .ok_or_else(|| NexError::Git("no pending credential request with that id".to_string()))?;
+            .ok_or_else(|| {
+                NexError::Git("no pending credential request with that id".to_string())
+            })?;
         let answer = match (username.clone(), secret.clone()) {
             (None, None) => None,
-            (u, s) => Some(CredentialAnswer { username: u, secret: s }),
+            (u, s) => Some(CredentialAnswer {
+                username: u,
+                secret: s,
+            }),
         };
         if remember {
             if let (Some(u), Some(s)) = (username, secret) {
                 self.session_cache.lock().unwrap().insert(
                     session_key(&entry.url, &entry.kind),
-                    CachedCredential { username: u, secret: s, kind: entry.kind.clone() },
+                    CachedCredential {
+                        username: u,
+                        secret: s,
+                        kind: entry.kind.clone(),
+                    },
                 );
             }
         }
@@ -152,7 +168,11 @@ impl GitCredentialBroker {
     }
 
     pub fn lookup_session(&self, url: &str, kind: &str) -> Option<CachedCredential> {
-        self.session_cache.lock().unwrap().get(&session_key(url, kind)).cloned()
+        self.session_cache
+            .lock()
+            .unwrap()
+            .get(&session_key(url, kind))
+            .cloned()
     }
 }
 
@@ -167,6 +187,9 @@ pub fn session_key(url: &str, kind: &str) -> String {
 pub fn host_of(url: &str) -> String {
     let after_scheme = url.split_once("://").map(|(_, rest)| rest).unwrap_or(url);
     let authority = after_scheme.split('/').next().unwrap_or("");
-    let no_user = authority.rsplit_once('@').map(|(_, rest)| rest).unwrap_or(authority);
+    let no_user = authority
+        .rsplit_once('@')
+        .map(|(_, rest)| rest)
+        .unwrap_or(authority);
     no_user.split(':').next().unwrap_or(no_user).to_string()
 }

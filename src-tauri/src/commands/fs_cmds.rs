@@ -1,10 +1,13 @@
 use crate::error::NexError;
-use crate::fs::tree::{FsNode, read_tree, expand_dir};
-use crate::fs::read::{FileContent, read_file};
+use crate::fs::create::{create_dir, create_file};
+use crate::fs::operations::{copy_entry, delete_entry, import_file, move_entry, rename_entry};
+use crate::fs::read::{read_file, FileContent};
+use crate::fs::search::{
+    apply_replace, search, search_replace, ReplacePreview, ReplaceResult, SearchMatch,
+    SearchOptions,
+};
+use crate::fs::tree::{expand_dir, read_tree, FsNode};
 use crate::fs::write::write_file;
-use crate::fs::create::{create_file, create_dir};
-use crate::fs::operations::{delete_entry, rename_entry, copy_entry, move_entry, import_file};
-use crate::fs::search::{SearchMatch, SearchOptions, ReplacePreview, ReplaceResult, search, search_replace, apply_replace};
 use crate::state::AppState;
 use std::path::Path;
 use tauri::{AppHandle, State};
@@ -65,14 +68,23 @@ pub fn fs_watch_stop(state: State<'_, AppState>, project_path: String) -> Result
 /// Global project search with match rules (case / whole-word / regex).
 /// `options = None` keeps the historical case-insensitive substring behavior.
 #[tauri::command]
-pub fn fs_search(project_path: String, query: String, options: Option<SearchOptions>) -> Result<Vec<SearchMatch>, NexError> {
+pub fn fs_search(
+    project_path: String,
+    query: String,
+    options: Option<SearchOptions>,
+) -> Result<Vec<SearchMatch>, NexError> {
     search(Path::new(&project_path), &query, options)
 }
 
 /// Project-wide replace PREVIEW: per-file replacement counts, writes nothing.
 /// Honors the same MAX_RESULTS/.gitignore/size constraints as search.
 #[tauri::command]
-pub fn fs_search_replace(project_path: String, query: String, replacement: String, options: Option<SearchOptions>) -> Result<ReplacePreview, NexError> {
+pub fn fs_search_replace(
+    project_path: String,
+    query: String,
+    replacement: String,
+    options: Option<SearchOptions>,
+) -> Result<ReplacePreview, NexError> {
     search_replace(Path::new(&project_path), &query, &replacement, options)
 }
 
@@ -83,8 +95,22 @@ pub fn fs_search_replace(project_path: String, query: String, replacement: Strin
 /// (clean → silent reload, dirty → stale banner) — intentionally not
 /// suppressed.
 #[tauri::command]
-pub fn fs_apply_replace(project_path: String, query: String, replacement: String, options: Option<SearchOptions>, paths: Option<Vec<String>>, limit_per_file: Option<usize>) -> Result<ReplaceResult, NexError> {
-    apply_replace(Path::new(&project_path), &query, &replacement, options, paths, limit_per_file)
+pub fn fs_apply_replace(
+    project_path: String,
+    query: String,
+    replacement: String,
+    options: Option<SearchOptions>,
+    paths: Option<Vec<String>>,
+    limit_per_file: Option<usize>,
+) -> Result<ReplaceResult, NexError> {
+    apply_replace(
+        Path::new(&project_path),
+        &query,
+        &replacement,
+        options,
+        paths,
+        limit_per_file,
+    )
 }
 
 #[tauri::command]

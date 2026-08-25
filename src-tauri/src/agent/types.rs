@@ -133,7 +133,9 @@ pub struct AgentSessionTerminated {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PromptBlock {
-    Text { text: String },
+    Text {
+        text: String,
+    },
     Image {
         data: String,
         mime_type: String,

@@ -65,13 +65,11 @@ impl Tool for ReadSpreadsheet {
             .and_then(|e| e.to_str())
             .map(|e| e.to_ascii_lowercase());
 
-        let grid: Vec<Vec<String>> = if BINARY_EXTS
-            .iter()
-            .any(|b| ext.as_deref() == Some(*b))
-        {
+        let grid: Vec<Vec<String>> = if BINARY_EXTS.iter().any(|b| ext.as_deref() == Some(*b)) {
             // Excel / ODS: read the selected worksheet through calamine.
-            let mut wb = calamine::open_workbook_auto(&path)
-                .map_err(|e| format!("failed to open `{}` as a spreadsheet: {e}", path.display()))?;
+            let mut wb = calamine::open_workbook_auto(&path).map_err(|e| {
+                format!("failed to open `{}` as a spreadsheet: {e}", path.display())
+            })?;
             let names = wb.sheet_names();
             if names.is_empty() {
                 return Err(format!("`{}` contains no worksheets", path.display()));
@@ -88,13 +86,22 @@ impl Tool for ReadSpreadsheet {
             // CSV / TSV (and unknown text extensions): parse in-process.
             let text = std::fs::read_to_string(&path)
                 .map_err(|e| format!("failed to read `{}`: {e}", path.display()))?;
-            let delim = if ext.as_deref() == Some("tsv") { '\t' } else { ',' };
+            let delim = if ext.as_deref() == Some("tsv") {
+                '\t'
+            } else {
+                ','
+            };
             let target = pick_sheet(&["Sheet1".to_string()], sheet.as_deref())?;
             let _ = target; // CSV has a single sheet; name kept for symmetry.
             parse_csv(&text, delim)
         };
 
-        Ok(format_grid(sheet.as_deref().unwrap_or("Sheet1"), &grid, max_rows, max_cols))
+        Ok(format_grid(
+            sheet.as_deref().unwrap_or("Sheet1"),
+            &grid,
+            max_rows,
+            max_cols,
+        ))
     }
 }
 
@@ -107,7 +114,10 @@ fn pick_sheet(names: &[String], requested: Option<&str>) -> Result<String, Strin
             .find(|n| n.as_str() == name)
             .cloned()
             .ok_or_else(|| {
-                format!("worksheet `{name}` not found; available: {}", names.join(", "))
+                format!(
+                    "worksheet `{name}` not found; available: {}",
+                    names.join(", ")
+                )
             }),
         None => Ok(names[0].clone()),
     }
@@ -242,7 +252,10 @@ mod tests {
 
     #[test]
     fn csv_parser_handles_quotes_escapes_and_crlf() {
-        let rows = parse_csv("a,b\n\"x,y\",\"say \"\"hi\"\"\"\n1,\"multi\nline\"\r\n", ',');
+        let rows = parse_csv(
+            "a,b\n\"x,y\",\"say \"\"hi\"\"\"\n1,\"multi\nline\"\r\n",
+            ',',
+        );
         assert_eq!(
             rows,
             vec![
@@ -253,10 +266,7 @@ mod tests {
         );
         // BOM is stripped.
         let rows = parse_csv("\u{feff}h1,h2\n1,2\n", ',');
-        assert_eq!(
-            rows[0],
-            vec!["h1".to_string(), "h2".to_string()]
-        );
+        assert_eq!(rows[0], vec!["h1".to_string(), "h2".to_string()]);
         // Final record without trailing newline is kept.
         let rows = parse_csv("a,b\n1,2", ',');
         assert_eq!(rows.len(), 2);
@@ -286,13 +296,19 @@ mod tests {
         write(&tmp, "s.csv", "a,b\n1,2\n");
         // Unknown sheet names the available ones (CSV has a single `Sheet1`).
         let err = ReadSpreadsheet
-            .execute(serde_json::json!({"path": "s.csv", "sheet": "nope"}), &ctx(tmp.path()))
+            .execute(
+                serde_json::json!({"path": "s.csv", "sheet": "nope"}),
+                &ctx(tmp.path()),
+            )
             .await
             .unwrap_err();
         assert!(err.contains("not found") && err.contains("Sheet1"), "{err}");
         // Explicit `Sheet1` is accepted.
         let out = ReadSpreadsheet
-            .execute(serde_json::json!({"path": "s.csv", "sheet": "Sheet1"}), &ctx(tmp.path()))
+            .execute(
+                serde_json::json!({"path": "s.csv", "sheet": "Sheet1"}),
+                &ctx(tmp.path()),
+            )
             .await
             .unwrap();
         assert!(out.contains("1: a | b"), "{out}");

@@ -203,7 +203,8 @@ fn visit_rust(
             }
         }
         "impl_item" => {
-            if let Some(name) = field_text(node, src, "type").or_else(|| field_text(node, src, "trait"))
+            if let Some(name) =
+                field_text(node, src, "type").or_else(|| field_text(node, src, "trait"))
             {
                 scope.push(strip_generics(&name));
                 *pushed = true;
@@ -554,7 +555,10 @@ fn visit_java(
                 );
             }
         }
-        "class_declaration" | "interface_declaration" | "enum_declaration" | "record_declaration" => {
+        "class_declaration"
+        | "interface_declaration"
+        | "enum_declaration"
+        | "record_declaration" => {
             if let Some(name) = field_text(node, src, "name") {
                 let nk = if kind == "class_declaration" || kind == "record_declaration" {
                     NodeKind::Class
@@ -622,13 +626,7 @@ fn push_symbol(
     *pushed = true;
 }
 
-fn push_call(
-    node: Node<'_>,
-    src: &[u8],
-    scope: &[String],
-    out: &mut ExtractedFile,
-    field: &str,
-) {
+fn push_call(node: Node<'_>, src: &[u8], scope: &[String], out: &mut ExtractedFile, field: &str) {
     let Some(fn_node) = node.child_by_field_name(field) else {
         return;
     };
@@ -740,11 +738,18 @@ mod tests {
             fn test_it() { target(); }
         "#;
         let out = extract("src/lib.rs", src, Lang::Rust).unwrap();
-        let names: Vec<_> = out.nodes.iter().map(|n| (n.name.as_str(), n.kind)).collect();
+        let names: Vec<_> = out
+            .nodes
+            .iter()
+            .map(|n| (n.name.as_str(), n.kind))
+            .collect();
         assert!(names.contains(&("target", NodeKind::Function)));
         assert!(names.contains(&("caller", NodeKind::Function)));
         assert!(names.contains(&("test_it", NodeKind::Test)));
-        assert!(out.facts.iter().any(|f| f.kind == FactKind::Calls && f.dst_name == "target"));
+        assert!(out
+            .facts
+            .iter()
+            .any(|f| f.kind == FactKind::Calls && f.dst_name == "target"));
     }
 
     #[test]
@@ -754,8 +759,14 @@ mod tests {
             export class Bar { run() { Foo(); } }
         "#;
         let out = extract("src/bar.ts", src, Lang::TypeScript).unwrap();
-        assert!(out.nodes.iter().any(|n| n.name == "Bar" && n.kind == NodeKind::Class));
-        assert!(out.nodes.iter().any(|n| n.name == "run" && n.kind == NodeKind::Function));
+        assert!(out
+            .nodes
+            .iter()
+            .any(|n| n.name == "Bar" && n.kind == NodeKind::Class));
+        assert!(out
+            .nodes
+            .iter()
+            .any(|n| n.name == "run" && n.kind == NodeKind::Function));
         assert!(out
             .facts
             .iter()
@@ -766,7 +777,10 @@ mod tests {
     fn python_extracts_class() {
         let src = "class Greeter:\n    def hello(self):\n        print(1)\n";
         let out = extract("app.py", src, Lang::Python).unwrap();
-        assert!(out.nodes.iter().any(|n| n.name == "Greeter" && n.kind == NodeKind::Class));
+        assert!(out
+            .nodes
+            .iter()
+            .any(|n| n.name == "Greeter" && n.kind == NodeKind::Class));
         assert!(out.nodes.iter().any(|n| n.name == "hello"));
     }
 }

@@ -1,6 +1,6 @@
-pub mod schema;
 pub mod conversations;
 pub mod projects;
+pub mod schema;
 
 use rusqlite::Connection;
 use std::sync::Mutex;

@@ -38,7 +38,11 @@ pub struct ThreadEntryPersisted {
 }
 
 impl Database {
-    pub fn create_conversation(&self, project_id: &str, agent_type: &str) -> Result<Conversation, NexError> {
+    pub fn create_conversation(
+        &self,
+        project_id: &str,
+        agent_type: &str,
+    ) -> Result<Conversation, NexError> {
         let conn = self.conn.lock().unwrap();
         let now = chrono::Utc::now().timestamp_millis();
         let conv = Conversation {
@@ -60,16 +64,29 @@ impl Database {
     pub fn list_conversations(&self, project_id: &str) -> Result<Vec<Conversation>, NexError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT id, project_id, title, agent_type, status, created_at, updated_at FROM conversations WHERE project_id = ?1 ORDER BY updated_at DESC")?;
-        let convs = stmt.query_map(params![project_id], |row| {
-            Ok(Conversation {
-                id: row.get(0)?, project_id: row.get(1)?, title: row.get(2)?,
-                agent_type: row.get(3)?, status: row.get(4)?, created_at: row.get(5)?, updated_at: row.get(6)?,
-            })
-        })?.collect::<Result<Vec<_>, _>>()?;
+        let convs = stmt
+            .query_map(params![project_id], |row| {
+                Ok(Conversation {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    title: row.get(2)?,
+                    agent_type: row.get(3)?,
+                    status: row.get(4)?,
+                    created_at: row.get(5)?,
+                    updated_at: row.get(6)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(convs)
     }
 
-    pub fn append_message(&self, conversation_id: &str, role: &str, content: &str, tool_summary: Option<&str>) -> Result<Message, NexError> {
+    pub fn append_message(
+        &self,
+        conversation_id: &str,
+        role: &str,
+        content: &str,
+        tool_summary: Option<&str>,
+    ) -> Result<Message, NexError> {
         let mut conn = self.conn.lock().unwrap();
         let now = chrono::Utc::now().timestamp_millis();
         // Sequence computation + INSERT + conversation touch must be atomic:
@@ -93,27 +110,45 @@ impl Database {
             "INSERT INTO messages (id, conversation_id, role, content, tool_summary, timestamp, sequence) VALUES (?1,?2,?3,?4,?5,?6,?7)",
             params![msg.id, msg.conversation_id, msg.role, msg.content, msg.tool_summary, msg.timestamp, msg.sequence],
         )?;
-        tx.execute("UPDATE conversations SET updated_at = ?1 WHERE id = ?2", params![now, conversation_id])?;
+        tx.execute(
+            "UPDATE conversations SET updated_at = ?1 WHERE id = ?2",
+            params![now, conversation_id],
+        )?;
         tx.commit()?;
         Ok(msg)
     }
 
-    pub fn get_messages(&self, conversation_id: &str, limit: i32, offset: i32) -> Result<Vec<Message>, NexError> {
+    pub fn get_messages(
+        &self,
+        conversation_id: &str,
+        limit: i32,
+        offset: i32,
+    ) -> Result<Vec<Message>, NexError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT id, conversation_id, role, content, tool_summary, timestamp, sequence FROM messages WHERE conversation_id = ?1 ORDER BY sequence ASC LIMIT ?2 OFFSET ?3")?;
-        let msgs = stmt.query_map(params![conversation_id, limit, offset], |row| {
-            Ok(Message {
-                id: row.get(0)?, conversation_id: row.get(1)?, role: row.get(2)?,
-                content: row.get(3)?, tool_summary: row.get(4)?, timestamp: row.get(5)?, sequence: row.get(6)?,
-            })
-        })?.collect::<Result<Vec<_>, _>>()?;
+        let msgs = stmt
+            .query_map(params![conversation_id, limit, offset], |row| {
+                Ok(Message {
+                    id: row.get(0)?,
+                    conversation_id: row.get(1)?,
+                    role: row.get(2)?,
+                    content: row.get(3)?,
+                    tool_summary: row.get(4)?,
+                    timestamp: row.get(5)?,
+                    sequence: row.get(6)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(msgs)
     }
 
     pub fn update_conversation_status(&self, id: &str, status: &str) -> Result<(), NexError> {
         let conn = self.conn.lock().unwrap();
         let now = chrono::Utc::now().timestamp_millis();
-        conn.execute("UPDATE conversations SET status = ?1, updated_at = ?2 WHERE id = ?3", params![status, now, id])?;
+        conn.execute(
+            "UPDATE conversations SET status = ?1, updated_at = ?2 WHERE id = ?3",
+            params![status, now, id],
+        )?;
         Ok(())
     }
 
@@ -146,10 +181,7 @@ impl Database {
             "DELETE FROM thread_entries WHERE conversation_id = ?1",
             params![id],
         )?;
-        let n = tx.execute(
-            "DELETE FROM conversations WHERE id = ?1",
-            params![id],
-        )?;
+        let n = tx.execute("DELETE FROM conversations WHERE id = ?1", params![id])?;
         tx.commit()?;
         if n == 0 {
             return Err(NexError::Database(format!("conversation not found: {id}")));
@@ -217,8 +249,7 @@ impl Database {
                 let sequence: i32 = row.get(1)?;
                 let timestamp: i64 = row.get(2)?;
                 let payload_json: String = row.get(3)?;
-                let payload: Value = serde_json::from_str(&payload_json)
-                    .unwrap_or(Value::Null);
+                let payload: Value = serde_json::from_str(&payload_json).unwrap_or(Value::Null);
 
                 Ok(ThreadEntryPersisted {
                     kind,
@@ -413,13 +444,25 @@ mod tests {
 
         let conn = db.conn.lock().unwrap();
         let conv_exists: bool = conn
-            .query_row("SELECT EXISTS(SELECT 1 FROM conversations WHERE id = 'c')", [], |row| row.get(0))
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = 'c')",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         let msg_exists: bool = conn
-            .query_row("SELECT EXISTS(SELECT 1 FROM messages WHERE conversation_id = 'c')", [], |row| row.get(0))
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM messages WHERE conversation_id = 'c')",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         let thread_exists: bool = conn
-            .query_row("SELECT EXISTS(SELECT 1 FROM thread_entries WHERE conversation_id = 'c')", [], |row| row.get(0))
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM thread_entries WHERE conversation_id = 'c')",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert!(!conv_exists);
         assert!(!msg_exists);

@@ -1,5 +1,8 @@
 use crate::agent::native::{bundled, home, mcp, skills};
-use crate::agent::{CreateSessionResult, CustomServer, NativeAgentConfig, PromptBlock, ServerDescriptor, SessionTarget};
+use crate::agent::{
+    CreateSessionResult, CustomServer, NativeAgentConfig, PromptBlock, ServerDescriptor,
+    SessionTarget,
+};
 use crate::error::NexError;
 use crate::state::AppState;
 use serde::{Deserialize, Serialize};
@@ -30,7 +33,10 @@ pub async fn agent_create_session(
     target: SessionTarget,
     cwd: String,
 ) -> Result<CreateSessionResult, NexError> {
-    state.agent_manager.create_session(&app, &conversation_id, target, &cwd).await
+    state
+        .agent_manager
+        .create_session(&app, &conversation_id, target, &cwd)
+        .await
 }
 
 #[tauri::command]
@@ -48,7 +54,10 @@ pub async fn agent_set_session_mode(
     session_id: String,
     mode_id: String,
 ) -> Result<(), NexError> {
-    state.agent_manager.set_session_mode(&session_id, &mode_id).await
+    state
+        .agent_manager
+        .set_session_mode(&session_id, &mode_id)
+        .await
 }
 
 #[tauri::command]
@@ -57,7 +66,10 @@ pub async fn agent_set_session_model(
     session_id: String,
     model_id: String,
 ) -> Result<Option<Vec<crate::agent::types::SessionConfigOptionDto>>, NexError> {
-    state.agent_manager.set_session_model(&session_id, &model_id).await
+    state
+        .agent_manager
+        .set_session_model(&session_id, &model_id)
+        .await
 }
 
 #[tauri::command]
@@ -84,7 +96,9 @@ pub fn agent_respond_permission(
     request_id: String,
     option_id: Option<String>,
 ) -> Result<(), NexError> {
-    state.agent_manager.respond_permission(&request_id, option_id)
+    state
+        .agent_manager
+        .respond_permission(&request_id, option_id)
 }
 
 #[tauri::command]
@@ -94,7 +108,9 @@ pub fn agent_respond_plan(
     outcome: String,
     reason: Option<String>,
 ) -> Result<(), NexError> {
-    state.agent_manager.respond_plan(&request_id, &outcome, reason)
+    state
+        .agent_manager
+        .respond_plan(&request_id, &outcome, reason)
 }
 
 #[tauri::command]
@@ -184,7 +200,9 @@ pub async fn native_agent_list_models(
         .map(|arr| arr.iter().filter_map(from_api_model).collect::<Vec<_>>())
         .unwrap_or_default();
     if models.is_empty() {
-        return Err(NexError::Agent("model list response has no data[].id entries".into()));
+        return Err(NexError::Agent(
+            "model list response has no data[].id entries".into(),
+        ));
     }
     Ok(models)
 }
@@ -206,7 +224,8 @@ pub struct SkillInfoDto {
     pub name: String,
     pub description: String,
     pub enabled: bool,
-    /// `builtin` when seeded from the app bundle, otherwise `user`.
+    /// `builtin` when seeded from the app bundle, `user` for other global
+    /// skills, `project` for `<cwd>/.nex/skills`.
     pub source: String,
 }
 
@@ -325,21 +344,27 @@ pub async fn native_agent_probe_mcp(
 }
 
 #[tauri::command]
-pub fn native_agent_list_skills(app: AppHandle) -> Result<Vec<SkillInfoDto>, NexError> {
+pub fn native_agent_list_skills(
+    app: AppHandle,
+    cwd: Option<String>,
+) -> Result<Vec<SkillInfoDto>, NexError> {
     if let Some(home_dir) = home::nex_home() {
         bundled::ensure_bundled(&home_dir);
     }
     let cfg = NativeAgentConfig::load(&app_data_dir(&app)?);
     let builtin: std::collections::HashSet<&str> =
         bundled::bundled_skill_names().iter().copied().collect();
-    let discovered = home::skills_dir()
-        .map(|root| skills::discover(&root))
-        .unwrap_or_default();
+    let discovered = skills::discover_for_cwd(
+        cwd.as_deref().map(std::path::Path::new),
+        home::skills_dir().as_deref(),
+    );
     Ok(discovered
         .into_iter()
         .map(|s| SkillInfoDto {
             enabled: !cfg.disabled_skills.iter().any(|d| d == &s.name),
-            source: if builtin.contains(s.name.as_str()) {
+            source: if s.source == skills::SkillSource::Project {
+                "project".into()
+            } else if builtin.contains(s.name.as_str()) {
                 "builtin".into()
             } else {
                 "user".into()
@@ -380,10 +405,15 @@ pub fn native_agent_set_skill_enabled(
 }
 
 #[tauri::command]
-pub fn native_agent_open_skills_dir() -> Result<String, NexError> {
-    let home_dir = home::nex_home().ok_or_else(|| NexError::Agent("home unavailable".into()))?;
-    bundled::ensure_bundled(&home_dir);
-    let dir = home_dir.join("skills");
+pub fn native_agent_open_skills_dir(cwd: Option<String>) -> Result<String, NexError> {
+    let dir = if let Some(cwd) = cwd {
+        std::path::PathBuf::from(cwd).join(".nex").join("skills")
+    } else {
+        let home_dir =
+            home::nex_home().ok_or_else(|| NexError::Agent("home unavailable".into()))?;
+        bundled::ensure_bundled(&home_dir);
+        home_dir.join("skills")
+    };
     let _ = std::fs::create_dir_all(&dir);
     open_path(&dir)?;
     Ok(dir.display().to_string())

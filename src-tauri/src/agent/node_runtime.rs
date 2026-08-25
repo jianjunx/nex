@@ -138,14 +138,15 @@ impl SystemNodeRuntime {
         // for the binary. We pass `Some(path_value)` so the shell-loaded PATH
         // takes precedence when available. CWD falls back to "/" so the
         // search doesn't accidentally exclude system dirs.
-        let node = which::which_in("node", Some(path_value), Path::new("/"))
-            .map_err(|_e| NexError::AgentNotInstalled {
+        let node = which::which_in("node", Some(path_value), Path::new("/")).map_err(|_e| {
+            NexError::AgentNotInstalled {
                 what: "node",
                 hint: "Nex could not find a `node` binary on the system PATH. \
                      Install Node 22+ from https://nodejs.org, or via \
                      `fnm install 22` / `volta install node@22`, then restart Nex."
                     .into(),
-            })?;
+            }
+        })?;
         Self::new(node).await
     }
 
@@ -276,18 +277,18 @@ impl ManagedNodeRuntime {
 
         log::info!("downloading managed Node {version} for {platform} from {archive_url}");
 
-        let response = http
-            .get(&archive_url)
-            .send()
-            .await
-            .map_err(|e| NexError::AgentNotInstalled {
-                what: "managed node",
-                hint: format!(
-                    "Nex could not download Node.js (network error: {e}). \
+        let response =
+            http.get(&archive_url)
+                .send()
+                .await
+                .map_err(|e| NexError::AgentNotInstalled {
+                    what: "managed node",
+                    hint: format!(
+                        "Nex could not download Node.js (network error: {e}). \
                      Install Node 22+ from https://nodejs.org, or via \
                      `fnm install 22` / `volta install node@22`, then restart Nex."
-                ),
-            })?;
+                    ),
+                })?;
         let status = response.status();
         if !status.is_success() {
             return Err(NexError::AgentNotInstalled {
@@ -345,7 +346,14 @@ impl NodeRuntime for ManagedNodeRuntime {
         subcommand: &str,
         args: &[&str],
     ) -> Result<(), NexError> {
-        run_npm_subcommand_with(self.binary_path(), dir, subcommand, args, &self.npm_command_env()).await
+        run_npm_subcommand_with(
+            self.binary_path(),
+            dir,
+            subcommand,
+            args,
+            &self.npm_command_env(),
+        )
+        .await
     }
 
     fn npm_command_env(&self) -> HashMap<String, String> {
@@ -433,7 +441,13 @@ impl NodeRuntimeHandle {
     pub async fn get(self: &Arc<Self>) -> Arc<dyn NodeRuntime> {
         self.cell
             .get_or_init(|| async {
-                resolve_node_runtime(&self.options, &self.shell_env, &self.app_data_dir, &self.http).await
+                resolve_node_runtime(
+                    &self.options,
+                    &self.shell_env,
+                    &self.app_data_dir,
+                    &self.http,
+                )
+                .await
             })
             .await
             .clone()
@@ -607,7 +621,11 @@ pub fn current_platform_key() -> String {
 }
 
 fn managed_node_url(version: &str, platform: &str) -> String {
-    let ext = if platform.starts_with("win") { "zip" } else { "tar.gz" };
+    let ext = if platform.starts_with("win") {
+        "zip"
+    } else {
+        "tar.gz"
+    };
     format!("https://nodejs.org/dist/{version}/node-{version}-{platform}.{ext}")
 }
 
@@ -725,20 +743,32 @@ pub fn parse_node_index(
         // Per-component floors: only enforced when the field is present.
         if let Some(req) = floors.min_v8.as_ref() {
             if let Some(field) = entry.v8.as_deref() {
-                let Some(sem) = parse_short_semver(field) else { continue };
-                if !req.matches(&sem) { continue; }
+                let Some(sem) = parse_short_semver(field) else {
+                    continue;
+                };
+                if !req.matches(&sem) {
+                    continue;
+                }
             }
         }
         if let Some(req) = floors.min_npm.as_ref() {
             if let Some(field) = entry.npm.as_deref() {
-                let Some(sem) = parse_short_semver(field) else { continue };
-                if !req.matches(&sem) { continue; }
+                let Some(sem) = parse_short_semver(field) else {
+                    continue;
+                };
+                if !req.matches(&sem) {
+                    continue;
+                }
             }
         }
         if let Some(req) = floors.min_openssl.as_ref() {
             if let Some(field) = entry.openssl.as_deref() {
-                let Some(sem) = parse_short_semver(field) else { continue };
-                if !req.matches(&sem) { continue; }
+                let Some(sem) = parse_short_semver(field) else {
+                    continue;
+                };
+                if !req.matches(&sem) {
+                    continue;
+                }
             }
         }
         return Some(entry.version.clone());
@@ -752,19 +782,19 @@ pub fn parse_node_index(
 /// install-dir names.
 async fn discover_node_version(http: &reqwest::Client, platform: &str) -> Result<String, NexError> {
     log::info!("discovering managed Node version from {NODE_DIST_INDEX_URL}");
-    let response = http
-        .get(NODE_DIST_INDEX_URL)
-        .send()
-        .await
-        .map_err(|e| NexError::AgentNotInstalled {
-            what: "managed node",
-            hint: format!(
-                "Nex could not reach nodejs.org to determine which Node.js to \
+    let response =
+        http.get(NODE_DIST_INDEX_URL)
+            .send()
+            .await
+            .map_err(|e| NexError::AgentNotInstalled {
+                what: "managed node",
+                hint: format!(
+                    "Nex could not reach nodejs.org to determine which Node.js to \
                  install (network error: {e}). Install Node 22+ from \
                  https://nodejs.org, or via `fnm install 22` / \
                  `volta install node@22`, then restart Nex."
-            ),
-        })?;
+                ),
+            })?;
     let status = response.status();
     if !status.is_success() {
         return Err(NexError::AgentNotInstalled {
@@ -775,22 +805,26 @@ async fn discover_node_version(http: &reqwest::Client, platform: &str) -> Result
             ),
         });
     }
-    let body = response.text().await.map_err(|e| NexError::AgentNotInstalled {
-        what: "managed node",
-        hint: format!("Failed to read the Node.js release index body: {e}"),
-    })?;
+    let body = response
+        .text()
+        .await
+        .map_err(|e| NexError::AgentNotInstalled {
+            what: "managed node",
+            hint: format!("Failed to read the Node.js release index body: {e}"),
+        })?;
 
     let files_key = files_key_for_platform(platform);
     let min = VersionReq::parse(MIN_NODE_VERSION)
         .expect("MIN_NODE_VERSION is a static, parseable requirement");
-    parse_node_index(&body, &files_key, &min, &IndexFloors::default())
-        .ok_or_else(|| NexError::AgentNotInstalled {
-        what: "managed node",
-        hint: format!(
-            "nodejs.org publishes no Node.js LTS with a `{files_key}` archive \
+    parse_node_index(&body, &files_key, &min, &IndexFloors::default()).ok_or_else(|| {
+        NexError::AgentNotInstalled {
+            what: "managed node",
+            hint: format!(
+                "nodejs.org publishes no Node.js LTS with a `{files_key}` archive \
              that satisfies {MIN_NODE_VERSION}. Install Node 22+ manually from \
              https://nodejs.org and restart Nex."
-        ),
+            ),
+        }
     })
 }
 
@@ -824,7 +858,11 @@ fn find_existing_managed_install(node_root: &Path, platform: &str) -> Option<(St
 /// The bare file name (no path) of the archive we're verifying, used to
 /// look up the matching line in `SHASUMS256.txt`.
 fn managed_node_archive_name(version: &str, platform: &str) -> String {
-    let ext = if platform.starts_with("win") { "zip" } else { "tar.gz" };
+    let ext = if platform.starts_with("win") {
+        "zip"
+    } else {
+        "tar.gz"
+    };
     format!("node-{version}-{platform}.{ext}")
 }
 
@@ -836,10 +874,7 @@ async fn fetch_expected_sha256(
     version: &str,
     archive_url: &str,
 ) -> Result<String, NexError> {
-    let archive_name = managed_node_archive_name(
-        version,
-        current_platform_key().as_str(),
-    );
+    let archive_name = managed_node_archive_name(version, current_platform_key().as_str());
     let url = shasums_url(version);
     log::info!("fetching Node checksum manifest from {url}");
 
@@ -873,8 +908,8 @@ async fn fetch_expected_sha256(
             hint: format!("Could not read SHASUMS256.txt body: {e}"),
         })?;
 
-    let sha = parse_shasums256(&body, &archive_name).ok_or_else(|| {
-        NexError::AgentNotInstalled {
+    let sha =
+        parse_shasums256(&body, &archive_name).ok_or_else(|| NexError::AgentNotInstalled {
             what: "managed node",
             hint: format!(
                 "Node.js {version} has no entry for `{archive_name}` in its \
@@ -882,8 +917,7 @@ async fn fetch_expected_sha256(
                  — install Node 22+ manually from https://nodejs.org. \
                  (Archive URL was {archive_url}.)"
             ),
-        }
-    })?;
+        })?;
     Ok(sha)
 }
 
@@ -899,10 +933,12 @@ fn node_binary_path(install_root: &Path) -> PathBuf {
 /// `node` sits in `<root>/bin/node`; on Windows, `node.exe` sits at
 /// `<root>/node.exe`.
 pub fn install_root_from_node(node_binary: &Path) -> Result<PathBuf, NexError> {
-    let parent = node_binary.parent().ok_or_else(|| NexError::Agent(format!(
-        "could not determine Node install root from `{}` (no parent directory)",
-        node_binary.display()
-    )))?;
+    let parent = node_binary.parent().ok_or_else(|| {
+        NexError::Agent(format!(
+            "could not determine Node install root from `{}` (no parent directory)",
+            node_binary.display()
+        ))
+    })?;
     if cfg!(windows) {
         // <root>/node.exe → <root>
         Ok(parent.to_path_buf())
@@ -931,15 +967,32 @@ pub fn install_root_from_node(node_binary: &Path) -> Result<PathBuf, NexError> {
 pub fn resolve_npm_cli(install_root: &Path) -> Result<PathBuf, NexError> {
     let candidates: Vec<PathBuf> = if cfg!(windows) {
         vec![
-            install_root.join("node_modules").join("npm").join("bin").join("npm-cli.js"),
-            install_root.join("node_modules").join("npm").join("bin").join("npm.cmd"),
+            install_root
+                .join("node_modules")
+                .join("npm")
+                .join("bin")
+                .join("npm-cli.js"),
+            install_root
+                .join("node_modules")
+                .join("npm")
+                .join("bin")
+                .join("npm.cmd"),
         ]
     } else {
         vec![
             // Most common: official tarball / nvm / fnm / volta / Homebrew.
-            install_root.join("lib").join("node_modules").join("npm").join("bin").join("npm-cli.js"),
+            install_root
+                .join("lib")
+                .join("node_modules")
+                .join("npm")
+                .join("bin")
+                .join("npm-cli.js"),
             // Fallback for custom builds that skip the `lib/` prefix.
-            install_root.join("node_modules").join("npm").join("bin").join("npm-cli.js"),
+            install_root
+                .join("node_modules")
+                .join("npm")
+                .join("bin")
+                .join("npm-cli.js"),
         ]
     };
     for candidate in &candidates {
@@ -1076,11 +1129,15 @@ fn extract_zip(data: &[u8], dest: &Path) -> Result<(), NexError> {
         hint: format!("Invalid Node zip: {e}"),
     })?;
     for i in 0..archive.len() {
-        let mut file = archive.by_index(i).map_err(|e| NexError::AgentNotInstalled {
-            what: "managed node",
-            hint: format!("zip entry {i}: {e}"),
-        })?;
-        let Some(rel) = file.enclosed_name() else { continue };
+        let mut file = archive
+            .by_index(i)
+            .map_err(|e| NexError::AgentNotInstalled {
+                what: "managed node",
+                hint: format!("zip entry {i}: {e}"),
+            })?;
+        let Some(rel) = file.enclosed_name() else {
+            continue;
+        };
         // Node tarballs nest under `node-vX.Y.Z-<platform>/`; strip that prefix
         // so `install_root` contains the bare `bin/`, `include/`, `lib/`, ...
         let stripped = rel
@@ -1103,10 +1160,11 @@ fn extract_zip(data: &[u8], dest: &Path) -> Result<(), NexError> {
                     hint: format!("mkdir: {e}"),
                 })?;
             }
-            let mut out = std::fs::File::create(&out_path).map_err(|e| NexError::AgentNotInstalled {
-                what: "managed node",
-                hint: format!("create file: {e}"),
-            })?;
+            let mut out =
+                std::fs::File::create(&out_path).map_err(|e| NexError::AgentNotInstalled {
+                    what: "managed node",
+                    hint: format!("create file: {e}"),
+                })?;
             std::io::copy(&mut file, &mut out).map_err(|e| NexError::AgentNotInstalled {
                 what: "managed node",
                 hint: format!("write file: {e}"),
@@ -1116,7 +1174,10 @@ fn extract_zip(data: &[u8], dest: &Path) -> Result<(), NexError> {
         {
             use std::os::unix::fs::PermissionsExt;
             if let Some(mode) = file.unix_mode() {
-                let _ = std::fs::set_permissions(&out_path, std::fs::Permissions::from_mode(mode | 0o100));
+                let _ = std::fs::set_permissions(
+                    &out_path,
+                    std::fs::Permissions::from_mode(mode | 0o100),
+                );
             }
         }
     }
@@ -1165,10 +1226,12 @@ fn extract_tar_gz(data: &[u8], dest: &Path) -> Result<(), NexError> {
                     hint: format!("mkdir: {e}"),
                 })?;
             }
-            entry.unpack(&out_path).map_err(|e| NexError::AgentNotInstalled {
-                what: "managed node",
-                hint: format!("tar unpack: {e}"),
-            })?;
+            entry
+                .unpack(&out_path)
+                .map_err(|e| NexError::AgentNotInstalled {
+                    what: "managed node",
+                    hint: format!("tar unpack: {e}"),
+                })?;
         }
     }
     Ok(())
@@ -1201,10 +1264,12 @@ async fn run_npm_subcommand_with(
     cmd.stderr(Stdio::piped());
     crate::win_process::no_window_tokio(&mut cmd);
 
-    let output = cmd.output().await.map_err(|e| NexError::Agent(format!(
-        "failed to spawn npm (via {}): {e}",
-        node_binary.display()
-    )))?;
+    let output = cmd.output().await.map_err(|e| {
+        NexError::Agent(format!(
+            "failed to spawn npm (via {}): {e}",
+            node_binary.display()
+        ))
+    })?;
     if !output.status.success() {
         return Err(NexError::Agent(format!(
             "npm {subcommand} failed (status {}):\n  stderr: {}\n  stdout: {}",
@@ -1267,7 +1332,11 @@ mod tests {
         let env_map = npm_command_env(&node);
         let path = env_map.get("PATH").expect("PATH set");
         let path_str = path.to_string();
-        let prefix = if cfg!(windows) { r"C:\nodejs" } else { "/opt/homebrew/bin" };
+        let prefix = if cfg!(windows) {
+            r"C:\nodejs"
+        } else {
+            "/opt/homebrew/bin"
+        };
         assert!(
             path_str.starts_with(prefix),
             "PATH should start with node dir, got: {path_str}"
@@ -1306,7 +1375,10 @@ mod tests {
     #[tokio::test]
     async fn unavailable_runtime_errors_on_npm() {
         let rt = UnavailableNodeRuntime::new("custom hint");
-        let err = rt.run_npm_subcommand(None, "install", &[]).await.unwrap_err();
+        let err = rt
+            .run_npm_subcommand(None, "install", &[])
+            .await
+            .unwrap_err();
         match err {
             NexError::AgentNotInstalled { what, hint } => {
                 assert_eq!(what, "node");
@@ -1341,7 +1413,9 @@ mod tests {
     /// version string and exits 0. Returns the path to the binary.
     fn fake_node(version: &str) -> PathBuf {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(if cfg!(windows) { "node.cmd" } else { "node" });
+        let path = dir
+            .path()
+            .join(if cfg!(windows) { "node.cmd" } else { "node" });
         let body = if cfg!(windows) {
             format!("@echo off\r\necho {version}\r\n")
         } else {
@@ -1361,14 +1435,18 @@ mod tests {
     #[tokio::test]
     async fn system_node_runtime_accepts_supported_version() {
         let node = fake_node("v24.11.0");
-        let rt = SystemNodeRuntime::new(node).await.expect("24.x is supported");
+        let rt = SystemNodeRuntime::new(node)
+            .await
+            .expect("24.x is supported");
         assert_eq!(rt.version(), &Version::parse("24.11.0").unwrap());
     }
 
     #[tokio::test]
     async fn system_node_runtime_accepts_minimum_supported_version() {
         let node = fake_node("v22.0.0");
-        let rt = SystemNodeRuntime::new(node).await.expect("22.0.0 is the floor");
+        let rt = SystemNodeRuntime::new(node)
+            .await
+            .expect("22.0.0 is the floor");
         assert_eq!(rt.version(), &Version::parse("22.0.0").unwrap());
     }
 
@@ -1434,19 +1512,28 @@ dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd *node-v24.11.0-
     #[test]
     fn parse_shasums256_double_space_separator() {
         let got = parse_shasums256(SAMPLE_SHASUMS, "node-v24.11.0-darwin-arm64.tar.gz");
-        assert_eq!(got, Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()));
+        assert_eq!(
+            got,
+            Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string())
+        );
     }
 
     #[test]
     fn parse_shasums256_binary_mode_prefix() {
         let got = parse_shasums256(SAMPLE_SHASUMS, "node-v24.11.0-linux-x64.tar.gz");
-        assert_eq!(got, Some("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_string()));
+        assert_eq!(
+            got,
+            Some("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_string())
+        );
     }
 
     #[test]
     fn parse_shasums256_windows_zip() {
         let got = parse_shasums256(SAMPLE_SHASUMS, "node-v24.11.0-windows-x64.zip");
-        assert_eq!(got, Some("dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".to_string()));
+        assert_eq!(
+            got,
+            Some("dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".to_string())
+        );
     }
 
     #[test]
@@ -1472,7 +1559,10 @@ garbage-not-a-hash                                       some-other-file.tar.gz
 eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee  node-v24.11.0-linux-arm64.tar.gz
 ";
         let got = parse_shasums256(body, "node-v24.11.0-linux-arm64.tar.gz");
-        assert_eq!(got, Some("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".to_string()));
+        assert_eq!(
+            got,
+            Some("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".to_string())
+        );
     }
 
     #[test]
@@ -1538,14 +1628,26 @@ eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee  node-v24.11.0-
 
         // And a floor above everything yields nothing.
         let req = VersionReq::parse(">=99.0.0").unwrap();
-        assert_eq!(parse_node_index(SAMPLE_INDEX, "linux-x64", &req, &no_floors()), None);
+        assert_eq!(
+            parse_node_index(SAMPLE_INDEX, "linux-x64", &req, &no_floors()),
+            None
+        );
     }
 
     #[test]
     fn parse_node_index_malformed_json_returns_none() {
-        assert_eq!(parse_node_index("not json", "win-x64-zip", &min_req(), &no_floors()), None);
-        assert_eq!(parse_node_index("{}", "win-x64-zip", &min_req(), &no_floors()), None);
-        assert_eq!(parse_node_index("", "win-x64-zip", &min_req(), &no_floors()), None);
+        assert_eq!(
+            parse_node_index("not json", "win-x64-zip", &min_req(), &no_floors()),
+            None
+        );
+        assert_eq!(
+            parse_node_index("{}", "win-x64-zip", &min_req(), &no_floors()),
+            None
+        );
+        assert_eq!(
+            parse_node_index("", "win-x64-zip", &min_req(), &no_floors()),
+            None
+        );
     }
 
     #[test]
@@ -1594,12 +1696,7 @@ eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee  node-v24.11.0-
             min_v8: Some(VersionReq::parse(">=13.0.0").unwrap()),
             ..no_floors()
         };
-        let got = parse_node_index(
-            INDEX_WITH_BUNDLED,
-            "osx-arm64-tar",
-            &min_req(),
-            &floors,
-        );
+        let got = parse_node_index(INDEX_WITH_BUNDLED, "osx-arm64-tar", &min_req(), &floors);
         assert_eq!(got.as_deref(), Some("v24.18.1"));
     }
 
@@ -1610,12 +1707,7 @@ eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee  node-v24.11.0-
             min_npm: Some(VersionReq::parse(">=11.0.0").unwrap()),
             ..no_floors()
         };
-        let got = parse_node_index(
-            INDEX_WITH_BUNDLED,
-            "osx-arm64-tar",
-            &min_req(),
-            &floors,
-        );
+        let got = parse_node_index(INDEX_WITH_BUNDLED, "osx-arm64-tar", &min_req(), &floors);
         assert_eq!(got.as_deref(), Some("v24.18.1"));
     }
 
@@ -1626,12 +1718,7 @@ eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee  node-v24.11.0-
             min_openssl: Some(VersionReq::parse(">=3.4.0").unwrap()),
             ..no_floors()
         };
-        let got = parse_node_index(
-            INDEX_WITH_BUNDLED,
-            "osx-arm64-tar",
-            &min_req(),
-            &floors,
-        );
+        let got = parse_node_index(INDEX_WITH_BUNDLED, "osx-arm64-tar", &min_req(), &floors);
         // v24.10.0 (openssl 3.4.0) and v24.18.1 (3.5.1) both pass.
         assert_eq!(got.as_deref(), Some("v24.18.1"));
     }
@@ -1802,8 +1889,10 @@ eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee  node-v24.11.0-
         std::fs::write(&npm_cli, "// fake").unwrap();
 
         let resolved = resolve_npm_cli(root).unwrap();
-        assert_eq!(resolved, npm_cli,
-            "Unix layout must find npm-cli.js under lib/node_modules/, got: {resolved:?}");
+        assert_eq!(
+            resolved, npm_cli,
+            "Unix layout must find npm-cli.js under lib/node_modules/, got: {resolved:?}"
+        );
     }
 
     #[test]
@@ -1833,8 +1922,10 @@ eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee  node-v24.11.0-
                 if cfg!(windows) {
                     assert!(msg.contains("node_modules"));
                 } else {
-                    assert!(msg.contains("/lib/node_modules/npm/bin/npm-cli.js"),
-                        "error must list the lib/ candidate: {msg}");
+                    assert!(
+                        msg.contains("/lib/node_modules/npm/bin/npm-cli.js"),
+                        "error must list the lib/ candidate: {msg}"
+                    );
                 }
             }
             other => panic!("expected NexError::Agent, got {other:?}"),

@@ -29,7 +29,10 @@ fn test_read_tree_paths_are_unique() {
     paths.sort();
     let mut deduped = paths.clone();
     deduped.dedup();
-    assert_eq!(paths, deduped, "file tree must not emit duplicate paths: {paths:?}");
+    assert_eq!(
+        paths, deduped,
+        "file tree must not emit duplicate paths: {paths:?}"
+    );
 }
 
 #[test]
@@ -52,12 +55,20 @@ fn test_write_file_atomic_round_trip() {
 use nex_lib::fs::search::{search, SearchOptions};
 
 fn opts(case_sensitive: bool, whole_word: bool, regex: bool) -> SearchOptions {
-    SearchOptions { case_sensitive, whole_word, regex }
+    SearchOptions {
+        case_sensitive,
+        whole_word,
+        regex,
+    }
 }
 
 fn search_fixture(dir: &std::path::Path) {
     fs::create_dir_all(dir.join("src")).unwrap();
-    fs::write(dir.join("src/app.ts"), "const Foo = 1;\nlet foo = 2;\nlet food = 3;\n").unwrap();
+    fs::write(
+        dir.join("src/app.ts"),
+        "const Foo = 1;\nlet foo = 2;\nlet food = 3;\n",
+    )
+    .unwrap();
     fs::write(dir.join("notes.txt"), "foo cat concat\nFoo Cat\n").unwrap();
     fs::write(dir.join("foo.md"), "readme\n").unwrap();
 }
@@ -68,7 +79,9 @@ fn test_search_default_is_case_insensitive_substring() {
     search_fixture(dir.path());
     let results = search(dir.path(), "foo", None).unwrap();
     // foo.md 名称命中（line=None）；app.ts 3 行内容命中；notes.txt 2 行。
-    assert!(results.iter().any(|m| m.name == "foo.md" && m.line.is_none()));
+    assert!(results
+        .iter()
+        .any(|m| m.name == "foo.md" && m.line.is_none()));
     let content_hits: Vec<_> = results.iter().filter(|m| m.line.is_some()).collect();
     assert_eq!(content_hits.len(), 5);
 }
@@ -90,7 +103,10 @@ fn test_search_whole_word_excludes_substrings() {
     let dir = tempdir().unwrap();
     search_fixture(dir.path());
     let results = search(dir.path(), "cat", Some(opts(false, true, false))).unwrap();
-    let texts: Vec<_> = results.iter().filter_map(|m| m.line.map(|_| m.text.clone())).collect();
+    let texts: Vec<_> = results
+        .iter()
+        .filter_map(|m| m.line.map(|_| m.text.clone()))
+        .collect();
     // "foo cat concat"（独立词 cat）与 "Foo Cat"（大小写不敏感）；concat 内的 cat 不算
     assert_eq!(texts.len(), 2);
     assert!(texts.iter().all(|t| t.to_lowercase().contains(" cat")));
@@ -102,7 +118,10 @@ fn test_search_regex_mode() {
     search_fixture(dir.path());
     // 大小写敏感正则：仅 "const Foo = 1;"（"let foo = 2;" 小写不中，"food" 其后非空白不中）
     let results = search(dir.path(), r"Foo\s*=\s*\d", Some(opts(true, false, true))).unwrap();
-    let texts: Vec<_> = results.iter().filter_map(|m| m.line.map(|_| m.text.clone())).collect();
+    let texts: Vec<_> = results
+        .iter()
+        .filter_map(|m| m.line.map(|_| m.text.clone()))
+        .collect();
     assert_eq!(texts.len(), 1);
     assert!(texts[0].contains("const Foo = 1;"));
 }
@@ -124,7 +143,9 @@ fn test_search_fuzzy_filename_matches_abbreviation() {
     fs::write(dir.path().join("compose.js"), "console.log('x');\n").unwrap();
 
     let results = search(dir.path(), "cmpjs", None).unwrap();
-    assert!(results.iter().any(|m| m.name == "components.json" && m.line.is_none()));
+    assert!(results
+        .iter()
+        .any(|m| m.name == "components.json" && m.line.is_none()));
 }
 
 #[test]
@@ -134,8 +155,13 @@ fn test_search_filename_hits_rank_before_content_hits() {
     fs::write(dir.path().join("notes.txt"), "cmpjs appears in content\n").unwrap();
 
     let results = search(dir.path(), "cmpjs", None).unwrap();
-    assert_eq!(results.first().map(|m| (m.name.as_str(), m.line)), Some(("components.json", None)));
-    assert!(results.iter().any(|m| m.name == "notes.txt" && m.line == Some(1)));
+    assert_eq!(
+        results.first().map(|m| (m.name.as_str(), m.line)),
+        Some(("components.json", None))
+    );
+    assert!(results
+        .iter()
+        .any(|m| m.name == "notes.txt" && m.line == Some(1)));
 }
 
 #[test]
@@ -145,7 +171,10 @@ fn test_search_prefers_stronger_filename_match_ordering() {
     fs::write(dir.path().join("my-components.json.backup"), "{}\n").unwrap();
 
     let results = search(dir.path(), "components.json", None).unwrap();
-    assert_eq!(results.first().map(|m| m.name.as_str()), Some("components.json"));
+    assert_eq!(
+        results.first().map(|m| m.name.as_str()),
+        Some("components.json")
+    );
 }
 
 use nex_lib::fs::search::{apply_replace, search_replace};
@@ -159,10 +188,16 @@ fn test_search_replace_preview_counts_without_writing() {
     assert_eq!(preview.total, 5);
     assert!(!preview.truncated);
     assert_eq!(preview.files.len(), 2);
-    let app = preview.files.iter().find(|f| f.path.ends_with("app.ts")).unwrap();
+    let app = preview
+        .files
+        .iter()
+        .find(|f| f.path.ends_with("app.ts"))
+        .unwrap();
     assert_eq!(app.count, 3);
     // 预览不得写盘
-    assert!(fs::read_to_string(dir.path().join("src/app.ts")).unwrap().contains("const Foo = 1;"));
+    assert!(fs::read_to_string(dir.path().join("src/app.ts"))
+        .unwrap()
+        .contains("const Foo = 1;"));
 }
 
 #[test]
@@ -180,7 +215,10 @@ fn test_apply_replace_writes_all_matches() {
     assert!(notes.contains("bar cat concat"));
     assert!(notes.contains("bar Cat"));
     // foo.md 仅名称命中，内容不得被改
-    assert_eq!(fs::read_to_string(dir.path().join("foo.md")).unwrap(), "readme\n");
+    assert_eq!(
+        fs::read_to_string(dir.path().join("foo.md")).unwrap(),
+        "readme\n"
+    );
 }
 
 #[test]
@@ -191,7 +229,9 @@ fn test_apply_replace_single_file_scope() {
     let result = apply_replace(dir.path(), "foo", "bar", None, Some(vec![only]), None).unwrap();
     assert_eq!(result.files_changed, 1);
     assert_eq!(result.replacements, 2);
-    assert!(fs::read_to_string(dir.path().join("src/app.ts")).unwrap().contains("const Foo = 1;"));
+    assert!(fs::read_to_string(dir.path().join("src/app.ts"))
+        .unwrap()
+        .contains("const Foo = 1;"));
 }
 
 #[test]
@@ -199,7 +239,12 @@ fn test_apply_replace_limit_per_file_replaces_first_only() {
     let dir = tempdir().unwrap();
     search_fixture(dir.path());
     // 注意：join 单段再 join 文件名，确保路径分隔符与 walker 产出一致（Windows 为 \）
-    let only = dir.path().join("src").join("app.ts").to_string_lossy().to_string();
+    let only = dir
+        .path()
+        .join("src")
+        .join("app.ts")
+        .to_string_lossy()
+        .to_string();
     let result = apply_replace(dir.path(), "foo", "bar", None, Some(vec![only]), Some(1)).unwrap();
     assert_eq!(result.files_changed, 1);
     assert_eq!(result.replacements, 1);
@@ -221,10 +266,14 @@ fn test_apply_replace_supports_capture_groups() {
         Some(opts(false, false, true)),
         None,
         None,
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(result.files_changed, 1);
     assert_eq!(result.replacements, 2);
-    assert_eq!(fs::read_to_string(dir.path().join("users.txt")).unwrap(), "corp/alice corp/bob\n");
+    assert_eq!(
+        fs::read_to_string(dir.path().join("users.txt")).unwrap(),
+        "corp/alice corp/bob\n"
+    );
 }
 
 #[test]
@@ -244,17 +293,38 @@ fn test_replace_honors_max_results_budget() {
     assert_eq!(result.files_changed, 1);
     assert_eq!(result.replacements, 200);
     let content = fs::read_to_string(dir.path().join("big.txt")).unwrap();
-    assert_eq!(content.lines().filter(|l| l.starts_with("hit line")).count(), 200);
-    assert_eq!(content.lines().filter(|l| l.starts_with("needle line")).count(), 50);
+    assert_eq!(
+        content
+            .lines()
+            .filter(|l| l.starts_with("hit line"))
+            .count(),
+        200
+    );
+    assert_eq!(
+        content
+            .lines()
+            .filter(|l| l.starts_with("needle line"))
+            .count(),
+        50
+    );
 }
 
 #[test]
 fn test_apply_replace_invalid_regex_is_validation_error() {
     let dir = tempdir().unwrap();
     search_fixture(dir.path());
-    let err = apply_replace(dir.path(), "(broken", "x", Some(opts(false, false, true)), None, None).unwrap_err();
+    let err = apply_replace(
+        dir.path(),
+        "(broken",
+        "x",
+        Some(opts(false, false, true)),
+        None,
+        None,
+    )
+    .unwrap_err();
     assert!(format!("{err}").contains("无效的正则表达式"));
-    let err = search_replace(dir.path(), "(broken", "x", Some(opts(false, false, true))).unwrap_err();
+    let err =
+        search_replace(dir.path(), "(broken", "x", Some(opts(false, false, true))).unwrap_err();
     assert!(format!("{err}").contains("无效的正则表达式"));
 }
 
@@ -286,7 +356,10 @@ fn copy_entry_rejects_directory_into_descendant() {
     fs::write(src.join("f.txt"), "x").unwrap();
 
     let err = copy_entry(&src, &nested).unwrap_err();
-    assert!(format!("{err}").contains("自身或其子目录"), "unexpected: {err}");
+    assert!(
+        format!("{err}").contains("自身或其子目录"),
+        "unexpected: {err}"
+    );
     assert!(!nested.join("src").exists());
 }
 
@@ -313,7 +386,10 @@ fn import_file_rejects_directory_into_itself() {
     fs::create_dir_all(src.join("a")).unwrap();
 
     let err = import_file(&src, &src).unwrap_err();
-    assert!(format!("{err}").contains("自身或其子目录"), "unexpected: {err}");
+    assert!(
+        format!("{err}").contains("自身或其子目录"),
+        "unexpected: {err}"
+    );
 }
 
 #[test]
@@ -324,6 +400,9 @@ fn move_entry_rejects_directory_into_descendant() {
     fs::create_dir_all(&nested).unwrap();
 
     let err = move_entry(&src, &nested).unwrap_err();
-    assert!(format!("{err}").contains("自身或其子目录"), "unexpected: {err}");
+    assert!(
+        format!("{err}").contains("自身或其子目录"),
+        "unexpected: {err}"
+    );
     assert!(src.exists());
 }

@@ -35,30 +35,36 @@ impl Database {
     pub fn list_projects(&self) -> Result<Vec<Project>, NexError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT id, name, path, created_at, last_opened FROM projects ORDER BY last_opened DESC")?;
-        let projects = stmt.query_map([], |row| {
-            Ok(Project {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                path: row.get(2)?,
-                created_at: row.get(3)?,
-                last_opened: row.get(4)?,
-            })
-        })?.collect::<Result<Vec<_>, _>>()?;
+        let projects = stmt
+            .query_map([], |row| {
+                Ok(Project {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    path: row.get(2)?,
+                    created_at: row.get(3)?,
+                    last_opened: row.get(4)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(projects)
     }
 
     pub fn get_project_by_path(&self, path: &str) -> Result<Option<Project>, NexError> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT id, name, path, created_at, last_opened FROM projects WHERE path = ?1")?;
-        let project = stmt.query_row(params![path], |row| {
-            Ok(Project {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                path: row.get(2)?,
-                created_at: row.get(3)?,
-                last_opened: row.get(4)?,
+        let mut stmt = conn.prepare(
+            "SELECT id, name, path, created_at, last_opened FROM projects WHERE path = ?1",
+        )?;
+        let project = stmt
+            .query_row(params![path], |row| {
+                Ok(Project {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    path: row.get(2)?,
+                    created_at: row.get(3)?,
+                    last_opened: row.get(4)?,
+                })
             })
-        }).optional()?;
+            .optional()?;
         Ok(project)
     }
 
@@ -74,7 +80,10 @@ impl Database {
     pub fn update_project_last_opened(&self, id: &str) -> Result<i64, NexError> {
         let conn = self.conn.lock().unwrap();
         let now = chrono::Utc::now().timestamp_millis();
-        conn.execute("UPDATE projects SET last_opened = ?1 WHERE id = ?2", params![now, id])?;
+        conn.execute(
+            "UPDATE projects SET last_opened = ?1 WHERE id = ?2",
+            params![now, id],
+        )?;
         Ok(now)
     }
 

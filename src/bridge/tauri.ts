@@ -243,7 +243,7 @@ export interface NativeSkillInfo {
   name: string;
   description: string;
   enabled: boolean;
-  source: "builtin" | "user" | string;
+  source: "builtin" | "user" | "project" | string;
 }
 
 export interface NativeMcpUpsert {
@@ -456,8 +456,8 @@ export async function nativeAgentProbeMcp(
   return invoke(COMMANDS.NATIVE_AGENT_PROBE_MCP, { name, source, cwd: cwd ?? null });
 }
 
-export async function nativeAgentListSkills(): Promise<NativeSkillInfo[]> {
-  return invoke(COMMANDS.NATIVE_AGENT_LIST_SKILLS);
+export async function nativeAgentListSkills(cwd?: string | null): Promise<NativeSkillInfo[]> {
+  return invoke(COMMANDS.NATIVE_AGENT_LIST_SKILLS, { cwd: cwd ?? null });
 }
 
 export async function nativeAgentDeleteSkill(name: string): Promise<void> {
@@ -468,8 +468,8 @@ export async function nativeAgentSetSkillEnabled(name: string, enabled: boolean)
   return invoke(COMMANDS.NATIVE_AGENT_SET_SKILL_ENABLED, { name, enabled });
 }
 
-export async function nativeAgentOpenSkillsDir(): Promise<string> {
-  return invoke(COMMANDS.NATIVE_AGENT_OPEN_SKILLS_DIR);
+export async function nativeAgentOpenSkillsDir(cwd?: string | null): Promise<string> {
+  return invoke(COMMANDS.NATIVE_AGENT_OPEN_SKILLS_DIR, { cwd: cwd ?? null });
 }
 
 export async function nativeAgentOpenLogsDir(): Promise<string> {

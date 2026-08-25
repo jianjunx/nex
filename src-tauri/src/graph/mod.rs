@@ -148,7 +148,10 @@ impl Default for GraphService {
     }
 }
 
-fn worker(rx: std::sync::mpsc::Receiver<Job>, statuses: Arc<Mutex<HashMap<PathBuf, Arc<ProjectStatus>>>>) {
+fn worker(
+    rx: std::sync::mpsc::Receiver<Job>,
+    statuses: Arc<Mutex<HashMap<PathBuf, Arc<ProjectStatus>>>>,
+) {
     while let Ok(job) = rx.recv() {
         match job {
             Job::Ensure(cwd) => {
@@ -315,7 +318,10 @@ mod tests {
         let svc = GraphService::new();
         svc.ensure(cwd);
         let snap = svc.wait_ready(cwd, Duration::from_secs(30));
-        assert!(snap.ready, "first wait must see a finished index, got {snap:?}");
+        assert!(
+            snap.ready,
+            "first wait must see a finished index, got {snap:?}"
+        );
         let search = svc
             .handle()
             .query(

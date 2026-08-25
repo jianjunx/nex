@@ -287,7 +287,9 @@ pub fn resolve_within(cwd: &Path, raw: &str) -> Result<PathBuf, String> {
         .canonicalize()
         .map_err(|e| format!("cannot resolve `{}`: {e}", existing.display()))?;
     if canon != cwd_canon && !canon.starts_with(&cwd_canon) {
-        return Err(format!("path `{raw}` escapes the workspace root (via symlink)"));
+        return Err(format!(
+            "path `{raw}` escapes the workspace root (via symlink)"
+        ));
     }
     if suffix.as_os_str().is_empty() {
         // Path already exists: join("") would append a trailing separator.
@@ -411,7 +413,10 @@ pub fn shell_command() -> tokio::process::Command {
 
 /// Attach `script` to a [`shell_command`] result, preserving quotes on every
 /// platform: `raw_arg` on Windows (cmd parses quotes itself), `arg` elsewhere.
-pub fn shell_command_script(mut cmd: tokio::process::Command, script: &str) -> tokio::process::Command {
+pub fn shell_command_script(
+    mut cmd: tokio::process::Command,
+    script: &str,
+) -> tokio::process::Command {
     #[cfg(windows)]
     {
         cmd.raw_arg(script);
@@ -459,10 +464,7 @@ mod tests {
             resolve_within(&cwd, cwd.join("x").to_str().unwrap()).unwrap(),
             cwd.join("x")
         );
-        assert_eq!(
-            resolve_within(&cwd, "a/../b").unwrap(),
-            cwd.join("b")
-        );
+        assert_eq!(resolve_within(&cwd, "a/../b").unwrap(), cwd.join("b"));
     }
 
     #[test]
@@ -576,10 +578,7 @@ mod tests {
     fn ensure_working_memory_reinserts_after_system_prompt() {
         let mem = test_memory_handle();
         mem.borrow_mut().set_goal("ship v1");
-        let mut msgs = vec![
-            ChatMessage::system("sys"),
-            ChatMessage::user("hello"),
-        ];
+        let mut msgs = vec![ChatMessage::system("sys"), ChatMessage::user("hello")];
         assert!(ensure_working_memory(&mut msgs, &mem.borrow()));
         assert_eq!(msgs[0].role, "system");
         assert!(msgs[1]

@@ -11,7 +11,8 @@ pub fn nex_home() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".nex"))
 }
 
-/// `~/.nex/skills` — root of Claude-compatible agent skills.
+/// `~/.nex/skills` — global Claude-compatible agent skills. Project skills
+/// live in `<cwd>/.nex/skills` (see `skills::project_skills_dir`).
 pub fn skills_dir() -> Option<PathBuf> {
     nex_home().map(|h| h.join("skills"))
 }

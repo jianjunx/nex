@@ -57,7 +57,10 @@ const SKILLS: &[(&str, &str)] = &[
     ("debug", include_str!("skills/debug/SKILL.md")),
     ("refactor", include_str!("skills/refactor/SKILL.md")),
     ("create-skill", include_str!("skills/create-skill/SKILL.md")),
-    ("install-skill", include_str!("skills/install-skill/SKILL.md")),
+    (
+        "install-skill",
+        include_str!("skills/install-skill/SKILL.md"),
+    ),
 ];
 
 #[cfg(test)]

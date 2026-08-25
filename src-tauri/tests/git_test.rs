@@ -19,7 +19,13 @@ fn init_repo(path: &Path) -> Repository {
 /// Current branch short name (never hard-code "master": libgit2 may honor
 /// init.defaultBranch from the environment).
 fn head_name(dir: &Path) -> String {
-    Repository::open(dir).unwrap().head().unwrap().shorthand().unwrap().to_string()
+    Repository::open(dir)
+        .unwrap()
+        .head()
+        .unwrap()
+        .shorthand()
+        .unwrap()
+        .to_string()
 }
 
 /// Write a file, stage it, and commit; returns the new HEAD oid string.
@@ -223,7 +229,10 @@ fn stash_pop_restores_changes_and_drops_entry() {
     let id = repository::stash_list(dir.path()).unwrap()[0].id.clone();
     repository::stash_pop(dir.path(), &id).unwrap();
 
-    assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "dirty");
+    assert_eq!(
+        fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "dirty"
+    );
     assert!(repository::stash_list(dir.path()).unwrap().is_empty());
 }
 
@@ -238,7 +247,10 @@ fn stash_apply_restores_but_keeps_entry() {
     let id = repository::stash_list(dir.path()).unwrap()[0].id.clone();
     repository::stash_apply(dir.path(), &id).unwrap();
 
-    assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "dirty");
+    assert_eq!(
+        fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "dirty"
+    );
     assert_eq!(repository::stash_list(dir.path()).unwrap().len(), 1);
 }
 
@@ -273,15 +285,28 @@ fn stash_ops_follow_id_when_list_shifts() {
 
     let list = repository::stash_list(dir.path()).unwrap();
     assert_eq!(list.len(), 2);
-    let newer = list.iter().find(|e| e.message.contains("second")).unwrap().id.clone();
-    let older = list.iter().find(|e| e.message.contains("first")).unwrap().id.clone();
+    let newer = list
+        .iter()
+        .find(|e| e.message.contains("second"))
+        .unwrap()
+        .id
+        .clone();
+    let older = list
+        .iter()
+        .find(|e| e.message.contains("first"))
+        .unwrap()
+        .id
+        .clone();
 
     // Drop the newer entry → the older one shifts from index 1 to 0, but
     // popping it by id must still restore "first".
     repository::stash_drop(dir.path(), &newer).unwrap();
     repository::stash_pop(dir.path(), &older).unwrap();
 
-    assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "first");
+    assert_eq!(
+        fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "first"
+    );
     assert!(repository::stash_list(dir.path()).unwrap().is_empty());
 
     // A stale id (already dropped) must fail cleanly, not hit another entry.
@@ -301,13 +326,19 @@ fn stash_save_on_unborn_head_errors() {
 fn host_of_parses_common_remote_shapes() {
     assert_eq!(host_of("https://github.com/owner/repo.git"), "github.com");
     assert_eq!(host_of("https://user@codeberg.org:443/o/r"), "codeberg.org");
-    assert_eq!(host_of("ssh://git@gitlab.com:22/group/proj.git"), "gitlab.com");
+    assert_eq!(
+        host_of("ssh://git@gitlab.com:22/group/proj.git"),
+        "gitlab.com"
+    );
     assert_eq!(host_of("git@github.com:owner/repo.git"), "github.com");
 }
 
 #[test]
 fn session_key_scopes_cache_by_kind_and_host() {
-    assert_eq!(session_key("https://github.com/a/b", "https"), "https:github.com");
+    assert_eq!(
+        session_key("https://github.com/a/b", "https"),
+        "https:github.com"
+    );
     assert_ne!(
         session_key("https://github.com/a/b", "https"),
         session_key("https://github.com/a/b", "ssh-passphrase"),
@@ -318,7 +349,9 @@ fn session_key_scopes_cache_by_kind_and_host() {
 async fn respond_delivers_answer_to_pending_receiver() {
     let broker = GitCredentialBroker::new();
     let (id, rx) = broker.register_pending("https://github.com/a/b", "https");
-    broker.respond(&id, Some("u".into()), Some("p".into()), false).unwrap();
+    broker
+        .respond(&id, Some("u".into()), Some("p".into()), false)
+        .unwrap();
     let answer = rx.await.unwrap().expect("answer");
     assert_eq!(answer.username.as_deref(), Some("u"));
     assert_eq!(answer.secret.as_deref(), Some("p"));
@@ -336,24 +369,38 @@ async fn respond_without_credentials_means_cancel() {
 async fn remember_caches_for_same_host_and_kind_only() {
     let broker = GitCredentialBroker::new();
     let (id, rx) = broker.register_pending("https://github.com/a/b", "https");
-    broker.respond(&id, Some("u".into()), Some("p".into()), true).unwrap();
+    broker
+        .respond(&id, Some("u".into()), Some("p".into()), true)
+        .unwrap();
     let _ = rx.await;
-    assert!(broker.lookup_session("https://github.com/other/repo", "https").is_some());
-    assert!(broker.lookup_session("https://gitlab.com/a/b", "https").is_none());
-    assert!(broker.lookup_session("https://github.com/a/b", "ssh-passphrase").is_none());
+    assert!(broker
+        .lookup_session("https://github.com/other/repo", "https")
+        .is_some());
+    assert!(broker
+        .lookup_session("https://gitlab.com/a/b", "https")
+        .is_none());
+    assert!(broker
+        .lookup_session("https://github.com/a/b", "ssh-passphrase")
+        .is_none());
 }
 
 #[test]
 fn respond_unknown_request_id_errors() {
     let broker = GitCredentialBroker::new();
-    let err = broker.respond("nope", Some("u".into()), Some("p".into()), false).unwrap_err();
+    let err = broker
+        .respond("nope", Some("u".into()), Some("p".into()), false)
+        .unwrap_err();
     assert!(err.to_string().contains("no pending credential request"));
 }
 
 /// file:// URL for the local transport (works on Windows and Unix alike).
 fn file_url(p: &Path) -> String {
     let s = p.to_str().unwrap().replace('\\', "/");
-    if s.starts_with('/') { format!("file://{s}") } else { format!("file:///{s}") }
+    if s.starts_with('/') {
+        format!("file://{s}")
+    } else {
+        format!("file:///{s}")
+    }
 }
 
 /// Clones inherit objects but not identity config; set it on any repo we
@@ -397,7 +444,9 @@ fn checkout_remote_creates_local_tracking_branch() {
     assert_eq!(head_name(&work_path), "feature");
     let repo = Repository::open(&work_path).unwrap();
     assert!(!repo.head_detached().unwrap());
-    let local = repo.find_branch("feature", git2::BranchType::Local).unwrap();
+    let local = repo
+        .find_branch("feature", git2::BranchType::Local)
+        .unwrap();
     let upstream = local.upstream().unwrap();
     assert_eq!(upstream.name().unwrap().unwrap(), "origin/feature");
 }
@@ -553,6 +602,12 @@ fn commit_patch_contains_added_lines_and_accepts_short_hash() {
     let oid = commit_file(dir.path(), "a.txt", "v1\n", "init");
 
     let patch = repository::get_commit_patch(dir.path(), &oid[..7]).unwrap();
-    assert!(patch.contains("a.txt"), "patch should name the file: {patch}");
-    assert!(patch.contains("+v1"), "patch should contain the added line: {patch}");
+    assert!(
+        patch.contains("a.txt"),
+        "patch should name the file: {patch}"
+    );
+    assert!(
+        patch.contains("+v1"),
+        "patch should contain the added line: {patch}"
+    );
 }

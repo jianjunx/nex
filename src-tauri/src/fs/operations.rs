@@ -5,9 +5,8 @@ use std::path::{Path, PathBuf};
 
 /// Move a file or directory to the OS trash / recycle bin.
 pub fn delete_entry(path: &Path) -> Result<(), NexError> {
-    trash::delete(path).map_err(|e| {
-        NexError::FileSystem(format!("删除失败 '{}': {}", path.display(), e))
-    })
+    trash::delete(path)
+        .map_err(|e| NexError::FileSystem(format!("删除失败 '{}': {}", path.display(), e)))
 }
 
 /// Rename a file or directory in-place (same parent directory).
@@ -24,8 +23,7 @@ pub fn rename_entry(path: &Path, new_name: &str) -> Result<(), NexError> {
             new_path.display()
         )));
     }
-    fs::rename(path, &new_path)
-        .map_err(|e| NexError::FileSystem(format!("重命名失败: {}", e)))
+    fs::rename(path, &new_path).map_err(|e| NexError::FileSystem(format!("重命名失败: {}", e)))
 }
 
 /// True when `path` is `ancestor` or lives under it (component-wise).
@@ -85,9 +83,9 @@ pub fn copy_entry(source: &Path, target_dir: &Path) -> Result<PathBuf, NexError>
             fs::create_dir_all(parent)
                 .map_err(|e| NexError::FileSystem(format!("创建目录失败: {}", e)))?;
         }
-        fs::copy(source, &dest).map(|_| ()).map_err(|e| {
-            NexError::FileSystem(format!("复制失败: {}", e))
-        })?
+        fs::copy(source, &dest)
+            .map(|_| ())
+            .map_err(|e| NexError::FileSystem(format!("复制失败: {}", e)))?
     }
     Ok(dest)
 }
@@ -105,9 +103,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), NexError> {
     let entries: Vec<_> = fs::read_dir(src)
         .map_err(|e| NexError::FileSystem(format!("读取目录失败: {}", e)))?
         .collect();
-    fs::create_dir(dst).map_err(|e| {
-        NexError::FileSystem(format!("创建目录失败: {}", e))
-    })?;
+    fs::create_dir(dst).map_err(|e| NexError::FileSystem(format!("创建目录失败: {}", e)))?;
     for entry in entries {
         let entry = entry.map_err(|e| NexError::FileSystem(format!("读取条目失败: {}", e)))?;
         let src_path = entry.path();
@@ -123,9 +119,9 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), NexError> {
         } else if file_type.is_dir() {
             copy_dir_recursive(&src_path, &dst_path)?;
         } else {
-            fs::copy(&src_path, &dst_path).map(|_| ()).map_err(|e| {
-                NexError::FileSystem(format!("复制文件失败: {}", e))
-            })?;
+            fs::copy(&src_path, &dst_path)
+                .map(|_| ())
+                .map_err(|e| NexError::FileSystem(format!("复制文件失败: {}", e)))?;
         }
     }
     Ok(())
@@ -133,8 +129,8 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), NexError> {
 
 /// Copies a symlink by recreating it with the same target (never follows it).
 fn copy_symlink(src: &Path, dst: &Path) -> Result<(), NexError> {
-    let target = fs::read_link(src)
-        .map_err(|e| NexError::FileSystem(format!("读取符号链接失败: {}", e)))?;
+    let target =
+        fs::read_link(src).map_err(|e| NexError::FileSystem(format!("读取符号链接失败: {}", e)))?;
     #[cfg(unix)]
     {
         std::os::unix::fs::symlink(&target, dst)
@@ -146,9 +142,8 @@ fn copy_symlink(src: &Path, dst: &Path) -> Result<(), NexError> {
         // fall back to copying the referenced file's contents.
         if let Ok(meta) = fs::metadata(src) {
             if meta.is_dir() {
-                return std::os::windows::fs::symlink_dir(&target, dst).map_err(|e| {
-                    NexError::FileSystem(format!("复制目录符号链接失败: {}", e))
-                });
+                return std::os::windows::fs::symlink_dir(&target, dst)
+                    .map_err(|e| NexError::FileSystem(format!("复制目录符号链接失败: {}", e)));
             }
         }
         std::os::windows::fs::symlink_file(&target, dst)
@@ -217,8 +212,7 @@ fn move_cross_device(source: &Path, dest: &Path) -> Result<(), NexError> {
         fs::remove_dir_all(source)
             .map_err(|e| NexError::FileSystem(format!("跨盘移动后删除源目录失败: {}", e)))?;
     } else {
-        fs::copy(source, dest)
-            .map_err(|e| NexError::FileSystem(format!("跨盘复制失败: {}", e)))?;
+        fs::copy(source, dest).map_err(|e| NexError::FileSystem(format!("跨盘复制失败: {}", e)))?;
         fs::remove_file(source)
             .map_err(|e| NexError::FileSystem(format!("跨盘移动后删除源文件失败: {}", e)))?;
     }
@@ -241,9 +235,8 @@ pub fn import_file(source: &Path, target_dir: &Path) -> Result<PathBuf, NexError
             fs::create_dir_all(parent)
                 .map_err(|e| NexError::FileSystem(format!("创建目录失败: {}", e)))?;
         }
-        fs::copy(source, &dest).map_err(|e| {
-            NexError::FileSystem(format!("复制文件失败: {}", e))
-        })?;
+        fs::copy(source, &dest)
+            .map_err(|e| NexError::FileSystem(format!("复制文件失败: {}", e)))?;
     }
     Ok(dest)
 }
@@ -271,10 +264,13 @@ fn resolve_unique_path(dir: &Path, name: &std::ffi::OsStr) -> PathBuf {
         // Safety valve: 999 tries
         if counter > 999 {
             // Fallback with timestamp
-            return dir.join(format!("{stem_no_ext}_{}", std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()));
+            return dir.join(format!(
+                "{stem_no_ext}_{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+            ));
         }
     }
 }

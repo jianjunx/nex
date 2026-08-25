@@ -366,10 +366,9 @@ impl ToolAccumulator {
         let mut used = std::collections::HashSet::new();
         out.into_iter()
             .map(|(index, p)| {
-                let mut id = p
-                    .id
-                    .filter(|s| !s.trim().is_empty())
-                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                let mut id =
+                    p.id.filter(|s| !s.trim().is_empty())
+                        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
                 if !used.insert(id.clone()) {
                     id = uuid::Uuid::new_v4().to_string();
                     used.insert(id.clone());
@@ -399,7 +398,11 @@ fn parse_tool_arguments(
     raw: &str,
     original_name: &Option<String>,
 ) -> Result<serde_json::Value, String> {
-    if original_name.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+    if original_name
+        .as_ref()
+        .map(|s| s.trim().is_empty())
+        .unwrap_or(true)
+    {
         return Err(format!("tool call {index} has no function name"));
     }
     let args = if raw.trim().is_empty() {
@@ -457,7 +460,11 @@ fn json_u64(v: &serde_json::Value) -> u64 {
             .as_u64()
             .or_else(|| n.as_f64().map(|f| f.max(0.0) as u64))
             .unwrap_or(0),
-        serde_json::Value::String(s) => s.parse::<f64>().ok().map(|f| f.max(0.0) as u64).unwrap_or(0),
+        serde_json::Value::String(s) => s
+            .parse::<f64>()
+            .ok()
+            .map(|f| f.max(0.0) as u64)
+            .unwrap_or(0),
         _ => 0,
     }
 }

@@ -1,12 +1,13 @@
+use super::types::*;
+use crate::error::NexError;
 use git2::{DiffFormat, Repository, StatusOptions};
 use std::path::Path;
-use crate::error::NexError;
-use super::types::*;
 
 pub fn get_status(repo_path: &Path) -> Result<GitStatus, NexError> {
     let repo = Repository::open(repo_path)?;
     let head = repo.head().ok();
-    let branch = head.as_ref()
+    let branch = head
+        .as_ref()
         .and_then(|h| h.shorthand().map(|s| s.to_string()))
         .unwrap_or_else(|| "HEAD".to_string());
 
@@ -40,16 +41,41 @@ pub fn get_status(repo_path: &Path) -> Result<GitStatus, NexError> {
         let s = entry.status();
 
         if s.is_index_new() || s.is_index_modified() || s.is_index_deleted() {
-            let status = if s.is_index_new() { "added" } else if s.is_index_deleted() { "deleted" } else { "modified" };
-            files.push(GitFileChange { path: path.clone(), status: status.to_string(), staged: true });
+            let status = if s.is_index_new() {
+                "added"
+            } else if s.is_index_deleted() {
+                "deleted"
+            } else {
+                "modified"
+            };
+            files.push(GitFileChange {
+                path: path.clone(),
+                status: status.to_string(),
+                staged: true,
+            });
         }
         if s.is_wt_modified() || s.is_wt_deleted() || s.is_wt_new() {
-            let status = if s.is_wt_new() { "untracked" } else if s.is_wt_deleted() { "deleted" } else { "modified" };
-            files.push(GitFileChange { path, status: status.to_string(), staged: false });
+            let status = if s.is_wt_new() {
+                "untracked"
+            } else if s.is_wt_deleted() {
+                "deleted"
+            } else {
+                "modified"
+            };
+            files.push(GitFileChange {
+                path,
+                status: status.to_string(),
+                staged: false,
+            });
         }
     }
 
-    Ok(GitStatus { branch, ahead, behind, files })
+    Ok(GitStatus {
+        branch,
+        ahead,
+        behind,
+        files,
+    })
 }
 
 /// 共享补丁打印器：DiffLine::content() 不含行首来源标记，补回 +/-/空格
@@ -108,7 +134,11 @@ fn blob_bytes(repo: &Repository, id: git2::Oid) -> Result<Vec<u8>, NexError> {
 /// 为合并视图取两个完整文档。staged = HEAD blob vs 索引 blob；
 /// unstaged = 索引 blob（无索引条目回退 HEAD blob）vs 工作区磁盘内容。
 /// 缺失一侧得空串：暂存新增文件 original=""，工作区已删文件 revised=""。
-pub fn get_diff_contents(repo_path: &Path, file: &str, staged: bool) -> Result<DiffContents, NexError> {
+pub fn get_diff_contents(
+    repo_path: &Path,
+    file: &str,
+    staged: bool,
+) -> Result<DiffContents, NexError> {
     let repo = Repository::open(repo_path)?;
 
     let original_id = if staged {
@@ -127,7 +157,8 @@ pub fn get_diff_contents(repo_path: &Path, file: &str, staged: bool) -> Result<D
             None => Vec::new(),
         }
     } else {
-        let workdir = repo.workdir()
+        let workdir = repo
+            .workdir()
             .ok_or_else(|| NexError::Git("bare repository has no working directory".to_string()))?;
         match std::fs::read(workdir.join(Path::new(file))) {
             Ok(b) => b,
@@ -183,7 +214,8 @@ pub fn get_log(repo_path: &Path, limit: usize) -> Result<Vec<CommitInfo>, NexErr
 
 pub fn stage_files(repo_path: &Path, files: &[String]) -> Result<(), NexError> {
     let repo = Repository::open(repo_path)?;
-    let workdir = repo.workdir()
+    let workdir = repo
+        .workdir()
         .ok_or_else(|| NexError::Git("cannot stage files in a bare repository".to_string()))?;
     let mut index = repo.index()?;
     for file in files {
@@ -315,8 +347,13 @@ pub fn checkout_branch(repo_path: &Path, name: &str) -> Result<(), NexError> {
 }
 
 /// 从 `origin/foo/bar` 解析本地名 `foo/bar`（按已配置 remote 前缀剥离）。
-fn local_name_from_remote_branch(repo: &Repository, remote_branch: &str) -> Result<String, NexError> {
-    let remotes = repo.remotes().map_err(|e| NexError::Git(e.message().to_string()))?;
+fn local_name_from_remote_branch(
+    repo: &Repository,
+    remote_branch: &str,
+) -> Result<String, NexError> {
+    let remotes = repo
+        .remotes()
+        .map_err(|e| NexError::Git(e.message().to_string()))?;
     let mut names: Vec<&str> = remotes.iter().flatten().collect();
     // 较长 remote 名优先，避免误剥前缀。
     names.sort_by_key(|n| std::cmp::Reverse(n.len()));
@@ -347,7 +384,10 @@ fn checkout_remote_as_local(repo_path: &Path, remote_branch: &str) -> Result<(),
     let repo = Repository::open(repo_path)?;
     let local_name = local_name_from_remote_branch(&repo, remote_branch)?;
 
-    if repo.find_branch(&local_name, git2::BranchType::Local).is_ok() {
+    if repo
+        .find_branch(&local_name, git2::BranchType::Local)
+        .is_ok()
+    {
         let _ = fetch_result; // 已存在本地分支：fetch 成败都不挡签出
         return checkout_local_ref(&repo, &local_name);
     }
@@ -433,7 +473,8 @@ pub fn delete_branch(repo_path: &Path, name: &str) -> Result<(), NexError> {
 fn validate_repo_relative(file: &str) -> Result<(), NexError> {
     let p = Path::new(file);
     if p.is_absolute()
-        || p.components().any(|c| matches!(c, std::path::Component::ParentDir))
+        || p.components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
     {
         return Err(NexError::Git(format!("非法的仓库相对路径: {file}")));
     }
@@ -526,11 +567,19 @@ pub fn stash_save(repo_path: &Path, message: &str) -> Result<(), NexError> {
         ));
     }
     // libgit2 stores an empty message verbatim; synthesize git's default.
-    let fallback = match repo.head().ok().and_then(|h| h.shorthand().map(|s| s.to_string())) {
+    let fallback = match repo
+        .head()
+        .ok()
+        .and_then(|h| h.shorthand().map(|s| s.to_string()))
+    {
         Some(branch) => format!("WIP on {branch}"),
         None => "WIP on HEAD".to_string(),
     };
-    let msg = if message.trim().is_empty() { fallback.as_str() } else { message };
+    let msg = if message.trim().is_empty() {
+        fallback.as_str()
+    } else {
+        message
+    };
     repo.stash_save(&sig, msg, Some(git2::StashFlags::INCLUDE_UNTRACKED))?;
     Ok(())
 }
@@ -553,8 +602,8 @@ pub fn stash_list(repo_path: &Path) -> Result<Vec<StashEntry>, NexError> {
 /// index. Callers previously passed UI-time indexes, which silently hit the
 /// wrong stash whenever the list shifted (any drop renumbers everything).
 fn resolve_stash_index(repo: &mut Repository, id: &str) -> Result<usize, NexError> {
-    let wanted = git2::Oid::from_str(id)
-        .map_err(|_| NexError::Git(format!("非法的 stash id: {id:?}")))?;
+    let wanted =
+        git2::Oid::from_str(id).map_err(|_| NexError::Git(format!("非法的 stash id: {id:?}")))?;
     let mut found: Option<usize> = None;
     repo.stash_foreach(|index, _message, oid| {
         if *oid == wanted {

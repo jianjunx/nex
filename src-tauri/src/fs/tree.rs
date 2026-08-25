@@ -1,8 +1,8 @@
+use crate::error::NexError;
 use ignore::WalkBuilder;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::Path;
-use crate::error::NexError;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FsNode {
@@ -41,17 +41,29 @@ pub fn read_tree(root: &Path, depth: usize) -> Result<Vec<FsNode>, NexError> {
     let mut seen = HashSet::new();
     for entry in walker.flatten() {
         let path = entry.path();
-        if path == root { continue; }
+        if path == root {
+            continue;
+        }
         let path_str = path.to_string_lossy().to_string();
         if !seen.insert(path_str.clone()) {
             continue;
         }
-        let metadata = entry.metadata().map_err(|e| NexError::FileSystem(e.to_string()))?;
+        let metadata = entry
+            .metadata()
+            .map_err(|e| NexError::FileSystem(e.to_string()))?;
         nodes.push(FsNode {
-            name: path.file_name().unwrap_or_default().to_string_lossy().to_string(),
+            name: path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
             path: path_str,
             is_dir: metadata.is_dir(),
-            size: if metadata.is_file() { Some(metadata.len()) } else { None },
+            size: if metadata.is_file() {
+                Some(metadata.len())
+            } else {
+                None
+            },
         });
     }
 
@@ -66,6 +78,10 @@ pub fn read_tree(root: &Path, depth: usize) -> Result<Vec<FsNode>, NexError> {
 }
 
 pub fn expand_dir(dir_path: &Path) -> Result<Vec<FsNode>, NexError> {
-    read_tree(dir_path, 1)
-        .map(|nodes| nodes.into_iter().filter(|n| n.path != dir_path.to_string_lossy()).collect())
+    read_tree(dir_path, 1).map(|nodes| {
+        nodes
+            .into_iter()
+            .filter(|n| n.path != dir_path.to_string_lossy())
+            .collect()
+    })
 }

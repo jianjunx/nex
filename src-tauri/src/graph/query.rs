@@ -94,7 +94,9 @@ fn overview(conn: &Connection, cwd: &Path, _limit: usize) -> Result<String, Stri
             .prepare("SELECT path FROM files")
             .map_err(|e| e.to_string())?;
         let mut counts: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
-        let rows = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
         for row in rows {
             let p = row.map_err(|e| e.to_string())?;
             let top = p.split('/').next().unwrap_or(&p).to_string();
@@ -128,10 +130,7 @@ fn overview(conn: &Connection, cwd: &Path, _limit: usize) -> Result<String, Stri
 }
 
 fn search(conn: &Connection, req: &QueryReq) -> Result<String, String> {
-    let q = req
-        .query
-        .as_deref()
-        .ok_or("search requires `query`")?;
+    let q = req.query.as_deref().ok_or("search requires `query`")?;
     let like = format!("%{q}%");
     let order = " ORDER BY CASE kind WHEN 'Function' THEN 0 WHEN 'Class' THEN 1 WHEN 'Type' THEN 2 WHEN 'Test' THEN 3 ELSE 4 END, name LIMIT ";
     let rows = if let Some(kind) = &req.kind {
@@ -395,7 +394,8 @@ fn resolve_file(conn: &Connection, target: &str) -> Option<String> {
 }
 
 fn count(conn: &Connection, sql: &str) -> Result<i64, String> {
-    conn.query_row(sql, [], |r| r.get(0)).map_err(|e| e.to_string())
+    conn.query_row(sql, [], |r| r.get(0))
+        .map_err(|e| e.to_string())
 }
 
 fn meta(conn: &Connection, key: &str) -> Option<String> {
@@ -408,5 +408,6 @@ fn query_pairs(conn: &Connection, sql: &str) -> Result<Vec<(String, i64)>, Strin
     let rows = stmt
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }

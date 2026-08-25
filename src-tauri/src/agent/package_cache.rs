@@ -55,12 +55,10 @@ const KEEP_RECENT_VERSIONS: usize = 3;
 fn write_empty_npmrc_pair(dir: &Path) -> Result<(PathBuf, PathBuf), NexError> {
     let user_rc = dir.join(".nex-npmrc-user");
     let global_rc = dir.join(".nex-npmrc-global");
-    std::fs::write(&user_rc, "").map_err(|e| {
-        NexError::Agent(format!("failed to write empty user npmrc: {e}"))
-    })?;
-    std::fs::write(&global_rc, "").map_err(|e| {
-        NexError::Agent(format!("failed to write empty global npmrc: {e}"))
-    })?;
+    std::fs::write(&user_rc, "")
+        .map_err(|e| NexError::Agent(format!("failed to write empty user npmrc: {e}")))?;
+    std::fs::write(&global_rc, "")
+        .map_err(|e| NexError::Agent(format!("failed to write empty global npmrc: {e}")))?;
     Ok((user_rc, global_rc))
 }
 
@@ -127,7 +125,10 @@ impl PackageCache {
             .root
             .join(sanitize(id))
             .join(sanitize(spec))
-            .join(format!("node-{node_version}", node_version = node_version.version())))
+            .join(format!(
+                "node-{node_version}",
+                node_version = node_version.version()
+            )))
     }
 
     /// Installs exactly the registry version, deduplicating concurrent work.
@@ -258,7 +259,9 @@ impl PackageCache {
                 install_dir,
                 runtime,
                 attempt_timeout,
-            ).await {
+            )
+            .await
+            {
                 Ok(()) => break,
                 Err(failure)
                     if index == 0
@@ -289,13 +292,11 @@ impl PackageCache {
 
 fn prepare_install_dir(install_dir: &Path) -> Result<(), NexError> {
     if install_dir.exists() {
-        std::fs::remove_dir_all(install_dir).map_err(|e| NexError::Agent(format!(
-            "failed to wipe prior install dir: {e}"
-        )))?;
+        std::fs::remove_dir_all(install_dir)
+            .map_err(|e| NexError::Agent(format!("failed to wipe prior install dir: {e}")))?;
     }
-    std::fs::create_dir_all(install_dir).map_err(|e| NexError::Agent(format!(
-        "failed to create install dir: {e}"
-    )))
+    std::fs::create_dir_all(install_dir)
+        .map_err(|e| NexError::Agent(format!("failed to create install dir: {e}")))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -357,23 +358,30 @@ impl NpmInstallFailure {
         match self {
             Self::Spawn(e) => format!("spawn error: {e}"),
             Self::Timeout => "timed out".to_string(),
-            Self::Exit { status, stderr, stdout } => {
-                let detail = if stderr.trim().is_empty() { stdout } else { stderr };
+            Self::Exit {
+                status,
+                stderr,
+                stdout,
+            } => {
+                let detail = if stderr.trim().is_empty() {
+                    stdout
+                } else {
+                    stderr
+                };
                 format!("exit {status}: {}", detail.trim())
             }
         }
     }
 
-    fn into_nex_error(
-        self,
-        spec: &str,
-        registry: &str,
-        mirror_failure: Option<&str>,
-    ) -> NexError {
+    fn into_nex_error(self, spec: &str, registry: &str, mirror_failure: Option<&str>) -> NexError {
         match self {
             Self::Spawn(e) => NexError::Agent(format!("failed to spawn npm install: {e}")),
             Self::Timeout => install_timeout_error(spec),
-            Self::Exit { status, stdout, stderr } => {
+            Self::Exit {
+                status,
+                stdout,
+                stderr,
+            } => {
                 let fallback = mirror_failure
                     .map(|detail| format!("\n  mirror failure: {detail}"))
                     .unwrap_or_default();
@@ -390,13 +398,37 @@ impl NpmInstallFailure {
 fn is_registry_failure_output(output: &str) -> bool {
     let text = output.to_ascii_lowercase();
     [
-        "eai_again", "enotfound", "econnreset", "econnrefused", "etimedout",
-        "econnaborted", "err_socket", "err_ssl", "err_tls", "certificate",
-        "self signed", "unable_to_verify", "socket hang up", "fetch failed",
-        "network request", "network error", "e403", "403 forbidden", "e404",
-        "404 not found", "e429", "429 too many requests", "e502", "e503",
-        "e504", "bad gateway", "service unavailable", "gateway timeout",
-        "eintegrity", "etarget", "no matching version",
+        "eai_again",
+        "enotfound",
+        "econnreset",
+        "econnrefused",
+        "etimedout",
+        "econnaborted",
+        "err_socket",
+        "err_ssl",
+        "err_tls",
+        "certificate",
+        "self signed",
+        "unable_to_verify",
+        "socket hang up",
+        "fetch failed",
+        "network request",
+        "network error",
+        "e403",
+        "403 forbidden",
+        "e404",
+        "404 not found",
+        "e429",
+        "429 too many requests",
+        "e502",
+        "e503",
+        "e504",
+        "bad gateway",
+        "service unavailable",
+        "gateway timeout",
+        "eintegrity",
+        "etarget",
+        "no matching version",
     ]
     .iter()
     .any(|needle| text.contains(needle))
@@ -473,19 +505,17 @@ impl PackageResolver for PackageCache {
         // Registry updates never block a working cached agent. Install the
         // latest version silently; the exact-version fast path above switches
         // future sessions only after its success marker has been written.
-        if let Some((cached, marker)) = newest_usable_npx_install(
-            &self.root,
-            &entry.id,
-            &npx.package,
-            runtime.binary_path(),
-        ) {
+        if let Some((cached, marker)) =
+            newest_usable_npx_install(&self.root, &entry.id, &npx.package, runtime.binary_path())
+        {
             let _ = touch_marker(&marker);
             self.prefetch_current(entry.id.clone(), npx.package.clone(), runtime);
             return Ok(cached);
         }
 
         // Cold install: no usable version exists, so wait for installation.
-        self.ensure_current_install(&entry.id, &npx.package, &runtime).await
+        self.ensure_current_install(&entry.id, &npx.package, &runtime)
+            .await
     }
 
     fn newest_installed_version(&self, agent_id: &str) -> Option<String> {
@@ -604,7 +634,10 @@ fn install_dirs_for_spec(spec_dir: &Path) -> Vec<PathBuf> {
 /// (different `spec` strings get distinct cache subdirs), but a bug if
 /// you ever pass it to `node_modules.join(...)`.
 pub fn sanitize(s: &str) -> String {
-    s.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|', ' ', '@'], "_")
+    s.replace(
+        ['/', '\\', ':', '*', '?', '"', '<', '>', '|', ' ', '@'],
+        "_",
+    )
 }
 
 /// Extract the npm package name (with `@scope/` preserved, `@version`
@@ -716,17 +749,11 @@ async fn sweep_lru(root: &Path, keep_recent: usize) -> std::io::Result<usize> {
             for (_, stale_path) in specs.into_iter().skip(keep_recent) {
                 match std::fs::remove_dir_all(&stale_path) {
                     Ok(()) => {
-                        log::info!(
-                            "evicted old agent cache: {}",
-                            stale_path.display()
-                        );
+                        log::info!("evicted old agent cache: {}", stale_path.display());
                         removed += 1;
                     }
                     Err(e) => {
-                        log::warn!(
-                            "failed to evict {}: {e}",
-                            stale_path.display()
-                        );
+                        log::warn!("failed to evict {}: {e}", stale_path.display());
                     }
                 }
             }
@@ -752,25 +779,31 @@ pub fn read_package_executable_path(
     let pkg_dir_name = package_name_from_spec(package_spec);
     let pkg_dir = install_dir.join("node_modules").join(pkg_dir_name);
     let pkg_json_path = pkg_dir.join("package.json");
-    let raw = std::fs::read_to_string(&pkg_json_path).map_err(|e| NexError::Agent(format!(
-        "missing package.json at {}: {e}",
-        pkg_json_path.display()
-    )))?;
-    let pkg_json: JsonValue = serde_json::from_str(&raw).map_err(|e| NexError::Agent(format!(
-        "invalid package.json at {}: {e}",
-        pkg_json_path.display()
-    )))?;
+    let raw = std::fs::read_to_string(&pkg_json_path).map_err(|e| {
+        NexError::Agent(format!(
+            "missing package.json at {}: {e}",
+            pkg_json_path.display()
+        ))
+    })?;
+    let pkg_json: JsonValue = serde_json::from_str(&raw).map_err(|e| {
+        NexError::Agent(format!(
+            "invalid package.json at {}: {e}",
+            pkg_json_path.display()
+        ))
+    })?;
     let name = pkg_json
         .get("name")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| NexError::Agent(format!(
-            "package.json at {} has no `name`",
-            pkg_json_path.display()
-        )))?
+        .ok_or_else(|| {
+            NexError::Agent(format!(
+                "package.json at {} has no `name`",
+                pkg_json_path.display()
+            ))
+        })?
         .to_string();
-    let bin_value = pkg_json.get("bin").ok_or_else(|| NexError::Agent(format!(
-        "package `{name}` declares no `bin`"
-    )))?;
+    let bin_value = pkg_json
+        .get("bin")
+        .ok_or_else(|| NexError::Agent(format!("package `{name}` declares no `bin`")))?;
 
     let bins: HashMap<String, String> = match bin_value {
         JsonValue::String(p) => {
@@ -781,9 +814,11 @@ pub fn read_package_executable_path(
             .iter()
             .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
             .collect(),
-        _ => return Err(NexError::Agent(format!(
-            "package `{name}` has a malformed `bin` field"
-        ))),
+        _ => {
+            return Err(NexError::Agent(format!(
+                "package `{name}` has a malformed `bin` field"
+            )))
+        }
     };
 
     let selected = select_npx_bin(&bins, &name)?;
@@ -791,10 +826,7 @@ pub fn read_package_executable_path(
 }
 
 /// Mirror npx's bin-selection logic. Returns the relative bin path to run.
-fn select_npx_bin(
-    bins: &HashMap<String, String>,
-    package_name: &str,
-) -> Result<String, NexError> {
+fn select_npx_bin(bins: &HashMap<String, String>, package_name: &str) -> Result<String, NexError> {
     match bins.len() {
         0 => Err(NexError::Agent(format!(
             "package `{package_name}` declares an empty `bin` map"
@@ -909,10 +941,7 @@ mod tests {
 
     #[test]
     fn package_name_handles_pre_release_version() {
-        assert_eq!(
-            package_name_from_spec("foo@1.0.0-beta.1"),
-            "foo"
-        );
+        assert_eq!(package_name_from_spec("foo@1.0.0-beta.1"), "foo");
         assert_eq!(
             package_name_from_spec("@scope/name@2.0.0-rc.3+build.42"),
             "@scope/name"
@@ -957,10 +986,16 @@ mod tests {
     #[test]
     fn registry_failures_trigger_official_fallback() {
         assert!(is_registry_failure_output("npm error code ENOTFOUND"));
-        assert!(is_registry_failure_output("404 Not Found - package not synced"));
+        assert!(is_registry_failure_output(
+            "404 Not Found - package not synced"
+        ));
         assert!(is_registry_failure_output("504 Gateway Timeout"));
-        assert!(is_registry_failure_output("ETARGET No matching version found"));
-        assert!(!is_registry_failure_output("postinstall script exited with code 1"));
+        assert!(is_registry_failure_output(
+            "ETARGET No matching version found"
+        ));
+        assert!(!is_registry_failure_output(
+            "postinstall script exited with code 1"
+        ));
     }
 
     #[test]
@@ -989,7 +1024,10 @@ mod tests {
         )
         .unwrap();
         let got = read_package_executable_path(dir.path(), "foo@1.0.0").unwrap();
-        assert!(got.ends_with("node_modules/foo/dist/cli.js"), "got: {got:?}");
+        assert!(
+            got.ends_with("node_modules/foo/dist/cli.js"),
+            "got: {got:?}"
+        );
     }
 
     #[test]
@@ -1004,7 +1042,10 @@ mod tests {
         )
         .unwrap();
         let got = read_package_executable_path(dir.path(), "@scope/foo@1.0.0").unwrap();
-        assert!(got.ends_with("node_modules/@scope/foo/dist/cli.js"), "got: {got:?}");
+        assert!(
+            got.ends_with("node_modules/@scope/foo/dist/cli.js"),
+            "got: {got:?}"
+        );
     }
 
     #[test]
@@ -1026,14 +1067,20 @@ mod tests {
         // Mirror exactly the path layout npm produces for a real install:
         //   /tmp/.../node_modules/@agentclientprotocol/claude-agent-acp/package.json
         let dir = tempfile::tempdir().unwrap();
-        let pkg = dir.path().join("node_modules/@agentclientprotocol/claude-agent-acp");
+        let pkg = dir
+            .path()
+            .join("node_modules/@agentclientprotocol/claude-agent-acp");
         std::fs::create_dir_all(&pkg).unwrap();
         std::fs::write(
             pkg.join("package.json"),
             r#"{"name":"@agentclientprotocol/claude-agent-acp","bin":"dist/cli.js"}"#,
         )
         .unwrap();
-        let got = read_package_executable_path(dir.path(), "@agentclientprotocol/claude-agent-acp@0.64.2").unwrap();
+        let got = read_package_executable_path(
+            dir.path(),
+            "@agentclientprotocol/claude-agent-acp@0.64.2",
+        )
+        .unwrap();
         assert!(got.ends_with("node_modules/@agentclientprotocol/claude-agent-acp/dist/cli.js"));
     }
 
@@ -1061,7 +1108,10 @@ mod tests {
 
     #[test]
     fn version_from_spec_handles_prerelease() {
-        assert_eq!(version_from_spec("foo@1.0.0-beta.1").as_deref(), Some("1.0.0-beta.1"));
+        assert_eq!(
+            version_from_spec("foo@1.0.0-beta.1").as_deref(),
+            Some("1.0.0-beta.1")
+        );
         assert_eq!(
             version_from_spec("@scope/name@2.0.0-rc.3").as_deref(),
             Some("2.0.0-rc.3")
@@ -1091,7 +1141,10 @@ mod tests {
         version: &str,
         marker_mtime_offset_secs: i64,
     ) -> PathBuf {
-        let dir = root.join(sanitize(id)).join(sanitize(spec)).join("node-test");
+        let dir = root
+            .join(sanitize(id))
+            .join(sanitize(spec))
+            .join("node-test");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(".nex-install-ok"), "").unwrap();
         std::fs::write(dir.join(".nex-version"), version).unwrap();
@@ -1155,10 +1208,31 @@ mod tests {
         );
         // Three installs: 0.64.0 (old), 0.65.0 (older), 0.66.0 (newest).
         // Mtimes are: -3600, -60, 0 seconds from now.
-        make_fake_install(&cache.root, "claude-acp", "@scope/claude@0.64.0", "0.64.0", -3600);
-        make_fake_install(&cache.root, "claude-acp", "@scope/claude@0.66.0", "0.66.0", 0);
-        make_fake_install(&cache.root, "claude-acp", "@scope/claude@0.65.0", "0.65.0", -60);
-        assert_eq!(cache.newest_installed_version("claude-acp").as_deref(), Some("0.66.0"));
+        make_fake_install(
+            &cache.root,
+            "claude-acp",
+            "@scope/claude@0.64.0",
+            "0.64.0",
+            -3600,
+        );
+        make_fake_install(
+            &cache.root,
+            "claude-acp",
+            "@scope/claude@0.66.0",
+            "0.66.0",
+            0,
+        );
+        make_fake_install(
+            &cache.root,
+            "claude-acp",
+            "@scope/claude@0.65.0",
+            "0.65.0",
+            -60,
+        );
+        assert_eq!(
+            cache.newest_installed_version("claude-acp").as_deref(),
+            Some("0.66.0")
+        );
     }
 
     #[test]
@@ -1172,19 +1246,13 @@ mod tests {
             "0.66.0",
             0,
         );
-        let old_executable = make_fake_executable(
-            &old,
-            "@agentclientprotocol/claude-agent-acp",
-        );
+        let old_executable = make_fake_executable(&old, "@agentclientprotocol/claude-agent-acp");
 
         let partial = root
             .join("claude-acp")
             .join("_agentclientprotocol_claude-agent-acp_0.67.0")
             .join("node-test");
-        let _ = make_fake_executable(
-            &partial,
-            "@agentclientprotocol/claude-agent-acp",
-        );
+        let _ = make_fake_executable(&partial, "@agentclientprotocol/claude-agent-acp");
         // No success marker on the new version: it must never be selected.
         let (resolved, _) = newest_usable_npx_install(
             &root,

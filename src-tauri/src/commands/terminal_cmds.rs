@@ -16,18 +16,17 @@ pub async fn terminal_create(
     let path_env = state.agent_manager.path_for_cwd(&project_path).await;
     let cols = cols.unwrap_or(80);
     let rows = rows.unwrap_or(24);
-    state.terminal_manager.create(
-        app,
-        &project_path,
-        shell.as_deref(),
-        &path_env,
-        cols,
-        rows,
-    )
+    state
+        .terminal_manager
+        .create(app, &project_path, shell.as_deref(), &path_env, cols, rows)
 }
 
 #[tauri::command]
-pub fn terminal_write(state: State<'_, AppState>, terminal_id: String, data: String) -> Result<(), NexError> {
+pub fn terminal_write(
+    state: State<'_, AppState>,
+    terminal_id: String,
+    data: String,
+) -> Result<(), NexError> {
     state.terminal_manager.write(&terminal_id, &data)
 }
 

@@ -19,9 +19,9 @@ use std::ffi::OsStr;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use super::binary::BinaryCache;
 use super::package_cache::PackageResolver;
 use super::registry::RegistryEntry;
-use super::binary::BinaryCache;
 use crate::error::NexError;
 
 /// Registry id of Anthropic's Claude agent — the one agent that needs an env
@@ -93,9 +93,7 @@ pub async fn resolve_registry(
     if let Some(binaries) = &entry.distribution.binary {
         let key = registry_platform_key();
         if let Some(target) = binaries.get(&key) {
-            let exe_path = binary_cache
-                .ensure_installed(entry, target, &key)
-                .await?;
+            let exe_path = binary_cache.ensure_installed(entry, target, &key).await?;
             let program = exe_path.to_string_lossy().to_string();
             let args = target.args.clone();
             let mut env = target.env.clone();
@@ -109,11 +107,18 @@ pub async fn resolve_registry(
                 program,
                 args.join(" ")
             );
-            return Ok(LaunchSpec { program, args, env, cwd: cwd.to_string() });
+            return Ok(LaunchSpec {
+                program,
+                args,
+                env,
+                cwd: cwd.to_string(),
+            });
         }
         return Err(NexError::Agent(format!(
             "agent `{}` has no binary for platform `{}` (available: {:?})",
-            entry.id, key, binaries.keys().collect::<Vec<_>>()
+            entry.id,
+            key,
+            binaries.keys().collect::<Vec<_>>()
         )));
     }
 
@@ -177,7 +182,12 @@ pub fn resolve_custom(
         .to_string();
     let args: Vec<String> = parts.map(str::to_string).collect();
     apply_shell_env(&mut env, shell_env);
-    Ok(LaunchSpec { program, args, env, cwd: cwd.to_string() })
+    Ok(LaunchSpec {
+        program,
+        args,
+        env,
+        cwd: cwd.to_string(),
+    })
 }
 
 /// Per-agent env overrides, mirroring Zed's `custom.rs`.
@@ -234,7 +244,9 @@ fn spawn_with(spec: &LaunchSpec, windows: bool) -> Result<tokio::process::Child,
             let mut via_cmd = tokio::process::Command::new("cmd");
             via_cmd.arg("/c").arg(&spec.program).args(&spec.args);
             configure(&mut via_cmd, spec);
-            via_cmd.spawn().map_err(|e2| classify_spawn_error(&program_path, &e2))
+            via_cmd
+                .spawn()
+                .map_err(|e2| classify_spawn_error(&program_path, &e2))
         }
         Err(e) => Err(classify_spawn_error(&program_path, &e)),
     }
@@ -273,10 +285,7 @@ pub fn classify_spawn_error(program: &Path, err: &io::Error) -> NexError {
 /// `Path::new` on a non-Windows host) still detects the right tail.
 fn path_targets_node(program: &Path) -> bool {
     let path_str = program.to_string_lossy();
-    let last = path_str
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or("");
+    let last = path_str.rsplit(['/', '\\']).next().unwrap_or("");
     let lower = last.to_ascii_lowercase();
     lower == "node" || lower == "node.exe" || lower.starts_with("node-")
 }
@@ -341,7 +350,10 @@ mod tests {
     /// Full shell/project env stand-in used by resolve_* tests.
     fn test_shell_env() -> HashMap<String, String> {
         let mut env = HashMap::new();
-        env.insert("PATH".to_string(), test_shell_path().to_string_lossy().into_owned());
+        env.insert(
+            "PATH".to_string(),
+            test_shell_path().to_string_lossy().into_owned(),
+        );
         env.insert("CODEX_API_KEY".to_string(), "test-key".to_string());
         env
     }
@@ -356,10 +368,16 @@ mod tests {
 
     impl FakePackageResolver {
         fn ok(resolved: ResolvedNpx) -> Self {
-            Self { resolved: Ok(resolved), installed_version: None }
+            Self {
+                resolved: Ok(resolved),
+                installed_version: None,
+            }
         }
         fn err(err: NexError) -> Self {
-            Self { resolved: Err(err), installed_version: None }
+            Self {
+                resolved: Err(err),
+                installed_version: None,
+            }
         }
         #[allow(dead_code)]
         fn with_installed(mut self, ver: Option<&str>) -> Self {
@@ -447,12 +465,17 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_registry_uses_resolver_for_npx() {
-        let e = entry("codex-acp", Some(npx("@agentclientprotocol/codex-acp@1.1.7", &[])));
+        let e = entry(
+            "codex-acp",
+            Some(npx("@agentclientprotocol/codex-acp@1.1.7", &[])),
+        );
         let resolver = FakePackageResolver::ok(fake_resolved(
             "/opt/homebrew/bin/node",
             "/cache/agent-packages/_codex-acp/_pkg_1.1.7/node-/node_modules/.../cli.js",
         ));
-        let spec = resolve_registry(&e, "/work", &test_cache(), &resolver, &test_shell_env()).await.unwrap();
+        let spec = resolve_registry(&e, "/work", &test_cache(), &resolver, &test_shell_env())
+            .await
+            .unwrap();
         assert_eq!(spec.program, "/opt/homebrew/bin/node");
         assert!(spec.args[0].ends_with("cli.js"));
         assert_eq!(spec.cwd, "/work");
@@ -472,7 +495,9 @@ mod tests {
     async fn resolve_registry_appends_entry_args() {
         let e = entry("gemini", Some(npx("@google/gemini-cli@0.52.0", &["--acp"])));
         let resolver = FakePackageResolver::ok(fake_resolved("/usr/bin/node", "/cache/bin"));
-        let spec = resolve_registry(&e, "/w", &test_cache(), &resolver, &test_shell_env()).await.unwrap();
+        let spec = resolve_registry(&e, "/w", &test_cache(), &resolver, &test_shell_env())
+            .await
+            .unwrap();
         // args: [bin, --acp]
         assert_eq!(spec.args.len(), 2);
         assert_eq!(spec.args[0], "/cache/bin");
@@ -481,20 +506,33 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_registry_clears_anthropic_key_for_claude() {
-        let e = entry("claude-acp", Some(npx("@agentclientprotocol/claude-agent-acp@0.62.0", &[])));
+        let e = entry(
+            "claude-acp",
+            Some(npx("@agentclientprotocol/claude-agent-acp@0.62.0", &[])),
+        );
         let resolver = FakePackageResolver::ok(fake_resolved("/usr/bin/node", "/cache/bin"));
-        let spec = resolve_registry(&e, "/w", &test_cache(), &resolver, &test_shell_env()).await.unwrap();
-        assert_eq!(spec.env.get("ANTHROPIC_API_KEY").map(String::as_str), Some(""));
+        let spec = resolve_registry(&e, "/w", &test_cache(), &resolver, &test_shell_env())
+            .await
+            .unwrap();
+        assert_eq!(
+            spec.env.get("ANTHROPIC_API_KEY").map(String::as_str),
+            Some("")
+        );
     }
 
     #[tokio::test]
     async fn resolve_registry_propagates_package_resolver_error() {
-        let e = entry("claude-acp", Some(npx("@agentclientprotocol/claude-agent-acp@0.62.0", &[])));
+        let e = entry(
+            "claude-acp",
+            Some(npx("@agentclientprotocol/claude-agent-acp@0.62.0", &[])),
+        );
         let resolver = FakePackageResolver::err(NexError::AgentNotInstalled {
             what: "npm package",
             hint: "synthetic failure".into(),
         });
-        let err = resolve_registry(&e, "/w", &test_cache(), &resolver, &test_shell_env()).await.unwrap_err();
+        let err = resolve_registry(&e, "/w", &test_cache(), &resolver, &test_shell_env())
+            .await
+            .unwrap_err();
         match err {
             NexError::AgentNotInstalled { what, hint } => {
                 assert_eq!(what, "npm package");
@@ -585,17 +623,31 @@ mod tests {
             version: "1.0.0".to_string(),
             description: String::new(),
             icon: None,
-            distribution: RegistryDistribution { binary: Some(binary), npx: None },
+            distribution: RegistryDistribution {
+                binary: Some(binary),
+                npx: None,
+            },
         };
         let resolver = FakePackageResolver::ok(fake_resolved("/usr/bin/node", "/cache/bin"));
-        let err = resolve_registry(&e, "/w", &test_cache(), &resolver, &test_shell_env()).await.unwrap_err();
+        let err = resolve_registry(&e, "/w", &test_cache(), &resolver, &test_shell_env())
+            .await
+            .unwrap_err();
         let msg = format!("{err}");
-        assert!(msg.contains("has no binary for platform"), "error should mention missing platform: {msg}");
+        assert!(
+            msg.contains("has no binary for platform"),
+            "error should mention missing platform: {msg}"
+        );
     }
 
     #[test]
     fn resolve_custom_splits_command() {
-        let spec = resolve_custom("my-agent --acp --verbose", HashMap::new(), "/w", &test_shell_env()).unwrap();
+        let spec = resolve_custom(
+            "my-agent --acp --verbose",
+            HashMap::new(),
+            "/w",
+            &test_shell_env(),
+        )
+        .unwrap();
         assert_eq!(spec.program, "my-agent");
         assert_eq!(spec.args, vec!["--acp", "--verbose"]);
         assert_eq!(
@@ -606,20 +658,32 @@ mod tests {
 
     #[test]
     fn resolve_custom_inherits_shell_credentials() {
-        let spec = resolve_custom("my-agent --acp", HashMap::new(), "/w", &test_shell_env()).unwrap();
-        assert_eq!(spec.env.get("CODEX_API_KEY").map(String::as_str), Some("test-key"));
+        let spec =
+            resolve_custom("my-agent --acp", HashMap::new(), "/w", &test_shell_env()).unwrap();
+        assert_eq!(
+            spec.env.get("CODEX_API_KEY").map(String::as_str),
+            Some("test-key")
+        );
         assert!(spec.env.contains_key("PATH"));
     }
 
     #[tokio::test]
     async fn resolve_registry_inherits_shell_credentials_for_npx_agents() {
-        let e = entry("codex-acp", Some(npx("@agentclientprotocol/codex-acp@1.1.14", &[])));
+        let e = entry(
+            "codex-acp",
+            Some(npx("@agentclientprotocol/codex-acp@1.1.14", &[])),
+        );
         let resolver = FakePackageResolver::ok(fake_resolved(
             "/opt/homebrew/bin/node",
             "/cache/agent-packages/_codex-acp/_pkg_1.1.14/node_modules/@agentclientprotocol/codex-acp/dist/index.js",
         ));
-        let spec = resolve_registry(&e, "/work", &test_cache(), &resolver, &test_shell_env()).await.unwrap();
-        assert_eq!(spec.env.get("CODEX_API_KEY").map(String::as_str), Some("test-key"));
+        let spec = resolve_registry(&e, "/work", &test_cache(), &resolver, &test_shell_env())
+            .await
+            .unwrap();
+        assert_eq!(
+            spec.env.get("CODEX_API_KEY").map(String::as_str),
+            Some("test-key")
+        );
         assert!(spec.env.contains_key("PATH"));
     }
 

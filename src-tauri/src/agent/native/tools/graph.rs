@@ -157,6 +157,9 @@ mod tests {
             .await
             .unwrap();
         assert!(impact.contains("src/lib.rs"), "{impact}");
-        assert!(impact.contains("target") || impact.contains("caller"), "{impact}");
+        assert!(
+            impact.contains("target") || impact.contains("caller"),
+            "{impact}"
+        );
     }
 }

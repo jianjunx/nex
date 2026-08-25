@@ -1,6 +1,6 @@
+use crate::error::NexError;
 use serde::Serialize;
 use std::path::Path;
-use crate::error::NexError;
 
 #[derive(Debug, Serialize)]
 pub struct FileContent {
@@ -16,7 +16,11 @@ pub fn read_file(path: &Path) -> Result<FileContent, NexError> {
     let size = metadata.len();
 
     if size > MAX_TEXT_SIZE {
-        return Ok(FileContent { is_text: false, content: None, size });
+        return Ok(FileContent {
+            is_text: false,
+            content: None,
+            size,
+        });
     }
 
     let bytes = std::fs::read(path).map_err(|e| NexError::FileSystem(e.to_string()))?;
@@ -33,5 +37,9 @@ pub fn read_file(path: &Path) -> Result<FileContent, NexError> {
         None
     };
 
-    Ok(FileContent { is_text, content, size })
+    Ok(FileContent {
+        is_text,
+        content,
+        size,
+    })
 }

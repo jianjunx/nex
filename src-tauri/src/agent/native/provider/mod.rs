@@ -485,7 +485,10 @@ mod tests {
         let msg = format_model_http_error(reqwest::StatusCode::PAYMENT_REQUIRED, body);
         assert!(msg.contains("余额不足"), "{msg}");
         assert!(!msg.contains("invalid_request_error"), "{msg}");
-        assert!(is_billing_error(reqwest::StatusCode::PAYMENT_REQUIRED, body));
+        assert!(is_billing_error(
+            reqwest::StatusCode::PAYMENT_REQUIRED,
+            body
+        ));
     }
 
     #[test]
@@ -607,15 +610,9 @@ mod tests {
             ChatMessage::tool_result("b", "ok"),
         ];
         ensure_unique_tool_call_ids(&mut msgs);
-        assert_eq!(
-            msgs[0].tool_calls.as_ref().unwrap()[0].id,
-            "a"
-        );
+        assert_eq!(msgs[0].tool_calls.as_ref().unwrap()[0].id, "a");
         assert_eq!(msgs[1].tool_call_id.as_deref(), Some("a"));
-        assert_eq!(
-            msgs[2].tool_calls.as_ref().unwrap()[0].id,
-            "b"
-        );
+        assert_eq!(msgs[2].tool_calls.as_ref().unwrap()[0].id, "b");
         assert_eq!(msgs[3].tool_call_id.as_deref(), Some("b"));
     }
 

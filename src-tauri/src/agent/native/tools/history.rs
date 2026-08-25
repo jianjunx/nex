@@ -389,11 +389,7 @@ mod tests {
             ),
         ] {
             let path = archive.join(name);
-            std::fs::write(
-                &path,
-                format!("{}\n", serde_json::to_string(&msg).unwrap()),
-            )
-            .unwrap();
+            std::fs::write(&path, format!("{}\n", serde_json::to_string(&msg).unwrap())).unwrap();
         }
         let ctx = ToolCtx {
             cwd: tmp.path().to_path_buf(),

@@ -38,16 +38,22 @@ impl Tool for LoadSkill {
     fn read_only(&self) -> bool {
         true
     }
-    async fn execute(&self, args: serde_json::Value, _ctx: &ToolCtx) -> Result<String, String> {
+    async fn execute(&self, args: serde_json::Value, ctx: &ToolCtx) -> Result<String, String> {
         let skill = arg_str(&args, "skill")?;
         let file = arg_str_opt(&args, "file");
-
-        let Some(root) = crate::agent::native::home::skills_dir() else {
-            return Err("skills are unavailable (home directory not resolvable)".to_string());
-        };
+        let global = crate::agent::native::home::skills_dir();
         let content = match file {
-            Some(rel) => crate::agent::native::skills::load_file(&root, &skill, &rel)?,
-            None => crate::agent::native::skills::load_body(&root, &skill)?,
+            Some(rel) => crate::agent::native::skills::load_file_for_cwd(
+                Some(&ctx.cwd),
+                global.as_deref(),
+                &skill,
+                &rel,
+            )?,
+            None => crate::agent::native::skills::load_body_for_cwd(
+                Some(&ctx.cwd),
+                global.as_deref(),
+                &skill,
+            )?,
         };
         Ok(truncate_output(content, MAX_OUTPUT_CHARS))
     }
@@ -109,6 +115,35 @@ mod tests {
             ),
             Ok(_) => panic!("unknown skill must not load"),
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn loads_project_skill_from_cwd() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join(".nex/skills/demo");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: demo\ndescription: d\n---\nPROJECT SKILL BODY",
+        )
+        .unwrap();
+        std::fs::write(skill_dir.join("ref.txt"), "project-ref").unwrap();
+        let ctx = make_ctx(tmp.path());
+
+        let body = LoadSkill
+            .execute(serde_json::json!({ "skill": "demo" }), &ctx)
+            .await
+            .expect("project skill must load");
+        assert!(body.contains("PROJECT SKILL BODY"));
+
+        let file = LoadSkill
+            .execute(
+                serde_json::json!({ "skill": "demo", "file": "ref.txt" }),
+                &ctx,
+            )
+            .await
+            .expect("project supporting file must load");
+        assert_eq!(file, "project-ref");
     }
 
     #[test]

@@ -508,8 +508,7 @@ pub fn replace_prefix_with_summary(
         )));
     }
     // Splice: protected head (system + memory) + one summary + protected tail.
-    let mut new_msgs: Vec<ChatMessage> =
-        Vec::with_capacity(keep + 1 + KEEP_TAIL_MESSAGES);
+    let mut new_msgs: Vec<ChatMessage> = Vec::with_capacity(keep + 1 + KEEP_TAIL_MESSAGES);
     new_msgs.extend(messages[..keep].iter().cloned());
     new_msgs.push(summary_msg);
     new_msgs.extend(messages[boundary..].iter().cloned());
@@ -607,23 +606,21 @@ pub fn apply_tier(messages: &mut [ChatMessage], tier: StepTier, archive_dir: &Pa
                 archive_file: None,
             }
         }
-        CompactLevel::Compact | CompactLevel::Force => match compact_after_archive(
-            messages,
-            force,
-            archive_dir,
-        ) {
-            CompactArchiveResult::Archived { folded, path } => StepOutcome {
-                snipped: snip_tool_results(messages, force),
-                folded,
-                archive_file: Some(path),
-            },
-            CompactArchiveResult::NothingToDo => StepOutcome {
-                snipped: snip_tool_results(messages, force),
-                folded: 0,
-                archive_file: None,
-            },
-            CompactArchiveResult::ArchiveFailed => StepOutcome::default(),
-        },
+        CompactLevel::Compact | CompactLevel::Force => {
+            match compact_after_archive(messages, force, archive_dir) {
+                CompactArchiveResult::Archived { folded, path } => StepOutcome {
+                    snipped: snip_tool_results(messages, force),
+                    folded,
+                    archive_file: Some(path),
+                },
+                CompactArchiveResult::NothingToDo => StepOutcome {
+                    snipped: snip_tool_results(messages, force),
+                    folded: 0,
+                    archive_file: None,
+                },
+                CompactArchiveResult::ArchiveFailed => StepOutcome::default(),
+            }
+        }
     }
 }
 
@@ -850,17 +847,17 @@ mod tests {
             Some("sys")
         );
         // Summary message carries the archive_ref line.
-        let summary_text = msgs[1]
-            .content
-            .as_ref()
-            .and_then(Content::as_text)
-            .unwrap();
+        let summary_text = msgs[1].content.as_ref().and_then(Content::as_text).unwrap();
         assert!(summary_text.starts_with(SUMMARY_MARKER));
         assert!(summary_text.contains("archive_ref"));
         assert!(summary_text.contains(splice.archive_ref.as_deref().unwrap()));
         // Recent tail untouched.
         assert_eq!(
-            msgs.last().unwrap().content.as_ref().and_then(Content::as_text),
+            msgs.last()
+                .unwrap()
+                .content
+                .as_ref()
+                .and_then(Content::as_text),
             Some("current tail answer")
         );
         // Length sanity: removed everything except system+summary+tail.
@@ -895,10 +892,8 @@ mod tests {
             &[],
             Some("old.jsonl"),
         );
-        let mut msgs: Vec<ChatMessage> = vec![
-            ChatMessage::system("sys"),
-            ChatMessage::assistant(existing),
-        ];
+        let mut msgs: Vec<ChatMessage> =
+            vec![ChatMessage::system("sys"), ChatMessage::assistant(existing)];
         for i in 0..10 {
             msgs.push(ChatMessage::user(format!("u{i}")));
             msgs.push(ChatMessage::assistant(format!("a{i}")));
@@ -937,7 +932,9 @@ mod tests {
             1
         );
         assert_eq!(
-            msgs.last().and_then(|m| m.content.as_ref()).and_then(Content::as_text),
+            msgs.last()
+                .and_then(|m| m.content.as_ref())
+                .and_then(Content::as_text),
             tail_before
                 .as_ref()
                 .and_then(|m| m.content.as_ref())
@@ -960,7 +957,10 @@ mod tests {
         for i in 0..12 {
             msgs.push(assistant_calls(&[&format!("id{i}")]));
             msgs.push(tool_msg(&format!("id{i}"), &big));
-            msgs.push(ChatMessage::assistant(format!("old prose {i} {}", "a".repeat(200))));
+            msgs.push(ChatMessage::assistant(format!(
+                "old prose {i} {}",
+                "a".repeat(200)
+            )));
         }
         compact(&mut msgs, true);
         assert!(

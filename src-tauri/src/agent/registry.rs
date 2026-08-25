@@ -110,7 +110,9 @@ impl RegistryStore {
     }
 
     fn load_cache(&self) {
-        let Ok(bytes) = std::fs::read(&self.cache_path) else { return };
+        let Ok(bytes) = std::fs::read(&self.cache_path) else {
+            return;
+        };
         match serde_json::from_slice::<Vec<RegistryEntry>>(&bytes) {
             Ok(entries) => *self.entries.lock().unwrap() = entries,
             Err(e) => log::warn!("ignoring unreadable agent registry cache: {e}"),
@@ -123,7 +125,12 @@ impl RegistryStore {
     }
 
     pub fn find(&self, id: &str) -> Option<RegistryEntry> {
-        self.entries.lock().unwrap().iter().find(|e| e.id == id).cloned()
+        self.entries
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|e| e.id == id)
+            .cloned()
     }
 
     /// True when we've never refreshed or the last refresh is older than the
@@ -231,7 +238,10 @@ mod tests {
         assert!(claude.distribution.binary.is_none());
 
         let gemini = &entries[1];
-        assert_eq!(gemini.distribution.npx.as_ref().unwrap().args, vec!["--acp"]);
+        assert_eq!(
+            gemini.distribution.npx.as_ref().unwrap().args,
+            vec!["--acp"]
+        );
         assert!(gemini.icon.is_none());
     }
 
@@ -262,7 +272,14 @@ mod tests {
         let entries = parse_registry(body).unwrap();
         assert_eq!(entries.len(), 2);
         assert_eq!(
-            entries[0].distribution.npx.as_ref().unwrap().env.get("FOO").map(String::as_str),
+            entries[0]
+                .distribution
+                .npx
+                .as_ref()
+                .unwrap()
+                .env
+                .get("FOO")
+                .map(String::as_str),
             Some("bar")
         );
         let bin = entries[1].distribution.binary.as_ref().unwrap();

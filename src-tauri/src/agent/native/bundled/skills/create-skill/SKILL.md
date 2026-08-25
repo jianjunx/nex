@@ -6,22 +6,29 @@ description: >-
 ---
 # Create a Nex skill
 
-Nex skills are Claude-compatible folders discovered from **`~/.nex/skills/`** only.
+Nex skills are Claude-compatible folders discovered from two roots (project
+overrides the same name globally):
 
-## Destination (required)
+| Scope | Path |
+|-------|------|
+| Global | `~/.nex/skills/<skill-name>/SKILL.md` |
+| Project | `<cwd>/.nex/skills/<skill-name>/SKILL.md` |
 
-```
-~/.nex/skills/<skill-name>/SKILL.md
-```
+## Destination
+
+Ask the user whether the skill should be **global** (every project) or
+**project-local** (this repo only). Default to project-local when the user is
+working in a repository and does not specify.
 
 - Expand `~` to the user home directory (macOS/Linux: `$HOME`, Windows: user profile).
+- `<cwd>` is the session working directory (the open project).
 - `<skill-name>`: lowercase letters, digits, hyphens; folder name is the catalog / `load_skill` key.
-- Do **not** write to `~/.claude/skills`, `.claude/skills`, `~/.cursor/skills`, or project `.nex/skills` — Nex will not discover those.
+- Do **not** write to `~/.claude/skills`, `.claude/skills`, `~/.cursor/skills`, or `.cursor/skills` — Nex will not discover those.
 
 ## Workflow
 
-1. Confirm purpose, trigger scenarios, and any verbatim wording the user wants preserved.
-2. Pick a short, unique `<skill-name>` that does not collide with existing skills under `~/.nex/skills/`.
+1. Confirm purpose, trigger scenarios, scope (global vs project), and any verbatim wording the user wants preserved.
+2. Pick a short, unique `<skill-name>` that does not collide with existing skills in the chosen root.
 3. Create the directory and write `SKILL.md` with YAML frontmatter + markdown body.
 4. Optionally add supporting files (`references/`, `scripts/`, templates) next to `SKILL.md`; mention them in the body so the model can `load_skill` with `file`.
 5. Tell the user the skill appears in Settings → NexAgent → 技能, and as `/<skill-name>` after refresh / a new turn.
@@ -61,5 +68,5 @@ Unknown frontmatter fields (e.g. `allowed-tools`) are tolerated for Claude compa
 ## Verify
 
 - `SKILL.md` parses (leading `---` frontmatter closed by a second `---`).
-- Path is exactly under `~/.nex/skills/<skill-name>/`.
+- Path is under `~/.nex/skills/<skill-name>/` or `<cwd>/.nex/skills/<skill-name>/`.
 - `load_skill` with `skill=<skill-name>` returns the body once the catalog refreshes.

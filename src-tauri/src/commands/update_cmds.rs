@@ -318,9 +318,7 @@ fn api_status_error(status: reqwest::StatusCode, body: &str) -> NexError {
     let rate_limited = status.as_u16() == 403 || status.as_u16() == 429;
     let mentions_rate = body.contains("rate limit") || body.contains("Rate limit");
     if rate_limited && (mentions_rate || body.is_empty()) {
-        return NexError::Internal(
-            "查询更新失败: GitHub API 请求次数已达上限，请稍后再试".into(),
-        );
+        return NexError::Internal("查询更新失败: GitHub API 请求次数已达上限，请稍后再试".into());
     }
     if status.as_u16() == 404 {
         return NexError::Internal("查询更新失败: 未找到发布版本".into());
@@ -459,7 +457,9 @@ fn strip_simple_html(s: &str) -> String {
 }
 
 fn tag_from_release_url(url: &str) -> Option<&str> {
-    url.rsplit("/releases/tag/").next().filter(|t| !t.is_empty())
+    url.rsplit("/releases/tag/")
+        .next()
+        .filter(|t| !t.is_empty())
 }
 
 /// Parse `/releases/expanded_assets/{tag}` HTML for download links.
@@ -586,7 +586,9 @@ pub async fn update_download_and_install(
         || asset_name.contains('\\')
         || asset_name.contains("..")
     {
-        return Err(NexError::Internal(format!("非法安装包文件名: {asset_name}")));
+        return Err(NexError::Internal(format!(
+            "非法安装包文件名: {asset_name}"
+        )));
     }
 
     let client = http_client(None)?;
@@ -705,13 +707,11 @@ fn spawn_windows_installer(dest: &Path) -> Result<(), NexError> {
 
     match spawn_helper(&script_arg, true) {
         Ok(_) => Ok(()),
-        Err(e) if e.raw_os_error() == Some(5) => spawn_helper(&script_arg, false)
-            .map(|_| ())
-            .map_err(|e2| {
-                NexError::Internal(format!(
-                    "启动安装程序失败: {e2}（breakaway 被拒绝: {e}）"
-                ))
-            }),
+        Err(e) if e.raw_os_error() == Some(5) => {
+            spawn_helper(&script_arg, false).map(|_| ()).map_err(|e2| {
+                NexError::Internal(format!("启动安装程序失败: {e2}（breakaway 被拒绝: {e}）"))
+            })
+        }
         Err(e) => Err(NexError::Internal(format!("启动安装程序失败: {e}"))),
     }
 }
@@ -865,7 +865,10 @@ mod tests {
   </entry>
 </feed>"#;
         let (url, title, notes) = parse_atom_first_entry(atom).unwrap();
-        assert_eq!(url, "https://github.com/jianjunx/nex/releases/tag/v1.0.0-beta8");
+        assert_eq!(
+            url,
+            "https://github.com/jianjunx/nex/releases/tag/v1.0.0-beta8"
+        );
         assert_eq!(title, "Nex v1.0.0-beta8");
         assert!(notes.contains("notes here"));
         assert_eq!(tag_from_release_url(&url), Some("v1.0.0-beta8"));

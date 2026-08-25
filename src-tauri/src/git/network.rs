@@ -44,9 +44,9 @@ fn run_git_output(repo: Option<&Path>, args: &[&str]) -> Result<Output, NexError
     loop {
         match child.try_wait() {
             Ok(Some(_)) => {
-                return child.wait_with_output().map_err(|e| {
-                    NexError::Git(format!("git 读取输出失败：{e}"))
-                });
+                return child
+                    .wait_with_output()
+                    .map_err(|e| NexError::Git(format!("git 读取输出失败：{e}")));
             }
             Ok(None) => {
                 if Instant::now() >= deadline {
@@ -153,7 +153,9 @@ pub fn push_remote(repo_path: &Path, remote: &str, branch: &str) -> Result<(), N
     }
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stderr.contains("non-fast-forward") || stderr.contains("fetch first") {
-        return Err(NexError::Git("推送被拒绝：非快进，请先拉取合并".to_string()));
+        return Err(NexError::Git(
+            "推送被拒绝：非快进，请先拉取合并".to_string(),
+        ));
     }
     Err(git_err_from_stderr(&out.stderr))
 }

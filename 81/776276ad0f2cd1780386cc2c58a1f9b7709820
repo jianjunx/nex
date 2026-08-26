@@ -1,0 +1,79 @@
+src-tauri/src/agent/native/session.rs
+  s_a7995d4b6e6b58::t_133f27da0efc4a 1919-1920
+  s_a7995d4b6e6b58::t_92e0d8fef7f066 195-196
+src-tauri/src/agent/types.rs
+  s_a7995d4b6e6b58::t_1d3848b3052a80 114-115,118,124-126
+src-tauri/src/agent/native/mod.rs
+  s_a7995d4b6e6b58::t_fff5c41508be2d 838,863-864
+src-tauri/src/agent/native/tools/ask.rs
+  s_a7995d4b6e6b58::t_e1c1f158721c6f 1-384
+src-tauri/patches/agent-client-protocol/src/lib.rs
+  s_a7995d4b6e6b58::t_118ab6362e6639 417-442
+src/stores/agent.store.ts
+  s_a7995d4b6e6b58::t_928a9b6f1188b0 1765-1771
+src/stores/agent.store.test.ts
+  s_a7995d4b6e6b58::t_eeba2b2208068f 57
+  s_a7995d4b6e6b58::t_834c2faca3448a 778-807
+src-tauri/src/agent/acp_adapter.rs
+  s_a7995d4b6e6b58::t_22d6cdec8db433 710-727,729-755,757-762
+  s_a7995d4b6e6b58::t_e9b003d2ca4e91 2850
+  s_a7995d4b6e6b58::t_7da74a325af4b7 324
+  s_a7995d4b6e6b58::t_949bd4c4485ae1 1035-1036,1040,1059,1078-1079,1081-1088,1102,1104,1188,1195,1214,1224-1228
+  s_a7995d4b6e6b58::t_fb3bd13c968581 2297
+  s_a7995d4b6e6b58::t_a53685bf1530f4 1000-1010,1031-1034,1037-1039,1041-1058,1060-1077,1080,1089-1101,1103,1105-1187,1189-1194,1196-1213,1215-1223,1229-1233
+  s_a7995d4b6e6b58::t_e54cff45d6d9a2 2291-2296,2298-2310,2312,2315-2317
+  s_a7995d4b6e6b58::t_e4601895c58b42 2843-2849,2851-2879,2881-2913
+  s_a7995d4b6e6b58::t_2968b4d692f1b3 728,756
+  s_a7995d4b6e6b58::t_6ddbc6214db8c8 2880
+  s_a7995d4b6e6b58::t_821b88b10a184a 1234
+  s_a7995d4b6e6b58::t_bf4a48a3257584 2842
+src/features/agent/AskQuestionModal.tsx
+  s_a7995d4b6e6b58::t_94a798aa8d7f8c 104
+  s_a7995d4b6e6b58::t_3edeef60346bdb 20,27,31-35,37,61-77,81,85,98-99,105-107,122-127,139,144-149,154-172,183
+src/bridge/events.ts
+  s_a7995d4b6e6b58::t_26abb2446e1ebb 55,68-69
+src-tauri/src/agent/native/tools/mod.rs
+  s_a7995d4b6e6b58::t_59fd98ba4fe197 62-66
+  s_a7995d4b6e6b58::t_5a69addbe94fab 7
+  s_a7995d4b6e6b58::t_535db72a1c8e58 187
+  s_a7995d4b6e6b58::t_2b2636492efafd 105-106
+  s_a7995d4b6e6b58::t_1ee71184bc02d5 542
+src-tauri/src/agent/native/mcp.rs
+  s_a7995d4b6e6b58::t_f9777f25b65017 1365-1366
+src-tauri/src/agent/native/tools/bash.rs
+  s_a7995d4b6e6b58::t_9ffc2133cdadc4 348-349
+src-tauri/src/agent/native/tools/checkpoint.rs
+  s_a7995d4b6e6b58::t_0fa93e7a311ea6 288-289
+src-tauri/src/agent/native/tools/fs.rs
+  s_a7995d4b6e6b58::t_86a551ac748043 299-300
+src-tauri/src/agent/native/tools/history.rs
+  s_a7995d4b6e6b58::t_380c5a0c4f0275 358-359,409-410,477-478
+src-tauri/src/agent/native/tools/jobs.rs
+  s_a7995d4b6e6b58::t_d5d0097d3dd623 430-431
+src-tauri/src/agent/native/tools/mode.rs
+  s_a7995d4b6e6b58::t_39efa91d068a98 119-120
+src-tauri/src/agent/native/tools/search.rs
+  s_a7995d4b6e6b58::t_197444d17f1116 260-261
+src-tauri/src/agent/native/tools/skill.rs
+  s_a7995d4b6e6b58::t_bad65373455a61 81-82
+src-tauri/src/agent/native/tools/spreadsheet.rs
+  s_a7995d4b6e6b58::t_d90ed0e65f88e9 246-247
+src-tauri/src/agent/native/tools/subagent.rs
+  s_a7995d4b6e6b58::t_be91c9fd007fe1 214-215
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "81776276ad0f2cd1780386cc2c58a1f9b7709820",
+  "prompts": {},
+  "sessions": {
+    "s_a7995d4b6e6b58": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "3d0b7ac1-3eff-4735-8afc-03e3caf6470a",
+        "model": "default"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

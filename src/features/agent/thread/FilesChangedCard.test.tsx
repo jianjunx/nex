@@ -74,10 +74,10 @@ describe("FilesChangedCard", () => {
     expect(openPathToken).toHaveBeenCalledWith("/repo/src/a.ts");
   });
 
-  it("header actions are Commit, Review, then 查看", () => {
+  it("header actions are Commit & Push, Review, then 查看", () => {
     render(<FilesChangedCard files={FILES} />);
-    const actions = screen.getAllByRole("button", { name: /Commit|Review|查看/ });
-    expect(actions.map((b) => b.textContent)).toEqual(["Commit", "Review", "查看"]);
+    const actions = screen.getAllByRole("button", { name: /Commit & Push|Review|查看/ });
+    expect(actions.map((b) => b.textContent)).toEqual(["Commit & Push", "Review", "查看"]);
   });
 
   it("查看 opens every file then focuses the first", async () => {
@@ -93,16 +93,15 @@ describe("FilesChangedCard", () => {
     ]);
   });
 
-  it("Commit sends a commit prompt with file paths on the current session", () => {
+  it("Commit & Push sends the command without file paths on the current session", () => {
     const appendUserMessage = vi.fn();
     const sendPrompt = vi.fn().mockResolvedValue(undefined);
     useAgentStore.setState({ appendUserMessage, sendPrompt });
 
     render(<FilesChangedCard files={FILES} />);
-    fireEvent.click(screen.getByText("Commit"));
-    const text = "请提交这些文件，并写一条合适的 commit message：\n- src/a.ts\n- src/b.ts";
-    expect(appendUserMessage).toHaveBeenCalledWith("c1", text);
-    expect(sendPrompt).toHaveBeenCalledWith("sid-1", [{ type: "text", text }]);
+    fireEvent.click(screen.getByText("Commit & Push"));
+    expect(appendUserMessage).toHaveBeenCalledWith("c1", "Commit & Push");
+    expect(sendPrompt).toHaveBeenCalledWith("sid-1", [{ type: "text", text: "Commit & Push" }]);
   });
 
   it("Review sends /review with file paths on the current session", () => {
@@ -116,12 +115,12 @@ describe("FilesChangedCard", () => {
     expect(sendPrompt).toHaveBeenCalledWith("sid-1", [{ type: "text", text: "/review src/a.ts src/b.ts" }]);
   });
 
-  it("Commit and Review are disabled while the session is running", () => {
+  it("Commit & Push and Review are disabled while the session is running", () => {
     useAgentStore.setState({
       sessions: { c1: { sessionId: "sid-1", conversationId: "c1", status: "running" } },
     });
     render(<FilesChangedCard files={FILES} />);
-    expect((screen.getByText("Commit") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByText("Commit & Push") as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByText("Review") as HTMLButtonElement).disabled).toBe(true);
   });
 });

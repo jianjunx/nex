@@ -37,13 +37,9 @@ export function FilesChangedCard({ files }: { files: ChangedFile[] }) {
     })();
   };
 
-  const commitFiles = () => {
+  const commitAndPush = () => {
     if (!canPrompt || !activeTabId || !session?.sessionId) return;
-    sendToSession(
-      activeTabId,
-      session.sessionId,
-      `请提交这些文件，并写一条合适的 commit message：\n${rels.map((p) => `- ${p}`).join("\n")}`,
-    );
+    sendToSession(activeTabId, session.sessionId, "Commit & Push");
   };
 
   const reviewFiles = () => {
@@ -58,8 +54,8 @@ export function FilesChangedCard({ files }: { files: ChangedFile[] }) {
           修改了 {files.length} 个文件
         </span>
         <div className="flex shrink-0 items-center gap-2.5">
-          <button type="button" className={ACTION_BTN} disabled={!canPrompt} onClick={commitFiles}>
-            Commit
+          <button type="button" className={ACTION_BTN} disabled={!canPrompt} onClick={commitAndPush}>
+            Commit & Push
           </button>
           <button type="button" className={ACTION_BTN} disabled={!canPrompt} onClick={reviewFiles}>
             Review

@@ -1,0 +1,24 @@
+src/features/agent/thread/FilesChangedCard.tsx
+  s_a7995d4b6e6b58::t_1c62a227c83a56 40,42
+  s_a7995d4b6e6b58::t_a997778eeca65b 57-58
+src/features/agent/thread/FilesChangedCard.test.tsx
+  s_a7995d4b6e6b58::t_a472886cd4e597 118,123
+  s_a7995d4b6e6b58::t_b28160d41ab6ba 96,102-104
+  s_a7995d4b6e6b58::t_7d071a54946554 77,79-80
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "9e6d75628b75d0e96a455bcd2cc01739258cbc60",
+  "prompts": {},
+  "sessions": {
+    "s_a7995d4b6e6b58": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "3d0b7ac1-3eff-4735-8afc-03e3caf6470a",
+        "model": "default"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

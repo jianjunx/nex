@@ -1,0 +1,93 @@
+src/bridge/tauri.ts
+  s_62123ff92fbae5::t_77fe62d59450a9 493
+src/stores/git.store.ts
+  s_311b7f14d59fe9::t_2945ed4bf1245c 85
+  s_62123ff92fbae5::t_eb9ed35fe77c0e 176
+  s_311b7f14d59fe9::t_62b92cd508c6e3 403
+  s_62123ff92fbae5::t_3bba1888e73ebf 187-194
+  s_62123ff92fbae5::t_d3c923f491fa2f 404,410-413
+  s_311b7f14d59fe9::t_7967c1ddc2a27a 183-185,195-196
+  s_62123ff92fbae5::t_cb4adf7fd460fb 92-100
+  s_311b7f14d59fe9::t_8c199b88dcf2ff 256
+  s_62123ff92fbae5::t_4031a7c3104ab8 257,263-266
+  s_311b7f14d59fe9::t_8aa141866ca5cb 103,111-113
+  s_62123ff92fbae5::t_768d0b91ad1a2a 342,348-351
+  s_62123ff92fbae5::t_308afd24a0d280 34-35
+  s_311b7f14d59fe9::t_f4d6d8dbbbfc2f 36-37
+  s_311b7f14d59fe9::t_6df22dbac2d1d2 177
+  s_62123ff92fbae5::t_e8c6cd1569f69d 154-157
+  s_311b7f14d59fe9::t_2bece80c41e8d0 132-135
+  s_62123ff92fbae5::t_70f31934a5a537 84,86-89
+  s_311b7f14d59fe9::t_10f49f28bd0ccb 101-102,104-110,114-115
+  s_311b7f14d59fe9::t_78a83a86c9c2af 341
+src-tauri/src/watcher.rs
+  s_311b7f14d59fe9::t_54160a3ba968b8 119
+  s_311b7f14d59fe9::t_9b64fe35621801 218,220
+  s_62123ff92fbae5::t_56c3458256c444 120-126
+  s_62123ff92fbae5::t_3f4572e2ef5356 214-217,219
+  s_311b7f14d59fe9::t_2e9dabae46ec2f 221
+src/features/agent/AgentComposer.tsx
+  s_311b7f14d59fe9::t_3d1992ce869ded 927
+  s_311b7f14d59fe9::t_b00ab0b7a7f87e 155
+  s_62123ff92fbae5::t_aa76985c8f3fa1 307
+  s_62123ff92fbae5::t_01b9961c46c6af 154
+src-tauri/src/graph/index.rs
+  s_311b7f14d59fe9::t_da27333af29604 270,272-277,394
+  s_311b7f14d59fe9::t_0f66afacc4a302 388-393
+src-tauri/src/git/repository.rs
+  s_62123ff92fbae5::t_69bb7875d6f211 116,121
+  s_62123ff92fbae5::t_f39e7936e6207b 20-21
+  s_62123ff92fbae5::t_1a35b74f3a0993 331-333
+  s_311b7f14d59fe9::t_76bf3ac439b581 3,6-18,23-25,32-34
+  s_62123ff92fbae5::t_75100e1b62996c 19,22,26-31,35-50
+  s_62123ff92fbae5::t_34d15db5060a8a 635-637
+  s_62123ff92fbae5::t_c2054809d56435 140,185,223,261,280,300,385,431,498,508,532,568,609,669,676,683
+  s_62123ff92fbae5::t_3af43078249276 233-235
+src/stores/git.store.test.ts
+  s_311b7f14d59fe9::t_13d6ee5c794d5f 302,306-312,314,316-336,338-343
+  s_311b7f14d59fe9::t_2ba9b786d0e081 75
+  s_311b7f14d59fe9::t_9748361b9e3755 295,313,315,337
+  s_62123ff92fbae5::t_11a29337f9b4ed 74
+  s_62123ff92fbae5::t_05351dfbbb2f54 271-294,296-301,303-305
+  s_311b7f14d59fe9::t_c2542cb4187dcd 344-345
+src-tauri/tests/git_test.rs
+  s_311b7f14d59fe9::t_a1f7a4cf7b5752 634,639-645
+  s_62123ff92fbae5::t_af409f5ef93a81 630-633,635-638,646-654,656
+  s_62123ff92fbae5::t_df31ba52095333 146-150,179-183,196-200,213-217
+  s_62123ff92fbae5::t_6fced2e411fae9 655
+src-tauri/src/commands/git_cmds.rs
+  s_62123ff92fbae5::t_29f3db370b6eea 10
+src/features/layout/IconBar.tsx
+  s_311b7f14d59fe9::t_b0143f351ec664 23-26
+src/features/git/GitPanel.tsx
+  s_62123ff92fbae5::t_1ccf4d9c95cff2 34
+  s_311b7f14d59fe9::t_2244cc2fe34a7c 4,26,39-43
+  s_311b7f14d59fe9::t_1492965e4c648e 124-128
+  s_62123ff92fbae5::t_36692cd956451d 25
+  s_62123ff92fbae5::t_66891a0dbce7c3 45-52
+  s_62123ff92fbae5::t_8a5cd649acf2ce 44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.11",
+  "base_commit_sha": "c6514735c309facb7dee031ea9f4a7f333450bb9",
+  "prompts": {},
+  "sessions": {
+    "s_311b7f14d59fe9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "bc0e3e11-4a57-4e54-9be4-bcf7566c187c",
+        "model": "grok-4.6"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    },
+    "s_62123ff92fbae5": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "2bad8534-1d64-46d8-9882-15f6d30caced",
+        "model": "grok-4.6"
+      },
+      "human_author": "JJ.Xie <jj.xie@outlook.com>"
+    }
+  }
+}

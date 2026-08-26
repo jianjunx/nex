@@ -321,6 +321,7 @@ impl acp::Client for NexAcpClient {
             "cursor/ask_question" => self.handle_ask_question(params).await,
             "cursor/task" => self.handle_cursor_task(&params),
             "cursor/generate_image" => self.handle_generate_image(&params).await,
+            "elicitation/create" => self.handle_elicitation_create(params).await,
             _ => return Err(acp::Error::method_not_found()),
         };
         let raw = serde_json::value::RawValue::from_string(result.to_string()).map_err(|e| {
@@ -706,6 +707,59 @@ impl NexAcpClient {
             }
         }
     }
+
+    /// ACP `elicitation/create` (form mode) — used by Claude AskUserQuestion.
+    async fn handle_elicitation_create(&self, params: serde_json::Value) -> serde_json::Value {
+        let mode = params.get("mode").and_then(|v| v.as_str()).unwrap_or("");
+        if mode != "form" {
+            // URL / unknown modes: we only advertise form support.
+            return serde_json::json!({ "action": "cancel" });
+        }
+
+        let message = params
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("需要你的选择")
+            .to_string();
+        let schema = params
+            .get("requestedSchema")
+            .cloned()
+            .unwrap_or(serde_json::json!({ "type": "object", "properties": {} }));
+        let (questions, field_meta) = questions_from_elicitation_schema(&schema, &message);
+        if questions.is_empty() {
+            return serde_json::json!({ "action": "cancel" });
+        }
+
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let (tx, rx) = oneshot::channel();
+        self.pending_ask_questions.lock().unwrap().insert(
+            request_id.clone(),
+            PendingAskQuestion {
+                session_key: self.session_key.clone(),
+                tx,
+            },
+        );
+
+        let _ = self.app.emit(
+            AGENT_ASK_QUESTION_REQUEST_EVENT,
+            AgentAskQuestionRequest {
+                session_id: self.session_key.clone(),
+                request_id,
+                title: Some(message),
+                questions,
+            },
+        );
+
+        let outcome = rx.await.unwrap_or(AskQuestionOutcome::Cancelled);
+        match outcome {
+            AskQuestionOutcome::Answered { answers } => {
+                let content = elicitation_content_from_answers(&answers, &field_meta);
+                serde_json::json!({ "action": "accept", "content": content })
+            }
+            AskQuestionOutcome::Skipped { .. } => serde_json::json!({ "action": "decline" }),
+            AskQuestionOutcome::Cancelled => serde_json::json!({ "action": "cancel" }),
+        }
+    }
 }
 
 fn normalize_plan_status(status: &str) -> &str {
@@ -943,7 +997,17 @@ fn parse_ask_questions(params: &serde_json::Value) -> Vec<AskQuestionItemDto> {
                     if label.is_empty() {
                         return None;
                     }
-                    Some(AskQuestionOptionDto { id: oid, label })
+                    let description = o
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string);
+                    Some(AskQuestionOptionDto {
+                        id: oid,
+                        label,
+                        description,
+                    })
                 })
                 .collect::<Vec<_>>();
             if options.is_empty() {
@@ -962,6 +1026,210 @@ fn parse_ask_questions(params: &serde_json::Value) -> Vec<AskQuestionItemDto> {
             })
         })
         .collect()
+}
+
+/// Convert an ACP form `requestedSchema` into AskQuestion items.
+///
+/// Claude AskUserQuestion uses `question_<n>` / `question_<n>_custom` fields with
+/// `oneOf`/`anyOf` enums whose `const` is the option label.
+///
+/// Returns `(questions, field_meta)` where `field_meta` is `(field_id, allow_multiple)`.
+fn questions_from_elicitation_schema(
+    schema: &serde_json::Value,
+    fallback_message: &str,
+) -> (Vec<AskQuestionItemDto>, Vec<(String, bool)>) {
+    let Some(properties) = schema.get("properties").and_then(|v| v.as_object()) else {
+        return (Vec::new(), Vec::new());
+    };
+
+    let mut keys: Vec<String> = properties
+        .keys()
+        .filter(|k| !k.ends_with("_custom") && !is_custom_answer_meta_field(properties.get(*k)))
+        .cloned()
+        .collect();
+    keys.sort_by(|a, b| match (question_field_index(a), question_field_index(b)) {
+        (Some(ai), Some(bi)) => ai.cmp(&bi),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.cmp(b),
+    });
+
+    let single = keys.len() == 1;
+    let mut questions = Vec::new();
+    let mut field_meta = Vec::new();
+    for key in keys {
+        let Some(prop) = properties.get(&key) else {
+            continue;
+        };
+        let (allow_multiple, enum_opts) = enum_options_from_property(prop);
+        if enum_opts.is_empty() {
+            continue;
+        }
+        let header = prop
+            .get("title")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let description = prop
+            .get("description")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        // Single-question: Claude puts the prompt in `message`. Multi: each field
+        // carries its own question text in `description` (with `title` as header).
+        let prompt = if single {
+            if !fallback_message.trim().is_empty() {
+                fallback_message.to_string()
+            } else {
+                description
+                    .or(header)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| key.clone())
+            }
+        } else {
+            description
+                .or(header)
+                .map(str::to_string)
+                .unwrap_or_else(|| key.clone())
+        };
+
+        questions.push(AskQuestionItemDto {
+            id: key.clone(),
+            prompt,
+            options: enum_opts,
+            allow_multiple,
+        });
+        field_meta.push((key, allow_multiple));
+    }
+    (questions, field_meta)
+}
+
+fn question_field_index(key: &str) -> Option<usize> {
+    key.strip_prefix("question_")?.parse().ok()
+}
+
+fn is_custom_answer_meta_field(prop: Option<&serde_json::Value>) -> bool {
+    let Some(prop) = prop else {
+        return false;
+    };
+    prop.pointer("/_meta/_askUserQuestionCustomAnswer/isCustomAnswer")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+fn enum_options_from_property(prop: &serde_json::Value) -> (bool, Vec<AskQuestionOptionDto>) {
+    if prop.get("type").and_then(|v| v.as_str()) == Some("array") {
+        let opts = prop
+            .pointer("/items/anyOf")
+            .or_else(|| prop.pointer("/items/oneOf"))
+            .and_then(|v| v.as_array())
+            .map(|arr| parse_enum_option_list(arr))
+            .unwrap_or_default();
+        return (true, opts);
+    }
+    if let Some(arr) = prop.get("oneOf").and_then(|v| v.as_array()) {
+        return (false, parse_enum_option_list(arr));
+    }
+    if let Some(arr) = prop.get("anyOf").and_then(|v| v.as_array()) {
+        return (false, parse_enum_option_list(arr));
+    }
+    if let Some(arr) = prop.get("enum").and_then(|v| v.as_array()) {
+        let opts = arr
+            .iter()
+            .filter_map(|v| {
+                let label = v.as_str()?.trim();
+                if label.is_empty() {
+                    return None;
+                }
+                Some(AskQuestionOptionDto {
+                    id: label.to_string(),
+                    label: label.to_string(),
+                    description: None,
+                })
+            })
+            .collect();
+        return (false, opts);
+    }
+    (false, Vec::new())
+}
+
+fn parse_enum_option_list(arr: &[serde_json::Value]) -> Vec<AskQuestionOptionDto> {
+    arr.iter()
+        .filter_map(|o| {
+            let label = o
+                .get("const")
+                .or_else(|| o.get("title"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())?;
+            let title = o
+                .get("title")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(label);
+            let description = o
+                .get("description")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            Some(AskQuestionOptionDto {
+                id: label.to_string(),
+                label: title.to_string(),
+                description,
+            })
+        })
+        .collect()
+}
+
+fn elicitation_content_from_answers(
+    answers: &[AskQuestionAnswerDto],
+    field_meta: &[(String, bool)],
+) -> serde_json::Map<String, serde_json::Value> {
+    let by_id: std::collections::HashMap<&str, &AskQuestionAnswerDto> = answers
+        .iter()
+        .map(|a| (a.question_id.as_str(), a))
+        .collect();
+    let mut content = serde_json::Map::new();
+    for (field, allow_multiple) in field_meta {
+        let Some(ans) = by_id.get(field.as_str()) else {
+            continue;
+        };
+        if let Some(custom) = ans
+            .custom_text
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            content.insert(
+                format!("{field}_custom"),
+                serde_json::Value::String(custom.to_string()),
+            );
+            continue;
+        }
+        if ans.selected_option_ids.is_empty() {
+            continue;
+        }
+        if *allow_multiple {
+            content.insert(
+                field.clone(),
+                serde_json::Value::Array(
+                    ans.selected_option_ids
+                        .iter()
+                        .cloned()
+                        .map(serde_json::Value::String)
+                        .collect(),
+                ),
+            );
+        } else {
+            content.insert(
+                field.clone(),
+                serde_json::Value::String(ans.selected_option_ids[0].clone()),
+            );
+        }
+    }
+    content
 }
 
 fn prompt_blocks_to_acp(blocks: Vec<PromptBlock>) -> Vec<acp::ContentBlock> {
@@ -2020,19 +2288,33 @@ async fn run_acp_session<W, R>(
     });
 
     let handshake = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
-        let init = conn
-            .initialize(acp::InitializeRequest {
-                protocol_version: acp::VERSION,
-                client_capabilities: acp::ClientCapabilities::default(),
-                client_info: Some(acp::Implementation {
-                    name: "nex".into(),
-                    title: Some("Nex".into()),
-                    version: env!("CARGO_PKG_VERSION").into(),
+        // Advertise `elicitation.form` so Claude ACP can surface AskUserQuestion as a
+        // structured form (schema 0.6.x ClientCapabilities has no typed field for it).
+        let init_raw = conn
+            .request_raw(
+                "initialize",
+                serde_json::json!({
+                    "protocolVersion": acp::VERSION,
+                    "clientCapabilities": {
+                        "fs": {
+                            "readTextFile": false,
+                            "writeTextFile": false,
+                        },
+                        "terminal": false,
+                        "elicitation": { "form": {} },
+                    },
+                    "clientInfo": {
+                        "name": "nex",
+                        "title": "Nex",
+                        "version": env!("CARGO_PKG_VERSION"),
+                    },
                 }),
-                meta: None,
-            })
+            )
             .await
             .map_err(NexError::from)?;
+        let init: acp::InitializeResponse = serde_json::from_value(init_raw).map_err(|e| {
+            NexError::Agent(format!("initialize response decode failed: {e}"))
+        })?;
 
         // Cursor advertises `cursor_login` and requires `authenticate` before
         // `session/new`. Codex lists `api-key` first even when the user is
@@ -2555,6 +2837,78 @@ mod tests {
         assert_eq!(qs[0].id, "q1");
         assert_eq!(qs[0].options.len(), 2);
         assert!(!qs[0].allow_multiple);
+    }
+
+    #[test]
+    fn questions_from_claude_ask_user_question_schema() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "question_0": {
+                    "type": "string",
+                    "title": "Format",
+                    "description": "How should I format the output?",
+                    "oneOf": [
+                        { "const": "Summary", "title": "Summary", "description": "Brief" },
+                        { "const": "Detailed", "title": "Detailed", "description": "Full" }
+                    ]
+                },
+                "question_0_custom": {
+                    "type": "string",
+                    "title": "Other",
+                    "_meta": { "_askUserQuestionCustomAnswer": { "isCustomAnswer": true } }
+                },
+                "question_1": {
+                    "type": "array",
+                    "title": "Sections",
+                    "description": "Which sections should I include?",
+                    "items": {
+                        "anyOf": [
+                            { "const": "Intro", "title": "Intro" },
+                            { "const": "Outro", "title": "Outro" }
+                        ]
+                    }
+                },
+                "question_1_custom": {
+                    "type": "string",
+                    "_meta": { "_askUserQuestionCustomAnswer": { "isCustomAnswer": true } }
+                }
+            }
+        });
+        let (qs, meta) = questions_from_elicitation_schema(
+            &schema,
+            "Please answer the following questions.",
+        );
+        assert_eq!(qs.len(), 2);
+        assert_eq!(qs[0].id, "question_0");
+        assert_eq!(qs[0].prompt, "How should I format the output?");
+        assert_eq!(qs[0].options[0].id, "Summary");
+        assert_eq!(qs[0].options[0].description.as_deref(), Some("Brief"));
+        assert!(!qs[0].allow_multiple);
+        assert_eq!(qs[1].id, "question_1");
+        assert!(qs[1].allow_multiple);
+        assert_eq!(qs[1].prompt, "Which sections should I include?");
+        assert_eq!(meta.len(), 2);
+        assert!(meta[1].1); // multi-select
+
+        let answers = vec![
+            AskQuestionAnswerDto {
+                question_id: "question_0".into(),
+                selected_option_ids: vec!["Summary".into()],
+                custom_text: None,
+            },
+            AskQuestionAnswerDto {
+                question_id: "question_1".into(),
+                selected_option_ids: vec!["Intro".into(), "Outro".into()],
+                custom_text: None,
+            },
+        ];
+        let content = elicitation_content_from_answers(&answers, &meta);
+        assert_eq!(content["question_0"], "Summary");
+        assert_eq!(
+            content["question_1"],
+            serde_json::json!(["Intro", "Outro"])
+        );
     }
 
     #[test]

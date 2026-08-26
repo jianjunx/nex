@@ -835,7 +835,7 @@ impl acp::Agent for NexNativeAgent {
                 });
 
                 let env = TurnEnv {
-                    conn,
+                    conn: conn.clone(),
                     session_id: args.session_id.clone(),
                     provider: provider.clone(),
                     tool_specs: registry.specs(),
@@ -860,6 +860,8 @@ impl acp::Agent for NexNativeAgent {
                         mode_id: Some(session.handles.mode_id.clone()),
                         memory: session.memory.clone(),
                         graph: self.inner.graph.clone(),
+                        conn: Some(conn),
+                        session_id: Some(args.session_id.0.to_string()),
                     },
                     context_window: cfg.context_window_for(&model_id),
                     usage: RefCell::new(provider::Usage::default()),

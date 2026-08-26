@@ -111,14 +111,19 @@ pub struct AskQuestionItemDto {
 pub struct AskQuestionOptionDto {
     pub id: String,
     pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
-/// One answered question returned by the UI for `cursor/ask_question`.
+/// One answered question returned by the UI for `cursor/ask_question` / elicitation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AskQuestionAnswerDto {
     pub question_id: String,
     pub selected_option_ids: Vec<String>,
+    /// Free-text "Other" answer; when set, overrides selected options for that question.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_text: Option<String>,
 }
 
 /// Payload of the `agent-session-terminated` event, emitted when the agent

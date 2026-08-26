@@ -296,6 +296,8 @@ mod tests {
             mode_id: None,
             memory: super::super::test_memory_handle(),
             graph: None,
+        conn: None,
+        session_id: None,
         }
     }
 

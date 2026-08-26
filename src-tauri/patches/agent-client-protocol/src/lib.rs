@@ -414,6 +414,32 @@ impl AgentSideConnection {
     pub fn subscribe(&self) -> StreamReceiver {
         self.conn.subscribe()
     }
+
+    /// Send a JSON-RPC request with an arbitrary method name and raw JSON params.
+    ///
+    /// Used for newer client methods (e.g. `elicitation/create`) that are not yet
+    /// modeled in this crate's typed `AgentRequest` enum. Unlike [`Client::ext_method`],
+    /// this does **not** prefix the method with `_`, matching the wire names external
+    /// ACP agents (Claude Code) use.
+    pub async fn request_raw(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        use serde_json::value::RawValue;
+        let raw = RawValue::from_string(params.to_string()).map_err(|e| {
+            Error::internal_error().with_data(format!("invalid raw params: {e}"))
+        })?;
+        self.conn
+            .request(
+                method,
+                Some(AgentRequest::ExtMethodRequest(ExtRequest {
+                    method: method.into(),
+                    params: raw.into(),
+                })),
+            )
+            .await
+    }
 }
 
 #[async_trait::async_trait(?Send)]

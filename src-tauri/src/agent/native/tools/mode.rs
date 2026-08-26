@@ -116,6 +116,8 @@ mod tests {
             mode_id: Some(test_mode_cell(mode)),
             memory: super::super::test_memory_handle(),
             graph: None,
+        conn: None,
+        session_id: None,
         }
     }
 

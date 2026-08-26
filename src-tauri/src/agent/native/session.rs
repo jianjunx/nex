@@ -192,6 +192,8 @@ pub async fn run_subagent(harness: &SubagentHarness, task: &str) -> Result<Strin
         mode_id: None,
         memory: harness.memory.clone(),
         graph: harness.graph.clone(),
+        conn: Some(harness.conn.clone()),
+        session_id: Some(harness.parent_session_id.0.to_string()),
     };
     let env = TurnEnv {
         conn: harness.conn.clone(),
@@ -1914,6 +1916,8 @@ mod tests {
                 mode_id: Some(mode_id),
                 memory: crate::agent::native::tools::test_memory_handle(),
                 graph: None,
+                conn: None,
+                session_id: None,
             },
             context_window: 0,
             usage: RefCell::new(Usage::default()),

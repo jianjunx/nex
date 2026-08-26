@@ -1362,6 +1362,8 @@ data: \"result\":{\"ok\":true}}\n\
             mode_id: None,
             memory: crate::agent::native::tools::test_memory_handle(),
             graph: None,
+        conn: None,
+        session_id: None,
         };
         let ok = proxy
             .execute(serde_json::json!({ "text": "yo" }), &ctx)

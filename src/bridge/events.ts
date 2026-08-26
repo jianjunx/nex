@@ -52,6 +52,7 @@ export interface AgentPlanApprovalRequestPayload {
 export interface AskQuestionOptionPayload {
   id: string;
   label: string;
+  description?: string | null;
 }
 
 export interface AskQuestionItemPayload {
@@ -64,6 +65,8 @@ export interface AskQuestionItemPayload {
 export interface AskQuestionAnswerPayload {
   questionId: string;
   selectedOptionIds: string[];
+  /** Free-text "Other"; when set, overrides selected options for that question. */
+  customText?: string | null;
 }
 
 /** Cursor `cursor/ask_question` — blocks until the user answers or skips. */

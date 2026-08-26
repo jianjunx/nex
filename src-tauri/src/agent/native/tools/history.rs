@@ -355,6 +355,8 @@ mod tests {
             mode_id: None,
             memory: super::super::test_memory_handle(),
             graph: None,
+        conn: None,
+        session_id: None,
         };
 
         let out = History
@@ -404,6 +406,8 @@ mod tests {
             mode_id: None,
             memory: super::super::test_memory_handle(),
             graph: None,
+        conn: None,
+        session_id: None,
         };
         let scoped = History
             .execute(
@@ -470,6 +474,8 @@ mod tests {
             mode_id: None,
             memory: super::super::test_memory_handle(),
             graph: None,
+        conn: None,
+        session_id: None,
         };
         let out = History
             .execute(serde_json::json!({"query": "payment"}), &ctx)

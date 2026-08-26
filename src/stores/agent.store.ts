@@ -170,12 +170,6 @@ interface AgentStore {
 
   createSession: (conversationId: string, target: SessionTarget, cwd: string) => Promise<string>;
   removeSession: (conversationId: string) => Promise<void>;
-  /**
-   * Close the ACP child process but keep thread/prefs so the next prompt can
-   * reconnect. Used after 5 minutes of inactivity. No-op while starting,
-   * running, waiting, or queued work remains.
-   */
-  hibernateSession: (conversationId: string) => Promise<void>;
   /** Replace in-memory thread with hydrated history (used on cold restore). */
   hydrateEntries: (conversationId: string, entries: ThreadEntry[]) => void;
   /** Best-effort persist of all in-memory thread snapshots (window close / quit). */
@@ -577,61 +571,6 @@ export function resetAgentPromptTrackingForTests(): void {
   promptTurnAnchors.clear();
   promptGenerationByConversation.clear();
   inFlightPromptBySessionId.clear();
-  clearIdleHibernateStateForTests();
-}
-
-/** Idle ACP processes stay resident (Cursor ~400–650MB each). Hibernate after this. */
-export const SESSION_IDLE_HIBERNATE_MS = 5 * 60 * 1000;
-
-const idleHibernateTimers = new Map<string, ReturnType<typeof setTimeout>>();
-/** Bumped when a create/hibernate starts so an in-flight close cannot drop a newer session. */
-const hibernateEpochByConversation = new Map<string, number>();
-
-function bumpHibernateEpoch(conversationId: string): number {
-  const next = (hibernateEpochByConversation.get(conversationId) ?? 0) + 1;
-  hibernateEpochByConversation.set(conversationId, next);
-  return next;
-}
-
-function cancelIdleHibernate(conversationId: string): void {
-  const timer = idleHibernateTimers.get(conversationId);
-  if (timer === undefined) return;
-  clearTimeout(timer);
-  idleHibernateTimers.delete(conversationId);
-}
-
-function scheduleIdleHibernate(conversationId: string): void {
-  cancelIdleHibernate(conversationId);
-  const timer = setTimeout(() => {
-    idleHibernateTimers.delete(conversationId);
-    void useAgentStore.getState().hibernateSession(conversationId);
-  }, SESSION_IDLE_HIBERNATE_MS);
-  idleHibernateTimers.set(conversationId, timer);
-}
-
-function sessionIsBusy(s: AgentStore, conversationId: string): boolean {
-  const session = s.sessions[conversationId];
-  if (!session) return false;
-  if (session.status === "starting" || session.status === "running" || session.status === "waiting") {
-    return true;
-  }
-  if ((s.pendingMessagesByConversation[conversationId] ?? []).length > 0) return true;
-  return session.sessionId.length > 0 && sessionStillWaiting(s, session.sessionId);
-}
-
-function syncIdleHibernateTimer(get: () => AgentStore, conversationId: string): void {
-  const s = get();
-  if (!s.sessions[conversationId] || sessionIsBusy(s, conversationId)) {
-    cancelIdleHibernate(conversationId);
-    return;
-  }
-  scheduleIdleHibernate(conversationId);
-}
-
-function clearIdleHibernateStateForTests(): void {
-  for (const timer of idleHibernateTimers.values()) clearTimeout(timer);
-  idleHibernateTimers.clear();
-  hibernateEpochByConversation.clear();
 }
 
 /** Only meta catalogs that must survive the create-session race. Drop stream chunks. */
@@ -874,8 +813,6 @@ export const useAgentStore = create<AgentStore>()(
     cacheHitHistoryByConversation: {},
 
     createSession: async (conversationId, target, cwd) => {
-      bumpHibernateEpoch(conversationId);
-      cancelIdleHibernate(conversationId);
       set((s) => {
         s.loading = true;
         clearConversationError(s, conversationId);
@@ -903,7 +840,6 @@ export const useAgentStore = create<AgentStore>()(
         await restorePrefsToLiveSession(set, get, conversationId, result.sessionId);
         // Auto-process any messages queued while the session was starting
         void get().processNextPending(conversationId);
-        syncIdleHibernateTimer(get, conversationId);
         return result.sessionId;
       } catch (err) {
         set((s) => {
@@ -919,35 +855,7 @@ export const useAgentStore = create<AgentStore>()(
       }
     },
 
-    hibernateSession: async (conversationId) => {
-      const snapshot = get();
-      if (sessionIsBusy(snapshot, conversationId)) return;
-      const session = snapshot.sessions[conversationId];
-      if (!session) return;
-      cancelIdleHibernate(conversationId);
-      const epoch = bumpHibernateEpoch(conversationId);
-      try {
-        if (session.sessionId) await agentCloseSession(session.sessionId);
-      } catch (err) {
-        console.error("[agent] hibernateSession close failed:", err);
-      } finally {
-        if (hibernateEpochByConversation.get(conversationId) !== epoch) return;
-        const liveSessionId = session.sessionId;
-        if (liveSessionId) pendingNotificationsBySessionId.delete(liveSessionId);
-        clearPromptTracking(conversationId, liveSessionId);
-        set((s) => {
-          // Keep thread / prefs / meta — only drop the live ACP handle.
-          if (s.sessions[conversationId]?.sessionId === liveSessionId) {
-            delete s.sessions[conversationId];
-          }
-          if (liveSessionId) clearSessionQueues(s, liveSessionId);
-        });
-      }
-    },
-
     removeSession: async (conversationId) => {
-      bumpHibernateEpoch(conversationId);
-      cancelIdleHibernate(conversationId);
       const session = get().sessions[conversationId];
       set((s) => {
         clearConversationError(s, conversationId);
@@ -1091,7 +999,6 @@ export const useAgentStore = create<AgentStore>()(
         return;
       }
       const promptGen = bumpPromptGeneration(session.conversationId);
-      cancelIdleHibernate(session.conversationId);
       set((s) => {
         s.sessions[session.conversationId].status = "running";
         clearConversationError(s, session.conversationId);
@@ -1199,7 +1106,6 @@ export const useAgentStore = create<AgentStore>()(
             : "idle";
         }
       });
-      syncIdleHibernateTimer(get, session.conversationId);
 
       // NexAgent: after a mutating turn, chain a visible `/review` once.
       const conv = Object.values(useConversationStore.getState().conversationsByProject)
@@ -1276,7 +1182,6 @@ export const useAgentStore = create<AgentStore>()(
             s.pendingAskQuestion = nextPendingAskQuestion(s.askQuestionQueues);
           }
         });
-        if (conversationId) syncIdleHibernateTimer(get, conversationId);
       }
     },
 
@@ -1857,7 +1762,13 @@ export const useAgentStore = create<AgentStore>()(
         const authMode = session
           ? get().sessionPrefsByConversation[session.conversationId]?.authMode
           : undefined;
-        if (authMode === "allow") {
+        const isAskUserQuestion =
+          /askuserquestion/i.test(payload.toolTitle ?? "") ||
+          (payload.toolRawInput != null &&
+            typeof payload.toolRawInput === "object" &&
+            Array.isArray((payload.toolRawInput as { questions?: unknown }).questions));
+        // Never auto-allow clarifying questions — they need structured answers.
+        if (authMode === "allow" && !isAskUserQuestion) {
           const optionId = pickAllowOptionId(payload.options);
           if (optionId) {
             void get().respondPermission(payload.requestId, optionId);
@@ -2006,7 +1917,6 @@ export const useAgentStore = create<AgentStore>()(
         set((s) => {
           const session = Object.values(s.sessions).find((ss) => ss.sessionId === sessionId);
           if (session) {
-            cancelIdleHibernate(session.conversationId);
             archiveLingeringPlan(s, session.conversationId);
             delete s.sessions[session.conversationId];
           }

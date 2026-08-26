@@ -4,6 +4,7 @@
 //! canonical set handed to the model (schemas) and the harness (execution).
 //! File/bash tools are sandboxed to the session cwd by [`resolve_within`].
 
+pub mod ask;
 pub mod bash;
 pub mod checkpoint;
 pub mod fs;
@@ -58,6 +59,11 @@ pub struct ToolCtx {
     pub memory: Rc<RefCell<WorkingMemory>>,
     /// Per-process code graph. `None` in unit tests that don't exercise it.
     pub graph: Option<crate::graph::GraphHandle>,
+    /// ACP connection for client-side prompts (`ask_user_question` elicitation).
+    /// `None` in unit tests / subagents that don't need it.
+    pub conn: Option<std::sync::Arc<acp::AgentSideConnection>>,
+    /// Nex-side / agent session id for elicitation scope.
+    pub session_id: Option<String>,
 }
 
 /// Tools that rewrite workspace files. Auto-`/review` triggers only when at
@@ -96,6 +102,8 @@ impl ToolCtx {
             mode_id: None,
             memory: test_memory_handle(),
             graph: None,
+            conn: None,
+            session_id: None,
         }
     }
 }
@@ -176,6 +184,7 @@ impl ToolRegistry {
                 Box::new(spreadsheet::ReadSpreadsheet),
                 Box::new(bash::Bash),
                 Box::new(todo::TodoWrite),
+                Box::new(ask::AskUserQuestion),
                 Box::new(history::History),
                 Box::new(jobs::RunInBackground),
                 Box::new(jobs::BashOutput),
@@ -530,6 +539,7 @@ mod tests {
             .map(|s| s.function.name.clone())
             .collect();
         assert_eq!(names[0], "read_file");
+        assert!(names.contains(&"ask_user_question".to_string()));
         assert!(names.contains(&"bash".to_string()));
         assert!(names.contains(&"history".to_string()));
         assert!(names.contains(&"run_in_background".to_string()));

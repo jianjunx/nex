@@ -71,6 +71,8 @@ beforeEach(() => {
     opRunning: null,
     opLog: [],
     error: null,
+    hasRepo: null,
+    repoPath: null,
     commitMessage: "",
     treeView: false,
     historyOpen: false,
@@ -263,6 +265,81 @@ describe("git.store clearError", () => {
     useGitStore.setState({ error: "推送被拒绝：非快进，请先拉取合并" });
     useGitStore.getState().clearError();
     expect(useGitStore.getState().error).toBeNull();
+  });
+});
+
+describe("git.store missing git repo", () => {
+  it("refresh with null status marks hasRepo false and does not set error", async () => {
+    gitStatusMock.mockResolvedValue(null);
+    await useGitStore.getState().refresh("/p");
+    const s = useGitStore.getState();
+    expect(s.status).toBeNull();
+    expect(s.hasRepo).toBe(false);
+    expect(s.error).toBeNull();
+    expect(s.statusLoading).toBe(false);
+  });
+
+  it("refresh swallows libgit2 NotFound without surfacing an error", async () => {
+    gitStatusMock.mockRejectedValue({
+      type: "Git",
+      message: "could not find repository at '/p'; class=Repository (6); code=NotFound (-3)",
+    });
+    await useGitStore.getState().refresh("/p");
+    const s = useGitStore.getState();
+    expect(s.hasRepo).toBe(false);
+    expect(s.error).toBeNull();
+    expect(s.status).toBeNull();
+  });
+
+  it("loadHistory is a no-op when hasRepo is false", async () => {
+    useGitStore.setState({ hasRepo: false, repoPath: "/p" });
+    await useGitStore.getState().loadHistory("/p");
+    expect(gitLogMock).not.toHaveBeenCalled();
+    expect(useGitStore.getState().error).toBeNull();
+  });
+
+  it("loadBranches is a no-op when hasRepo is false", async () => {
+    useGitStore.setState({ hasRepo: false, repoPath: "/p" });
+    await useGitStore.getState().loadBranches("/p");
+    expect(gitListBranchesMock).not.toHaveBeenCalled();
+    expect(useGitStore.getState().error).toBeNull();
+  });
+
+  it("refresh resets stale state when the project path changes", async () => {
+    useGitStore.setState({
+      repoPath: "/old",
+      hasRepo: true,
+      status: STATUS,
+      branches: [{ name: "main", isHead: true, isRemote: false, ahead: null, behind: null, tipTime: null }],
+      commits: [{ hash: "abc", message: "m", author: "a", time: 1 }],
+      stashes: [{ id: "stash@{0}", message: "wip", index: 0 }],
+      error: "stale",
+    });
+    gitStatusMock.mockResolvedValue(null);
+    const pending = useGitStore.getState().refresh("/new");
+    const mid = useGitStore.getState();
+    expect(mid.repoPath).toBe("/new");
+    expect(mid.hasRepo).toBeNull();
+    expect(mid.status).toBeNull();
+    expect(mid.branches).toEqual([]);
+    expect(mid.commits).toEqual([]);
+    expect(mid.stashes).toEqual([]);
+    expect(mid.error).toBeNull();
+    await pending;
+    expect(useGitStore.getState().hasRepo).toBe(false);
+  });
+
+  it("runOp swallows missing-repo errors without writing error or opLog failure", async () => {
+    gitFetchMock.mockRejectedValue({
+      type: "Git",
+      message: "could not find repository at '/p'; class=Repository (6); code=NotFound (-3)",
+    });
+    gitStatusMock.mockResolvedValue(null);
+    await useGitStore.getState().fetch("/p");
+    const s = useGitStore.getState();
+    expect(s.hasRepo).toBe(false);
+    expect(s.error).toBeNull();
+    expect(s.opLog.some((line) => line.includes("失败"))).toBe(false);
   });
 });
 

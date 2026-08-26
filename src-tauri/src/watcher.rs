@@ -116,12 +116,14 @@ impl WatcherManager {
                             paths: paths.clone(),
                         },
                     );
-                    let _ = app.emit(
-                        GIT_STATUS_CHANGED_EVENT,
-                        GitStatusChangedPayload {
-                            project_path: emit_path.clone(),
-                        },
-                    );
+                    if crate::git::repository::has_git_metadata(Path::new(&emit_path)) {
+                        let _ = app.emit(
+                            GIT_STATUS_CHANGED_EVENT,
+                            GitStatusChangedPayload {
+                                project_path: emit_path.clone(),
+                            },
+                        );
+                    }
                     for listener in listeners.lock().unwrap().iter() {
                         listener(&emit_path, &paths);
                     }
@@ -208,5 +210,13 @@ mod tests {
         ]);
         assert_eq!(mixed, vec!["/p/src/a.rs"]);
         assert!(user_facing_paths(&["/p/.nex/cache/x".into()]).is_empty());
+    }
+
+    #[test]
+    fn project_has_git_is_false_without_dot_git() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!crate::git::repository::has_git_metadata(dir.path()));
+        std::fs::create_dir(dir.path().join(".git")).unwrap();
+        assert!(crate::git::repository::has_git_metadata(dir.path()));
     }
 }

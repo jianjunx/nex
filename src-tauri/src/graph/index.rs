@@ -267,10 +267,14 @@ fn hash_bytes(bytes: &[u8]) -> u64 {
 }
 
 /// `git diff --name-only <base>` plus untracked, workspace-relative `/` paths.
+/// Non-git folders return an empty list (not an error) so impact queries stay quiet.
 pub fn git_changed_files(cwd: &Path, base: &str) -> Result<Vec<String>, String> {
-    let repo = git2::Repository::open(cwd)
-        .or_else(|_| git2::Repository::discover(cwd))
-        .map_err(|e| format!("not a git repo: {e}"))?;
+    if !crate::git::repository::has_git_metadata(cwd) {
+        return Ok(Vec::new());
+    }
+    let Ok(repo) = git2::Repository::open(cwd).or_else(|_| git2::Repository::discover(cwd)) else {
+        return Ok(Vec::new());
+    };
     let obj = repo
         .revparse_single(base)
         .map_err(|e| format!("cannot resolve git ref `{base}`: {e}"))?;
@@ -380,5 +384,12 @@ mod tests {
             before, after,
             "cache-only invalidate must not rewrite meta.json"
         );
+    }
+
+    #[test]
+    fn git_changed_files_is_empty_without_a_repo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let files = git_changed_files(tmp.path(), "HEAD~1").unwrap();
+        assert!(files.is_empty(), "{files:?}");
     }
 }

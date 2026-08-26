@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use tauri::State;
 
 #[tauri::command]
-pub async fn git_status(project_path: String) -> Result<GitStatus, NexError> {
+pub async fn git_status(project_path: String) -> Result<Option<GitStatus>, NexError> {
     tauri::async_runtime::spawn_blocking(move || repository::get_status(Path::new(&project_path)))
         .await
         .map_err(|e| NexError::Git(format!("git_status join: {e}")))?

@@ -151,6 +151,8 @@ export function AgentComposer() {
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const projects = useProjectStore((s) => s.projects);
   const project = projects.find((p) => p.id === activeProjectId);
+  const hasRepo = useGitStore((s) => s.hasRepo);
+  const gitRepoPath = useGitStore((s) => s.repoPath);
   const activeTabId = useConversationStore((s) => selectProjectActiveTabId(s, activeProjectId));
   const sessions = useAgentStore((s) => s.sessions);
   const metaByConversation = useAgentStore((s) => s.metaByConversation);
@@ -302,13 +304,7 @@ export function AgentComposer() {
   const projectPath = project?.path;
   useEffect(() => {
     if (!projectPath) return;
-    void useGitStore.getState().refresh(projectPath).then(() => {
-      // 非 git 项目的探测失败不打扰用户；其它真实错误（权限/仓库损坏）保留。
-      const st = useGitStore.getState();
-      if (!st.status && st.error && /not a git repository/i.test(st.error)) {
-        st.clearError();
-      }
-    });
+    void useGitStore.getState().refresh(projectPath);
   }, [projectPath]);
 
   // Keep highlight in range when the filtered list shrinks.
@@ -928,7 +924,7 @@ export function AgentComposer() {
               />
             </div>
 
-            {project && (
+            {project && hasRepo === true && gitRepoPath === project.path && (
               <BranchSelector
                 projectPath={project.path}
                 open={branchOpen}

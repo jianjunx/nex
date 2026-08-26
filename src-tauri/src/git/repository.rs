@@ -1,10 +1,53 @@
 use super::types::*;
 use crate::error::NexError;
-use git2::{DiffFormat, Repository, StatusOptions};
+use git2::{DiffFormat, ErrorClass, ErrorCode, Repository, StatusOptions};
 use std::path::Path;
 
-pub fn get_status(repo_path: &Path) -> Result<GitStatus, NexError> {
-    let repo = Repository::open(repo_path)?;
+/// Cheap probe: does `path` look like a git worktree or a bare repo?
+///
+/// Used to skip libgit2 entirely on folders that were never `git init`'d, so
+/// opening a project cannot surface `could not find repository … NotFound`.
+pub fn has_git_metadata(path: &Path) -> bool {
+    let git = path.join(".git");
+    if git.exists() {
+        return true;
+    }
+    // Bare repository opened as the project folder (HEAD + objects + refs).
+    path.join("HEAD").is_file() && path.join("objects").is_dir() && path.join("refs").is_dir()
+}
+
+/// True when libgit2 failed because `path` is not a git repository.
+/// Scoped to `Repository::open` only — `NotFound` elsewhere means a missing
+/// ref/object, not a missing repo.
+fn is_repository_not_found(err: &git2::Error) -> bool {
+    err.code() == ErrorCode::NotFound
+        || (err.class() == ErrorClass::Repository
+            && err.message().contains("could not find repository"))
+}
+
+/// Open the repo at `path`. `Ok(None)` means the directory has no git
+/// metadata — probe callers (status / log / branches) treat that as empty,
+/// not as an error.
+fn open_repo(path: &Path) -> Result<Option<Repository>, NexError> {
+    if !has_git_metadata(path) {
+        return Ok(None);
+    }
+    match Repository::open(path) {
+        Ok(repo) => Ok(Some(repo)),
+        Err(e) if is_repository_not_found(&e) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+fn require_repo(path: &Path) -> Result<Repository, NexError> {
+    open_repo(path)?.ok_or_else(|| NexError::Git("当前项目不是 Git 仓库".into()))
+}
+
+/// `None` when `repo_path` is not a git repository (no `.git`).
+pub fn get_status(repo_path: &Path) -> Result<Option<GitStatus>, NexError> {
+    let Some(repo) = open_repo(repo_path)? else {
+        return Ok(None);
+    };
     let head = repo.head().ok();
     let branch = head
         .as_ref()
@@ -70,12 +113,12 @@ pub fn get_status(repo_path: &Path) -> Result<GitStatus, NexError> {
         }
     }
 
-    Ok(GitStatus {
+    Ok(Some(GitStatus {
         branch,
         ahead,
         behind,
         files,
-    })
+    }))
 }
 
 /// 共享补丁打印器：DiffLine::content() 不含行首来源标记，补回 +/-/空格
@@ -94,7 +137,7 @@ fn render_patch(diff: &git2::Diff) -> Result<String, NexError> {
 }
 
 pub fn get_diff(repo_path: &Path, file: &str, staged: bool) -> Result<String, NexError> {
-    let repo = Repository::open(repo_path)?;
+    let repo = require_repo(repo_path)?;
     let mut opts = git2::DiffOptions::new();
     opts.pathspec(file);
 
@@ -139,7 +182,7 @@ pub fn get_diff_contents(
     file: &str,
     staged: bool,
 ) -> Result<DiffContents, NexError> {
-    let repo = Repository::open(repo_path)?;
+    let repo = require_repo(repo_path)?;
 
     let original_id = if staged {
         head_entry_id(&repo, file)
@@ -177,7 +220,7 @@ pub fn get_diff_contents(
 
 /// 整提交对父提交的补丁全文（根提交对空树）；hash 接受短哈希。
 pub fn get_commit_patch(repo_path: &Path, hash: &str) -> Result<String, NexError> {
-    let repo = Repository::open(repo_path)?;
+    let repo = require_repo(repo_path)?;
     let obj = repo.revparse_single(&format!("{hash}^{{commit}}"))?;
     let commit = obj.peel_to_commit()?;
     let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
@@ -187,7 +230,9 @@ pub fn get_commit_patch(repo_path: &Path, hash: &str) -> Result<String, NexError
 }
 
 pub fn get_log(repo_path: &Path, limit: usize) -> Result<Vec<CommitInfo>, NexError> {
-    let repo = Repository::open(repo_path)?;
+    let Some(repo) = open_repo(repo_path)? else {
+        return Ok(Vec::new());
+    };
     // Fresh repo with no commits yet: HEAD is unborn, so there is simply
     // no history — return an empty list instead of erroring.
     if repo.head().is_err() {
@@ -213,7 +258,7 @@ pub fn get_log(repo_path: &Path, limit: usize) -> Result<Vec<CommitInfo>, NexErr
 }
 
 pub fn stage_files(repo_path: &Path, files: &[String]) -> Result<(), NexError> {
-    let repo = Repository::open(repo_path)?;
+    let repo = require_repo(repo_path)?;
     let workdir = repo
         .workdir()
         .ok_or_else(|| NexError::Git("cannot stage files in a bare repository".to_string()))?;
@@ -232,7 +277,7 @@ pub fn stage_files(repo_path: &Path, files: &[String]) -> Result<(), NexError> {
 }
 
 pub fn unstage_files(repo_path: &Path, files: &[String]) -> Result<(), NexError> {
-    let repo = Repository::open(repo_path)?;
+    let repo = require_repo(repo_path)?;
     match repo.head() {
         Ok(head) => {
             // Reset the index entries for these paths back to HEAD.
@@ -252,7 +297,7 @@ pub fn unstage_files(repo_path: &Path, files: &[String]) -> Result<(), NexError>
 }
 
 pub fn commit(repo_path: &Path, message: &str) -> Result<String, NexError> {
-    let repo = Repository::open(repo_path)?;
+    let repo = require_repo(repo_path)?;
     let mut index = repo.index()?;
     let tree_id = index.write_tree()?;
     let tree = repo.find_tree(tree_id)?;
@@ -283,7 +328,9 @@ fn branch_tip_time(branch: &git2::Branch<'_>) -> Option<i64> {
 }
 
 pub fn list_branches(repo_path: &Path) -> Result<Vec<BranchInfo>, NexError> {
-    let repo = Repository::open(repo_path)?;
+    let Some(repo) = open_repo(repo_path)? else {
+        return Ok(Vec::new());
+    };
     let mut out = Vec::new();
 
     for entry in repo.branches(Some(git2::BranchType::Local))? {
@@ -335,7 +382,7 @@ pub fn list_branches(repo_path: &Path) -> Result<Vec<BranchInfo>, NexError> {
 }
 
 pub fn checkout_branch(repo_path: &Path, name: &str) -> Result<(), NexError> {
-    let repo = Repository::open(repo_path)?;
+    let repo = require_repo(repo_path)?;
 
     // 远程跟踪分支（如 origin/feature）：同步为本地同名分支并签出，
     // 而不是进入分离 HEAD（旧行为）。本地已存在则直接签出本地分支。
@@ -381,7 +428,7 @@ fn checkout_remote_as_local(repo_path: &Path, remote_branch: &str) -> Result<(),
     // 尽力同步远端 tip；离线时仍可用已有 remote-tracking ref。
     let fetch_result = super::network::fetch_remote(repo_path, remote_name);
 
-    let repo = Repository::open(repo_path)?;
+    let repo = require_repo(repo_path)?;
     let local_name = local_name_from_remote_branch(&repo, remote_branch)?;
 
     if repo
@@ -448,7 +495,7 @@ pub fn create_branch(repo_path: &Path, name: &str) -> Result<(), NexError> {
     if trimmed.is_empty() {
         return Err(NexError::Git("分支名不能为空".to_string()));
     }
-    let repo = Repository::open(repo_path)?;
+    let repo = require_repo(repo_path)?;
     let head = repo
         .head()
         .and_then(|h| h.peel_to_commit())
@@ -458,7 +505,7 @@ pub fn create_branch(repo_path: &Path, name: &str) -> Result<(), NexError> {
 }
 
 pub fn delete_branch(repo_path: &Path, name: &str) -> Result<(), NexError> {
-    let repo = Repository::open(repo_path)?;
+    let repo = require_repo(repo_path)?;
     let mut branch = repo.find_branch(name, git2::BranchType::Local)?;
     if branch.is_head() {
         return Err(NexError::Git("不能删除当前分支".to_string()));
@@ -482,7 +529,7 @@ fn validate_repo_relative(file: &str) -> Result<(), NexError> {
 }
 
 pub fn discard_changes(repo_path: &Path, files: &[String]) -> Result<(), NexError> {
-    let repo = Repository::open(repo_path)?;
+    let repo = require_repo(repo_path)?;
     let workdir = repo
         .workdir()
         .ok_or_else(|| NexError::Git("cannot discard changes in a bare repository".to_string()))?
@@ -518,7 +565,7 @@ pub fn discard_changes(repo_path: &Path, files: &[String]) -> Result<(), NexErro
 }
 
 pub fn revert_staged(repo_path: &Path, files: &[String]) -> Result<(), NexError> {
-    let repo = Repository::open(repo_path)?;
+    let repo = require_repo(repo_path)?;
     for file in files {
         validate_repo_relative(file)?;
     }
@@ -559,7 +606,7 @@ pub fn revert_staged(repo_path: &Path, files: &[String]) -> Result<(), NexError>
 
 pub fn stash_save(repo_path: &Path, message: &str) -> Result<(), NexError> {
     // git2 0.19 的 stash_* 全系 &mut self
-    let mut repo = Repository::open(repo_path)?;
+    let mut repo = require_repo(repo_path)?;
     let sig = repo.signature()?;
     if repo.head().and_then(|h| h.peel_to_commit()).is_err() {
         return Err(NexError::Git(
@@ -585,7 +632,9 @@ pub fn stash_save(repo_path: &Path, message: &str) -> Result<(), NexError> {
 }
 
 pub fn stash_list(repo_path: &Path) -> Result<Vec<StashEntry>, NexError> {
-    let mut repo = Repository::open(repo_path)?;
+    let Some(mut repo) = open_repo(repo_path)? else {
+        return Ok(Vec::new());
+    };
     let mut out = Vec::new();
     repo.stash_foreach(|index, message, oid| {
         out.push(StashEntry {
@@ -617,21 +666,21 @@ fn resolve_stash_index(repo: &mut Repository, id: &str) -> Result<usize, NexErro
 }
 
 pub fn stash_apply(repo_path: &Path, id: &str) -> Result<(), NexError> {
-    let mut repo = Repository::open(repo_path)?;
+    let mut repo = require_repo(repo_path)?;
     let index = resolve_stash_index(&mut repo, id)?;
     repo.stash_apply(index, None)?;
     Ok(())
 }
 
 pub fn stash_pop(repo_path: &Path, id: &str) -> Result<(), NexError> {
-    let mut repo = Repository::open(repo_path)?;
+    let mut repo = require_repo(repo_path)?;
     let index = resolve_stash_index(&mut repo, id)?;
     repo.stash_pop(index, None)?;
     Ok(())
 }
 
 pub fn stash_drop(repo_path: &Path, id: &str) -> Result<(), NexError> {
-    let mut repo = Repository::open(repo_path)?;
+    let mut repo = require_repo(repo_path)?;
     let index = resolve_stash_index(&mut repo, id)?;
     repo.stash_drop(index)?;
     Ok(())

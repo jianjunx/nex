@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { FolderTree, List, Loader2, RefreshCw, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useGitStore } from "../../stores/git.store";
+import { isMissingGitRepo, useGitStore } from "../../stores/git.store";
 import { useProjectStore } from "../../stores/project.store";
 import { BranchSelector } from "./BranchSelector";
 import { ChangesSection } from "./ChangesSection";
@@ -22,6 +22,8 @@ export function GitPanel() {
     push,
     treeView,
     setTreeView,
+    hasRepo,
+    repoPath,
   } = useGitStore();
   const projects = useProjectStore((s) => s.projects);
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
@@ -29,10 +31,24 @@ export function GitPanel() {
   const [branchSelectorOpen, setBranchSelectorOpen] = useState(false);
 
   useEffect(() => {
-    if (project) refresh(project.path);
+    if (project) void refresh(project.path);
   }, [project?.path]);
 
   if (!project) return <div className="px-3 py-4 text-sm text-[var(--text-tertiary)]">还没有打开项目</div>;
+
+  // Drop stale state from the previous project while the probe is in flight.
+  const forThisProject = repoPath === project.path;
+  if (!forThisProject || hasRepo === null) {
+    return null;
+  }
+
+  if (hasRepo === false) {
+    return (
+      <div className="px-3 py-4 text-sm text-[var(--text-tertiary)]">
+        此项目尚未初始化 Git 仓库
+      </div>
+    );
+  }
 
   const ahead = status?.ahead ?? 0;
   const behind = status?.behind ?? 0;
@@ -105,7 +121,11 @@ export function GitPanel() {
       <HistorySection projectPath={project.path} />
       <OpLogPanel />
 
-      <GitErrorDialog open={!!error} error={error} onClose={clearError} />
+      <GitErrorDialog
+        open={!!error && !isMissingGitRepo(error)}
+        error={error}
+        onClose={clearError}
+      />
     </div>
   );
 }

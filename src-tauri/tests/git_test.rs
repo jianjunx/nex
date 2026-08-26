@@ -143,7 +143,11 @@ fn discard_restores_tracked_and_removes_untracked() {
 
     assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "v1");
     assert!(!dir.path().join("scratch.tmp").exists());
-    assert!(repository::get_status(dir.path()).unwrap().files.is_empty());
+    assert!(repository::get_status(dir.path())
+        .unwrap()
+        .unwrap()
+        .files
+        .is_empty());
 }
 
 #[test]
@@ -172,7 +176,11 @@ fn revert_staged_undoes_index_and_workdir_to_head() {
     repository::revert_staged(dir.path(), &["a.txt".to_string()]).unwrap();
 
     assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "v1");
-    assert!(repository::get_status(dir.path()).unwrap().files.is_empty());
+    assert!(repository::get_status(dir.path())
+        .unwrap()
+        .unwrap()
+        .files
+        .is_empty());
 }
 
 #[test]
@@ -185,7 +193,11 @@ fn revert_staged_on_unborn_head_clears_index_and_disk() {
     repository::revert_staged(dir.path(), &["new.txt".to_string()]).unwrap();
 
     assert!(!dir.path().join("new.txt").exists());
-    assert!(repository::get_status(dir.path()).unwrap().files.is_empty());
+    assert!(repository::get_status(dir.path())
+        .unwrap()
+        .unwrap()
+        .files
+        .is_empty());
 }
 
 #[test]
@@ -198,7 +210,11 @@ fn stash_save_clears_workdir_including_untracked() {
 
     repository::stash_save(dir.path(), "my stash").unwrap();
 
-    assert!(repository::get_status(dir.path()).unwrap().files.is_empty());
+    assert!(repository::get_status(dir.path())
+        .unwrap()
+        .unwrap()
+        .files
+        .is_empty());
     let list = repository::stash_list(dir.path()).unwrap();
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].index, 0);
@@ -609,5 +625,32 @@ fn commit_patch_contains_added_lines_and_accepts_short_hash() {
     assert!(
         patch.contains("+v1"),
         "patch should contain the added line: {patch}"
+    );
+}
+
+#[test]
+fn probe_ops_are_empty_when_path_is_not_a_git_repo() {
+    let dir = tempdir().unwrap();
+    assert!(!repository::has_git_metadata(dir.path()));
+    assert!(repository::get_status(dir.path()).unwrap().is_none());
+    assert!(repository::get_log(dir.path(), 20).unwrap().is_empty());
+    assert!(repository::list_branches(dir.path()).unwrap().is_empty());
+    assert!(repository::stash_list(dir.path()).unwrap().is_empty());
+}
+
+#[test]
+fn has_git_metadata_true_after_init() {
+    let dir = tempdir().unwrap();
+    init_repo(dir.path());
+    assert!(repository::has_git_metadata(dir.path()));
+}
+
+#[test]
+fn mutating_ops_use_a_friendly_error_when_not_a_git_repo() {
+    let dir = tempdir().unwrap();
+    let err = repository::stage_files(dir.path(), &["a.txt".to_string()]).unwrap_err();
+    assert!(
+        err.to_string().contains("当前项目不是 Git 仓库"),
+        "unexpected error: {err}"
     );
 }

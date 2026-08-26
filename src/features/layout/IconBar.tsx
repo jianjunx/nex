@@ -20,8 +20,10 @@ export function IconBar() {
     settingsOpen,
     openSettings,
   } = useUiStore();
-  // Live changes count drives the Git badge (hidden when zero).
-  const gitChangesCount = useGitStore((s) => s.status?.files.length ?? 0);
+  // Live changes count drives the Git badge (hidden when zero / no repo).
+  const gitChangesCount = useGitStore((s) =>
+    s.hasRepo === true ? (s.status?.files.length ?? 0) : 0,
+  );
 
   return (
     <div className="nex-material-panel flex w-11 flex-col items-center border-l border-[color:var(--hairline-soft)] py-2.5">

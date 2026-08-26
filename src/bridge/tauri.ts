@@ -490,7 +490,7 @@ export interface GitStatus {
   files: GitFileChange[];
 }
 
-export async function gitStatus(projectPath: string): Promise<GitStatus> {
+export async function gitStatus(projectPath: string): Promise<GitStatus | null> {
   return invoke(COMMANDS.GIT_STATUS, { projectPath });
 }
 

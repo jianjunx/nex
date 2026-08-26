@@ -31,6 +31,10 @@ interface GitStore {
   opRunning: string | null;
   opLog: string[];
   error: string | null;
+  /** `null` until the first status probe; `false` means the project has no git repo. */
+  hasRepo: boolean | null;
+  /** Project path the current git slot belongs to; used to drop stale state on switch. */
+  repoPath: string | null;
   commitMessage: string;
   treeView: boolean;
   historyOpen: boolean;
@@ -77,8 +81,38 @@ function errorMessage(err: unknown): string {
   return String(err);
 }
 
+/** libgit2 / git CLI messages for a directory that is not a repository. */
+export function isMissingGitRepo(err: unknown): boolean {
+  const msg = errorMessage(err);
+  return /could not find repository|not a git repository|NotFound \(-3\)|当前项目不是 Git 仓库/i.test(msg);
+}
+
 export const useGitStore = create<GitStore>()(
   immer((set, get) => {
+    const markMissingRepo = () =>
+      set((s) => {
+        s.status = null;
+        s.hasRepo = false;
+        s.branches = [];
+        s.commits = [];
+        s.stashes = [];
+        s.error = null;
+      });
+    const adoptPath = (projectPath: string) => {
+      if (get().repoPath === projectPath) return;
+      const switching = get().repoPath != null;
+      set((s) => {
+        s.repoPath = projectPath;
+        s.status = null;
+        s.hasRepo = null;
+        s.branches = [];
+        s.commits = [];
+        s.stashes = [];
+        // Keep a freshly recorded op failure when the slot is first bound
+        // (e.g. fetch → refresh). Only drop errors when leaving another project.
+        if (switching) s.error = null;
+      });
+    };
     // Append one op-log line; trim from the front beyond OP_LOG_MAX.
     const logOp = (op: string, failure?: string) =>
       set((s) => {
@@ -95,6 +129,10 @@ export const useGitStore = create<GitStore>()(
         logOp(name);
         return true;
       } catch (err) {
+        if (isMissingGitRepo(err)) {
+          markMissingRepo();
+          return false;
+        }
         const msg = errorMessage(err);
         set((s) => { s.error = msg; });
         logOp(name, msg);
@@ -113,6 +151,10 @@ export const useGitStore = create<GitStore>()(
       try {
         await fn();
       } catch (err) {
+        if (isMissingGitRepo(err)) {
+          markMissingRepo();
+          return;
+        }
         set((s) => { s.error = errorMessage(err); });
       } finally {
         set((s) => { s.statusLoading = false; });
@@ -131,16 +173,27 @@ export const useGitStore = create<GitStore>()(
       opRunning: null,
       opLog: [],
       error: null,
+      hasRepo: null,
+      repoPath: null,
       commitMessage: "",
       treeView: false,
       historyOpen: false,
       opLogOpen: false,
 
-      refresh: async (projectPath) =>
-        loadStatus(async () => {
+      refresh: async (projectPath) => {
+        adoptPath(projectPath);
+        return loadStatus(async () => {
           const status = await gitStatus(projectPath);
-          set((s) => { s.status = status; });
-        }),
+          if (!status) {
+            markMissingRepo();
+            return;
+          }
+          set((s) => {
+            s.status = status;
+            s.hasRepo = true;
+          });
+        });
+      },
 
       openDiffInEditor: async (projectPath, file, staged) => {
         try {
@@ -200,11 +253,17 @@ export const useGitStore = create<GitStore>()(
       },
 
       loadBranches: async (projectPath) => {
+        adoptPath(projectPath);
+        if (get().hasRepo === false) return;
         set((s) => { s.branchesLoading = true; });
         try {
           const branches = await gitListBranches(projectPath);
           set((s) => { s.branches = branches; });
         } catch (err) {
+          if (isMissingGitRepo(err)) {
+            markMissingRepo();
+            return;
+          }
           set((s) => { s.error = errorMessage(err); });
         } finally {
           set((s) => { s.branchesLoading = false; });
@@ -279,11 +338,17 @@ export const useGitStore = create<GitStore>()(
         return ok;
       },
       loadStashes: async (projectPath) => {
+        adoptPath(projectPath);
+        if (get().hasRepo === false) return;
         set((s) => { s.stashesLoading = true; });
         try {
           const stashes = await gitStashList(projectPath);
           set((s) => { s.stashes = stashes; });
         } catch (err) {
+          if (isMissingGitRepo(err)) {
+            markMissingRepo();
+            return;
+          }
           set((s) => { s.error = errorMessage(err); });
         } finally {
           set((s) => { s.stashesLoading = false; });
@@ -335,11 +400,17 @@ export const useGitStore = create<GitStore>()(
       },
 
       loadHistory: async (projectPath) => {
+        adoptPath(projectPath);
+        if (get().hasRepo === false) return;
         set((s) => { s.historyLoading = true; });
         try {
           const commits = await gitLog(projectPath, 20);
           set((s) => { s.commits = commits; });
         } catch (err) {
+          if (isMissingGitRepo(err)) {
+            markMissingRepo();
+            return;
+          }
           set((s) => { s.error = errorMessage(err); });
         } finally {
           set((s) => { s.historyLoading = false; });

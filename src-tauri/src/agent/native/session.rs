@@ -55,6 +55,11 @@ const EMPTY_REPLY_NOTICE: &str = "模型没有返回可见回复，本轮已结�
 /// Internal nudge when the model parrots a harness-maintained transcript block.
 const HARNESS_ECHO_NUDGE: &str = "[Nex harness] `[nex:working-memory]` and `[nex:summary]` blocks are system-maintained. Do NOT output or paraphrase them — including after other prose. Continue the user's task by calling tools or giving a normal answer grounded in tool results.";
 const HARNESS_ECHO_MAX_RETRIES: u32 = 2;
+/// Gateway/model glitch: a tool round came back with `EndTurn` and no text.
+/// Retry instead of immediately idling — MiniMax-M3 in particular sometimes
+/// spends the whole stream on unstreamed thinking then returns empty.
+const EMPTY_AFTER_TOOLS_NUDGE: &str = "[Nex harness] The previous model step returned no text and no tool calls after tool results. The user's task is not finished. Continue by calling tools or giving a complete answer. Do NOT output `[nex:working-memory]` or `[nex:summary]`.";
+const EMPTY_AFTER_TOOLS_MAX_RETRIES: u32 = 2;
 /// Prepended to bare continuation utterances so resumed sessions keep working.
 const CONTINUATION_NUDGE: &str = "[Resume] Continue the active task from the working-memory Goal. Use tools to make progress. Do NOT output or paraphrase `[nex:working-memory]` or `[nex:summary]` blocks.\n\n";
 
@@ -354,6 +359,7 @@ pub async fn run_turn(
     let mut steps = 0u32;
     let mut no_progress = 0u32;
     let mut harness_echo_retries = 0u32;
+    let mut empty_after_tools_retries = 0u32;
     let mut recent_signatures: VecDeque<u64> = VecDeque::with_capacity(SIGNATURE_WINDOW);
     loop {
         if env.cancelled.get() {
@@ -652,6 +658,16 @@ pub async fn run_turn(
                         "harness_echo",
                     );
                 }
+                if retry_empty_after_tools(
+                    env,
+                    messages,
+                    wrap_up,
+                    steps,
+                    &mut empty_after_tools_retries,
+                    provider_stop,
+                ) {
+                    continue;
+                }
                 let notice = EMPTY_AFTER_TOOLS_NOTICE;
                 emit_text(env, notice).await;
                 messages.push(ChatMessage::assistant(notice.to_string()));
@@ -672,6 +688,16 @@ pub async fn run_turn(
                 };
                 return finish_turn(env, turn_started, acp::StopReason::EndTurn, why);
             } else {
+                if retry_empty_after_tools(
+                    env,
+                    messages,
+                    wrap_up,
+                    steps,
+                    &mut empty_after_tools_retries,
+                    provider_stop,
+                ) {
+                    continue;
+                }
                 let notice = if wrap_up {
                     EMPTY_WRAP_UP_NOTICE
                 } else if steps > 0 {
@@ -930,6 +956,31 @@ fn strip_harness_tail(text: &str) -> String {
 fn is_harness_block_echo(text: &str) -> bool {
     let t = text.trim_start();
     t.starts_with(memory::MARKER) || t.starts_with(compact::SUMMARY_MARKER)
+}
+
+/// Push a continuation nudge after an empty post-tool model step.
+/// Returns true when the caller should `continue` the turn loop.
+fn retry_empty_after_tools(
+    env: &TurnEnv,
+    messages: &mut Vec<ChatMessage>,
+    wrap_up: bool,
+    steps: u32,
+    retries: &mut u32,
+    provider_stop: StopReasonKind,
+) -> bool {
+    if wrap_up || steps == 0 || *retries >= EMPTY_AFTER_TOOLS_MAX_RETRIES {
+        return false;
+    }
+    *retries += 1;
+    diag::warn(
+        sid(env),
+        format!(
+            "empty after tools retry {}/{EMPTY_AFTER_TOOLS_MAX_RETRIES} stop={provider_stop:?}",
+            *retries
+        ),
+    );
+    messages.push(ChatMessage::user(EMPTY_AFTER_TOOLS_NUDGE.to_string()));
+    true
 }
 
 /// True when the model echoed a harness block alone or after other prose.
@@ -2311,6 +2362,52 @@ mod tests {
                     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                 }
                 panic!("notice was persisted but never streamed to the client");
+            })
+            .await;
+    }
+
+    /// A single empty post-tool completion is a gateway glitch: nudge and
+    /// continue instead of immediately showing the idle notice.
+    #[tokio::test(flavor = "current_thread")]
+    async fn empty_reply_after_tools_retries_then_continues() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let tmp = tempfile::tempdir().unwrap();
+                std::fs::write(tmp.path().join("x.txt"), "hello").unwrap();
+                let provider = ScriptedProvider {
+                    turns: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
+                        vec![
+                            Chunk::ToolCall(NativeToolCall {
+                                id: "call_1".into(),
+                                name: "read_file".into(),
+                                arguments: serde_json::json!({"path": "x.txt"}),
+                            }),
+                            done(),
+                        ],
+                        vec![done()],
+                        vec![text_chunk("文件内容是 hello"), done()],
+                    ])),
+                    tools_nonempty: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+                };
+                let (env, _nots, _perms) = make_env(provider, tmp.path(), false);
+                let mut messages = vec![ChatMessage::system("sys")];
+                let stop =
+                    run_turn(&env, &mut messages, Content::Text("读一下 x.txt".into())).await;
+                assert!(matches!(stop, acp::StopReason::EndTurn));
+                let last = messages
+                    .last()
+                    .and_then(|m| m.content.as_ref())
+                    .and_then(Content::as_text)
+                    .unwrap_or("");
+                assert!(
+                    last.contains("文件内容是 hello"),
+                    "one empty post-tool step must retry, got {last:?}"
+                );
+                assert!(
+                    !last.contains("模型未继续调用工具"),
+                    "idle notice must not fire when the retry produces text"
+                );
             })
             .await;
     }

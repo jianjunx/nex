@@ -1165,6 +1165,9 @@ export const useAgentStore = create<AgentStore>()(
                 if (e.kind === "plan_approval" && e.status === "pending") {
                   e.status = "cancelled";
                 }
+                if (e.kind === "ask_question" && e.status === "pending") {
+                  e.status = "cancelled";
+                }
               }
             }
             archiveLingeringPlan(s, session.conversationId);
@@ -1358,6 +1361,19 @@ export const useAgentStore = create<AgentStore>()(
           if (session) {
             conversationIdForError = session.conversationId;
             clearConversationError(s, session.conversationId);
+            const list = s.entriesByConversation[session.conversationId];
+            const card = list?.find(
+              (e) => e.kind === "ask_question" && e.requestId === requestId,
+            );
+            if (card && card.kind === "ask_question") {
+              card.status =
+                outcome === "answered"
+                  ? "answered"
+                  : outcome === "skipped"
+                    ? "skipped"
+                    : "cancelled";
+              card.answers = outcome === "answered" ? (answers ?? []) : undefined;
+            }
           }
         }
       });
@@ -1379,6 +1395,16 @@ export const useAgentStore = create<AgentStore>()(
               s.askQuestionQueues[resolvedSessionId] = queue;
             }
             s.pendingAskQuestion = nextPendingAskQuestion(s.askQuestionQueues);
+          }
+          if (conversationIdForError) {
+            const list = s.entriesByConversation[conversationIdForError];
+            const card = list?.find(
+              (e) => e.kind === "ask_question" && e.requestId === requestId,
+            );
+            if (card && card.kind === "ask_question") {
+              card.status = "pending";
+              card.answers = undefined;
+            }
           }
         });
       } finally {
@@ -1886,6 +1912,27 @@ export const useAgentStore = create<AgentStore>()(
           const live = Object.values(s.sessions).find((ss) => ss.sessionId === payload.sessionId);
           if (live) live.status = "waiting";
           if (!s.pendingAskQuestion) s.pendingAskQuestion = payload;
+          // Inline card in the conversation thread (no modal).
+          if (live) {
+            if (!s.entriesByConversation[live.conversationId]) {
+              s.entriesByConversation[live.conversationId] = [];
+            }
+            const list = s.entriesByConversation[live.conversationId];
+            if (!list.some((e) => e.kind === "ask_question" && e.requestId === payload.requestId)) {
+              list.push({
+                id: crypto.randomUUID(),
+                kind: "ask_question",
+                timestamp: Date.now(),
+                requestId: payload.requestId,
+                title: payload.title ?? undefined,
+                questions: payload.questions.map((q) => ({
+                  ...q,
+                  options: q.options.map((o) => ({ ...o })),
+                })),
+                status: "pending",
+              });
+            }
+          }
         });
 
         if (session) {

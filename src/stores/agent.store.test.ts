@@ -19,6 +19,7 @@ const nativeAgentGetConfig = vi.fn().mockResolvedValue({
   agent: { maxSteps: 0, contextWindow: 0, bashTimeoutSecs: 120, maxSubagentConcurrency: 6, autoReview: false },
 });
 let permissionHandler: ((payload: unknown) => void) | null = null;
+let askQuestionHandler: ((payload: unknown) => void) | null = null;
 let notificationHandler: ((payload: { sessionId: string; update: unknown; promptSeq?: number }) => void) | null = null;
 
 vi.mock("../bridge/tauri", () => ({
@@ -50,7 +51,10 @@ vi.mock("../bridge/tauri", () => ({
     return Promise.resolve(() => {});
   },
   onAgentPlanApprovalRequest: () => Promise.resolve(() => {}),
-  onAgentAskQuestionRequest: () => Promise.resolve(() => {}),
+  onAgentAskQuestionRequest: (cb: (payload: unknown) => void) => {
+    askQuestionHandler = cb;
+    return Promise.resolve(() => {});
+  },
   onAgentSessionTerminated: () => Promise.resolve(() => {}),
 }));
 
@@ -66,6 +70,7 @@ beforeEach(() => {
   listenersTeardown = null;
   vi.clearAllMocks();
   permissionHandler = null;
+  askQuestionHandler = null;
   notificationHandler = null;
   resetAgentPromptTrackingForTests();
   // 每例前把打点相关字段重置回初始态（store 为单例）。
@@ -986,7 +991,7 @@ describe("respondPlan / respondAskQuestion re-queue", () => {
     expect(agentSetSessionMode).not.toHaveBeenCalled();
   });
 
-  it("RPC 失败时把 ask_question 请求重新入队", async () => {
+  it("RPC 失败时把 ask_question 请求重新入队并回滚卡片 pending", async () => {
     agentRespondAskQuestion.mockRejectedValue(new Error("ask failed"));
     const ask = {
       sessionId: "sid-1",
@@ -1007,6 +1012,18 @@ describe("respondPlan / respondAskQuestion re-queue", () => {
       },
       askQuestionQueues: { "sid-1": [ask] },
       pendingAskQuestion: ask,
+      entriesByConversation: {
+        "conv-1": [
+          {
+            id: "ask-card-1",
+            kind: "ask_question",
+            timestamp: 1,
+            requestId: "ask-1",
+            questions: ask.questions,
+            status: "pending",
+          },
+        ],
+      },
     });
 
     await useAgentStore.getState().respondAskQuestion("ask-1", "answered", [
@@ -1017,6 +1034,94 @@ describe("respondPlan / respondAskQuestion re-queue", () => {
     expect(s.errorsByConversation["conv-1"]).toBe("ask failed");
     expect(s.askQuestionQueues["sid-1"]?.[0]?.requestId).toBe("ask-1");
     expect(s.pendingAskQuestion?.requestId).toBe("ask-1");
+    const card = s.entriesByConversation["conv-1"]?.[0];
+    expect(card?.kind).toBe("ask_question");
+    if (card?.kind === "ask_question") {
+      expect(card.status).toBe("pending");
+      expect(card.answers).toBeUndefined();
+    }
+  });
+
+  it("ask_question 请求插入会话内卡片", () => {
+    listenersTeardown = useAgentStore.getState().initListeners();
+    expect(askQuestionHandler).toBeTruthy();
+    useAgentStore.setState({
+      sessions: {
+        "conv-1": { sessionId: "sid-1", conversationId: "conv-1", status: "running" },
+      },
+    });
+
+    askQuestionHandler!({
+      sessionId: "sid-1",
+      requestId: "ask-1",
+      title: "需要你的选择",
+      questions: [
+        {
+          id: "q1",
+          prompt: "Which?",
+          options: [{ id: "a", label: "A", description: "opt a" }],
+          allowMultiple: false,
+        },
+      ],
+    });
+
+    const s = useAgentStore.getState();
+    expect(s.sessions["conv-1"]?.status).toBe("waiting");
+    expect(s.pendingAskQuestion?.requestId).toBe("ask-1");
+    const card = s.entriesByConversation["conv-1"]?.[0];
+    expect(card?.kind).toBe("ask_question");
+    if (card?.kind === "ask_question") {
+      expect(card.requestId).toBe("ask-1");
+      expect(card.status).toBe("pending");
+      expect(card.title).toBe("需要你的选择");
+    }
+  });
+
+  it("回答成功后把 ask_question 卡片标为 answered", async () => {
+    const ask = {
+      sessionId: "sid-1",
+      requestId: "ask-1",
+      title: null as string | null,
+      questions: [
+        {
+          id: "q1",
+          prompt: "Which?",
+          options: [{ id: "a", label: "A" }],
+          allowMultiple: false,
+        },
+      ],
+    };
+    useAgentStore.setState({
+      sessions: {
+        "conv-1": { sessionId: "sid-1", conversationId: "conv-1", status: "waiting" },
+      },
+      askQuestionQueues: { "sid-1": [ask] },
+      pendingAskQuestion: ask,
+      entriesByConversation: {
+        "conv-1": [
+          {
+            id: "ask-card-1",
+            kind: "ask_question",
+            timestamp: 1,
+            requestId: "ask-1",
+            questions: ask.questions,
+            status: "pending",
+          },
+        ],
+      },
+    });
+
+    await useAgentStore.getState().respondAskQuestion("ask-1", "answered", [
+      { questionId: "q1", selectedOptionIds: ["a"] },
+    ]);
+
+    const card = useAgentStore.getState().entriesByConversation["conv-1"]?.[0];
+    expect(card?.kind).toBe("ask_question");
+    if (card?.kind === "ask_question") {
+      expect(card.status).toBe("answered");
+      expect(card.answers).toEqual([{ questionId: "q1", selectedOptionIds: ["a"] }]);
+    }
+    expect(useAgentStore.getState().askQuestionQueues["sid-1"]).toBeUndefined();
   });
 
   it("accept 成功后 handoff：切可执行模式并续跑", async () => {
@@ -1111,6 +1216,67 @@ describe("cancel marks pending plan cards", () => {
     if (pending?.kind === "plan_approval") expect(pending.status).toBe("cancelled");
     if (kept?.kind === "plan_approval") expect(kept.status).toBe("accepted");
     expect(useAgentStore.getState().planApprovalQueues["sid-1"]).toBeUndefined();
+  });
+
+  it("cancel 将会话内 pending ask_question 标为 cancelled", async () => {
+    useAgentStore.setState({
+      sessions: {
+        "conv-1": { sessionId: "sid-1", conversationId: "conv-1", status: "waiting" },
+      },
+      askQuestionQueues: {
+        "sid-1": [
+          {
+            sessionId: "sid-1",
+            requestId: "ask-1",
+            title: null,
+            questions: [
+              { id: "q1", prompt: "Which?", options: [{ id: "a", label: "A" }], allowMultiple: false },
+            ],
+          },
+        ],
+      },
+      pendingAskQuestion: {
+        sessionId: "sid-1",
+        requestId: "ask-1",
+        title: null,
+        questions: [
+          { id: "q1", prompt: "Which?", options: [{ id: "a", label: "A" }], allowMultiple: false },
+        ],
+      },
+      entriesByConversation: {
+        "conv-1": [
+          {
+            id: "ask-card-1",
+            kind: "ask_question",
+            timestamp: 1,
+            requestId: "ask-1",
+            questions: [
+              { id: "q1", prompt: "Which?", options: [{ id: "a", label: "A" }], allowMultiple: false },
+            ],
+            status: "pending",
+          },
+          {
+            id: "ask-card-2",
+            kind: "ask_question",
+            timestamp: 2,
+            requestId: "ask-old",
+            questions: [
+              { id: "q2", prompt: "Old?", options: [{ id: "b", label: "B" }], allowMultiple: false },
+            ],
+            status: "answered",
+          },
+        ],
+      },
+    });
+
+    await useAgentStore.getState().cancel("sid-1");
+
+    const entries = useAgentStore.getState().entriesByConversation["conv-1"] ?? [];
+    const pending = entries.find((e) => e.kind === "ask_question" && e.requestId === "ask-1");
+    const kept = entries.find((e) => e.kind === "ask_question" && e.requestId === "ask-old");
+    if (pending?.kind === "ask_question") expect(pending.status).toBe("cancelled");
+    if (kept?.kind === "ask_question") expect(kept.status).toBe("answered");
+    expect(useAgentStore.getState().askQuestionQueues["sid-1"]).toBeUndefined();
   });
 });
 

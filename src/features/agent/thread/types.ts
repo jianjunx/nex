@@ -1,9 +1,12 @@
+import type { AskQuestionAnswerPayload, AskQuestionItemPayload } from "../../../bridge/events";
+
 export type ThreadEntryKind =
   | "user_message"
   | "assistant_message"
   | "tool_call"
   | "completed_plan"
-  | "plan_approval";
+  | "plan_approval"
+  | "ask_question";
 
 export type AssistantChunk =
   | { type: "message"; text: string }
@@ -96,12 +99,23 @@ export interface PlanApprovalEntry extends ThreadEntryBase {
   status: "pending" | "accepted" | "rejected" | "cancelled";
 }
 
+/** Cursor `cursor/ask_question` / Claude AskUserQuestion — inline card. */
+export interface AskQuestionEntry extends ThreadEntryBase {
+  kind: "ask_question";
+  requestId: string;
+  title?: string;
+  questions: AskQuestionItemPayload[];
+  status: "pending" | "answered" | "skipped" | "cancelled";
+  answers?: AskQuestionAnswerPayload[];
+}
+
 export type ThreadEntry =
   | UserMessageEntry
   | AssistantMessageEntry
   | ToolCallEntry
   | CompletedPlanEntry
-  | PlanApprovalEntry;
+  | PlanApprovalEntry
+  | AskQuestionEntry;
 
 export interface AvailableCommand {
   name: string;

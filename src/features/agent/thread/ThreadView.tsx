@@ -40,6 +40,7 @@ function estimateRowHeight(item: ThreadRenderItem | undefined): number {
     return e.status === "waiting_for_confirmation" ? 96 : 48;
   }
   if (e.kind === "plan_approval") return 220;
+  if (e.kind === "ask_question") return 280;
   // 120: 贴近含代码块/表格/Mermaid 的助手消息实测高度（多在 80~500px）。
   // 上调首帧估值以减小「首次上滚未见行」的首滚 delta；measureElement
   // 仍持续校正（流式消息尾行常大幅超出，依赖实时测量）。
@@ -89,6 +90,10 @@ function shouldShowAgentLoading(
   if (last.kind === "plan_approval") {
     // Pending card has its own CTA; after accept the agent should resume.
     return last.status === "accepted";
+  }
+  if (last.kind === "ask_question") {
+    // Pending card has its own CTA; answered/skipped unblocks the agent.
+    return last.status === "answered" || last.status === "skipped";
   }
   if (last.kind === "tool_call") {
     // Tool card already animates in-flight / permission states.

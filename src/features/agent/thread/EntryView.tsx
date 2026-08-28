@@ -4,6 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { ToolCallCard } from "./ToolCallCard";
 import { PlanApprovalCard } from "./PlanApprovalCard";
+import { AskQuestionCard } from "./AskQuestionCard";
 import { MessageContextMenu } from "./MessageContextMenu";
 import { Markdown } from "./Markdown";
 import { groupChunks } from "./groupChunks";
@@ -89,6 +90,12 @@ export const EntryView = memo(function EntryView({
       return (
         <div className="max-w-[96%]">
           <PlanApprovalCard entry={entry} />
+        </div>
+      );
+    case "ask_question":
+      return (
+        <div className="max-w-[96%]">
+          <AskQuestionCard entry={entry} />
         </div>
       );
   }

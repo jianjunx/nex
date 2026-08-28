@@ -24,7 +24,16 @@ use crate::error::NexError;
 const MAX_RETRIES: u32 = 3;
 /// Base backoff between retries; doubled each attempt.
 const RETRY_BASE_MS: u64 = 500;
+/// Max in-place resends when a stream completes with zero content (no text,
+/// no thinking, no tool calls). Seen with gateways that enforce a silent-read
+/// timeout: long hidden thinking produces no SSE bytes, the proxy cuts the
+/// stream, and the client receives a bare empty completion. Resending the
+/// same request keeps the transcript untouched (unlike a harness nudge).
+const EMPTY_STREAM_MAX_RETRIES: u32 = 2;
+/// Pause before an empty-stream resend.
+const EMPTY_STREAM_RETRY_DELAY_MS: u64 = 400;
 
+#[derive(Clone)]
 pub struct DeepSeekProvider {
     base_url: String,
     api_key: String,
@@ -211,30 +220,111 @@ impl Provider for DeepSeekProvider {
             req.messages.len(),
             req.tools.len()
         );
-        let body = self.build_body(&req);
+        let mut body = self.build_body(&req);
         let resp = self.send_with_retry(&body).await?;
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Chunk>();
         // Drive the SSE parse on a background task so the harness can consume
-        // chunks through the receiver without blocking on IO here.
+        // chunks through the receiver without blocking on IO here. Streams
+        // that finish without emitting anything are resent in place: nothing
+        // reached the receiver yet, so a retry is invisible to the harness.
+        let this = self.clone();
+        let model = req.model.clone();
         tokio::spawn(async move {
-            if let Err(e) = pump_sse(resp, tx.clone()).await {
-                let _ = tx.send(Chunk::Error(e));
+            let mut resp = Some(resp);
+            let mut attempt = 0u32;
+            loop {
+                let current = match resp.take() {
+                    Some(r) => r,
+                    None => match this.send_with_retry(&body).await {
+                        Ok(r) => r,
+                        Err(e) => {
+                            let _ = tx.send(Chunk::Error(e.user_message()));
+                            return;
+                        }
+                    },
+                };
+                match pump_sse(current, tx.clone()).await {
+                    Ok(out) => {
+                        if !out.had_content && attempt < EMPTY_STREAM_MAX_RETRIES && !tx.is_closed()
+                        {
+                            attempt += 1;
+                            // Last attempt: silent hidden thinking is the usual
+                            // culprit (gateway read timeout), so drop it.
+                            if attempt == EMPTY_STREAM_MAX_RETRIES
+                                && downgrade_thinking_body(&mut body)
+                            {
+                                log::warn!(
+                                    target: crate::agent::native::diag::TARGET,
+                                    "empty stream persists; disabling thinking for final retry model={model}"
+                                );
+                            }
+                            log::warn!(
+                                target: crate::agent::native::diag::TARGET,
+                                "stream ended without content stop={:?}; resending ({attempt}/{EMPTY_STREAM_MAX_RETRIES}) model={model}",
+                                out.stop_reason
+                            );
+                            tokio::time::sleep(std::time::Duration::from_millis(
+                                EMPTY_STREAM_RETRY_DELAY_MS,
+                            ))
+                            .await;
+                            continue;
+                        }
+                        let _ = tx.send(Chunk::Done {
+                            stop_reason: out.stop_reason,
+                            usage: out.usage,
+                        });
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Chunk::Error(e));
+                    }
+                }
+                return;
             }
         });
         Ok(rx)
     }
 }
 
-/// Reads the SSE response to completion, emitting chunks on `tx`.
+/// Strip reasoning fields from a built request body so the retry runs without
+/// hidden thinking. Only rewrites fields `build_body` actually set — adding
+/// `thinking` for a family that never got it risks a 400. Returns whether
+/// anything changed.
+fn downgrade_thinking_body(body: &mut serde_json::Value) -> bool {
+    let Some(obj) = body.as_object_mut() else {
+        return false;
+    };
+    let mut changed = obj.remove("reasoning_effort").is_some();
+    if let Some(t) = obj.get_mut("thinking") {
+        if t.get("type").and_then(|v| v.as_str()) != Some("disabled") {
+            t["type"] = serde_json::json!("disabled");
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// What a fully-drained SSE stream produced, minus the terminal `Done` (the
+/// caller decides whether to forward it or resend the request).
+struct StreamOutcome {
+    stop_reason: StopReasonKind,
+    usage: Option<Usage>,
+    /// Whether any `Text` / `Thinking` / `ToolCall` chunk was emitted.
+    had_content: bool,
+}
+
+/// Reads the SSE response to completion, emitting content chunks on `tx`.
+/// The terminal [`Chunk::Done`] is **not** sent here; the outcome carries
+/// what the caller needs to either forward it or retry an empty stream.
 async fn pump_sse(
     mut resp: reqwest::Response,
     tx: tokio::sync::mpsc::UnboundedSender<Chunk>,
-) -> Result<(), String> {
+) -> Result<StreamOutcome, String> {
     let mut buffer = String::new();
     let mut acc = ToolAccumulator::default();
     let mut finish: Option<StopReasonKind> = None;
     let mut usage: Option<Usage> = None;
+    let mut had_content = false;
 
     loop {
         let chunk = resp
@@ -279,13 +369,19 @@ async fn pump_sse(
                     if let Some(choice) = event.choices.and_then(|c| c.into_iter().next()) {
                         let delta = choice.delta.unwrap_or_default();
                         if let Some(text) = delta.content {
-                            if !text.is_empty() && tx.send(Chunk::Text(text)).is_err() {
-                                return Ok(());
+                            if !text.is_empty() {
+                                had_content = true;
+                                if tx.send(Chunk::Text(text)).is_err() {
+                                    return Ok(receiver_gone(usage));
+                                }
                             }
                         }
                         if let Some(think) = delta.reasoning_content {
-                            if !think.is_empty() && tx.send(Chunk::Thinking(think)).is_err() {
-                                return Ok(());
+                            if !think.is_empty() {
+                                had_content = true;
+                                if tx.send(Chunk::Thinking(think)).is_err() {
+                                    return Ok(receiver_gone(usage));
+                                }
                             }
                         }
                         if let Some(calls) = delta.tool_calls {
@@ -312,9 +408,10 @@ async fn pump_sse(
     // and already-streamed text still reach the transcript.
     let calls = acc.drain();
     let had_calls = !calls.is_empty();
+    had_content |= had_calls;
     for call in calls {
         if tx.send(Chunk::ToolCall(call)).is_err() {
-            return Ok(());
+            return Ok(receiver_gone(usage));
         }
     }
     let stop_reason = finish.unwrap_or(if !had_calls {
@@ -322,8 +419,21 @@ async fn pump_sse(
     } else {
         StopReasonKind::ToolCalls
     });
-    let _ = tx.send(Chunk::Done { stop_reason, usage });
-    Ok(())
+    Ok(StreamOutcome {
+        stop_reason,
+        usage,
+        had_content,
+    })
+}
+
+/// Outcome used when the harness dropped the receiver mid-stream: report
+/// content so the caller never retries into a closed channel.
+fn receiver_gone(usage: Option<Usage>) -> StreamOutcome {
+    StreamOutcome {
+        stop_reason: StopReasonKind::Cancelled,
+        usage,
+        had_content: true,
+    }
 }
 
 /// Accumulates split tool-call deltas keyed by their stream `index`.
@@ -509,7 +619,7 @@ fn parse_usage_value(u: &serde_json::Value) -> Option<Usage> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::native::provider::Provider;
+    use crate::agent::native::provider::{ChatMessage, Provider};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[test]
@@ -820,6 +930,162 @@ mod tests {
         assert_eq!(resp.status().as_u16(), 200);
         assert!(p.reasoning_downgraded(), "downgrade must be recorded");
         server.await.unwrap();
+    }
+
+    #[test]
+    fn downgrade_thinking_body_flips_toggle_and_strips_effort() {
+        let mut minimax = serde_json::json!({ "thinking": { "type": "enabled" } });
+        assert!(downgrade_thinking_body(&mut minimax));
+        assert_eq!(minimax["thinking"]["type"], "disabled");
+
+        let mut effort = serde_json::json!({ "reasoning_effort": "high" });
+        assert!(downgrade_thinking_body(&mut effort));
+        assert!(effort.get("reasoning_effort").is_none());
+        // Never invent a `thinking` field the family did not get.
+        assert!(effort.get("thinking").is_none());
+
+        let mut plain = serde_json::json!({ "model": "m" });
+        assert!(!downgrade_thinking_body(&mut plain));
+        let mut off = serde_json::json!({ "thinking": { "type": "disabled" } });
+        assert!(!downgrade_thinking_body(&mut off));
+    }
+
+    /// Serves one scripted SSE response per connection (`Connection: close`
+    /// forces the client to reconnect for each retry) and forwards every
+    /// request body for assertions.
+    fn spawn_sse_server(
+        listener: tokio::net::TcpListener,
+        scripts: Vec<&'static str>,
+    ) -> (
+        tokio::sync::mpsc::UnboundedReceiver<String>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let (btx, brx) = tokio::sync::mpsc::unbounded_channel();
+        let handle = tokio::spawn(async move {
+            for script in scripts {
+                let (mut sock, _) = listener.accept().await.unwrap();
+                let body = read_http_body(&mut sock).await;
+                let _ = btx.send(body);
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{script}",
+                    script.len()
+                );
+                sock.write_all(resp.as_bytes()).await.unwrap();
+            }
+        });
+        (brx, handle)
+    }
+
+    async fn read_http_body(sock: &mut tokio::net::TcpStream) -> String {
+        let mut buf: Vec<u8> = Vec::new();
+        let mut tmp = [0u8; 8192];
+        loop {
+            let n = sock.read(&mut tmp).await.unwrap();
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&tmp[..n]);
+            let Some(split) = buf.windows(4).position(|w| w == b"\r\n\r\n") else {
+                continue;
+            };
+            let headers = String::from_utf8_lossy(&buf[..split]).to_ascii_lowercase();
+            let len = headers
+                .lines()
+                .find_map(|l| l.strip_prefix("content-length:"))
+                .and_then(|v| v.trim().parse::<usize>().ok())
+                .unwrap_or(0);
+            if buf.len() >= split + 4 + len {
+                return String::from_utf8_lossy(&buf[split + 4..split + 4 + len]).to_string();
+            }
+        }
+        String::from_utf8_lossy(&buf).to_string()
+    }
+
+    fn minimax_request() -> ChatRequest {
+        ChatRequest {
+            model: "MiniMax-M3".into(),
+            messages: vec![ChatMessage::user("hi")],
+            tools: vec![],
+            reasoning: ReasoningControl::High,
+            max_tokens: None,
+            temperature: None,
+        }
+    }
+
+    const EMPTY_SSE: &str = "data: [DONE]\n\n";
+    const TEXT_SSE: &str = "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
+
+    /// A stream that completes without any content is resent in place; the
+    /// harness only ever sees the successful second attempt.
+    #[tokio::test]
+    async fn empty_stream_is_resent_transparently() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (mut bodies, server) = spawn_sse_server(listener, vec![EMPTY_SSE, TEXT_SSE]);
+
+        let p = DeepSeekProvider::new(format!("http://{addr}"), "k");
+        let mut rx = p.stream(minimax_request()).await.expect("stream starts");
+
+        let mut text = String::new();
+        let mut done: Option<StopReasonKind> = None;
+        while let Some(chunk) = rx.recv().await {
+            match chunk {
+                Chunk::Text(t) => text.push_str(&t),
+                Chunk::Done { stop_reason, .. } => {
+                    done = Some(stop_reason);
+                    break;
+                }
+                Chunk::Error(e) => panic!("unexpected error: {e}"),
+                _ => {}
+            }
+        }
+        assert_eq!(text, "hi");
+        assert_eq!(done, Some(StopReasonKind::EndTurn));
+        server.await.unwrap();
+
+        // First resend keeps the body untouched (thinking still enabled).
+        let first: serde_json::Value = serde_json::from_str(&bodies.recv().await.unwrap()).unwrap();
+        let second: serde_json::Value =
+            serde_json::from_str(&bodies.recv().await.unwrap()).unwrap();
+        assert_eq!(first["thinking"]["type"], "enabled");
+        assert_eq!(second["thinking"]["type"], "enabled");
+    }
+
+    /// When the resend is empty again, the final attempt goes out with
+    /// thinking disabled; if that also yields nothing, the empty `Done`
+    /// surfaces so the harness-level nudge can take over.
+    #[tokio::test]
+    async fn persistent_empty_stream_disables_thinking_then_gives_up() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (mut bodies, server) =
+            spawn_sse_server(listener, vec![EMPTY_SSE, EMPTY_SSE, EMPTY_SSE]);
+
+        let p = DeepSeekProvider::new(format!("http://{addr}"), "k");
+        let mut rx = p.stream(minimax_request()).await.expect("stream starts");
+
+        let mut done: Option<StopReasonKind> = None;
+        while let Some(chunk) = rx.recv().await {
+            match chunk {
+                Chunk::Done { stop_reason, .. } => {
+                    done = Some(stop_reason);
+                    break;
+                }
+                Chunk::Error(e) => panic!("unexpected error: {e}"),
+                Chunk::Text(t) => panic!("unexpected text: {t}"),
+                _ => {}
+            }
+        }
+        assert_eq!(done, Some(StopReasonKind::EndTurn));
+        server.await.unwrap();
+
+        let first: serde_json::Value = serde_json::from_str(&bodies.recv().await.unwrap()).unwrap();
+        let second: serde_json::Value =
+            serde_json::from_str(&bodies.recv().await.unwrap()).unwrap();
+        let third: serde_json::Value = serde_json::from_str(&bodies.recv().await.unwrap()).unwrap();
+        assert_eq!(first["thinking"]["type"], "enabled");
+        assert_eq!(second["thinking"]["type"], "enabled");
+        assert_eq!(third["thinking"]["type"], "disabled");
     }
 
     /// Models that never get `reasoning_effort` in the body must not trip the

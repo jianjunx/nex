@@ -67,9 +67,19 @@ impl DeepSeekProvider {
     }
 
     fn build_body(&self, req: &ChatRequest) -> serde_json::Value {
+        let mut messages = serde_json::to_value(&req.messages).unwrap_or_default();
+        // `response_items` is Nex archive metadata for the Responses adapter,
+        // not part of the Chat Completions wire schema.
+        if let Some(items) = messages.as_array_mut() {
+            for message in items {
+                if let Some(object) = message.as_object_mut() {
+                    object.remove("response_items");
+                }
+            }
+        }
         let mut body = serde_json::json!({
             "model": req.model,
-            "messages": req.messages,
+            "messages": messages,
             "stream": true,
             "stream_options": { "include_usage": true },
         });
@@ -209,6 +219,10 @@ impl Provider for DeepSeekProvider {
         } else {
             Some(4096)
         }
+    }
+
+    fn reasoning_downgraded(&self) -> bool {
+        DeepSeekProvider::reasoning_downgraded(self)
     }
 
     async fn stream(&self, req: ChatRequest) -> Result<ChunkStream, NexError> {

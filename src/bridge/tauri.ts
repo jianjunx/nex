@@ -183,6 +183,12 @@ export interface NativeAgentProvider {
   name: string;
   baseUrl: string;
   apiKey: string;
+  /** Preferred secret source; the config stores only this variable name. */
+  apiKeyEnv?: string | null;
+  /** Opaque reference in Keychain / Secret Service / PasswordVault. */
+  apiKeyCredential?: string | null;
+  /** HTTP protocol; auto selects Responses for api.openai.com. */
+  apiMode?: "auto" | "chatCompletions" | "responses";
   models: NativeAgentModel[];
 }
 
@@ -196,9 +202,20 @@ export interface NativeAgentConfig {
     /** Set after the 0→200k factory-default lift; keep this when saving. */
     contextWindowMigrated?: boolean;
     bashTimeoutSecs: number;
+    /** OS-level shell isolation. */
+    shellSandbox?: "approvalOnly" | "workspaceWrite" | "workspaceWriteNoNetwork";
     maxSubagentConcurrency: number;
     /** After a mutating turn, automatically send `/review`. */
     autoReview?: boolean;
+    /** User-owned lifecycle integrations; project files cannot add these. */
+    hooks?: Array<{
+      event: "before_turn" | "after_turn";
+      command: string;
+      args?: string[];
+      env?: Record<string, string>;
+      timeoutSecs?: number;
+      failClosed?: boolean;
+    }>;
   };
   disabledSkills?: string[];
   disabledMcpServers?: string[];
@@ -338,6 +355,57 @@ export async function agentSendPrompt(
   return invoke(COMMANDS.AGENT_SEND_PROMPT, { sessionId, blocks });
 }
 
+export async function agentSteer(
+  sessionId: string,
+  blocks: PromptBlock[],
+): Promise<PromptResultDto> {
+  return invoke(COMMANDS.AGENT_STEER, { sessionId, blocks });
+}
+
+export interface NativeSessionState {
+  goal: string[];
+  taskAnchor?: string | null;
+  todos: string[];
+  openQuestions: string[];
+  modeId: string;
+  modelId: string;
+  cancelled: boolean;
+}
+
+export async function agentSetGoal(sessionId: string, goal: string): Promise<NativeSessionState> {
+  return invoke(COMMANDS.AGENT_SET_GOAL, { sessionId, goal });
+}
+
+export async function agentGetSessionState(sessionId: string): Promise<NativeSessionState> {
+  return invoke(COMMANDS.AGENT_GET_SESSION_STATE, { sessionId });
+}
+
+export async function nativeAgentForkSession(
+  sourceConversationId: string,
+  targetConversationId: string,
+  cwd: string,
+): Promise<CreateSessionResult> {
+  return invoke(COMMANDS.NATIVE_AGENT_FORK_SESSION, {
+    sourceConversationId,
+    targetConversationId,
+    cwd,
+  });
+}
+
+export interface NativeHistoryPage {
+  items: unknown[];
+  nextCursor?: number | null;
+  total: number;
+}
+
+export async function nativeAgentHistoryPage(
+  sessionId: string,
+  cursor = 0,
+  limit = 50,
+): Promise<NativeHistoryPage> {
+  return invoke(COMMANDS.NATIVE_AGENT_HISTORY_PAGE, { sessionId, cursor, limit });
+}
+
 export async function agentSetSessionMode(sessionId: string, modeId: string): Promise<void> {
   return invoke(COMMANDS.AGENT_SET_SESSION_MODE, { sessionId, modeId });
 }
@@ -411,8 +479,15 @@ export async function nativeAgentSetConfig(config: NativeAgentConfig): Promise<v
 export async function nativeAgentListModels(
   baseUrl: string,
   apiKey: string,
+  apiKeyEnv?: string | null,
+  apiKeyCredential?: string | null,
 ): Promise<NativeAgentModel[]> {
-  return invoke(COMMANDS.NATIVE_AGENT_LIST_MODELS, { baseUrl, apiKey });
+  return invoke(COMMANDS.NATIVE_AGENT_LIST_MODELS, {
+    baseUrl,
+    apiKey,
+    apiKeyEnv,
+    apiKeyCredential,
+  });
 }
 
 /** Probe which reasoning effort values a model accepts (tiny chat calls). */
@@ -420,8 +495,16 @@ export async function nativeAgentProbeReasoning(
   baseUrl: string,
   apiKey: string,
   modelId: string,
+  apiKeyEnv?: string | null,
+  apiKeyCredential?: string | null,
 ): Promise<NativeAgentModel> {
-  return invoke(COMMANDS.NATIVE_AGENT_PROBE_REASONING, { baseUrl, apiKey, modelId });
+  return invoke(COMMANDS.NATIVE_AGENT_PROBE_REASONING, {
+    baseUrl,
+    apiKey,
+    apiKeyEnv,
+    apiKeyCredential,
+    modelId,
+  });
 }
 
 export async function nativeAgentListMcp(cwd?: string | null): Promise<NativeMcpServerInfo[]> {

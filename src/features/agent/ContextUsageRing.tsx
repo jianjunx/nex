@@ -41,7 +41,10 @@ export function resolveContextRingUsage(
   stats?: ContextStatsDto | null,
 ): ContextUsage | null {
   const window = stats?.contextWindow ?? 0;
-  const estimated = stats?.finalTokens ?? 0;
+  // Provider-reported input usage is exact for the serialized request; keep
+  // the local estimate only as the preflight/fallback value.
+  const observed = stats?.promptTokens ?? 0;
+  const estimated = observed > 0 ? observed : (stats?.finalTokens ?? 0);
   if (contextUsage) {
     return {
       used: contextUsage.used > 0 ? contextUsage.used : estimated,

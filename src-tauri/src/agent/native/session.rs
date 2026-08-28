@@ -9,6 +9,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashSet, VecDeque};
 use std::ffi::OsString;
 use std::hash::{Hash, Hasher};
+use std::io::Write;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -126,6 +127,7 @@ impl TurnEnv {
 
 /// Everything a `task`/`fleet` invocation needs to spin up isolated subagent
 /// turns. Built once per prompt by the agent and shared through [`ToolCtx`].
+#[derive(Clone)]
 pub struct SubagentHarness {
     pub conn: Arc<acp::AgentSideConnection>,
     /// Parent session the subagent notifications/permissions are routed to.
@@ -137,12 +139,12 @@ pub struct SubagentHarness {
     pub model: String,
     pub reasoning: ReasoningControl,
     pub max_sub_steps: u32,
-    /// Legacy configured fleet concurrency. Shared-workspace fleet execution
-    /// is deliberately serialized until isolated worktrees/conflict handling
-    /// exist, so this is retained for config compatibility only.
+    /// Maximum concurrent fleet members. Writable children each receive an
+    /// isolated worktree; read-only children receive isolated memory.
     pub concurrency: usize,
     pub cwd: PathBuf,
     pub bash_timeout: Duration,
+    pub shell_sandbox: super::config::ShellSandboxMode,
     pub path_env: OsString,
     pub archive_dir: PathBuf,
     /// Effective context window for the parent session; passed through so
@@ -166,6 +168,24 @@ pub struct SubagentHarness {
 /// answers are spilled to `<archive_dir>/subagent-<uuid>.txt` and a stable
 /// `ref:` marker is returned instead (read back via `read_subagent_result`).
 pub async fn run_subagent(harness: &SubagentHarness, task: &str) -> Result<String, String> {
+    run_subagent_with_access(harness, task, false).await
+}
+
+/// Runs a subagent with an isolated working-memory snapshot and Ask-mode tool
+/// gate. This makes concurrent research safe even though children share the
+/// same repository checkout.
+pub async fn run_read_only_subagent(
+    harness: &SubagentHarness,
+    task: &str,
+) -> Result<String, String> {
+    run_subagent_with_access(harness, task, true).await
+}
+
+async fn run_subagent_with_access(
+    harness: &SubagentHarness,
+    task: &str,
+    read_only: bool,
+) -> Result<String, String> {
     if harness.cancelled.get() {
         return Err("cancelled".to_string());
     }
@@ -173,9 +193,10 @@ pub async fn run_subagent(harness: &SubagentHarness, task: &str) -> Result<Strin
         harness.parent_session_id.0.as_ref(),
         format!("subagent start task={}", diag::preview(task, 80)),
     );
-    // The child shares operational memory so file discoveries, mutations and
-    // tool errors flow back to the parent. Its task goal and scratch todo list,
-    // however, are transcript-local and must not replace the parent's state.
+    // Writable children share operational memory so discoveries and edits flow
+    // back to the parent, while task-local goal/todos are restored afterwards.
+    // Concurrent read-only children instead clone the snapshot: sharing a
+    // RefCell here would make their independent goal updates race semantically.
     let (parent_goal, parent_anchor, parent_todos) = {
         let memory = harness.memory.borrow();
         (
@@ -184,18 +205,29 @@ pub async fn run_subagent(harness: &SubagentHarness, task: &str) -> Result<Strin
             memory.active_todos.clone(),
         )
     };
+    let child_memory = if read_only {
+        Rc::new(RefCell::new(harness.memory.borrow().clone()))
+    } else {
+        harness.memory.clone()
+    };
+    let child_mutations = if read_only {
+        Rc::new(RefCell::new(Vec::new()))
+    } else {
+        harness.mutations.clone()
+    };
     let tool_ctx = ToolCtx {
         cwd: harness.cwd.clone(),
         bash_timeout: harness.bash_timeout,
+        shell_sandbox: harness.shell_sandbox,
         path_env: harness.path_env.clone(),
         archive_dir: harness.archive_dir.clone(),
         jobs: Rc::new(RefCell::new(super::tools::jobs::JobTable::default())),
         // No harness on the child: subagents cannot spawn subagents.
         harness: None,
-        mutations: harness.mutations.clone(),
+        mutations: child_mutations,
         // Parent mode is not mutable from subagents (`switch_mode` is filtered out).
         mode_id: None,
-        memory: harness.memory.clone(),
+        memory: child_memory,
         graph: harness.graph.clone(),
         conn: Some(harness.conn.clone()),
         session_id: Some(harness.parent_session_id.0.to_string()),
@@ -209,7 +241,11 @@ pub async fn run_subagent(harness: &SubagentHarness, task: &str) -> Result<Strin
         model: harness.model.clone(),
         reasoning: harness.reasoning,
         max_steps: harness.max_sub_steps,
-        mode_id: harness.mode_id.clone(),
+        mode_id: if read_only {
+            Rc::new(RefCell::new("ask".to_string()))
+        } else {
+            harness.mode_id.clone()
+        },
         plan_pending_confirm: Rc::new(Cell::new(false)),
         cancelled: harness.cancelled.clone(),
         auto_allow: Rc::new(RefCell::new(HashSet::new())),
@@ -223,7 +259,7 @@ pub async fn run_subagent(harness: &SubagentHarness, task: &str) -> Result<Strin
         &harness.model,
     ))];
     let _ = run_turn(&env, &mut messages, Content::Text(task.to_string())).await;
-    {
+    if !read_only {
         let mut memory = harness.memory.borrow_mut();
         memory.goal = parent_goal;
         memory.task_anchor = parent_anchor;
@@ -238,7 +274,7 @@ pub async fn run_subagent(harness: &SubagentHarness, task: &str) -> Result<Strin
         let _ = std::fs::create_dir_all(&harness.archive_dir);
         let name = format!("subagent-{}.txt", uuid::Uuid::new_v4().simple());
         let path = harness.archive_dir.join(&name);
-        std::fs::write(&path, &answer)
+        write_private_result(&path, answer.as_bytes())
             .map_err(|e| format!("failed to store subagent result: {e}"))?;
         let chars = answer.chars().count();
         return Ok(format!(
@@ -247,6 +283,40 @@ pub async fn run_subagent(harness: &SubagentHarness, task: &str) -> Result<Strin
         ));
     }
     Ok(answer)
+}
+
+fn write_private_result(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut options = std::fs::OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
+}
+
+/// Runs a writable child against an explicitly isolated checkout. The caller
+/// owns worktree creation, patch export and cleanup; this function only swaps
+/// the child sandbox root and gives it independent memory/mutation state.
+pub async fn run_isolated_subagent(
+    harness: &SubagentHarness,
+    task: &str,
+    cwd: PathBuf,
+) -> Result<String, String> {
+    let mut isolated = harness.clone();
+    isolated.cwd = cwd;
+    // Writable children must not be able to escape their worktree through a
+    // shell command or network side effect. File tools already enforce cwd.
+    isolated.shell_sandbox = super::config::ShellSandboxMode::WorkspaceWriteNoNetwork;
+    isolated.memory = Rc::new(RefCell::new(harness.memory.borrow().clone()));
+    isolated.mutations = Rc::new(RefCell::new(Vec::new()));
+    // The parent graph is rooted in the live checkout. Reusing it here would
+    // make a child observe stale paths outside its detached worktree.
+    isolated.graph = None;
+    run_subagent_with_access(&isolated, task, false).await
 }
 
 /// The subagent's final answer: last assistant message without tool calls
@@ -303,6 +373,7 @@ fn chunk_kind(chunk: &Chunk) -> &'static str {
         Chunk::Text(_) => "text",
         Chunk::Thinking(_) => "thinking",
         Chunk::ToolCall(_) => "tool_call",
+        Chunk::ResponseItem(_) => "response_item",
         Chunk::Done { .. } => "done",
         Chunk::Error(_) => "error",
     }
@@ -485,6 +556,13 @@ pub async fn run_turn(
 
         // Consume one provider stream: accumulate text + complete tool calls.
         let mut text = String::new();
+        // Retain the opaque provider reasoning only for an assistant tool-call
+        // turn. DeepSeek requires it to continue reasoning after tool results;
+        // previously Nex streamed it to the UI and then discarded it.
+        let mut reasoning_content = String::new();
+        // Complete typed output items from the Responses API. They are opaque
+        // to the harness and replayed verbatim on the next stateless request.
+        let mut response_items = Vec::new();
         // Bytes of `text` already shown to the user. Must track emit progress
         // separately from `text.len()` so ambiguous harness-prefix holdback can
         // flush once the continuation proves it was ordinary prose (e.g. `arr[0]`).
@@ -571,13 +649,17 @@ pub async fn run_turn(
                         emit_text(env, &delta).await;
                     }
                 }
-                Chunk::Thinking(t) => emit_thought(env, &t).await,
+                Chunk::Thinking(t) => {
+                    reasoning_content.push_str(&t);
+                    emit_thought(env, &t).await;
+                }
                 Chunk::ToolCall(c) => {
                     // Wrap-up turns advertise no tools; ignore any stray calls.
                     if !wrap_up {
                         calls.push(c);
                     }
                 }
+                Chunk::ResponseItem(item) => response_items.push(item),
                 Chunk::Done { stop_reason, usage } => {
                     provider_stop = stop_reason;
                     if let Some(u) = usage {
@@ -602,9 +684,10 @@ pub async fn run_turn(
         diag::info(
             sid(env),
             format!(
-                "stream done step={} reason={provider_stop:?} text_chars={} tools={} elapsed_ms={}",
+                "stream done step={} reason={provider_stop:?} text_chars={} reasoning_chars={} tools={} elapsed_ms={}",
                 steps + 1,
                 text.len(),
+                reasoning_content.len(),
                 calls.len(),
                 stream_started.elapsed().as_millis()
             ),
@@ -627,7 +710,7 @@ pub async fn run_turn(
                 text.push_str("\n\n");
             }
             text.push_str(notice);
-            messages.push(ChatMessage::assistant(text));
+            messages.push(ChatMessage::assistant(text).with_response_items(response_items));
             emit_text(env, notice).await;
             return finish_turn(env, turn_started, acp::StopReason::MaxTokens, "max_tokens");
         }
@@ -650,7 +733,8 @@ pub async fn run_turn(
                 }
                 let cleaned = strip_harness_tail(&text);
                 if !cleaned.trim().is_empty() {
-                    messages.push(ChatMessage::assistant(cleaned));
+                    messages
+                        .push(ChatMessage::assistant(cleaned).with_response_items(response_items));
                     return finish_turn(
                         env,
                         turn_started,
@@ -680,7 +764,7 @@ pub async fn run_turn(
             }
             let cleaned = strip_harness_tail(&text);
             if !cleaned.trim().is_empty() {
-                messages.push(ChatMessage::assistant(cleaned));
+                messages.push(ChatMessage::assistant(cleaned).with_response_items(response_items));
                 let why = if wrap_up {
                     "max_steps_wrap_up"
                 } else {
@@ -730,14 +814,22 @@ pub async fn run_turn(
                 },
             })
             .collect();
-        messages.push(ChatMessage::assistant_tool_calls(
-            wire_calls,
-            if text.trim().is_empty() {
-                None
-            } else {
-                Some(text)
-            },
-        ));
+        messages.push(
+            ChatMessage::assistant_tool_calls_with_reasoning(
+                wire_calls,
+                if text.trim().is_empty() {
+                    None
+                } else {
+                    Some(text)
+                },
+                if reasoning_content.trim().is_empty() {
+                    None
+                } else {
+                    Some(reasoning_content)
+                },
+            )
+            .with_response_items(response_items),
+        );
 
         // Execute the requested tool calls: consecutive read-only calls run
         // as one parallel batch, mutating ones run serially and get logged.
@@ -1223,8 +1315,11 @@ async fn execute_tool(env: &TurnEnv, call: &NativeToolCall) -> Result<String, St
     };
 
     // Read-only tools run without prompting; mutating ones need permission
-    // unless the user already said "always allow" for this tool (bash is
-    // keyed by command prefix) or the session runs in `auto` mode.
+    // unless the user already approved this exact operation for the session,
+    // or the session runs in `auto` mode. Exact argument binding matters for
+    // shell and MCP calls: approving `git status` must never implicitly approve
+    // a later `git push`, and approving one MCP mutation must not bless every
+    // operation exposed by that server.
     if !read_only {
         if env.read_only_mode() {
             diag::warn(
@@ -1528,19 +1623,40 @@ async fn wait_or_cancel<T>(
     }
 }
 
-/// Session-scoped always-allow key. Bash is keyed by the command prefix so
-/// "always allow `git status`" does not authorize `rm -rf`.
+/// Session-scoped always-allow key, bound to the exact tool arguments.
+///
+/// The previous bash key used only the first whitespace-delimited token. As a
+/// result, accepting `git status` also accepted `git push`, `git clean`, or a
+/// command chain beginning with `git`. Serializing the full arguments is
+/// intentionally conservative: a materially different operation prompts
+/// again, while an identical retry in the same session remains frictionless.
 fn permission_allow_key(name: &str, args: &serde_json::Value) -> String {
-    if name == "bash" {
-        if let Some(cmd) = args.get("command").and_then(|v| v.as_str()) {
-            return format!("bash:{}", bash_command_prefix(cmd));
-        }
-    }
-    name.to_string()
+    format!("{name}:{}", canonical_json(args))
 }
 
-fn bash_command_prefix(cmd: &str) -> String {
-    cmd.split_whitespace().next().unwrap_or(cmd).to_string()
+/// Stable JSON encoding for permission scopes. Object-key order from an LLM or
+/// MCP transport is not semantically meaningful, so sort it recursively before
+/// serializing; array order remains significant.
+fn canonical_json(value: &serde_json::Value) -> String {
+    fn canonicalize(value: &serde_json::Value) -> serde_json::Value {
+        match value {
+            serde_json::Value::Object(map) => {
+                let mut entries = map.iter().collect::<Vec<_>>();
+                entries.sort_by_key(|(index, _)| *index);
+                let sorted = entries
+                    .into_iter()
+                    .map(|(key, value)| (key.clone(), canonicalize(value)))
+                    .collect();
+                serde_json::Value::Object(sorted)
+            }
+            serde_json::Value::Array(items) => {
+                serde_json::Value::Array(items.iter().map(canonicalize).collect())
+            }
+            scalar => scalar.clone(),
+        }
+    }
+
+    serde_json::to_string(&canonicalize(value)).unwrap_or_else(|_| "null".to_string())
 }
 
 /// Confirms a model-driven mode elevation (leaving Plan, or entering auto).
@@ -1626,11 +1742,7 @@ async fn request_permission(
 ) -> PermissionDecision {
     use acp::Client as _;
 
-    let always_label = if tool_name == "bash" {
-        "始终允许该命令前缀".to_string()
-    } else {
-        "始终允许该工具".to_string()
-    };
+    let always_label = "本次会话始终允许该操作".to_string();
     let request = acp::RequestPermissionRequest {
         session_id: env.session_id.clone(),
         tool_call: acp::ToolCallUpdate {
@@ -1957,6 +2069,7 @@ mod tests {
             tool_ctx: ToolCtx {
                 cwd: cwd.to_path_buf(),
                 bash_timeout: std::time::Duration::from_secs(10),
+                shell_sandbox: crate::agent::native::config::ShellSandboxMode::ApprovalOnly,
                 path_env: std::env::var_os("PATH").unwrap_or_default(),
                 archive_dir: cwd.join(".nex-archive"),
                 jobs: Rc::new(RefCell::new(
@@ -2204,6 +2317,7 @@ mod tests {
                     concurrency: 1,
                     cwd: tmp.path().to_path_buf(),
                     bash_timeout: Duration::from_secs(10),
+                    shell_sandbox: crate::agent::native::config::ShellSandboxMode::ApprovalOnly,
                     path_env: std::env::var_os("PATH").unwrap_or_default(),
                     archive_dir: tmp.path().join(".nex-archive"),
                     context_window: 0,
@@ -2243,6 +2357,7 @@ mod tests {
                 let provider = ScriptedProvider {
                     turns: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
                         vec![
+                            Chunk::Thinking("inspect the requested file".into()),
                             Chunk::ToolCall(NativeToolCall {
                                 id: "call_1".into(),
                                 name: "read_file".into(),
@@ -2270,6 +2385,10 @@ mod tests {
                     .starts_with(crate::agent::native::memory::MARKER));
                 assert_eq!(messages[3].role, "assistant");
                 assert!(messages[3].tool_calls.is_some());
+                assert_eq!(
+                    messages[3].reasoning_content.as_deref(),
+                    Some("inspect the requested file")
+                );
                 assert_eq!(messages[4].role, "tool");
                 assert_eq!(messages[4].tool_call_id.as_deref(), Some("call_1"));
                 assert!(messages[4]
@@ -3060,18 +3179,28 @@ mod tests {
     }
 
     #[test]
-    fn bash_always_allow_is_keyed_by_command_prefix() {
+    fn always_allow_is_keyed_by_exact_canonical_operation() {
         assert_eq!(
             permission_allow_key("bash", &serde_json::json!({"command": "git status"})),
-            "bash:git"
+            r#"bash:{"command":"git status"}"#
         );
         assert_eq!(
             permission_allow_key("write_file", &serde_json::json!({"path": "a.txt"})),
-            "write_file"
+            r#"write_file:{"path":"a.txt"}"#
         );
         assert_ne!(
             permission_allow_key("bash", &serde_json::json!({"command": "git status"})),
-            permission_allow_key("bash", &serde_json::json!({"command": "rm -rf /"}))
+            permission_allow_key("bash", &serde_json::json!({"command": "git push"}))
+        );
+        assert_eq!(
+            permission_allow_key(
+                "mcp__example__mutate",
+                &serde_json::json!({"z": 1, "nested": {"b": 2, "a": 1}})
+            ),
+            permission_allow_key(
+                "mcp__example__mutate",
+                &serde_json::json!({"nested": {"a": 1, "b": 2}, "z": 1})
+            )
         );
     }
 }

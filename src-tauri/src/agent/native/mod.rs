@@ -25,11 +25,13 @@ pub mod config;
 pub mod context;
 pub mod diag;
 pub mod home;
+pub mod hooks;
 pub mod instructions;
 pub mod mcp;
 pub mod memory;
 pub mod probe;
 pub mod provider;
+pub mod secrets;
 pub mod session;
 pub mod skills;
 pub mod stats;
@@ -59,6 +61,9 @@ struct SessionHandles {
     /// execution (switch to code/auto, or Composer `set_session_mode`).
     /// Blocks `plan → ask → code` bypasses of the plan gate.
     plan_pending_confirm: Rc<Cell<bool>>,
+    /// Kept in the handles table so goal/state RPCs can inspect or steer a
+    /// session even while `prompt` has checked the main session value out.
+    memory: Rc<RefCell<memory::WorkingMemory>>,
 }
 
 /// Per-session mutable state held by the native agent.
@@ -90,6 +95,7 @@ impl SessionHandles {
             cancelled: Rc::new(Cell::new(false)),
             auto_allow: Rc::new(RefCell::new(HashSet::new())),
             plan_pending_confirm: Rc::new(Cell::new(false)),
+            memory: Rc::new(RefCell::new(memory::WorkingMemory::new())),
         }
     }
 
@@ -101,6 +107,7 @@ impl SessionHandles {
             cancelled: self.cancelled.clone(),
             auto_allow: self.auto_allow.clone(),
             plan_pending_confirm: self.plan_pending_confirm.clone(),
+            memory: self.memory.clone(),
         }
     }
 }
@@ -513,7 +520,7 @@ impl acp::Agent for NexNativeAgent {
         let session = NativeSession {
             cwd: cwd.clone(),
             path_env: self.inner.default_path_env.clone(),
-            memory: Rc::new(RefCell::new(memory::WorkingMemory::new())),
+            memory: handles.memory.clone(),
             handles: handles.clone_handles(),
             history: Vec::new(),
             jobs: Rc::new(RefCell::new(tools::jobs::JobTable::default())),
@@ -602,10 +609,11 @@ impl acp::Agent for NexNativeAgent {
             ))
         })?;
         let restored_memory = memory::recover_from_history(&arch.history).unwrap_or_default();
+        *handles.memory.borrow_mut() = restored_memory;
         let session = NativeSession {
             cwd: cwd.clone(),
             path_env: self.inner.default_path_env.clone(),
-            memory: Rc::new(RefCell::new(restored_memory)),
+            memory: handles.memory.clone(),
             handles: handles.clone_handles(),
             history: arch.history,
             jobs: Rc::new(RefCell::new(tools::jobs::JobTable::default())),
@@ -659,16 +667,7 @@ impl acp::Agent for NexNativeAgent {
         // `raw_model_id` is the provider's native model name (no composite
         // prefix) and is what actually goes into the API request body.
         let model_id = session.handles.model_id.borrow().clone();
-        let Some((prov_base_url, prov_api_key, raw_model_id, supports_vision)) =
-            cfg.resolve_model(&model_id).map(|(p, m)| {
-                (
-                    p.base_url.clone(),
-                    p.api_key.clone(),
-                    m.id.clone(),
-                    m.capabilities.vision,
-                )
-            })
-        else {
+        let Some((provider_entry, model_entry)) = cfg.resolve_model(&model_id) else {
             self.emit_text(
                 &args.session_id,
                 &format!("未找到模型 {} 对应的供应商配置，请在设置中检查", model_id),
@@ -683,6 +682,25 @@ impl acp::Agent for NexNativeAgent {
                 stop_reason: acp::StopReason::EndTurn,
                 meta: None,
             });
+        };
+        let prov_base_url = provider_entry.base_url.clone();
+        let prov_api_mode = provider_entry.api_mode;
+        let raw_model_id = model_entry.id.clone();
+        let supports_vision = model_entry.capabilities.vision;
+        let prov_api_key = match provider_entry.resolve_api_key() {
+            Ok(key) => key,
+            Err(error) => {
+                self.emit_text(&args.session_id, &error.to_string()).await;
+                diag::error(&session_key, error.to_string());
+                self.inner
+                    .sessions
+                    .borrow_mut()
+                    .insert(session_key, session);
+                return Ok(acp::PromptResponse {
+                    stop_reason: acp::StopReason::EndTurn,
+                    meta: None,
+                });
+            }
         };
 
         // Seed the transcript with the byte-stable system prompt once, plus
@@ -736,6 +754,44 @@ impl acp::Agent for NexNativeAgent {
             )
             .await;
         }
+        // User-owned policy hooks need the actual direction, not just session
+        // metadata. Keep the payload bounded and never include base64 image
+        // bodies; attachment counts still let integrations enforce policy.
+        let hook_prompt: String = parts
+            .iter()
+            .filter_map(|part| part.text.as_deref())
+            .flat_map(|text| text.chars().chain(std::iter::once('\n')))
+            .take(64_000)
+            .collect();
+        let before_hook_payload = serde_json::json!({
+            "event": "before_turn",
+            "sessionId": session_key.clone(),
+            "cwd": session.cwd.to_string_lossy(),
+            "modelId": model_id.clone(),
+            "modeId": session.handles.mode_id.borrow().as_str(),
+            "prompt": hook_prompt,
+            "imageCount": parts.iter().filter(|part| part.typ == "image_url").count(),
+        });
+        if let Err(error) = hooks::run(
+            &cfg.agent.hooks,
+            hooks::HookEvent::BeforeTurn,
+            &session.cwd,
+            &session.path_env,
+            &before_hook_payload,
+        )
+        .await
+        {
+            self.emit_text(&args.session_id, &format!("前置策略钩子拒绝本轮：{error}"))
+                .await;
+            self.inner
+                .sessions
+                .borrow_mut()
+                .insert(session_key, session);
+            return Ok(acp::PromptResponse {
+                stop_reason: acp::StopReason::EndTurn,
+                meta: None,
+            });
+        }
         // Slash-command expansion: when the text portion starts with a known
         // `/name`, replace the text parts with the command's template body.
         if !parts.is_empty() {
@@ -785,10 +841,18 @@ impl acp::Agent for NexNativeAgent {
 
         let (stop_reason, had_mutations, turn_stats) = match conn {
             Some(conn) => {
-                let provider = Arc::new(provider::deepseek::DeepSeekProvider::new(
-                    prov_base_url,
-                    prov_api_key,
-                ));
+                let provider: Arc<dyn provider::Provider> =
+                    if prov_api_mode.uses_responses(&prov_base_url) {
+                        Arc::new(provider::responses::ResponsesProvider::new(
+                            prov_base_url,
+                            prov_api_key,
+                        ))
+                    } else {
+                        Arc::new(provider::deepseek::DeepSeekProvider::new(
+                            prov_base_url,
+                            prov_api_key,
+                        ))
+                    };
                 let reasoning = Self::effective_reasoning(&cfg, &session);
                 // Session-level MCP tool proxies (`mcp__{server}__{tool}`), so
                 // the model can call configured MCP servers this turn. Built as
@@ -802,6 +866,22 @@ impl acp::Agent for NexNativeAgent {
                             tool_name: info.name.clone(),
                             description: info.description.clone(),
                             schema: info.schema.clone(),
+                            client: client.clone(),
+                        }));
+                    }
+                    if client.supports_resources {
+                        registry.add(Box::new(tools::mcp::McpListResources {
+                            name: format!("mcp__{}__resources_list", client.name),
+                            client: client.clone(),
+                        }));
+                        registry.add(Box::new(tools::mcp::McpReadResource {
+                            name: format!("mcp__{}__resources_read", client.name),
+                            client: client.clone(),
+                        }));
+                    }
+                    if client.supports_resource_templates {
+                        registry.add(Box::new(tools::mcp::McpListResourceTemplates {
+                            name: format!("mcp__{}__resource_templates_list", client.name),
                             client: client.clone(),
                         }));
                     }
@@ -824,6 +904,7 @@ impl acp::Agent for NexNativeAgent {
                     concurrency: (cfg.agent.max_subagent_concurrency as usize).max(1),
                     cwd: session.cwd.clone(),
                     bash_timeout,
+                    shell_sandbox: cfg.agent.shell_sandbox,
                     path_env: session.path_env.clone(),
                     archive_dir: archive_dir.clone(),
                     context_window: cfg.context_window_for(&model_id),
@@ -852,6 +933,7 @@ impl acp::Agent for NexNativeAgent {
                     tool_ctx: ToolCtx {
                         cwd: session.cwd.clone(),
                         bash_timeout,
+                        shell_sandbox: cfg.agent.shell_sandbox,
                         path_env: session.path_env.clone(),
                         archive_dir,
                         jobs: session.jobs.clone(),
@@ -870,6 +952,28 @@ impl acp::Agent for NexNativeAgent {
                     )),
                 };
                 let stop = session::run_turn(&env, &mut session.history, content).await;
+                let hook_usage = env.usage.borrow().clone();
+                let hook_stats = env.stats.borrow().clone();
+                let hook_mutations = env.tool_ctx.mutations.borrow().clone();
+                let _ = hooks::run(
+                    &cfg.agent.hooks,
+                    hooks::HookEvent::AfterTurn,
+                    &session.cwd,
+                    &session.path_env,
+                    &serde_json::json!({
+                        "event": "after_turn",
+                        "sessionId": session_key.clone(),
+                        "modelId": model_id.clone(),
+                        "stopReason": format!("{stop:?}"),
+                        "hadMutations": tools::mutations_include_workspace_edit(
+                            &hook_mutations
+                        ),
+                        "mutations": hook_mutations,
+                        "usage": hook_usage,
+                        "contextStats": hook_stats,
+                    }),
+                )
+                .await;
                 // The image was available for every provider/tool loop in
                 // this turn. Drop its base64 data before returning the
                 // session to the map so later turns cannot retain it.
@@ -1025,6 +1129,44 @@ impl acp::Agent for NexNativeAgent {
     }
 
     async fn ext_method(&self, args: acp::ExtRequest) -> acp::Result<acp::ExtResponse> {
+        if matches!(
+            args.method.as_ref(),
+            "session/set_goal" | "session/get_state"
+        ) {
+            let params: serde_json::Value = serde_json::from_str(args.params.get())
+                .map_err(|e| acp::Error::invalid_params().with_data(format!("bad params: {e}")))?;
+            let session_id = params
+                .get("sessionId")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            let handles = self.inner.handles.borrow();
+            let Some(handle) = handles.get(session_id) else {
+                return Err(acp::Error::invalid_params());
+            };
+            if args.method.as_ref() == "session/set_goal" {
+                let goal = params
+                    .get("goal")
+                    .and_then(|value| value.as_str())
+                    .map(str::trim)
+                    .filter(|goal| !goal.is_empty())
+                    .ok_or_else(acp::Error::invalid_params)?;
+                handle.memory.borrow_mut().set_goal(goal);
+            }
+            let memory = handle.memory.borrow();
+            let payload = serde_json::json!({
+                "goal": memory.goal.clone(),
+                "taskAnchor": memory.task_anchor.clone(),
+                "todos": memory.active_todos.clone(),
+                "openQuestions": memory.open_questions.clone(),
+                "modeId": handle.mode_id.borrow().as_str(),
+                "modelId": handle.model_id.borrow().as_str(),
+                "cancelled": handle.cancelled.get(),
+            });
+            return Ok(Arc::from(
+                serde_json::value::RawValue::from_string(payload.to_string())
+                    .map_err(|e| acp::Error::internal_error().with_data(format!("{e}")))?,
+            ));
+        }
         if args.method.as_ref() == "session/set_config_option" {
             let params: serde_json::Value = serde_json::from_str(args.params.get())
                 .map_err(|e| acp::Error::invalid_params().with_data(format!("bad params: {e}")))?;

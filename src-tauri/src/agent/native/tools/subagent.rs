@@ -1,17 +1,20 @@
 //! Subagent orchestration tools: `task` runs one isolated subagent turn,
-//! `fleet` runs several subagent tasks in deterministic sequence. They share a
-//! workspace, so parallel writable turns are unsafe without worktrees or a
-//! conflict protocol; `read_subagent_result` pages through spilled results.
+//! `fleet` runs several subagent tasks concurrently. Writable children use
+//! detached worktrees and return explicit patch refs; `read_subagent_result`
+//! pages through spilled answers and patches.
 //!
 //! Subagents share the parent connection (notifications/permissions reuse the
 //! same popup flow) but get a fresh transcript, tool registry without the
 //! orchestration tools, and `harness: None` so they cannot recurse.
 
+use std::io::Write;
 #[cfg(test)]
 use std::rc::Rc;
 
 use super::{arg_str, arg_usize, truncate_output, Tool, ToolCtx};
-use crate::agent::native::session::run_subagent;
+use crate::agent::native::session::{
+    run_isolated_subagent, run_read_only_subagent, run_subagent, SubagentHarness,
+};
 use agent_client_protocol as acp;
 
 /// Max characters per `read_subagent_result` page.
@@ -28,16 +31,18 @@ impl Tool for Task {
         "task"
     }
     fn description(&self) -> &'static str {
-        "Delegate a self-contained task to an isolated subagent (own context, same \
-         workspace tools). Only its final answer is returned. Good for parallelizable \
-         research or bounded subtasks. Very large answers are stored on disk and \
-         returned as a ref readable via read_subagent_result."
+        "Delegate a self-contained task to an isolated subagent. Read-only tasks use an \
+         isolated memory snapshot; writable tasks use a detached Git worktree and return \
+         a reviewable patch ref. Only its final answer is returned. Very large answers are \
+         stored on disk and returned as a ref readable via read_subagent_result."
     }
     fn schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "prompt": { "type": "string", "description": "Complete, self-contained task description for the subagent." }
+                "prompt": { "type": "string", "description": "Complete, self-contained task description for the subagent." },
+                "read_only": { "type": "boolean", "default": false, "description": "Run in Ask mode with all mutating tools and commands blocked." }
+                ,"role": { "type": "string", "description": "Optional specialist role/instructions prepended to the child task." }
             },
             "required": ["prompt"],
             "additionalProperties": false
@@ -47,13 +52,24 @@ impl Tool for Task {
         acp::ToolKind::Think
     }
     async fn execute(&self, args: serde_json::Value, ctx: &ToolCtx) -> Result<String, String> {
-        let prompt = arg_str(&args, "prompt")?;
+        let prompt = with_role(
+            arg_str(&args, "prompt")?,
+            args.get("role").and_then(|v| v.as_str()),
+        );
         let harness = ctx
             .harness
             .as_ref()
             .ok_or("subagents are disabled in this context")?
             .clone();
-        run_subagent(&harness, &prompt).await
+        if args
+            .get("read_only")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+        {
+            run_read_only_subagent(&harness, &prompt).await
+        } else {
+            run_writable_worktree_subagent(&harness, &prompt).await
+        }
     }
 }
 
@@ -65,8 +81,10 @@ impl Tool for Fleet {
         "fleet"
     }
     fn description(&self) -> &'static str {
-        "Run several independent subagent tasks in deterministic sequence. \
-         They share the workspace, so writes cannot race; results come back in order."
+        "Run several independent subagent tasks. With read_only=true they run \
+         concurrently up to the configured limit. Read-only children have isolated memory \
+         and mutations blocked; writable children run in separate Git worktrees and return \
+         reviewable patch refs. Results always come back in input order."
     }
     fn schema(&self) -> serde_json::Value {
         serde_json::json!({
@@ -76,7 +94,9 @@ impl Tool for Fleet {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "Task descriptions, one per subagent."
-                }
+                },
+                "read_only": { "type": "boolean", "default": false, "description": "Enable safe concurrent research with all mutations blocked." }
+                ,"role": { "type": "string", "description": "Optional specialist role/instructions prepended to every child task." }
             },
             "required": ["tasks"],
             "additionalProperties": false
@@ -91,12 +111,13 @@ impl Tool for Fleet {
             .as_ref()
             .ok_or("subagents are disabled in this context")?
             .clone();
+        let role = args.get("role").and_then(|value| value.as_str());
         let tasks: Vec<String> = args
             .get("tasks")
             .and_then(|v| v.as_array())
             .ok_or("missing required argument `tasks` (array of strings)")?
             .iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .filter_map(|v| v.as_str().map(|s| with_role(s.to_string(), role)))
             .collect();
         if tasks.is_empty() {
             return Err("`tasks` must contain at least one task".to_string());
@@ -105,12 +126,44 @@ impl Tool for Fleet {
             return Err("at most 16 tasks per fleet".to_string());
         }
 
-        // All subagents receive the same `cwd` and may call mutating tools.
-        // Serializing is the only honest safety boundary until fleet gives each
-        // task an isolated worktree and a reviewed merge path.
+        let read_only = args
+            .get("read_only")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
         let mut outcomes = Vec::with_capacity(tasks.len());
-        for task in &tasks {
-            outcomes.push(run_subagent(&harness, task).await);
+        if read_only {
+            // Futures are joined on the native agent's LocalSet; no Send bound
+            // is required. Batching enforces the configured concurrency while
+            // preserving deterministic output order.
+            let concurrency = harness.concurrency.clamp(1, tasks.len());
+            for batch in tasks.chunks(concurrency) {
+                outcomes.extend(
+                    futures::future::join_all(
+                        batch
+                            .iter()
+                            .map(|task| run_read_only_subagent(&harness, task)),
+                    )
+                    .await,
+                );
+            }
+        } else if git2::Repository::discover(&harness.cwd).is_ok() {
+            let concurrency = harness.concurrency.clamp(1, tasks.len());
+            for batch in tasks.chunks(concurrency) {
+                outcomes.extend(
+                    futures::future::join_all(
+                        batch
+                            .iter()
+                            .map(|task| run_writable_worktree_subagent(&harness, task)),
+                    )
+                    .await,
+                );
+            }
+        } else {
+            // Non-Git folders cannot provide independent worktrees. Preserve
+            // functionality and safety by running writable children serially.
+            for task in &tasks {
+                outcomes.push(run_subagent(&harness, task).await);
+            }
         }
 
         let mut out = String::new();
@@ -123,6 +176,254 @@ impl Tool for Fleet {
             out.push_str("\n\n");
         }
         Ok(truncate_output(out, 40_000))
+    }
+}
+
+fn with_role(prompt: String, role: Option<&str>) -> String {
+    match role.map(str::trim).filter(|role| !role.is_empty()) {
+        Some(role) => format!("Specialist role:\n{role}\n\nTask:\n{prompt}"),
+        None => prompt,
+    }
+}
+
+/// Snapshot the live checkout without touching its index, run a child in a
+/// detached worktree, then export the child's complete change set as a binary
+/// patch. Applying that patch is a separate permission-gated tool call.
+async fn run_writable_worktree_subagent(
+    harness: &SubagentHarness,
+    task: &str,
+) -> Result<String, String> {
+    if git2::Repository::discover(&harness.cwd).is_err() {
+        return run_subagent(harness, task).await;
+    }
+    let prepared = WorktreeRun::prepare(harness)?;
+    let child_cwd = prepared.child_cwd.clone();
+    let answer = run_isolated_subagent(harness, task, child_cwd).await;
+    let patch = prepared.export_patch();
+    let cleanup = prepared.cleanup();
+    if let Err(error) = cleanup {
+        log::warn!("subagent worktree cleanup failed: {error}");
+    }
+    let answer = answer?;
+    match patch? {
+        Some(reference) => Ok(format!(
+            "{answer}\n\nWorkspace changes are isolated. Patch ref: `{reference}`. Review with `read_subagent_result`, then apply with `apply_subagent_patch`."
+        )),
+        None => Ok(format!("{answer}\n\nWorkspace changes: none.")),
+    }
+}
+
+struct WorktreeRun {
+    repo_root: std::path::PathBuf,
+    worktree_root: std::path::PathBuf,
+    child_cwd: std::path::PathBuf,
+    archive_dir: std::path::PathBuf,
+    base: String,
+    path_env: std::ffi::OsString,
+}
+
+impl WorktreeRun {
+    fn prepare(harness: &SubagentHarness) -> Result<Self, String> {
+        let repo = git2::Repository::discover(&harness.cwd)
+            .map_err(|_| "writable parallel agents require a Git workspace".to_string())?;
+        let repo_root = repo
+            .workdir()
+            .ok_or("writable parallel agents require a non-bare Git workspace")?
+            .canonicalize()
+            .map_err(|e| format!("resolve repository root: {e}"))?;
+        let relative_cwd = harness
+            .cwd
+            .strip_prefix(&repo_root)
+            .map_err(|_| "session cwd is outside the discovered repository")?
+            .to_path_buf();
+
+        // Build a dangling snapshot commit from an in-memory index. The user's
+        // real index is never written or changed.
+        let mut index = repo.index().map_err(|e| format!("read Git index: {e}"))?;
+        index
+            .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+            .map_err(|e| format!("snapshot workspace: {e}"))?;
+        index
+            .update_all(["*"].iter(), None)
+            .map_err(|e| format!("snapshot deletions: {e}"))?;
+        for prefix in [".nex", ".nex-archive"] {
+            let path = std::path::Path::new(prefix);
+            index.remove_path(path).ok();
+            index.remove_dir(path, 0).ok();
+        }
+        let tree_id = index
+            .write_tree_to(&repo)
+            .map_err(|e| format!("write snapshot tree: {e}"))?;
+        let tree = repo
+            .find_tree(tree_id)
+            .map_err(|e| format!("snapshot tree: {e}"))?;
+        let signature = repo
+            .signature()
+            .or_else(|_| git2::Signature::now("Nex Agent", "nex-agent@localhost"))
+            .map_err(|e| format!("snapshot signature: {e}"))?;
+        let parent = repo.head().ok().and_then(|head| head.peel_to_commit().ok());
+        let parents: Vec<&git2::Commit> = parent.iter().collect();
+        let base = repo
+            .commit(
+                None,
+                &signature,
+                &signature,
+                "nex isolated subagent snapshot",
+                &tree,
+                &parents,
+            )
+            .map_err(|e| format!("create snapshot commit: {e}"))?
+            .to_string();
+
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let worktree_root = harness.archive_dir.join("worktrees").join(&id);
+        std::fs::create_dir_all(worktree_root.parent().unwrap_or(&harness.archive_dir))
+            .map_err(|e| format!("create worktree parent: {e}"))?;
+        let output = git_command(&repo_root, &harness.path_env)
+            .args(["worktree", "add", "--detach"])
+            .arg(&worktree_root)
+            .arg(&base)
+            .output()
+            .map_err(|e| format!("start git worktree: {e}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "create isolated worktree: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        let child_cwd = worktree_root.join(relative_cwd);
+        Ok(Self {
+            repo_root,
+            worktree_root,
+            child_cwd,
+            archive_dir: harness.archive_dir.clone(),
+            base,
+            path_env: harness.path_env.clone(),
+        })
+    }
+
+    fn export_patch(&self) -> Result<Option<String>, String> {
+        let add = git_command(&self.worktree_root, &self.path_env)
+            .args(["add", "-A"])
+            .output()
+            .map_err(|e| format!("stage isolated changes: {e}"))?;
+        if !add.status.success() {
+            return Err(format!(
+                "stage isolated changes: {}",
+                String::from_utf8_lossy(&add.stderr).trim()
+            ));
+        }
+        let diff = git_command(&self.worktree_root, &self.path_env)
+            .args(["diff", "--cached", "--binary", "--full-index", &self.base])
+            .output()
+            .map_err(|e| format!("export isolated changes: {e}"))?;
+        if !diff.status.success() {
+            return Err(format!(
+                "export isolated changes: {}",
+                String::from_utf8_lossy(&diff.stderr).trim()
+            ));
+        }
+        if diff.stdout.is_empty() {
+            return Ok(None);
+        }
+        std::fs::create_dir_all(&self.archive_dir)
+            .map_err(|e| format!("create result archive: {e}"))?;
+        let name = format!("subagent-patch-{}.patch", uuid::Uuid::new_v4().simple());
+        write_private(&self.archive_dir.join(&name), &diff.stdout)
+            .map_err(|e| format!("store isolated patch: {e}"))?;
+        Ok(Some(name))
+    }
+
+    fn cleanup(&self) -> Result<(), String> {
+        let output = git_command(&self.repo_root, &self.path_env)
+            .args(["worktree", "remove", "--force"])
+            .arg(&self.worktree_root)
+            .output()
+            .map_err(|e| format!("remove isolated worktree: {e}"))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+        }
+    }
+}
+
+fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut options = std::fs::OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
+}
+
+fn git_command(cwd: &std::path::Path, path_env: &std::ffi::OsStr) -> std::process::Command {
+    let mut command = std::process::Command::new("git");
+    command.current_dir(cwd).env("PATH", path_env);
+    command
+}
+
+pub struct ApplySubagentPatch;
+
+#[async_trait::async_trait(?Send)]
+impl Tool for ApplySubagentPatch {
+    fn name(&self) -> &'static str {
+        "apply_subagent_patch"
+    }
+    fn description(&self) -> &'static str {
+        "Apply a reviewed binary patch returned by a writable task/fleet child to the current workspace. Conflicts fail without partial application."
+    }
+    fn schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type":"object",
+            "properties":{"ref":{"type":"string","description":"subagent-patch-<id>.patch ref"}},
+            "required":["ref"],
+            "additionalProperties":false
+        })
+    }
+    fn kind(&self) -> acp::ToolKind {
+        acp::ToolKind::Edit
+    }
+    async fn execute(&self, args: serde_json::Value, ctx: &ToolCtx) -> Result<String, String> {
+        let name = arg_str(&args, "ref")?;
+        if !name.starts_with("subagent-patch-")
+            || !name.ends_with(".patch")
+            || name.contains('/')
+            || name.contains("..")
+        {
+            return Err("invalid subagent patch ref".to_string());
+        }
+        let patch = ctx.archive_dir.join(&name);
+        let check = git_command(&ctx.cwd, &ctx.path_env)
+            .args(["apply", "--check"])
+            .arg(&patch)
+            .output()
+            .map_err(|e| format!("check patch: {e}"))?;
+        if !check.status.success() {
+            return Err(format!(
+                "patch does not apply cleanly: {}",
+                String::from_utf8_lossy(&check.stderr).trim()
+            ));
+        }
+        let apply = git_command(&ctx.cwd, &ctx.path_env)
+            .args(["apply"])
+            .arg(&patch)
+            .output()
+            .map_err(|e| format!("apply patch: {e}"))?;
+        if !apply.status.success() {
+            return Err(format!(
+                "apply patch failed: {}",
+                String::from_utf8_lossy(&apply.stderr).trim()
+            ));
+        }
+        ctx.mutations
+            .borrow_mut()
+            .push(format!("apply_subagent_patch({name}) -> ok"));
+        Ok(format!("applied isolated subagent patch `{name}`"))
     }
 }
 
@@ -171,20 +472,21 @@ impl Tool for ReadSubagentResult {
                 MAX_RESULT_FILE_BYTES / (1024 * 1024)
             ));
         }
-        // Read from `offset` onward instead of slurping the whole file, so a
-        // page never allocates more than the remaining (capped) bytes.
+        // Read a bounded byte page instead of slurping the whole file. Refs are
+        // normally UTF-8 text or Git's ASCII binary-patch encoding; lossy
+        // decoding keeps diagnostics usable for a malformed result without
+        // making the continuation cursor ambiguous.
         use std::io::{Read, Seek, SeekFrom};
         let start = offset.min(meta.len() as usize);
         f.seek(SeekFrom::Start(start as u64))
             .map_err(|e| format!("seek failed: {e}"))?;
-        let mut bytes = Vec::with_capacity((meta.len() as usize).saturating_sub(start));
-        f.read_to_end(&mut bytes)
+        let remaining = (meta.len() as usize).saturating_sub(start);
+        let page_bytes = remaining.min(PAGE_CHARS);
+        let mut bytes = vec![0u8; page_bytes];
+        f.read_exact(&mut bytes)
             .map_err(|e| format!("read failed: {e}"))?;
-        let text = String::from_utf8_lossy(&bytes).to_string();
-        let chars: Vec<char> = text.chars().collect();
-        let page: String = chars.iter().take(PAGE_CHARS).collect();
-        let consumed_bytes = page.len();
-        let next_offset = start + consumed_bytes;
+        let page = String::from_utf8_lossy(&bytes);
+        let next_offset = start + page_bytes;
         let more = next_offset < meta.len() as usize;
         Ok(format!(
             "ref `{name}`; next offset: {next_offset}; more: {more}\n{page}"
@@ -203,6 +505,7 @@ mod tests {
         ToolCtx {
             cwd: dir.to_path_buf(),
             bash_timeout: std::time::Duration::from_secs(10),
+            shell_sandbox: crate::agent::native::config::ShellSandboxMode::ApprovalOnly,
             path_env: std::env::var_os("PATH").unwrap_or_default(),
             archive_dir: dir.join(".nex-archive"),
             jobs: Rc::new(RefCell::new(JobTable::default())),
@@ -211,8 +514,8 @@ mod tests {
             mode_id: None,
             memory: super::super::test_memory_handle(),
             graph: None,
-        conn: None,
-        session_id: None,
+            conn: None,
+            session_id: None,
         }
     }
 
@@ -230,6 +533,13 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err2.contains("disabled"));
+    }
+
+    #[test]
+    fn task_and_fleet_expose_read_only_isolation() {
+        assert_eq!(Task.schema()["properties"]["read_only"]["default"], false);
+        assert_eq!(Fleet.schema()["properties"]["read_only"]["default"], false);
+        assert!(Fleet.description().contains("concurrently"));
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -315,6 +625,7 @@ mod tests {
                     concurrency: 2,
                     cwd: tmp.path().to_path_buf(),
                     bash_timeout: std::time::Duration::from_secs(5),
+                    shell_sandbox: crate::agent::native::config::ShellSandboxMode::ApprovalOnly,
                     path_env: std::env::var_os("PATH").unwrap_or_default(),
                     archive_dir: tmp.path().join(".nex-archive"),
                     context_window: 0,

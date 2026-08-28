@@ -395,6 +395,26 @@ impl AgentSessionManager {
         self.acp.send_prompt(session_id, blocks).await
     }
 
+    pub async fn steer(
+        &self,
+        session_id: &str,
+        blocks: Vec<PromptBlock>,
+    ) -> Result<super::types::PromptResultDto, NexError> {
+        self.acp.steer(session_id, blocks).await
+    }
+
+    pub async fn set_goal(
+        &self,
+        session_id: &str,
+        goal: &str,
+    ) -> Result<serde_json::Value, NexError> {
+        self.acp.set_goal(session_id, goal).await
+    }
+
+    pub async fn session_state(&self, session_id: &str) -> Result<serde_json::Value, NexError> {
+        self.acp.session_state(session_id).await
+    }
+
     pub async fn set_session_mode(&self, session_id: &str, mode_id: &str) -> Result<(), NexError> {
         self.acp.set_session_mode(session_id, mode_id).await
     }

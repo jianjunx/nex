@@ -103,8 +103,9 @@ impl JobTable {
         command: &str,
         cwd: &std::path::Path,
         path_env: &std::ffi::OsStr,
+        shell_sandbox: crate::agent::native::config::ShellSandboxMode,
     ) -> Result<String, String> {
-        let mut cmd = super::shell_command_script(super::shell_command(), command);
+        let mut cmd = super::sandboxed_shell_command(command, cwd, shell_sandbox)?;
         cmd.current_dir(cwd)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
@@ -235,10 +236,10 @@ impl Tool for RunInBackground {
     }
     async fn execute(&self, args: serde_json::Value, ctx: &ToolCtx) -> Result<String, String> {
         let command = arg_str(&args, "command")?;
-        let id = ctx
-            .jobs
-            .borrow_mut()
-            .spawn(&command, &ctx.cwd, &ctx.path_env)?;
+        let id =
+            ctx.jobs
+                .borrow_mut()
+                .spawn(&command, &ctx.cwd, &ctx.path_env, ctx.shell_sandbox)?;
         Ok(format!(
             "{PARTIAL_MARKER} background job started, output is NOT in this transcript. \
 Use `bash_output(job_id=\"{id}\", offset=0)` to read.\nstarted job `{id}`: {command}"
@@ -419,6 +420,7 @@ mod tests {
         ToolCtx {
             cwd: dir.to_path_buf(),
             bash_timeout: std::time::Duration::from_secs(10),
+            shell_sandbox: crate::agent::native::config::ShellSandboxMode::ApprovalOnly,
             path_env: std::env::var_os("PATH").unwrap_or_default(),
             archive_dir: dir.join(".nex-archive"),
             jobs: Rc::new(RefCell::new(JobTable::default())),
@@ -427,8 +429,8 @@ mod tests {
             mode_id: None,
             memory: super::super::test_memory_handle(),
             graph: None,
-        conn: None,
-        session_id: None,
+            conn: None,
+            session_id: None,
         }
     }
 

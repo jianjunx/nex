@@ -5,9 +5,9 @@
 //! driven by [`crate::agent::native::compact::step`]; this module only owns
 //! the math.
 //!
-//! Defaults are intentionally conservative and provider-agnostic. They are
-//! placeholders, not long-term truth — providers are expected to override
-//! `reserved_response` once the trait exposes a hint.
+//! Defaults are intentionally conservative and provider-agnostic. Providers
+//! override `reserved_response` through the trait when they know their output
+//! ceiling; the generic fallback remains for compatible third-party gateways.
 
 use crate::agent::native::provider::{Provider, ReasoningControl};
 use crate::agent::native::{compact, memory, summary};

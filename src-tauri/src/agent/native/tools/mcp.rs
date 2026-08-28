@@ -111,3 +111,182 @@ fn tier_mcp_text(tool_name: &str, raw: String) -> String {
     let prefixed = format!("{notice}{tool_name} (truncated head)\n");
     format!("{prefixed}{head}")
 }
+
+/// Read-only proxy for MCP `resources/list` with cursor pagination.
+pub struct McpListResources {
+    pub name: String,
+    pub client: Rc<McpClient>,
+}
+
+#[async_trait::async_trait(?Send)]
+impl Tool for McpListResources {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn description(&self) -> &str {
+        "List resources exposed by this MCP server. Pass nextCursor from the previous response to continue."
+    }
+
+    fn schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "cursor": { "type": "string", "description": "Opaque nextCursor from a previous page." }
+            },
+            "additionalProperties": false
+        })
+    }
+
+    fn kind(&self) -> acp::ToolKind {
+        acp::ToolKind::Read
+    }
+
+    fn read_only(&self) -> bool {
+        true
+    }
+
+    async fn execute(&self, args: serde_json::Value, _ctx: &ToolCtx) -> Result<String, String> {
+        let cursor = args
+            .get("cursor")
+            .and_then(|value| value.as_str())
+            .map(str::to_string);
+        let response = self.client.list_resources(cursor).await?;
+        render_resource_response(&self.name, response)
+    }
+}
+
+/// Read-only proxy for MCP `resources/read`.
+pub struct McpReadResource {
+    pub name: String,
+    pub client: Rc<McpClient>,
+}
+
+/// Read-only proxy for MCP `resources/templates/list`.
+pub struct McpListResourceTemplates {
+    pub name: String,
+    pub client: Rc<McpClient>,
+}
+
+#[async_trait::async_trait(?Send)]
+impl Tool for McpListResourceTemplates {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn description(&self) -> &str {
+        "List URI templates exposed by this MCP server. Pass nextCursor to continue pagination."
+    }
+
+    fn schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "cursor": { "type": "string", "description": "Opaque nextCursor from a previous page." }
+            },
+            "additionalProperties": false
+        })
+    }
+
+    fn kind(&self) -> acp::ToolKind {
+        acp::ToolKind::Read
+    }
+
+    fn read_only(&self) -> bool {
+        true
+    }
+
+    async fn execute(&self, args: serde_json::Value, _ctx: &ToolCtx) -> Result<String, String> {
+        let cursor = args
+            .get("cursor")
+            .and_then(|value| value.as_str())
+            .map(str::to_string);
+        let response = self.client.list_resource_templates(cursor).await?;
+        render_resource_response(&self.name, response)
+    }
+}
+
+#[async_trait::async_trait(?Send)]
+impl Tool for McpReadResource {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn description(&self) -> &str {
+        "Read one resource from this MCP server by its URI."
+    }
+
+    fn schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "uri": { "type": "string", "description": "Exact resource URI returned by resources_list." }
+            },
+            "required": ["uri"],
+            "additionalProperties": false
+        })
+    }
+
+    fn kind(&self) -> acp::ToolKind {
+        acp::ToolKind::Read
+    }
+
+    fn read_only(&self) -> bool {
+        true
+    }
+
+    async fn execute(&self, args: serde_json::Value, _ctx: &ToolCtx) -> Result<String, String> {
+        let uri = args
+            .get("uri")
+            .and_then(|value| value.as_str())
+            .filter(|uri| !uri.is_empty())
+            .ok_or("missing required argument `uri`")?;
+        let response = self.client.read_resource(uri).await?;
+        render_resource_response(&self.name, response)
+    }
+}
+
+fn render_resource_response(
+    tool_name: &str,
+    response: serde_json::Value,
+) -> Result<String, String> {
+    if let Some(error) = response.get("error") {
+        return Err(format!("MCP resource error: {error}"));
+    }
+    let result = response.get("result").cloned().unwrap_or_default();
+    let text = serde_json::to_string_pretty(&result)
+        .map_err(|error| format!("failed to encode MCP resource response: {error}"))?;
+    Ok(tier_mcp_text(tool_name, text))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resource_response_preserves_cursor_and_metadata() {
+        let rendered = render_resource_response(
+            "mcp__docs__resources_list",
+            serde_json::json!({
+                "result": {
+                    "resources": [{"uri": "docs://guide", "mimeType": "text/markdown"}],
+                    "nextCursor": "page-2"
+                }
+            }),
+        )
+        .unwrap();
+        assert!(rendered.contains("docs://guide"));
+        assert!(rendered.contains("text/markdown"));
+        assert!(rendered.contains("page-2"));
+    }
+
+    #[test]
+    fn resource_response_surfaces_json_rpc_error() {
+        let error = render_resource_response(
+            "mcp__docs__resources_read",
+            serde_json::json!({"error": {"code": -32601, "message": "not supported"}}),
+        )
+        .unwrap_err();
+        assert!(error.contains("not supported"));
+    }
+}

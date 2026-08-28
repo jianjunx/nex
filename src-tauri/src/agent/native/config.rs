@@ -1,14 +1,17 @@
 //! Configuration for the in-process Nex native agent.
 //!
-//! Persisted as a standalone `nex-agent.json` inside the app data dir (the user
-//! explicitly chose the config-file approach, accepting that `api_key` is stored
-//! in plaintext). The same struct doubles as the Tauri DTO: it serializes to
-//! camelCase so the frontend settings panel can read/write it directly.
+//! Persisted as a standalone `nex-agent.json` inside the app data dir. Provider
+//! credentials can be referenced through an environment variable so the secret
+//! itself never enters the file; legacy inline `api_key` values remain supported
+//! for backwards compatibility. The same struct doubles as the Tauri DTO: it
+//! serializes to camelCase so the frontend settings panel can read/write it
+//! directly.
 //!
 //! The config supports multiple OpenAI-compatible providers, each with its own
 //! model list. Models are referenced across the app by a composite id of the
 //! form `<providerId>/<modelId>`.
 
+use std::io::Write;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -17,6 +20,40 @@ use crate::error::NexError;
 
 /// File name of the native-agent config inside the app data dir.
 pub const NATIVE_CONFIG_FILE: &str = "nex-agent.json";
+
+/// OS-level boundary used for shell tools. `ApprovalOnly` preserves legacy
+/// behavior; workspace modes restrict file writes and can additionally remove
+/// network access where a native sandbox backend is available.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ShellSandboxMode {
+    #[default]
+    ApprovalOnly,
+    WorkspaceWrite,
+    WorkspaceWriteNoNetwork,
+}
+
+/// HTTP surface used by an OpenAI-compatible provider. `Auto` keeps existing
+/// gateways on Chat Completions while selecting Responses for OpenAI's own
+/// endpoint, where typed output items and encrypted reasoning are available.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProviderApiMode {
+    #[default]
+    Auto,
+    ChatCompletions,
+    Responses,
+}
+
+impl ProviderApiMode {
+    pub fn uses_responses(self, base_url: &str) -> bool {
+        match self {
+            Self::Responses => true,
+            Self::ChatCompletions => false,
+            Self::Auto => base_url.to_ascii_lowercase().contains("api.openai.com"),
+        }
+    }
+}
 
 /// Whether a model accepts the `reasoning_effort` parameter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -119,8 +156,20 @@ pub struct ProviderEntry {
     /// OpenAI-compatible base URL (host or `…/v1`; no `/chat/completions`).
     /// Missing `/vN` is injected when building request URLs.
     pub base_url: String,
-    /// API key. Stored in plaintext on disk (accepted trade-off).
+    /// Legacy inline API key. Prefer `api_key_env` so persisted config contains
+    /// only a variable name, not the credential itself.
     pub api_key: String,
+    /// Environment variable containing the API key, for example
+    /// `OPENAI_API_KEY`. When set it takes precedence over `api_key`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key_env: Option<String>,
+    /// Opaque account id in the operating system credential store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key_credential: Option<String>,
+    /// Provider protocol. `Auto` uses Responses only for api.openai.com and
+    /// otherwise preserves broad Chat Completions compatibility.
+    #[serde(default)]
+    pub api_mode: ProviderApiMode,
     /// Models offered through this provider.
     pub models: Vec<ModelEntry>,
 }
@@ -132,8 +181,51 @@ impl Default for ProviderEntry {
             name: String::new(),
             base_url: "https://api.deepseek.com/v1".to_string(),
             api_key: String::new(),
+            api_key_env: None,
+            api_key_credential: None,
+            api_mode: ProviderApiMode::Auto,
             models: Vec::new(),
         }
+    }
+}
+
+impl ProviderEntry {
+    /// Resolves the provider credential without copying an environment-backed
+    /// secret into persisted configuration or returning it to the settings UI.
+    pub fn resolve_api_key(&self) -> Result<String, NexError> {
+        if let Some(name) = self
+            .api_key_env
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        {
+            return std::env::var(name).map_err(|_| {
+                NexError::Agent(format!(
+                    "provider `{}` requires environment variable `{name}`",
+                    self.name
+                ))
+            });
+        }
+        if let Some(id) = self
+            .api_key_credential
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+        {
+            return super::secrets::get(id).map_err(|error| {
+                NexError::Agent(format!(
+                    "provider `{}` credential is unavailable: {error}",
+                    self.name
+                ))
+            });
+        }
+        if self.api_key.trim().is_empty() {
+            return Err(NexError::Agent(format!(
+                "provider `{}` has no API key configured",
+                self.name
+            )));
+        }
+        Ok(self.api_key.clone())
     }
 }
 
@@ -154,11 +246,17 @@ pub struct AgentParams {
     pub context_window_migrated: bool,
     /// Synchronous `bash` tool timeout in seconds.
     pub bash_timeout_secs: u64,
+    /// Shell process isolation policy. Workspace modes fail closed when the
+    /// current platform has no supported sandbox backend.
+    pub shell_sandbox: ShellSandboxMode,
     /// Max concurrent subagents launched by the `fleet` tool.
     pub max_subagent_concurrency: u32,
     /// After a turn that mutated the workspace, automatically run `/review`.
     #[serde(default)]
     pub auto_review: bool,
+    /// User-owned lifecycle hooks. Repository files cannot add hooks.
+    #[serde(default)]
+    pub hooks: Vec<super::hooks::HookCommand>,
 }
 
 /// An explicit trust decision for one MCP server declared by a project.
@@ -184,8 +282,10 @@ impl Default for AgentParams {
             context_window: 200_000,
             context_window_migrated: true,
             bash_timeout_secs: 120,
+            shell_sandbox: ShellSandboxMode::ApprovalOnly,
             max_subagent_concurrency: 6,
             auto_review: false,
+            hooks: Vec::new(),
         }
     }
 }
@@ -222,6 +322,9 @@ impl Default for NativeAgentConfig {
                 name: "DeepSeek".to_string(),
                 base_url: "https://api.deepseek.com/v1".to_string(),
                 api_key: String::new(),
+                api_key_env: None,
+                api_key_credential: None,
+                api_mode: ProviderApiMode::Auto,
                 models: vec![chat],
             }],
             default_model: None,
@@ -333,6 +436,9 @@ impl NativeAgentConfig {
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
                 .to_string(),
+            api_key_env: None,
+            api_key_credential: None,
+            api_mode: ProviderApiMode::Auto,
             models: vec![crate::agent::native::capabilities::detect(&model_id)],
         };
         let agent: AgentParams = value
@@ -354,11 +460,45 @@ impl NativeAgentConfig {
     pub fn save(&self, dir: &Path) -> Result<(), NexError> {
         let _ = std::fs::create_dir_all(dir);
         let path = dir.join(NATIVE_CONFIG_FILE);
-        let json = serde_json::to_vec_pretty(self).map_err(|e| {
+        let mut persisted = self.clone();
+        for provider in &mut persisted.providers {
+            if provider
+                .api_key_env
+                .as_deref()
+                .is_some_and(|name| !name.trim().is_empty())
+                || provider
+                    .api_key_credential
+                    .as_deref()
+                    .is_some_and(|id| !id.trim().is_empty())
+            {
+                // A reference-backed provider must never retain a stale inline
+                // credential, even when an older/external client sends both.
+                provider.api_key.clear();
+            }
+        }
+        let json = serde_json::to_vec_pretty(&persisted).map_err(|e| {
             NexError::Internal(format!("failed to serialize native-agent config: {e}"))
         })?;
-        std::fs::write(&path, json)
+        let mut options = std::fs::OpenOptions::new();
+        options.create(true).write(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options
+            .open(&path)
+            .map_err(|e| NexError::Internal(format!("failed to open native-agent config: {e}")))?;
+        file.write_all(&json)
             .map_err(|e| NexError::Internal(format!("failed to write native-agent config: {e}")))?;
+        file.sync_all()
+            .map_err(|e| NexError::Internal(format!("failed to flush native-agent config: {e}")))?;
+        #[cfg(unix)]
+        std::fs::set_permissions(&path, {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::Permissions::from_mode(0o600)
+        })
+        .map_err(|e| NexError::Internal(format!("failed to protect native-agent config: {e}")))?;
         Ok(())
     }
 
@@ -501,6 +641,7 @@ mod tests {
         assert_eq!(cfg.providers[0].models[0].id, "deepseek-chat");
         assert_eq!(cfg.agent.max_steps, 64);
         assert_eq!(cfg.agent.context_window, 200_000);
+        assert_eq!(cfg.agent.shell_sandbox, ShellSandboxMode::ApprovalOnly);
         let json = serde_json::to_string(&cfg).unwrap();
         let back: NativeAgentConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(back.providers[0].base_url, cfg.providers[0].base_url);
@@ -607,6 +748,9 @@ mod tests {
             name: "Moonshot".to_string(),
             base_url: "https://api.moonshot.cn/v1".to_string(),
             api_key: "k".to_string(),
+            api_key_env: None,
+            api_key_credential: None,
+            api_mode: ProviderApiMode::Auto,
             models: vec![crate::agent::native::capabilities::detect("kimi-k2")],
         });
         assert!(cfg.resolve_model("deepseek/deepseek-chat").is_some());
@@ -650,5 +794,54 @@ mod tests {
         let cfg: NativeAgentConfig = serde_json::from_str(json).unwrap();
         assert_eq!(cfg.providers[0].models[0].id, "m");
         assert!(cfg.providers[0].models[0].capabilities.tools);
+    }
+
+    #[test]
+    fn provider_key_can_come_from_environment_without_persisting_secret() {
+        let env_name = format!("NEX_TEST_API_KEY_{}", std::process::id());
+        std::env::set_var(&env_name, "secret-from-env");
+        let provider = ProviderEntry {
+            id: "test".into(),
+            name: "Test".into(),
+            base_url: "https://example.test/v1".into(),
+            api_key: String::new(),
+            api_key_env: Some(env_name.clone()),
+            api_key_credential: None,
+            api_mode: ProviderApiMode::Auto,
+            models: Vec::new(),
+        };
+        assert_eq!(provider.resolve_api_key().unwrap(), "secret-from-env");
+        let json = serde_json::to_string(&provider).unwrap();
+        assert!(json.contains(&env_name));
+        assert!(!json.contains("secret-from-env"));
+        std::env::remove_var(env_name);
+    }
+
+    #[test]
+    fn save_scrubs_inline_key_when_environment_reference_is_set() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut config = NativeAgentConfig::default();
+        config.providers[0].api_key = "must-not-persist".into();
+        config.providers[0].api_key_env = Some("DEEPSEEK_API_KEY".into());
+        config.save(tmp.path()).unwrap();
+
+        let disk = std::fs::read_to_string(tmp.path().join(NATIVE_CONFIG_FILE)).unwrap();
+        assert!(disk.contains("DEEPSEEK_API_KEY"));
+        assert!(!disk.contains("must-not-persist"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saved_config_is_owner_read_write_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        NativeAgentConfig::default().save(tmp.path()).unwrap();
+        let mode = std::fs::metadata(tmp.path().join(NATIVE_CONFIG_FILE))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
     }
 }

@@ -1047,12 +1047,14 @@ fn questions_from_elicitation_schema(
         .filter(|k| !k.ends_with("_custom") && !is_custom_answer_meta_field(properties.get(*k)))
         .cloned()
         .collect();
-    keys.sort_by(|a, b| match (question_field_index(a), question_field_index(b)) {
-        (Some(ai), Some(bi)) => ai.cmp(&bi),
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => a.cmp(b),
-    });
+    keys.sort_by(
+        |a, b| match (question_field_index(a), question_field_index(b)) {
+            (Some(ai), Some(bi)) => ai.cmp(&bi),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.cmp(b),
+        },
+    );
 
     let single = keys.len() == 1;
     let mut questions = Vec::new();
@@ -1813,6 +1815,70 @@ impl AcpSessionManager {
         })
     }
 
+    /// Replace an in-flight generation with a new user direction. Cancellation
+    /// remains cooperative; once the old prompt RPC releases the session, the
+    /// steering prompt starts as the next turn on the preserved transcript.
+    pub async fn steer(
+        &self,
+        session_id: &str,
+        blocks: Vec<PromptBlock>,
+    ) -> Result<super::types::PromptResultDto, NexError> {
+        let handle = self.session(session_id)?;
+        if handle.prompt_in_flight.load(Ordering::SeqCst) {
+            self.cancel(session_id).await?;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while handle.prompt_in_flight.load(Ordering::SeqCst) {
+                if std::time::Instant::now() >= deadline {
+                    return Err(NexError::Agent(
+                        "timed out waiting for the cancelled turn to stop".to_string(),
+                    ));
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+        }
+        self.send_prompt(session_id, blocks).await
+    }
+
+    pub async fn set_goal(
+        &self,
+        session_id: &str,
+        goal: &str,
+    ) -> Result<serde_json::Value, NexError> {
+        self.session_ext(
+            session_id,
+            "session/set_goal",
+            serde_json::json!({ "goal": goal }),
+        )
+        .await
+    }
+
+    pub async fn session_state(&self, session_id: &str) -> Result<serde_json::Value, NexError> {
+        self.session_ext(session_id, "session/get_state", serde_json::json!({}))
+            .await
+    }
+
+    async fn session_ext(
+        &self,
+        session_id: &str,
+        method: &'static str,
+        extra: serde_json::Value,
+    ) -> Result<serde_json::Value, NexError> {
+        let handle = self.session(session_id)?;
+        let agent_session_id = handle.agent_session_id.to_string();
+        let mut params = extra.as_object().cloned().unwrap_or_default();
+        params.insert("sessionId".to_string(), serde_json::json!(agent_session_id));
+        run_acp({
+            let handle = Arc::clone(&handle);
+            move || async move {
+                handle
+                    .conn
+                    .request_raw(method, serde_json::Value::Object(params))
+                    .await
+            }
+        })
+        .await
+    }
+
     pub async fn set_session_mode(&self, session_id: &str, mode_id: &str) -> Result<(), NexError> {
         let handle = self.session(session_id)?;
         let agent_session_id = handle.agent_session_id.clone();
@@ -2312,9 +2378,8 @@ async fn run_acp_session<W, R>(
             )
             .await
             .map_err(NexError::from)?;
-        let init: acp::InitializeResponse = serde_json::from_value(init_raw).map_err(|e| {
-            NexError::Agent(format!("initialize response decode failed: {e}"))
-        })?;
+        let init: acp::InitializeResponse = serde_json::from_value(init_raw)
+            .map_err(|e| NexError::Agent(format!("initialize response decode failed: {e}")))?;
 
         // Cursor advertises `cursor_login` and requires `authenticate` before
         // `session/new`. Codex lists `api-key` first even when the user is
@@ -2875,10 +2940,8 @@ mod tests {
                 }
             }
         });
-        let (qs, meta) = questions_from_elicitation_schema(
-            &schema,
-            "Please answer the following questions.",
-        );
+        let (qs, meta) =
+            questions_from_elicitation_schema(&schema, "Please answer the following questions.");
         assert_eq!(qs.len(), 2);
         assert_eq!(qs[0].id, "question_0");
         assert_eq!(qs[0].prompt, "How should I format the output?");
@@ -2905,10 +2968,7 @@ mod tests {
         ];
         let content = elicitation_content_from_answers(&answers, &meta);
         assert_eq!(content["question_0"], "Summary");
-        assert_eq!(
-            content["question_1"],
-            serde_json::json!(["Intro", "Outro"])
-        );
+        assert_eq!(content["question_1"], serde_json::json!(["Intro", "Outro"]));
     }
 
     #[test]

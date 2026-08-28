@@ -345,6 +345,7 @@ mod tests {
         let ctx = ToolCtx {
             cwd: tmp.path().to_path_buf(),
             bash_timeout: std::time::Duration::from_secs(10),
+            shell_sandbox: crate::agent::native::config::ShellSandboxMode::ApprovalOnly,
             path_env: std::env::var_os("PATH").unwrap_or_default(),
             archive_dir: archive,
             jobs: std::rc::Rc::new(std::cell::RefCell::new(
@@ -355,8 +356,8 @@ mod tests {
             mode_id: None,
             memory: super::super::test_memory_handle(),
             graph: None,
-        conn: None,
-        session_id: None,
+            conn: None,
+            session_id: None,
         };
 
         let out = History
@@ -396,6 +397,7 @@ mod tests {
         let ctx = ToolCtx {
             cwd: tmp.path().to_path_buf(),
             bash_timeout: std::time::Duration::from_secs(10),
+            shell_sandbox: crate::agent::native::config::ShellSandboxMode::ApprovalOnly,
             path_env: std::env::var_os("PATH").unwrap_or_default(),
             archive_dir: archive,
             jobs: std::rc::Rc::new(std::cell::RefCell::new(
@@ -406,8 +408,8 @@ mod tests {
             mode_id: None,
             memory: super::super::test_memory_handle(),
             graph: None,
-        conn: None,
-        session_id: None,
+            conn: None,
+            session_id: None,
         };
         let scoped = History
             .execute(
@@ -464,6 +466,7 @@ mod tests {
         let ctx = ToolCtx {
             cwd: tmp.path().to_path_buf(),
             bash_timeout: std::time::Duration::from_secs(10),
+            shell_sandbox: crate::agent::native::config::ShellSandboxMode::ApprovalOnly,
             path_env: std::env::var_os("PATH").unwrap_or_default(),
             archive_dir: archive,
             jobs: std::rc::Rc::new(std::cell::RefCell::new(
@@ -474,8 +477,8 @@ mod tests {
             mode_id: None,
             memory: super::super::test_memory_handle(),
             graph: None,
-        conn: None,
-        session_id: None,
+            conn: None,
+            session_id: None,
         };
         let out = History
             .execute(serde_json::json!({"query": "payment"}), &ctx)

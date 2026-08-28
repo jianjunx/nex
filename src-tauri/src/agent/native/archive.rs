@@ -18,6 +18,14 @@ pub struct SessionArchive {
     pub history: Vec<ChatMessage>,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryPage {
+    pub items: Vec<ChatMessage>,
+    pub next_cursor: Option<usize>,
+    pub total: usize,
+}
+
 fn archive_dir() -> Option<PathBuf> {
     super::home::nex_home().map(|h| h.join("agent-sessions"))
 }
@@ -193,6 +201,37 @@ pub fn exists(session_id: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Copy a completed native-session archive to a new stable session id. The
+/// clone is independent: future saves replace only the target archive.
+pub fn fork(source_session_id: &str, target_session_id: &str) -> Result<(), String> {
+    if source_session_id == target_session_id {
+        return Err("source and target session ids must differ".to_string());
+    }
+    let archive = load(source_session_id)
+        .ok_or_else(|| format!("no archived session for `{source_session_id}`"))?;
+    if exists(target_session_id) {
+        return Err(format!(
+            "target session `{target_session_id}` already exists"
+        ));
+    }
+    save(target_session_id, &archive)
+}
+
+/// Stable forward pagination over archived provider messages. A numeric cursor
+/// is an index into the immutable snapshot loaded for this call.
+pub fn history_page(session_id: &str, cursor: usize, limit: usize) -> Result<HistoryPage, String> {
+    let archive =
+        load(session_id).ok_or_else(|| format!("no archived session for `{session_id}`"))?;
+    let total = archive.history.len();
+    let start = cursor.min(total);
+    let end = start.saturating_add(limit.clamp(1, 200)).min(total);
+    Ok(HistoryPage {
+        items: archive.history[start..end].to_vec(),
+        next_cursor: (end < total).then_some(end),
+        total,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -261,6 +300,7 @@ mod tests {
             tool_calls: None,
             tool_call_id: None,
             reasoning_content: None,
+            response_items: Vec::new(),
         }];
         strip_images_in_place(&mut history);
         let text = history[0]

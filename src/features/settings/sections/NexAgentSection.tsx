@@ -186,6 +186,7 @@ function freshProvider(): NativeAgentProvider {
     name: "新供应商",
     baseUrl: "https://api.deepseek.com/v1",
     apiKey: "",
+    apiMode: "auto",
     models: [],
   };
 }
@@ -532,6 +533,41 @@ export function NexAgentSection() {
             />
           </div>
           <div className="space-y-1">
+            <Label htmlFor="nex-shell-sandbox" className="text-sm">Shell 沙箱</Label>
+            <select
+              id="nex-shell-sandbox"
+              className="h-9 w-full rounded-[var(--radius-md)] border border-[color:var(--border-subtle)] bg-[var(--surface-input)] px-3 text-sm text-[var(--text-primary)]"
+              disabled={saving}
+              value={config.agent.shellSandbox ?? "approvalOnly"}
+              onChange={(event) => {
+                const shellSandbox = event.target.value as NonNullable<
+                  NativeAgentConfig["agent"]["shellSandbox"]
+                >;
+                void updateAdvancedConfig((cfg) => ({
+                  ...cfg,
+                  agent: { ...cfg.agent, shellSandbox },
+                }));
+              }}
+            >
+              <option value="approvalOnly">仅审批（兼容模式）</option>
+              <option value="workspaceWrite">仅工作区可写</option>
+              <option value="workspaceWriteNoNetwork">仅工作区可写 + 禁止网络</option>
+            </select>
+            <p className="text-xs text-[var(--text-tertiary)]">
+              macOS 使用系统 sandbox；Linux 需要 bwrap。严格模式不可用时会拒绝执行，不会静默降级。
+            </p>
+          </div>
+          <HooksEditor
+            hooks={config.agent.hooks ?? []}
+            disabled={saving}
+            onSave={async (hooks) => {
+              await updateAdvancedConfig((cfg) => ({
+                ...cfg,
+                agent: { ...cfg.agent, hooks },
+              }));
+            }}
+          />
+          <div className="space-y-1">
             <Label htmlFor="nex-max-steps" className="text-sm">最大步数</Label>
             <Input
               id="nex-max-steps"
@@ -635,6 +671,99 @@ export function NexAgentSection() {
   );
 }
 
+type NativeHook = NonNullable<NativeAgentConfig["agent"]["hooks"]>[number];
+
+function HooksEditor({
+  hooks,
+  disabled,
+  onSave,
+}: {
+  hooks: NativeHook[];
+  disabled: boolean;
+  onSave: (hooks: NativeHook[]) => Promise<void>;
+}) {
+  const serialized = JSON.stringify(hooks, null, 2);
+  const [draft, setDraft] = useState(serialized);
+  const [lastSerialized, setLastSerialized] = useState(serialized);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (serialized !== lastSerialized && !saving) {
+      setLastSerialized(serialized);
+      setDraft(serialized);
+    }
+  }, [lastSerialized, saving, serialized]);
+
+  const save = async () => {
+    setError(null);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(draft);
+    } catch (err) {
+      setError(`JSON 格式错误：${errorMessage(err)}`);
+      return;
+    }
+    if (
+      !Array.isArray(parsed) ||
+      parsed.some(
+        (hook) =>
+          !hook ||
+          typeof hook !== "object" ||
+          !["before_turn", "after_turn"].includes(String((hook as NativeHook).event)) ||
+          typeof (hook as NativeHook).command !== "string" ||
+          !(hook as NativeHook).command.trim(),
+      )
+    ) {
+      setError("每个钩子都必须包含 event（before_turn/after_turn）和非空 command。");
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSave(parsed as NativeHook[]);
+      const next = JSON.stringify(parsed, null, 2);
+      setDraft(next);
+      setLastSerialized(next);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <Label htmlFor="nex-lifecycle-hooks" className="text-sm">生命周期钩子</Label>
+          <p className="text-xs text-[var(--text-tertiary)]">
+            全局用户配置；通过 stdin 接收本轮 JSON。before_turn 可设置 failClosed 阻止执行。
+          </p>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={disabled || saving || draft === lastSerialized}
+          onClick={() => void save()}
+        >
+          {saving ? "保存中…" : "应用"}
+        </Button>
+      </div>
+      <Textarea
+        id="nex-lifecycle-hooks"
+        className="min-h-32 font-mono text-xs"
+        spellCheck={false}
+        disabled={disabled || saving}
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        placeholder={'[{"event":"before_turn","command":"policy-check","failClosed":true}]'}
+      />
+      {error && <p className="text-xs text-[var(--error)]">{error}</p>}
+    </div>
+  );
+}
+
 function ProviderEditorDialog({
   mode,
   provider: initial,
@@ -659,6 +788,9 @@ function ProviderEditorDialog({
   const [probingId, setProbingId] = useState<string | null>(null);
   const [probeError, setProbeError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const hasCredential = Boolean(
+    p.apiKey.trim() || p.apiKeyEnv?.trim() || p.apiKeyCredential?.trim(),
+  );
 
   const patchModel = (modelId: string, patch: Partial<NativeAgentModel>) => {
     setP((prev) => ({
@@ -686,7 +818,12 @@ function ProviderEditorDialog({
     const baseUrl = p.baseUrl;
     const apiKey = p.apiKey;
     try {
-      const listed = await nativeAgentListModels(baseUrl, apiKey);
+      const listed = await nativeAgentListModels(
+        baseUrl,
+        apiKey,
+        p.apiKeyEnv,
+        p.apiKeyCredential,
+      );
       setP((prev) => {
         const byId = new Map(listed.map((m) => [m.id, m]));
         const merged = prev.models.map((m) => {
@@ -796,7 +933,13 @@ function ProviderEditorDialog({
     const baseUrl = p.baseUrl;
     const apiKey = p.apiKey;
     try {
-      const probed = await nativeAgentProbeReasoning(baseUrl, apiKey, modelId);
+      const probed = await nativeAgentProbeReasoning(
+        baseUrl,
+        apiKey,
+        modelId,
+        p.apiKeyEnv,
+        p.apiKeyCredential,
+      );
       setP((prev) => ({
         ...prev,
         models: prev.models.map((m) => {
@@ -846,8 +989,40 @@ function ProviderEditorDialog({
               type="password"
               autoComplete="off"
               value={p.apiKey}
-              onChange={(e) => setP({ ...p, apiKey: e.target.value })}
-              placeholder="sk-…"
+              onChange={(e) =>
+                setP({
+                  ...p,
+                  apiKey: e.target.value,
+                  apiKeyEnv: null,
+                  apiKeyCredential: e.target.value ? null : p.apiKeyCredential,
+                })
+              }
+              placeholder={
+                p.apiKeyEnv
+                  ? `由 ${p.apiKeyEnv} 提供`
+                  : p.apiKeyCredential
+                    ? "已安全保存在系统凭据库"
+                    : "sk-…"
+              }
+            />
+            <p className="text-[10px] text-[var(--text-tertiary)]">
+              直接填写会优先迁移到系统凭据库；也可用下方环境变量引用，避免配置文件保存明文密钥。
+            </p>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-sm">API Key 环境变量</Label>
+            <Input
+              autoComplete="off"
+              value={p.apiKeyEnv ?? ""}
+              onChange={(e) =>
+                setP({
+                  ...p,
+                  apiKeyEnv: e.target.value || null,
+                  apiKey: e.target.value.trim() ? "" : p.apiKey,
+                  apiKeyCredential: e.target.value.trim() ? null : p.apiKeyCredential,
+                })
+              }
+              placeholder="如 OPENAI_API_KEY"
             />
           </div>
           <div className="space-y-1">
@@ -857,6 +1032,26 @@ function ProviderEditorDialog({
               onChange={(e) => setP({ ...p, baseUrl: e.target.value })}
               placeholder="https://api.openai.com/v1"
             />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-sm">API 协议</Label>
+            <select
+              className="h-9 w-full rounded-[var(--radius-md)] border border-[color:var(--border-subtle)] bg-[var(--surface-input)] px-3 text-sm text-[var(--text-primary)]"
+              value={p.apiMode ?? "auto"}
+              onChange={(event) =>
+                setP({
+                  ...p,
+                  apiMode: event.target.value as NonNullable<NativeAgentProvider["apiMode"]>,
+                })
+              }
+            >
+              <option value="auto">自动（OpenAI 使用 Responses）</option>
+              <option value="responses">Responses API</option>
+              <option value="chatCompletions">Chat Completions</option>
+            </select>
+            <p className="text-[10px] text-[var(--text-tertiary)]">
+              Responses 会保留 typed output items 与加密推理上下文；兼容网关可固定使用 Chat Completions。
+            </p>
           </div>
 
           <div className="space-y-1.5">
@@ -940,7 +1135,7 @@ function ProviderEditorDialog({
                             size="sm"
                             variant="outline"
                             className="h-7 text-xs"
-                            disabled={probingId === m.id || !p.baseUrl.trim() || !p.apiKey}
+                            disabled={probingId === m.id || !p.baseUrl.trim() || !hasCredential}
                             onClick={() => void probeModel(m.id)}
                           >
                             {probingId === m.id ? "探测中…" : "探测档位"}
@@ -1003,7 +1198,7 @@ function ProviderEditorDialog({
               <Button
                 size="sm"
                 variant="outline"
-                disabled={fetching || !p.baseUrl.trim() || !p.apiKey}
+                disabled={fetching || !p.baseUrl.trim() || !hasCredential}
                 onClick={() => void fetchModels()}
               >
                 {fetching ? "获取中…" : "获取模型"}

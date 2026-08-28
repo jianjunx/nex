@@ -106,6 +106,7 @@ mod tests {
         ToolCtx {
             cwd: PathBuf::from("/tmp"),
             bash_timeout: Duration::from_secs(1),
+            shell_sandbox: crate::agent::native::config::ShellSandboxMode::ApprovalOnly,
             path_env: std::env::var_os("PATH").unwrap_or_default(),
             archive_dir: PathBuf::from("/tmp/.nex-archive"),
             jobs: Rc::new(RefCell::new(
@@ -116,8 +117,8 @@ mod tests {
             mode_id: Some(test_mode_cell(mode)),
             memory: super::super::test_memory_handle(),
             graph: None,
-        conn: None,
-        session_id: None,
+            conn: None,
+            session_id: None,
         }
     }
 

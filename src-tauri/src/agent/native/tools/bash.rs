@@ -191,7 +191,7 @@ impl Tool for Bash {
             None => ctx.bash_timeout,
         };
 
-        let mut cmd = super::shell_command_script(super::shell_command(), &command);
+        let mut cmd = super::sandboxed_shell_command(&command, &ctx.cwd, ctx.shell_sandbox)?;
         cmd.current_dir(&ctx.cwd);
         apply_path_env(&mut cmd, &ctx.path_env);
         configure_process_group(&mut cmd);
@@ -335,6 +335,7 @@ mod tests {
         ToolCtx {
             cwd: dir.to_path_buf(),
             bash_timeout: Duration::from_secs(10),
+            shell_sandbox: crate::agent::native::config::ShellSandboxMode::ApprovalOnly,
             path_env: std::env::var_os("PATH").unwrap_or_default(),
             archive_dir: dir.join(".nex-archive"),
             jobs: std::rc::Rc::new(std::cell::RefCell::new(
@@ -345,8 +346,8 @@ mod tests {
             mode_id: None,
             memory: super::super::test_memory_handle(),
             graph: None,
-        conn: None,
-        session_id: None,
+            conn: None,
+            session_id: None,
         }
     }
 
@@ -377,6 +378,38 @@ mod tests {
             out.contains(&canon) || out.contains(&tmp.path().to_string_lossy().to_string()),
             "cwd must be reflected in output: {out}"
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn workspace_sandbox_allows_workspace_write_and_blocks_parent_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        let workspace = tmp.path().join("workspace");
+        std::fs::create_dir(&workspace).unwrap();
+        let mut sandboxed = ctx(&workspace);
+        sandboxed.shell_sandbox =
+            crate::agent::native::config::ShellSandboxMode::WorkspaceWriteNoNetwork;
+
+        Bash.execute(
+            serde_json::json!({"command": "printf inside > allowed.txt"}),
+            &sandboxed,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(workspace.join("allowed.txt")).unwrap(),
+            "inside"
+        );
+
+        let error = Bash
+            .execute(
+                serde_json::json!({"command": "printf outside > ../blocked.txt"}),
+                &sandboxed,
+            )
+            .await
+            .unwrap_err();
+        assert!(error.contains("Operation not permitted"), "got: {error}");
+        assert!(!tmp.path().join("blocked.txt").exists());
     }
 
     #[tokio::test(flavor = "current_thread")]

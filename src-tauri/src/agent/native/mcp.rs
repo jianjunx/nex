@@ -18,6 +18,7 @@
 
 use std::collections::HashMap;
 use std::ffi::OsString;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -198,7 +199,29 @@ fn read_file(path: &Path) -> McpFile {
 
 fn write_file(path: &Path, file: &McpFile) -> Result<(), String> {
     let json = serde_json::to_vec_pretty(file).map_err(|e| e.to_string())?;
-    std::fs::write(path, json).map_err(|e| format!("failed to write {}: {e}", path.display()))
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).write(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut output = options
+        .open(path)
+        .map_err(|e| format!("failed to open {}: {e}", path.display()))?;
+    output
+        .write_all(&json)
+        .map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+    output
+        .sync_all()
+        .map_err(|e| format!("failed to flush {}: {e}", path.display()))?;
+    #[cfg(unix)]
+    std::fs::set_permissions(path, {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::Permissions::from_mode(0o600)
+    })
+    .map_err(|e| format!("failed to protect {}: {e}", path.display()))?;
+    Ok(())
 }
 
 /// Loads the runtime MCP configuration for a session. Global servers retain
@@ -380,6 +403,10 @@ enum Transport {
         client: reqwest::Client,
         url: String,
         headers: HashMap<String, String>,
+        /// Login-shell/project environment used to resolve `${NAME}` header
+        /// references. GUI apps frequently do not inherit the user's shell
+        /// environment, so consulting only `std::env` is insufficient.
+        header_env: HashMap<String, String>,
         session_id: Option<String>,
         next_id: u64,
     },
@@ -394,6 +421,10 @@ pub struct McpClient {
     child: Option<Child>,
     transport: Arc<Mutex<Transport>>,
     pub tools: Vec<McpToolInfo>,
+    /// Server advertised MCP resource support during initialize.
+    pub supports_resources: bool,
+    /// Server advertised resource templates (part of the resources capability).
+    pub supports_resource_templates: bool,
 }
 
 impl std::fmt::Debug for McpClient {
@@ -407,6 +438,11 @@ impl std::fmt::Debug for McpClient {
                     .iter()
                     .map(|t| t.name.as_str())
                     .collect::<Vec<_>>(),
+            )
+            .field("supports_resources", &self.supports_resources)
+            .field(
+                "supports_resource_templates",
+                &self.supports_resource_templates,
             )
             .finish()
     }
@@ -495,7 +531,7 @@ impl McpClient {
         base_env: &HashMap<String, String>,
     ) -> Result<Self, String> {
         if let Some(url) = config.url.as_deref().filter(|u| !u.is_empty()) {
-            return Self::connect_http(name, url, &config.headers).await;
+            return Self::connect_http(name, url, &config.headers, base_env).await;
         }
         let Some(command) = &config.command else {
             return Err(format!("MCP server `{name}` has no `command`"));
@@ -507,6 +543,7 @@ impl McpClient {
         name: &str,
         url: &str,
         headers: &HashMap<String, String>,
+        base_env: &HashMap<String, String>,
     ) -> Result<Self, String> {
         validate_mcp_url(url)?;
         // No automatic redirects: MCP session headers / auth must not follow
@@ -520,6 +557,7 @@ impl McpClient {
             client,
             url: url.to_string(),
             headers: headers.clone(),
+            header_env: base_env.clone(),
             session_id: None,
             next_id: 1,
         }));
@@ -528,6 +566,8 @@ impl McpClient {
             child: None,
             transport: transport.clone(),
             tools: Vec::new(),
+            supports_resources: false,
+            supports_resource_templates: false,
         };
         mcp.run_handshake(transport).await?;
         Ok(mcp)
@@ -573,6 +613,8 @@ impl McpClient {
             child: Some(child),
             transport: transport.clone(),
             tools: Vec::new(),
+            supports_resources: false,
+            supports_resource_templates: false,
         };
         mcp.run_handshake(transport).await?;
         Ok(mcp)
@@ -596,6 +638,8 @@ impl McpClient {
             if let Some(err) = init.get("error") {
                 return Err(format!("initialize failed: {err}"));
             }
+            let supports_resources = init.pointer("/result/capabilities/resources").is_some();
+            let supports_resource_templates = supports_resources;
             t.notify("notifications/initialized", serde_json::json!({}))
                 .await?;
             let listed = t.request(2, "tools/list", serde_json::json!({})).await?;
@@ -628,11 +672,13 @@ impl McpClient {
                         .unwrap_or_else(|| serde_json::json!({ "type": "object" })),
                 });
             }
-            Ok(parsed)
+            Ok((parsed, supports_resources, supports_resource_templates))
         };
         match tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake).await {
-            Ok(Ok(tools)) => {
+            Ok(Ok((tools, supports_resources, supports_resource_templates))) => {
                 self.tools = tools;
+                self.supports_resources = supports_resources;
+                self.supports_resource_templates = supports_resource_templates;
                 Ok(())
             }
             Ok(Err(e)) => Err(format!("MCP server `{name}` handshake failed: {e}")),
@@ -664,6 +710,62 @@ impl McpClient {
         })
         .await
         .map_err(|_| format!("MCP tool `{}` timed out", self.name))?
+    }
+
+    /// Lists one page of resources exposed by the server. The raw MCP result
+    /// is retained so callers can preserve annotations, MIME types and cursor.
+    pub async fn list_resources(
+        &self,
+        cursor: Option<String>,
+    ) -> Result<serde_json::Value, String> {
+        let mut params = serde_json::json!({});
+        if let Some(cursor) = cursor.filter(|cursor| !cursor.is_empty()) {
+            params["cursor"] = serde_json::Value::String(cursor);
+        }
+        self.request("resources/list", params, "resources/list")
+            .await
+    }
+
+    /// Reads one MCP resource by URI.
+    pub async fn read_resource(&self, uri: &str) -> Result<serde_json::Value, String> {
+        self.request(
+            "resources/read",
+            serde_json::json!({ "uri": uri }),
+            "resources/read",
+        )
+        .await
+    }
+
+    /// Lists one page of URI templates exposed by the server.
+    pub async fn list_resource_templates(
+        &self,
+        cursor: Option<String>,
+    ) -> Result<serde_json::Value, String> {
+        let mut params = serde_json::json!({});
+        if let Some(cursor) = cursor.filter(|cursor| !cursor.is_empty()) {
+            params["cursor"] = serde_json::Value::String(cursor);
+        }
+        self.request(
+            "resources/templates/list",
+            params,
+            "resources/templates/list",
+        )
+        .await
+    }
+
+    async fn request(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+        label: &str,
+    ) -> Result<serde_json::Value, String> {
+        tokio::time::timeout(CALL_TIMEOUT, async {
+            let mut transport = self.transport.lock().await;
+            let id = transport.alloc_id();
+            transport.request(id, method, params).await
+        })
+        .await
+        .map_err(|_| format!("MCP {label} timed out for `{}`", self.name))?
     }
 }
 
@@ -829,6 +931,7 @@ impl Transport {
             client,
             url,
             headers,
+            header_env,
             session_id,
             ..
         } = self
@@ -844,7 +947,8 @@ impl Transport {
             )
             .json(payload);
         for (k, v) in headers.iter() {
-            req = req.header(k.as_str(), v.as_str());
+            let value = resolve_header_value(v, header_env)?;
+            req = req.header(k.as_str(), value);
         }
         if let Some(sid) = session_id.as_deref() {
             req = req.header("Mcp-Session-Id", sid);
@@ -900,6 +1004,34 @@ impl Transport {
             Ok(msg)
         }
     }
+}
+
+/// Header values may reference a process/project environment variable as
+/// `${NAME}`. This is especially useful for OAuth bearer tokens: mcp.json
+/// stores only `"Authorization": "Bearer ${MCP_ACCESS_TOKEN}"`.
+fn resolve_header_value(raw: &str, env: &HashMap<String, String>) -> Result<String, String> {
+    let mut out = String::with_capacity(raw.len());
+    let mut rest = raw;
+    while let Some(start) = rest.find("${") {
+        out.push_str(&rest[..start]);
+        let tail = &rest[start + 2..];
+        let Some(end) = tail.find('}') else {
+            return Err("unterminated MCP header environment reference".to_string());
+        };
+        let name = &tail[..end];
+        if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return Err(format!("invalid MCP header environment variable `{name}`"));
+        }
+        let value = env
+            .get(name)
+            .cloned()
+            .or_else(|| std::env::var(name).ok())
+            .ok_or_else(|| format!("MCP header requires environment variable `{name}`"))?;
+        out.push_str(&value);
+        rest = &tail[end + 1..];
+    }
+    out.push_str(rest);
+    Ok(out)
 }
 
 /// Read one newline-terminated frame/header line without allocating beyond
@@ -1352,6 +1484,7 @@ data: \"result\":{\"ok\":true}}\n\
         let ctx = ToolCtx {
             cwd: std::env::temp_dir(),
             bash_timeout: Duration::from_secs(5),
+            shell_sandbox: crate::agent::native::config::ShellSandboxMode::ApprovalOnly,
             path_env: std::env::var_os("PATH").unwrap_or_default(),
             archive_dir: std::env::temp_dir(),
             jobs: Rc::new(RefCell::new(
@@ -1362,8 +1495,8 @@ data: \"result\":{\"ok\":true}}\n\
             mode_id: None,
             memory: crate::agent::native::tools::test_memory_handle(),
             graph: None,
-        conn: None,
-        session_id: None,
+            conn: None,
+            session_id: None,
         };
         let ok = proxy
             .execute(serde_json::json!({ "text": "yo" }), &ctx)
@@ -1473,5 +1606,15 @@ data: \"result\":{\"ok\":true}}\n\
         );
         let resolved = resolve_command("fake-mcp", &cfg, &base_env);
         assert_eq!(resolved, script.into_os_string());
+    }
+
+    #[test]
+    fn header_values_expand_environment_references_without_persisting_tokens() {
+        let name = "NEX_MCP_TEST_TOKEN";
+        let env = HashMap::from([(name.to_string(), "secret-token".to_string())]);
+        let rendered = resolve_header_value(&format!("Bearer ${{{name}}}"), &env).unwrap();
+        assert_eq!(rendered, "Bearer secret-token");
+        assert!(resolve_header_value("Bearer ${MISSING_NEX_TOKEN}", &env).is_err());
+        assert!(resolve_header_value("Bearer ${BAD-NAME}", &env).is_err());
     }
 }

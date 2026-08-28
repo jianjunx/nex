@@ -233,6 +233,7 @@ mod tests {
         ToolCtx {
             cwd: dir.to_path_buf(),
             bash_timeout: std::time::Duration::from_secs(10),
+            shell_sandbox: crate::agent::native::config::ShellSandboxMode::ApprovalOnly,
             path_env: std::env::var_os("PATH").unwrap_or_default(),
             archive_dir: dir.join(".nex-archive"),
             jobs: std::rc::Rc::new(std::cell::RefCell::new(
@@ -243,8 +244,8 @@ mod tests {
             mode_id: None,
             memory: super::super::test_memory_handle(),
             graph: None,
-        conn: None,
-        session_id: None,
+            conn: None,
+            session_id: None,
         }
     }
 

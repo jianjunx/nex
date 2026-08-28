@@ -273,7 +273,10 @@ fn questions_to_elicitation_request(
 }
 
 fn format_answers(questions: &[Question], response: &serde_json::Value) -> String {
-    let action = response.get("action").and_then(|v| v.as_str()).unwrap_or("");
+    let action = response
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     match action {
         "decline" => "User skipped the questions.".to_string(),
         "cancel" => "User cancelled the questions.".to_string(),

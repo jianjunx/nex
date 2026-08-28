@@ -284,9 +284,13 @@ impl WorkingMemory {
     }
 
     /// Backward-compatible helper used by older call sites/tests. Equivalent
-    /// to setting the current request focus without an anchor.
+    /// to a new unanchored request: a changed goal drops the old checklist.
     pub fn set_goal_for_request(&mut self, goal: impl Into<String>) -> bool {
-        self.set_request_focus(goal, None)
+        let changed = self.set_request_focus(goal, None);
+        if changed {
+            self.active_todos.clear();
+        }
+        changed
     }
 
     /// Replace the boot placeholder with the first real user request.

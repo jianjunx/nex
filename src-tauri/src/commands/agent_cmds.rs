@@ -49,6 +49,64 @@ pub async fn agent_send_prompt(
 }
 
 #[tauri::command]
+pub async fn agent_steer(
+    state: State<'_, AppState>,
+    session_id: String,
+    blocks: Vec<PromptBlock>,
+) -> Result<crate::agent::types::PromptResultDto, NexError> {
+    state.agent_manager.steer(&session_id, blocks).await
+}
+
+#[tauri::command]
+pub async fn agent_set_goal(
+    state: State<'_, AppState>,
+    session_id: String,
+    goal: String,
+) -> Result<serde_json::Value, NexError> {
+    state.agent_manager.set_goal(&session_id, &goal).await
+}
+
+#[tauri::command]
+pub async fn agent_get_session_state(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<serde_json::Value, NexError> {
+    state.agent_manager.session_state(&session_id).await
+}
+
+/// Forks a completed native-agent conversation archive and immediately opens
+/// the target as an independently resumable native session.
+#[tauri::command]
+pub async fn native_agent_fork_session(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    source_conversation_id: String,
+    target_conversation_id: String,
+    cwd: String,
+) -> Result<CreateSessionResult, NexError> {
+    crate::agent::native::archive::fork(&source_conversation_id, &target_conversation_id)
+        .map_err(NexError::Agent)?;
+    state
+        .agent_manager
+        .create_session(&app, &target_conversation_id, SessionTarget::Native, &cwd)
+        .await
+}
+
+#[tauri::command]
+pub fn native_agent_history_page(
+    session_id: String,
+    cursor: Option<usize>,
+    limit: Option<usize>,
+) -> Result<crate::agent::native::archive::HistoryPage, NexError> {
+    crate::agent::native::archive::history_page(
+        &session_id,
+        cursor.unwrap_or(0),
+        limit.unwrap_or(50),
+    )
+    .map_err(NexError::Agent)
+}
+
+#[tauri::command]
 pub async fn agent_set_session_mode(
     state: State<'_, AppState>,
     session_id: String,
@@ -151,7 +209,12 @@ fn app_data_dir(app: &AppHandle) -> Result<std::path::PathBuf, NexError> {
 /// Reads the built-in native agent config (`nex-agent.json`; defaults when absent).
 #[tauri::command]
 pub fn native_agent_get_config(app: AppHandle) -> Result<NativeAgentConfig, NexError> {
-    Ok(NativeAgentConfig::load(&app_data_dir(&app)?))
+    let dir = app_data_dir(&app)?;
+    let mut config = NativeAgentConfig::load(&dir);
+    if secure_provider_keys(&mut config) {
+        config.save(&dir)?;
+    }
+    Ok(config)
 }
 
 /// Persists the built-in native agent config (`nex-agent.json`).
@@ -160,8 +223,73 @@ pub fn native_agent_set_config(
     app: AppHandle,
     mut config: NativeAgentConfig,
 ) -> Result<(), NexError> {
+    let dir = app_data_dir(&app)?;
+    let old = NativeAgentConfig::load(&dir);
     config.normalize_agent_limits();
-    config.save(&app_data_dir(&app)?)
+    secure_provider_keys(&mut config);
+    config.save(&dir)?;
+    let retained: std::collections::HashSet<&str> = config
+        .providers
+        .iter()
+        .filter_map(|provider| provider.api_key_credential.as_deref())
+        .collect();
+    for stale in old
+        .providers
+        .iter()
+        .filter_map(|provider| provider.api_key_credential.as_deref())
+        .filter(|id| !retained.contains(*id))
+    {
+        let _ = crate::agent::native::secrets::delete(stale);
+    }
+    Ok(())
+}
+
+/// Best-effort migration into the OS credential store. Failure deliberately
+/// leaves the inline value intact so Linux desktops without Secret Service do
+/// not lose a working provider configuration.
+fn secure_provider_keys(config: &mut NativeAgentConfig) -> bool {
+    let mut changed = false;
+    for provider in &mut config.providers {
+        if provider
+            .api_key_env
+            .as_deref()
+            .is_some_and(|name| !name.trim().is_empty())
+        {
+            provider.api_key.clear();
+            continue;
+        }
+        if provider.api_key.trim().is_empty() {
+            continue;
+        }
+        let id = provider
+            .api_key_credential
+            .clone()
+            .unwrap_or_else(|| format!("provider.{}", credential_component(&provider.id)));
+        match crate::agent::native::secrets::set(&id, &provider.api_key) {
+            Ok(()) => {
+                provider.api_key.clear();
+                provider.api_key_credential = Some(id);
+                changed = true;
+            }
+            Err(error) => log::warn!(
+                "provider credential remains inline because system storage failed: {error}"
+            ),
+        }
+    }
+    changed
+}
+
+fn credential_component(raw: &str) -> String {
+    let value: String = raw
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        .take(96)
+        .collect();
+    if value.is_empty() {
+        uuid::Uuid::new_v4().simple().to_string()
+    } else {
+        value
+    }
 }
 
 /// Fetches models from an OpenAI-compatible `{base_url}/v1/models` endpoint,
@@ -171,9 +299,12 @@ pub fn native_agent_set_config(
 pub async fn native_agent_list_models(
     base_url: String,
     api_key: String,
+    api_key_env: Option<String>,
+    api_key_credential: Option<String>,
 ) -> Result<Vec<crate::agent::native::config::ModelEntry>, NexError> {
     use crate::agent::native::capabilities::from_api_model;
 
+    let api_key = resolve_provider_key(api_key, api_key_env, api_key_credential)?;
     let url = crate::agent::native::provider::openai_endpoint(&base_url, "models");
     let resp = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
@@ -212,9 +343,39 @@ pub async fn native_agent_list_models(
 pub async fn native_agent_probe_reasoning(
     base_url: String,
     api_key: String,
+    api_key_env: Option<String>,
+    api_key_credential: Option<String>,
     model_id: String,
 ) -> Result<crate::agent::native::config::ModelEntry, NexError> {
+    let api_key = resolve_provider_key(api_key, api_key_env, api_key_credential)?;
     crate::agent::native::probe::probe_reasoning_levels(&base_url, &api_key, &model_id).await
+}
+
+fn resolve_provider_key(
+    api_key: String,
+    api_key_env: Option<String>,
+    api_key_credential: Option<String>,
+) -> Result<String, NexError> {
+    if let Some(name) = api_key_env
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        return std::env::var(name).map_err(|_| {
+            NexError::Agent(format!("environment variable `{name}` is not available"))
+        });
+    }
+    if let Some(id) = api_key_credential
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
+        return crate::agent::native::secrets::get(id).map_err(NexError::Agent);
+    }
+    if api_key.trim().is_empty() {
+        return Err(NexError::Agent("API key is required".into()));
+    }
+    Ok(api_key)
 }
 
 /// Settings-panel skill row.

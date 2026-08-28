@@ -2,10 +2,12 @@
 //!
 //! A [`Provider`] turns an assembled [`ChatRequest`] into a stream of
 //! [`Chunk`]s. The harness loop in `session.rs` consumes those chunks,
-//! accumulating assistant text and tool calls. Only DeepSeek is wired today,
-//! but the trait keeps the door open for other OpenAI-compatible endpoints.
+//! accumulating assistant text, typed response items, and tool calls. Nex uses
+//! Chat Completions for compatible gateways and Responses for OpenAI-native
+//! endpoints (or providers explicitly configured for that protocol).
 
 pub mod deepseek;
+pub mod responses;
 
 use serde::{Deserialize, Serialize};
 
@@ -205,6 +207,10 @@ pub enum Chunk {
     Thinking(String),
     /// A complete tool call (arguments already accumulated + parsed).
     ToolCall(NativeToolCall),
+    /// A complete Responses API output item. These opaque typed items are
+    /// archived and replayed verbatim so call linkage and encrypted reasoning
+    /// survive tool rounds, later turns, and app restarts.
+    ResponseItem(serde_json::Value),
     /// Stream finished.
     Done {
         stop_reason: StopReasonKind,
@@ -295,6 +301,10 @@ pub struct ChatMessage {
     /// DeepSeek reasoner thought channel (kept for transcript fidelity).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_content: Option<String>,
+    /// Provider-native Responses output items associated with this assistant
+    /// turn. DeepSeek/chat-completions serialization deliberately omits them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub response_items: Vec<serde_json::Value>,
 }
 
 impl ChatMessage {
@@ -305,6 +315,7 @@ impl ChatMessage {
             tool_calls: None,
             tool_call_id: None,
             reasoning_content: None,
+            response_items: Vec::new(),
         }
     }
     pub fn user(text: impl Into<String>) -> Self {
@@ -314,6 +325,7 @@ impl ChatMessage {
             tool_calls: None,
             tool_call_id: None,
             reasoning_content: None,
+            response_items: Vec::new(),
         }
     }
     pub fn assistant(text: impl Into<String>) -> Self {
@@ -323,16 +335,28 @@ impl ChatMessage {
             tool_calls: None,
             tool_call_id: None,
             reasoning_content: None,
+            response_items: Vec::new(),
         }
     }
     /// Assistant turn that only carries tool calls (content may be None).
     pub fn assistant_tool_calls(calls: Vec<ChatToolCall>, text: Option<String>) -> Self {
+        Self::assistant_tool_calls_with_reasoning(calls, text, None)
+    }
+    /// Assistant tool-call turn with the provider's opaque reasoning payload.
+    /// DeepSeek reasoning models require this value to be replayed with the
+    /// tool results in the immediately following completion request.
+    pub fn assistant_tool_calls_with_reasoning(
+        calls: Vec<ChatToolCall>,
+        text: Option<String>,
+        reasoning_content: Option<String>,
+    ) -> Self {
         Self {
             role: "assistant".into(),
             content: text.map(Content::Text),
             tool_calls: Some(calls),
             tool_call_id: None,
-            reasoning_content: None,
+            reasoning_content,
+            response_items: Vec::new(),
         }
     }
     pub fn tool_result(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
@@ -342,6 +366,7 @@ impl ChatMessage {
             tool_calls: None,
             tool_call_id: Some(tool_call_id.into()),
             reasoning_content: None,
+            response_items: Vec::new(),
         }
     }
     /// A user turn with multimodal parts (text + images + injected files).
@@ -352,6 +377,7 @@ impl ChatMessage {
             tool_calls: None,
             tool_call_id: None,
             reasoning_content: None,
+            response_items: Vec::new(),
         }
     }
     /// A user turn with arbitrary content (text or parts).
@@ -362,7 +388,13 @@ impl ChatMessage {
             tool_calls: None,
             tool_call_id: None,
             reasoning_content: None,
+            response_items: Vec::new(),
         }
+    }
+
+    pub fn with_response_items(mut self, items: Vec<serde_json::Value>) -> Self {
+        self.response_items = items;
+        self
     }
 }
 
@@ -472,6 +504,11 @@ pub trait Provider: Send + Sync {
     /// it is queried on every turn.
     fn reserved_response_hint(&self, _model_id: &str) -> Option<u64> {
         None
+    }
+    /// True when a compatibility endpoint rejected the configured reasoning
+    /// control and the provider retried without it.
+    fn reasoning_downgraded(&self) -> bool {
+        false
     }
 }
 

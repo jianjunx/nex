@@ -61,6 +61,14 @@ describe("resolveContextRingUsage", () => {
     expect(usage).toEqual({ used: 30_000, total: 200_000, tokens: [] });
   });
 
+  it("prefers exact provider input usage over the preflight estimate", () => {
+    const usage = resolveContextRingUsage(
+      null,
+      stats({ contextWindow: 200_000, finalTokens: 30_000, promptTokens: 27_412 }),
+    );
+    expect(usage).toEqual({ used: 27_412, total: 200_000, tokens: [] });
+  });
+
   it("prefers ACP size when both are present", () => {
     const usage = resolveContextRingUsage(
       { used: 12, total: 100, tokens: [{ type: "input", value: 12 }] },

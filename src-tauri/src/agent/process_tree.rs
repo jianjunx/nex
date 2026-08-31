@@ -91,13 +91,26 @@ mod tests {
 
         let pgid = child.id().expect("child pid") as libc::pid_t;
         kill_tree(&mut child).await;
-        let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
+        tokio::time::timeout(Duration::from_secs(2), child.wait())
+            .await
+            .expect("shell should exit after kill_tree")
+            .expect("wait for killed shell");
 
-        // Signal 0 to the group must fail once every member is gone.
-        let still_alive = unsafe { libc::kill(-pgid, 0) == 0 };
-        assert!(
-            !still_alive,
-            "process group {pgid} still has members after kill_tree"
-        );
+        // The shell can be reaped before its orphaned grandchild zombie is
+        // adopted and reaped by launchd/init. Give that asynchronous cleanup a
+        // bounded window instead of treating one scheduler tick as a leak.
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                // Signal 0 fails with ESRCH once every group member is gone.
+                if unsafe { libc::kill(-pgid, 0) } == -1
+                    && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("process group {pgid} still has members after kill_tree"));
     }
 }

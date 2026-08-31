@@ -106,6 +106,10 @@ pub struct TurnEnv {
     pub tool_ctx: ToolCtx,
     /// Context window in tokens; `0` disables compression.
     pub context_window: u64,
+    /// Exact prompt size from the previous provider request (including the
+    /// previous app turn when the model is unchanged). It guards against the
+    /// local tokenizer estimate under-counting a provider-specific payload.
+    pub observed_prompt_tokens: Cell<u64>,
     /// Accumulated provider usage for the turn (observability).
     pub usage: RefCell<Usage>,
     /// Per-turn context-engine stats (compaction, partials, cache hit).
@@ -251,6 +255,7 @@ async fn run_subagent_with_access(
         auto_allow: Rc::new(RefCell::new(HashSet::new())),
         tool_ctx,
         context_window: harness.context_window,
+        observed_prompt_tokens: Cell::new(0),
         usage: RefCell::new(Usage::default()),
         stats: RefCell::new(stats::ContextStats::with_window(harness.context_window)),
     };
@@ -449,17 +454,29 @@ pub async fn run_turn(
         );
         let outcome = {
             let mem = env.tool_ctx.memory.borrow();
-            budget::enforce_with_memory(messages, budget, &env.tool_ctx.archive_dir, Some(&mem))
+            budget::enforce_with_memory_and_observed(
+                messages,
+                budget,
+                &env.tool_ctx.archive_dir,
+                Some(&mem),
+                env.observed_prompt_tokens.get(),
+            )
         };
         {
             let mut s = env.stats.borrow_mut();
-            s.compaction_passes = outcome.passes as u32;
-            s.snipped_messages = outcome.total_snipped as u32;
-            s.folded_messages = outcome.total_folded as u32;
-            s.archive_files_written = outcome.archive_files.len() as u32;
+            s.compaction_passes = s.compaction_passes.saturating_add(outcome.passes as u32);
+            s.snipped_messages = s
+                .snipped_messages
+                .saturating_add(outcome.total_snipped as u32);
+            s.folded_messages = s
+                .folded_messages
+                .saturating_add(outcome.total_folded as u32);
+            s.archive_files_written = s
+                .archive_files_written
+                .saturating_add(outcome.archive_files.len() as u32);
             s.final_tokens = outcome.final_tokens;
             s.initial_tokens = outcome.initial_tokens;
-            s.used_summary_fallback = outcome.used_summary_fallback;
+            s.used_summary_fallback |= outcome.used_summary_fallback;
             s.over_budget = outcome.over_budget;
             s.context_window = env.context_window;
         }
@@ -668,8 +685,12 @@ pub async fn run_turn(
                         acc.completion_tokens += u.completion_tokens;
                         acc.cache_hit_tokens += u.cache_hit_tokens;
                         let mut s = env.stats.borrow_mut();
-                        s.cache_hit_tokens = acc.cache_hit_tokens;
-                        s.prompt_tokens = acc.prompt_tokens;
+                        s.cache_hit_tokens = u.cache_hit_tokens;
+                        s.prompt_tokens = u.prompt_tokens;
+                        s.turn_prompt_tokens = acc.prompt_tokens;
+                        s.turn_completion_tokens = acc.completion_tokens;
+                        s.turn_cache_hit_tokens = acc.cache_hit_tokens;
+                        env.observed_prompt_tokens.set(u.prompt_tokens);
                     }
                     break;
                 }
@@ -1995,6 +2016,16 @@ mod tests {
             usage: Some(Usage::default()),
         }
     }
+    fn done_with_usage(prompt_tokens: u64, completion_tokens: u64, cache_hit_tokens: u64) -> Chunk {
+        Chunk::Done {
+            stop_reason: StopReasonKind::EndTurn,
+            usage: Some(Usage {
+                prompt_tokens,
+                completion_tokens,
+                cache_hit_tokens,
+            }),
+        }
+    }
     fn max_tokens_done() -> Chunk {
         Chunk::Done {
             stop_reason: StopReasonKind::MaxTokens,
@@ -2084,6 +2115,7 @@ mod tests {
                 session_id: None,
             },
             context_window: 0,
+            observed_prompt_tokens: Cell::new(0),
             usage: RefCell::new(Usage::default()),
             stats: RefCell::new(stats::ContextStats::new()),
         };
@@ -2214,6 +2246,42 @@ mod tests {
                     }),
                     "model harness echo must not be persisted"
                 );
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn context_stats_separate_latest_request_from_turn_totals() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let tmp = tempfile::tempdir().unwrap();
+                let echo = format!("{}\nGoal:\n- stale\n", crate::agent::native::memory::MARKER);
+                let provider = ScriptedProvider {
+                    turns: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
+                        vec![text_chunk(&echo), done_with_usage(100, 10, 50)],
+                        vec![text_chunk("done"), done_with_usage(200, 20, 150)],
+                    ])),
+                    tools_nonempty: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+                };
+                let (env, _, _) = make_env(provider, tmp.path(), false);
+                let mut messages = vec![ChatMessage::system("sys")];
+                let stop = run_turn(&env, &mut messages, Content::Text("continue".into())).await;
+                assert!(matches!(stop, acp::StopReason::EndTurn));
+
+                let usage = env.usage.borrow();
+                assert_eq!(usage.prompt_tokens, 300);
+                assert_eq!(usage.completion_tokens, 30);
+                assert_eq!(usage.cache_hit_tokens, 200);
+                drop(usage);
+
+                let stats = env.stats.borrow();
+                assert_eq!(stats.prompt_tokens, 200);
+                assert_eq!(stats.cache_hit_tokens, 150);
+                assert_eq!(stats.turn_prompt_tokens, 300);
+                assert_eq!(stats.turn_completion_tokens, 30);
+                assert_eq!(stats.turn_cache_hit_tokens, 200);
+                assert_eq!(env.observed_prompt_tokens.get(), 200);
             })
             .await;
     }

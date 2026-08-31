@@ -38,14 +38,20 @@ pub struct ContextStats {
     /// entry here is a chance the model continues reasoning on partial
     /// information.
     pub partial_tool_results: u32,
-    /// Cache-hit tokens reported by the provider across streams of this
-    /// turn. Zero when the provider did not surface a cache field
+    /// Cache-hit tokens reported for the latest provider request. Zero when
+    /// the provider did not surface a cache field
     /// (`prompt_cache_hit_tokens`, `prompt_tokens_details.cached_tokens`,
     /// or `cache_read_input_tokens`).
     pub cache_hit_tokens: u64,
-    /// Total prompt tokens reported by the provider on the last stream
-    /// of this turn. Zero when the provider did not surface `usage`.
+    /// Prompt tokens reported for the latest provider request. This is the
+    /// numerator used by the context ring; it must never be a turn-wide sum.
     pub prompt_tokens: u64,
+    /// Provider usage accumulated across every model request in this agent
+    /// turn. Kept separate from the latest-request values above so billing /
+    /// cache observability cannot make the context ring exceed its window.
+    pub turn_prompt_tokens: u64,
+    pub turn_completion_tokens: u64,
+    pub turn_cache_hit_tokens: u64,
     /// Configured model context window for this turn. `0` means unknown
     /// or compression disabled. Surfaced so the composer can show
     /// `used / window` (e.g. `30K / 200K`).
@@ -60,7 +66,7 @@ pub struct ContextStats {
 impl ContextStats {
     /// Bump whenever the serialised shape changes; consumers can pin
     /// against this and warn when the schema drifts.
-    pub const SCHEMA_VERSION: u32 = 3;
+    pub const SCHEMA_VERSION: u32 = 4;
 
     pub fn new() -> Self {
         Self {
@@ -158,7 +164,7 @@ mod tests {
         let merged = to_meta(&stats, Some(existing));
         assert_eq!(merged["hadMutations"], true);
         assert_eq!(merged["contextStats"]["finalTokens"], 1234);
-        assert_eq!(merged["contextStats"]["schemaVersion"], 3);
+        assert_eq!(merged["contextStats"]["schemaVersion"], 4);
         assert_eq!(merged["contextStats"]["contextWindow"], 0);
     }
 }

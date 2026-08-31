@@ -447,6 +447,9 @@ describe("agent.store cache-hit history", () => {
         partialToolResults: 0,
         cacheHitTokens: 12,
         promptTokens: 20,
+        turnCacheHitTokens: 30,
+        turnPromptTokens: 50,
+        turnCompletionTokens: 7,
         contextWindow: 200_000,
         usedSummaryFallback: false,
         overBudget: false,
@@ -466,7 +469,7 @@ describe("agent.store cache-hit history", () => {
     const history = useAgentStore.getState().cacheHitHistoryByConversation["conv-1"];
     expect(history).toHaveLength(1);
     expect(history?.[0]).toEqual(
-      expect.objectContaining({ cacheHitTokens: 12, promptTokens: 20 }),
+      expect.objectContaining({ cacheHitTokens: 30, promptTokens: 50 }),
     );
   });
 

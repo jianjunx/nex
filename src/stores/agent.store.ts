@@ -1020,8 +1020,8 @@ export const useAgentStore = create<AgentStore>()(
             s.cacheHitHistoryByConversation[session.conversationId] = pushCacheHitSample(
               s.cacheHitHistoryByConversation[session.conversationId] ?? [],
               {
-                cacheHitTokens: stats.cacheHitTokens,
-                promptTokens: stats.promptTokens,
+                cacheHitTokens: stats.turnCacheHitTokens ?? stats.cacheHitTokens,
+                promptTokens: stats.turnPromptTokens ?? stats.promptTokens,
                 timestamp: Date.now(),
               },
             );

@@ -162,6 +162,20 @@ pub fn enforce_with_memory(
     archive_dir: &std::path::Path,
     working_memory: Option<&memory::WorkingMemory>,
 ) -> BudgetLoopOutcome {
+    enforce_with_memory_and_observed(messages, budget, archive_dir, working_memory, 0)
+}
+
+/// Budget enforcement with a provider-observed prompt size from the previous
+/// request. The exact count acts only as a pre-emptive pressure floor: after a
+/// tier rewrites the transcript we return to local estimates, because the old
+/// provider count describes content that is no longer present.
+pub fn enforce_with_memory_and_observed(
+    messages: &mut Vec<crate::agent::native::provider::ChatMessage>,
+    budget: ContextBudget,
+    archive_dir: &std::path::Path,
+    working_memory: Option<&memory::WorkingMemory>,
+    observed_prompt_tokens: u64,
+) -> BudgetLoopOutcome {
     if budget.prompt_budget == 0 {
         // Still report the current estimate so the composer can show
         // `used / window` even when the user has disabled compression.
@@ -177,7 +191,8 @@ pub fn enforce_with_memory(
     let mut used = tokens.estimate(messages);
     outcome.initial_tokens = used;
 
-    let preemptive_tier = match compact::decide(used, budget.model_window) {
+    let pressure = used.max(observed_prompt_tokens);
+    let preemptive_tier = match compact::decide(pressure, budget.model_window) {
         compact::CompactLevel::None => None,
         compact::CompactLevel::Snip => Some(compact::StepTier::Snip),
         compact::CompactLevel::Compact => Some(compact::StepTier::Compact),
@@ -465,6 +480,33 @@ mod tests {
         assert!(outcome.total_folded > 0 || outcome.total_snipped > 0);
         assert!(outcome.final_tokens < outcome.initial_tokens);
         assert!(outcome.final_tokens <= budget.prompt_budget);
+    }
+
+    #[test]
+    fn provider_high_water_forces_compaction_when_local_estimate_is_low() {
+        let mut msgs = vec![ChatMessage::system("sys")];
+        for i in 0..12 {
+            msgs.push(ChatMessage::user(format!("user {i}")));
+            msgs.push(ChatMessage::assistant(format!(
+                "assistant {i} {}",
+                "a".repeat(500)
+            )));
+        }
+        let local = compact::estimate_tokens(&msgs);
+        let budget = ContextBudget {
+            model_window: local * 10,
+            reserved_response: 0,
+            safety_margin: 0,
+            prompt_budget: local * 10,
+        };
+        let observed = (budget.model_window * 95) / 100;
+        let tmp = tempfile::tempdir().unwrap();
+        let outcome =
+            enforce_with_memory_and_observed(&mut msgs, budget, tmp.path(), None, observed);
+
+        assert!(outcome.passes >= 1);
+        assert!(outcome.total_folded > 0);
+        assert!(outcome.final_tokens < outcome.initial_tokens);
     }
 
     #[test]

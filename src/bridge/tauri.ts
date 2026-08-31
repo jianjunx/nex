@@ -233,6 +233,10 @@ export interface ContextStatsDto {
   partialToolResults: number;
   cacheHitTokens: number;
   promptTokens: number;
+  /** Usage accumulated across all provider requests in this agent turn. */
+  turnPromptTokens?: number;
+  turnCompletionTokens?: number;
+  turnCacheHitTokens?: number;
   /** Model context window; `0` / omitted when unknown. */
   contextWindow?: number;
   usedSummaryFallback: boolean;

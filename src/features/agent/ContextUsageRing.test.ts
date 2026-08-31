@@ -9,7 +9,7 @@ import { ContextUsageRing, fmtTokens, resolveContextRingUsage, summarizeRecentCa
 
 function stats(partial: Partial<ContextStatsDto>): ContextStatsDto {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     initialTokens: 0,
     finalTokens: 0,
     compactionPasses: 0,
@@ -113,15 +113,22 @@ describe("ContextUsageRing", () => {
     render(
       createElement(ContextUsageRing, {
         usage: { used: 30_000, total: 200_000, tokens: [] },
-        stats: stats({ cacheHitTokens: 12_000, promptTokens: 20_000 }),
+        stats: stats({
+          cacheHitTokens: 12_000,
+          promptTokens: 20_000,
+          turnCacheHitTokens: 48_000,
+          turnPromptTokens: 90_000,
+        }),
         recentCacheHitSummary: { sampleCount: 3, cacheHitTokens: 48_000, promptTokens: 100_000 },
       }),
     );
 
     fireEvent.click(screen.getByRole("button", { name: "上下文用量 30K / 200K" }));
 
-    expect(screen.getByText("缓存命中（本轮）")).toBeTruthy();
+    expect(screen.getByText("缓存命中（当前请求）")).toBeTruthy();
     expect(screen.getByText("12K / 20K (60%)")).toBeTruthy();
+    expect(screen.getByText("本轮累计输入")).toBeTruthy();
+    expect(screen.getByText("90K")).toBeTruthy();
     expect(screen.getByText("缓存命中（近 3 轮）")).toBeTruthy();
     expect(screen.getByText("48K / 100K (48%)")).toBeTruthy();
   });

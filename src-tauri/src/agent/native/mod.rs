@@ -79,6 +79,10 @@ struct NativeSession {
     /// Append-only OpenAI-format transcript (system prompt pushed lazily on
     /// the first turn so config edits take effect for fresh sessions).
     history: Vec<ChatMessage>,
+    /// Last exact prompt size, scoped to its model. Used to carry provider
+    /// high-water pressure across app turns without contaminating a model
+    /// switch with another model's window semantics.
+    last_prompt_usage: Option<(String, u64)>,
     /// Background shell jobs survive across turns within a session.
     jobs: Rc<RefCell<tools::jobs::JobTable>>,
     /// Connected MCP servers (one client per `mcp.json` entry); dropping the
@@ -523,6 +527,7 @@ impl acp::Agent for NexNativeAgent {
             memory: handles.memory.clone(),
             handles: handles.clone_handles(),
             history: Vec::new(),
+            last_prompt_usage: None,
             jobs: Rc::new(RefCell::new(tools::jobs::JobTable::default())),
             mcp: Vec::new(),
         };
@@ -616,6 +621,7 @@ impl acp::Agent for NexNativeAgent {
             memory: handles.memory.clone(),
             handles: handles.clone_handles(),
             history: arch.history,
+            last_prompt_usage: None,
             jobs: Rc::new(RefCell::new(tools::jobs::JobTable::default())),
             mcp: Vec::new(),
         };
@@ -946,6 +952,14 @@ impl acp::Agent for NexNativeAgent {
                         session_id: Some(args.session_id.0.to_string()),
                     },
                     context_window: cfg.context_window_for(&model_id),
+                    observed_prompt_tokens: Cell::new(
+                        session
+                            .last_prompt_usage
+                            .as_ref()
+                            .filter(|(last_model, _)| last_model == &model_id)
+                            .map(|(_, tokens)| *tokens)
+                            .unwrap_or(0),
+                    ),
                     usage: RefCell::new(provider::Usage::default()),
                     stats: RefCell::new(stats::ContextStats::with_window(
                         cfg.context_window_for(&model_id),
@@ -986,6 +1000,9 @@ impl acp::Agent for NexNativeAgent {
                 // still in scope; we will surface them in the prompt meta
                 // after the match arm closes.
                 let turn_stats = env.stats.borrow().clone();
+                if turn_stats.prompt_tokens > 0 {
+                    session.last_prompt_usage = Some((model_id.clone(), turn_stats.prompt_tokens));
+                }
                 // Runtime reasoning-support detection: the provider strips
                 // `reasoning_effort` and retries when the endpoint rejects it.
                 // Remember the result so later turns skip the parameter.

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { CheckCircle2, HelpCircle, XCircle } from "lucide-react";
+import { CheckCircle2, CheckSquare, Circle, HelpCircle, Square, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { AskQuestionAnswerPayload } from "../../../bridge/events";
@@ -134,30 +134,53 @@ export function AskQuestionCard({ entry }: { entry: AskQuestionEntry }) {
               {q.allowMultiple && pending && (
                 <p className="text-xs text-[var(--text-tertiary)]">可多选</p>
               )}
-              <div className="space-y-1.5">
+              <div
+                className="space-y-1.5"
+                role={q.allowMultiple ? "group" : "radiogroup"}
+                aria-label={q.prompt}
+              >
                 {q.options.map((opt) => {
                   const selected = pending
                     ? (selections[q.id] ?? []).includes(opt.id)
                     : (submitted?.selectedOptionIds ?? []).includes(opt.id);
+                  const Indicator = q.allowMultiple
+                    ? selected
+                      ? CheckSquare
+                      : Square
+                    : selected
+                      ? CheckCircle2
+                      : Circle;
                   return (
                     <Button
                       key={opt.id}
                       type="button"
-                      variant="outline"
+                      variant="ghost"
+                      role={q.allowMultiple ? "checkbox" : "radio"}
+                      aria-checked={selected}
                       disabled={!pending}
                       className={cn(
-                        "nex-interactive-chrome nex-pressable h-auto w-full flex-col items-start gap-0.5 whitespace-normal py-2 text-left",
-                        selected &&
-                          "border-[var(--accent)] bg-[color:color-mix(in_srgb,var(--material-elevated)_88%,transparent)] shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)]",
+                        "nex-interactive-chrome nex-pressable h-auto w-full items-start justify-start gap-2.5 whitespace-normal py-2 text-left font-medium",
+                        selected
+                          ? "border border-[color:var(--accent)] bg-[color:color-mix(in_srgb,var(--accent)_16%,transparent)] text-[var(--text-primary)] shadow-[inset_0_1px_0_0_var(--edge-highlight-bright)] hover:bg-[color:color-mix(in_srgb,var(--accent)_22%,transparent)] disabled:opacity-100 dark:border-[color:var(--accent)] dark:bg-[color:color-mix(in_srgb,var(--accent)_16%,transparent)] dark:hover:bg-[color:color-mix(in_srgb,var(--accent)_22%,transparent)]"
+                          : "border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_56%,transparent)] text-[var(--text-primary)] hover:border-[color:var(--hairline-strong)] hover:bg-[color:color-mix(in_srgb,var(--material-elevated)_86%,transparent)] disabled:opacity-40",
                       )}
                       onClick={() => onOptionClick(q.id, opt.id, q.allowMultiple)}
                     >
-                      <span>{opt.label}</span>
-                      {opt.description?.trim() && (
-                        <span className="text-xs font-normal text-[var(--text-tertiary)]">
-                          {opt.description}
-                        </span>
-                      )}
+                      <Indicator
+                        size={16}
+                        className={cn(
+                          "mt-0.5 shrink-0",
+                          selected ? "text-[var(--accent)]" : "text-[var(--text-tertiary)]",
+                        )}
+                      />
+                      <span className="flex min-w-0 flex-1 flex-col items-start gap-0.5">
+                        <span>{opt.label}</span>
+                        {opt.description?.trim() && (
+                          <span className="text-xs font-normal text-[var(--text-tertiary)]">
+                            {opt.description}
+                          </span>
+                        )}
+                      </span>
                     </Button>
                   );
                 })}

@@ -69,5 +69,41 @@ describe("AskQuestionCard", () => {
     expect(screen.queryByText("跳过")).toBeNull();
     fireEvent.click(screen.getByText("我手动登录后继续"));
     expect(respondAskQuestion).not.toHaveBeenCalled();
+    expect(screen.getByRole("radio", { name: /我手动登录后继续/ }).getAttribute("aria-checked")).toBe(
+      "true",
+    );
+    expect(screen.getByRole("radio", { name: /我提供测试账号密码/ }).getAttribute("aria-checked")).toBe(
+      "false",
+    );
+  });
+
+  it("多题时点击选项会标出选中态，且不立即提交", () => {
+    const multi: AskQuestionEntry = {
+      ...ENTRY,
+      questions: [
+        ENTRY.questions[0],
+        {
+          id: "q2",
+          prompt: "第二题",
+          options: [
+            { id: "c", label: "选项 C" },
+            { id: "d", label: "选项 D" },
+          ],
+          allowMultiple: false,
+        },
+      ],
+    };
+    render(<AskQuestionCard entry={multi} />);
+    const first = screen.getByRole("radio", { name: /我提供测试账号密码/ });
+    const second = screen.getByRole("radio", { name: /我手动登录后继续/ });
+    expect(first.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(first);
+    expect(first.getAttribute("aria-checked")).toBe("true");
+    expect(second.getAttribute("aria-checked")).toBe("false");
+    expect(respondAskQuestion).not.toHaveBeenCalled();
+
+    fireEvent.click(second);
+    expect(first.getAttribute("aria-checked")).toBe("false");
+    expect(second.getAttribute("aria-checked")).toBe("true");
   });
 });

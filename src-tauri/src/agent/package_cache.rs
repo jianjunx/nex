@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use serde_json::Value as JsonValue;
+use tokio::io::AsyncReadExt;
 use tokio::sync::{Mutex as AsyncMutex, OnceCell};
 
 use super::node_runtime::{NodeRuntime, NodeRuntimeHandle};
@@ -29,9 +30,14 @@ use super::registry::{RegistryEntry, RegistryNpxDistribution};
 use crate::error::NexError;
 
 /// Total hard cap for one package install, including registry fallback.
-const INSTALL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-/// Leave half of the total budget for npmjs if the mirror stalls completely.
-const MIRROR_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+///
+/// Codex ACP pulls a platform package whose unpacked binary is currently
+/// around 128 MiB. Ten minutes was not enough on slower links once the mirror
+/// attempt and the official-registry fallback shared that budget.
+const INSTALL_TIMEOUT: Duration = Duration::from_secs(20 * 60);
+/// Give each registry enough time to fetch a large platform package while
+/// still reserving half of the total budget for the official fallback.
+const MIRROR_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 /// Prefer the China-friendly mirror. npmjs remains the automatic fallback
 /// when the mirror is unreachable or has not synced a new package yet.
@@ -211,6 +217,18 @@ impl PackageCache {
                 hint: "No usable Node.js runtime. Install Node 22+ and restart Nex.".into(),
             });
         }
+        // npm may have completed and written its lockfile before Nex was
+        // interrupted between process exit and writing `.nex-install-ok`.
+        // Adopt that exact, structurally usable install instead of deleting
+        // and downloading it again.
+        if let Some(executable_path) = recover_completed_install(install_dir, spec) {
+            log::info!("recovered completed unmarked npm install for `{spec}`");
+            return Ok(ResolvedNpx {
+                node_path: node_binary.to_path_buf(),
+                executable_path,
+                first_install: true,
+            });
+        }
         // The Node distribution ships `npm-cli.js` next to its own `bin/node`
         // (Unix) or directly under `<root>/node_modules/` (Windows). The
         // exact path depends on the Node layout — see `resolve_npm_cli` for
@@ -230,8 +248,12 @@ impl PackageCache {
         let node_path = node_binary.to_path_buf();
         let registries = [NPM_MIRROR_REGISTRY, NPM_OFFICIAL_REGISTRY];
         let mut mirror_failure: Option<String> = None;
+        // Keep a partial same-spec install across retries. npm install is
+        // idempotent and will reconcile node_modules; deleting it here used
+        // to throw away hundreds of megabytes when the mirror timed out and
+        // forced the official fallback to start from zero.
+        ensure_install_dir(install_dir)?;
         for (index, registry) in registries.iter().enumerate() {
-            prepare_install_dir(install_dir)?;
             let (user_rc, global_rc) = write_empty_npmrc_pair(install_dir)?;
             let npm_args = npm_install_args(
                 install_dir,
@@ -290,13 +312,41 @@ impl PackageCache {
     }
 }
 
-fn prepare_install_dir(install_dir: &Path) -> Result<(), NexError> {
-    if install_dir.exists() {
-        std::fs::remove_dir_all(install_dir)
-            .map_err(|e| NexError::Agent(format!("failed to wipe prior install dir: {e}")))?;
-    }
+fn ensure_install_dir(install_dir: &Path) -> Result<(), NexError> {
     std::fs::create_dir_all(install_dir)
         .map_err(|e| NexError::Agent(format!("failed to create install dir: {e}")))
+}
+
+/// Return the package bin when npm previously finished but Nex did not get as
+/// far as writing its own success marker. A package lock is npm's completion
+/// signal here; a timeout halfway through reification does not create it.
+fn recover_completed_install(install_dir: &Path, spec: &str) -> Option<PathBuf> {
+    let package_name = package_name_from_spec(spec);
+    let lock: JsonValue =
+        serde_json::from_slice(&std::fs::read(install_dir.join("package-lock.json")).ok()?).ok()?;
+    let locked_version = lock
+        .get("packages")?
+        .get(format!("node_modules/{package_name}"))?
+        .get("version")?
+        .as_str()?;
+    let package_json = install_dir
+        .join("node_modules")
+        .join(package_name)
+        .join("package.json");
+    let package: JsonValue = serde_json::from_slice(&std::fs::read(package_json).ok()?).ok()?;
+    let installed_version = package.get("version").and_then(JsonValue::as_str)?;
+    if installed_version != locked_version {
+        return None;
+    }
+    if version_from_spec(spec)
+        .as_deref()
+        .is_some_and(|expected| expected != installed_version)
+    {
+        return None;
+    }
+
+    let executable_path = read_package_executable_path(install_dir, spec).ok()?;
+    executable_path.is_file().then_some(executable_path)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -461,19 +511,57 @@ async fn run_npm_install(
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
     crate::win_process::no_window_tokio(&mut cmd);
+    crate::agent::process_tree::configure_new_group(&mut cmd);
     cmd.kill_on_drop(true);
 
-    let output = tokio::time::timeout(timeout, cmd.output())
-        .await
-        .map_err(|_| NpmInstallFailure::Timeout)?
-        .map_err(NpmInstallFailure::Spawn)?;
-    if output.status.success() {
+    let mut child = cmd.spawn().map_err(NpmInstallFailure::Spawn)?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .expect("stdout is piped before npm spawn");
+    let mut stderr = child
+        .stderr
+        .take()
+        .expect("stderr is piped before npm spawn");
+    let stdout_task = tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        let _ = stdout.read_to_end(&mut bytes).await;
+        bytes
+    });
+    let stderr_task = tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        let _ = stderr.read_to_end(&mut bytes).await;
+        bytes
+    });
+
+    let status = match tokio::time::timeout(timeout, child.wait()).await {
+        Ok(Ok(status)) => status,
+        Ok(Err(error)) => {
+            crate::agent::process_tree::kill_tree(&mut child).await;
+            let _ = child.wait().await;
+            let _ = stdout_task.await;
+            let _ = stderr_task.await;
+            return Err(NpmInstallFailure::Spawn(error));
+        }
+        Err(_) => {
+            // npm can spawn lifecycle-script children. Killing only npm left
+            // those descendants running and holding cache/install files.
+            crate::agent::process_tree::kill_tree(&mut child).await;
+            let _ = child.wait().await;
+            let _ = stdout_task.await;
+            let _ = stderr_task.await;
+            return Err(NpmInstallFailure::Timeout);
+        }
+    };
+    let stdout = stdout_task.await.unwrap_or_default();
+    let stderr = stderr_task.await.unwrap_or_default();
+    if status.success() {
         return Ok(());
     }
     Err(NpmInstallFailure::Exit {
-        status: output.status,
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        status,
+        stdout: String::from_utf8_lossy(&stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&stderr).into_owned(),
     })
 }
 
@@ -999,9 +1087,49 @@ mod tests {
     }
 
     #[test]
-    fn install_timeout_is_ten_minutes_with_mirror_budget() {
-        assert_eq!(INSTALL_TIMEOUT, Duration::from_secs(600));
-        assert_eq!(MIRROR_ATTEMPT_TIMEOUT, Duration::from_secs(300));
+    fn install_timeout_reserves_ten_minutes_per_registry() {
+        assert_eq!(INSTALL_TIMEOUT, Duration::from_secs(1_200));
+        assert_eq!(MIRROR_ATTEMPT_TIMEOUT, Duration::from_secs(600));
+    }
+
+    #[test]
+    fn ensure_install_dir_preserves_partial_downloads() {
+        let dir = tempfile::tempdir().unwrap();
+        let install_dir = dir.path().join("install");
+        std::fs::create_dir_all(&install_dir).unwrap();
+        std::fs::write(install_dir.join("partial.tgz"), b"partial").unwrap();
+
+        ensure_install_dir(&install_dir).unwrap();
+
+        assert_eq!(
+            std::fs::read(install_dir.join("partial.tgz")).unwrap(),
+            b"partial"
+        );
+    }
+
+    #[test]
+    fn recover_completed_install_requires_lock_and_exact_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let pkg = dir.path().join("node_modules/@scope/agent");
+        std::fs::create_dir_all(pkg.join("dist")).unwrap();
+        std::fs::write(
+            pkg.join("package.json"),
+            r#"{"name":"@scope/agent","version":"1.2.3","bin":"dist/cli.js"}"#,
+        )
+        .unwrap();
+        std::fs::write(pkg.join("dist/cli.js"), "#!/usr/bin/env node").unwrap();
+
+        assert!(recover_completed_install(dir.path(), "@scope/agent@1.2.3").is_none());
+
+        std::fs::write(
+            dir.path().join("package-lock.json"),
+            r#"{"packages":{"node_modules/@scope/agent":{"version":"1.2.3"}}}"#,
+        )
+        .unwrap();
+        let recovered = recover_completed_install(dir.path(), "@scope/agent@1.2.3")
+            .expect("matching completed install should be recovered");
+        assert!(recovered.ends_with("node_modules/@scope/agent/dist/cli.js"));
+        assert!(recover_completed_install(dir.path(), "@scope/agent@1.2.4").is_none());
     }
 
     // ---- read_package_executable_path --------------------------------

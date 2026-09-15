@@ -83,7 +83,9 @@ impl Tool for TodoWrite {
     }
     fn description(&self) -> &'static str {
         "Create or replace the full task list for the current request. \
-         Call it whenever the plan changes; always send the complete list. \
+         Call it once initially, then only when task content or status changes; \
+         never resubmit an unchanged plan instead of executing its current step. \
+         Always send the complete list. \
          Statuses: pending, in_progress, completed, cancelled."
     }
     fn schema(&self) -> serde_json::Value {

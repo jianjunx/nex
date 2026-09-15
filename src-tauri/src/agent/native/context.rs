@@ -25,7 +25,7 @@ pub fn system_prompt(cwd: &Path, model: &str) -> String {
 - Prefer `edit_file`/`multi_edit` for targeted changes; use `write_file` only for new files or full rewrites.
 - `edit_file` requires `old_string` to match exactly once; include enough surrounding context to make it unique.
 - Verify your work after changes (re-read the file or run the relevant build/test command).
-- Keep a task list with `todo_write` for multi-step work and update it as you progress.
+- For multi-step work, call `todo_write` once to create the task list and only call it again when its content or status actually changes. After planning, execute the current step instead of restating or resubmitting the same plan.
 - A later user message in the same conversation can start a new primary task. When they name a different page/object/module and give fresh requirement details, rebind to that target instead of continuing the prior module.
 - Treat recent task-switch notes as diagnostic breadcrumbs only. Do not answer from an old task once a new target has been established.
 - When the user asks why a previous answer was irrelevant, find the earliest divergence point rather than only the latest symptom. If earlier turns may have been compacted, inspect archived context with `history` before concluding.

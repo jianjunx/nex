@@ -30,11 +30,17 @@ use super::{budget, compact, context, memory};
 
 /// Read-only tool calls in one round run concurrently, capped by this.
 const PARALLEL_BATCH_LIMIT: usize = 8;
-/// Progress lease: warn / pause after this many consecutive no-progress rounds.
-const LEASE_WARN_ROUNDS: u32 = 8;
-const LEASE_PAUSE_ROUNDS: u32 = 16;
-/// Sliding window of recent tool-round signatures. Consecutive-only comparison
-/// let A→B→A→B reset the lease every turn.
+/// Progress lease: warn / pause after this many repeated or failed rounds.
+const LEASE_WARN_ROUNDS: u32 = 4;
+const LEASE_PAUSE_ROUNDS: u32 = 8;
+/// An unchanged plan gets one corrective tool result, then the next duplicate
+/// pauses the turn. A different tool in between does not make the plan change.
+const TODO_REPEAT_PAUSE_WRITES: u32 = 2;
+const UNCHANGED_TODO_RESULT: &str = "Plan unchanged. Do not call todo_write again until task content or status changes; execute the current step with the appropriate tool now.";
+const UNCHANGED_TODO_PAUSE: &str =
+    "检测到重复提交同一份待办，且没有状态变化，本轮已暂停以避免继续空转。";
+/// Sliding window of recent tool-round signatures. This catches alternating
+/// loops such as A → B → A → B as well as immediately repeated calls.
 const SIGNATURE_WINDOW: usize = 8;
 /// Abort a hung provider stream if no chunk arrives within this idle window.
 /// 60s is too tight for reasoners that hold the first token (or do not
@@ -437,6 +443,8 @@ pub async fn run_turn(
     let mut harness_echo_retries = 0u32;
     let mut empty_after_tools_retries = 0u32;
     let mut recent_signatures: VecDeque<u64> = VecDeque::with_capacity(SIGNATURE_WINDOW);
+    let mut last_todo_signature = None;
+    let mut unchanged_todo_writes = 0u32;
     loop {
         if env.cancelled.get() {
             return finish_turn(env, turn_started, acp::StopReason::Cancelled, "cancelled");
@@ -867,7 +875,20 @@ pub async fn run_turn(
                     .join(",")
             ),
         );
-        let results = execute_calls(env, &calls).await;
+        let mut results = execute_calls(env, &calls).await;
+        if let Some(todo_signature) = todo_only_signature(&calls) {
+            if last_todo_signature == Some(todo_signature) {
+                unchanged_todo_writes += 1;
+                for (call, result) in calls.iter().zip(results.iter_mut()) {
+                    if call.name == "todo_write" && result.is_ok() {
+                        *result = Ok(UNCHANGED_TODO_RESULT.to_string());
+                    }
+                }
+            } else {
+                last_todo_signature = Some(todo_signature);
+                unchanged_todo_writes = 0;
+            }
+        }
         let round_signature = tool_round_signature(&calls, &results);
         let all_failed = results.iter().all(Result::is_err);
         // Same tool names, arguments, and results seen in the recent window
@@ -894,8 +915,23 @@ pub async fn run_turn(
         // Do not hard-stop here: the next loop iteration runs the OpenCode-style
         // text-only wrap-up when `steps >= max_steps`.
 
+        if unchanged_todo_writes >= TODO_REPEAT_PAUSE_WRITES {
+            diag::warn(
+                sid(env),
+                format!("lease pause unchanged_todo_writes={unchanged_todo_writes}"),
+            );
+            emit_text(env, UNCHANGED_TODO_PAUSE).await;
+            messages.push(ChatMessage::assistant(UNCHANGED_TODO_PAUSE.to_string()));
+            return finish_turn(
+                env,
+                turn_started,
+                acp::StopReason::EndTurn,
+                "unchanged_todo_pause",
+            );
+        }
+
         // Progress lease: all-failed rounds and identical successful rounds
-        // both count as no-progress. Warn at 8 consecutive, pause at 16.
+        // both count as no-progress. Warn/pause at the constants above.
         if all_failed || repeated_success {
             no_progress += 1;
             if no_progress == LEASE_WARN_ROUNDS {
@@ -916,7 +952,9 @@ pub async fn run_turn(
                 return finish_turn(env, turn_started, acp::StopReason::EndTurn, "lease_pause");
             }
         } else {
-            no_progress = 0;
+            // One different call is weak evidence of recovery. Decay the lease
+            // instead of erasing the accumulated loop signal in a single round.
+            no_progress = no_progress.saturating_sub(1);
         }
         recent_signatures.push_back(round_signature);
         if recent_signatures.len() > SIGNATURE_WINDOW {
@@ -1211,6 +1249,20 @@ fn tool_round_signature(calls: &[NativeToolCall], results: &[Result<String, Stri
         }
     }
     hasher.finish()
+}
+
+/// Fingerprints a round made exclusively of plan updates. Keeping this state
+/// separate from the general tool signature catches todo → inspect → same todo
+/// loops: inspecting something does not make an unchanged plan a new plan.
+fn todo_only_signature(calls: &[NativeToolCall]) -> Option<u64> {
+    if calls.is_empty() || calls.iter().any(|call| call.name != "todo_write") {
+        return None;
+    }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for call in calls {
+        call.arguments.to_string().hash(&mut hasher);
+    }
+    Some(hasher.finish())
 }
 
 /// Executes one round of tool calls. Consecutive read-only calls run
@@ -3182,6 +3234,77 @@ mod tests {
                     (LEASE_PAUSE_ROUNDS + 1) as usize,
                     "progress lease should stop before an unbounded loop"
                 );
+            })
+            .await;
+    }
+
+    /// Re-submitting the same todo list is not work. Even an unrelated tool
+    /// call between duplicates must not reset this plan-specific guard.
+    #[tokio::test(flavor = "current_thread")]
+    async fn unchanged_todo_loop_pauses_after_one_corrective_retry() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let tmp = tempfile::tempdir().unwrap();
+                std::fs::write(tmp.path().join("config.ts"), "export default {};").unwrap();
+                let todos = serde_json::json!({
+                    "todos": [
+                        {"content": "修改端口并启动服务", "status": "in_progress"},
+                        {"content": "反馈预览地址", "status": "pending"}
+                    ]
+                });
+                let todo_turn = |id: &str| {
+                    vec![
+                        Chunk::ToolCall(NativeToolCall {
+                            id: id.into(),
+                            name: "todo_write".into(),
+                            arguments: todos.clone(),
+                        }),
+                        done(),
+                    ]
+                };
+                let tools_log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+                let provider = ScriptedProvider {
+                    turns: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
+                        todo_turn("todo-1"),
+                        todo_turn("todo-2"),
+                        vec![
+                            Chunk::ToolCall(NativeToolCall {
+                                id: "inspect".into(),
+                                name: "read_file".into(),
+                                arguments: serde_json::json!({"path": "config.ts"}),
+                            }),
+                            done(),
+                        ],
+                        todo_turn("todo-3"),
+                        vec![text_chunk("must not be reached"), done()],
+                    ])),
+                    tools_nonempty: tools_log.clone(),
+                };
+                let (mut env, _nots, _perms) = make_env(provider, tmp.path(), false);
+                env.max_steps = 100;
+                let mut messages = vec![ChatMessage::system("sys")];
+                let stop = run_turn(
+                    &env,
+                    &mut messages,
+                    Content::Text("修改端口并启动服务".into()),
+                )
+                .await;
+
+                assert!(matches!(stop, acp::StopReason::EndTurn));
+                assert_eq!(
+                    tools_log.lock().unwrap().len(),
+                    4,
+                    "the second unchanged resubmission must pause before another model call"
+                );
+                let transcript_text = messages
+                    .iter()
+                    .filter_map(|message| message.content.as_ref())
+                    .filter_map(Content::as_text)
+                    .collect::<String>();
+                assert!(transcript_text.contains("Plan unchanged"));
+                assert!(transcript_text.contains("重复提交同一份待办"));
+                assert!(!transcript_text.contains("must not be reached"));
             })
             .await;
     }

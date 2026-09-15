@@ -130,7 +130,7 @@ export function ThreadDiffBlock({
   const placeholderH = diffHeights.get(cacheKey) ?? estimateDiffHeight(oldText, newText);
 
   return (
-    <div className="rounded bg-[var(--glass-2-surface)] overflow-hidden">
+    <div className="rounded bg-[var(--material-panel)] overflow-hidden">
       {path ? (
         <button
           type="button"

@@ -219,7 +219,7 @@ export function EditorPanel() {
               onPointerDown={drag.onPointerDown}
               className={`group/tab flex items-center gap-1 max-w-[160px] rounded-[var(--radius-sm)] border px-2 py-1 text-xs cursor-pointer shrink-0 select-none transition-colors duration-150 ${
                 active
-                  ? "border-[color:var(--border-default)] bg-[var(--glass-2-surface)] text-[var(--text-primary)] shadow-[inset_0_1px_0_0_var(--edge-highlight)]"
+                  ? "border-[color:var(--border-default)] bg-[var(--material-panel)] text-[var(--text-primary)] shadow-none"
                   : "border-transparent text-[var(--text-secondary)] hover:bg-[var(--overlay-hover)] hover:text-[var(--text-primary)]"
               } ${draggingIndex === index ? "opacity-50" : ""}`}
               title={f.diff ? f.diff.title : relativeToProject(f.path, projectPath)}

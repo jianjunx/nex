@@ -120,7 +120,7 @@ export function ContextUsageRing({ usage, stats, recentCacheHitSummary }: Props)
           type="button"
           aria-label={`上下文用量 ${fraction}`}
           title={`上下文用量 ${fraction}`}
-          className="nex-interactive-chrome flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_78%,transparent)] text-[var(--text-secondary)] shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)] hover:bg-[color:color-mix(in_srgb,var(--material-floating)_78%,transparent)]"
+          className="nex-interactive-chrome flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_78%,transparent)] text-[var(--text-secondary)] shadow-none hover:bg-[color:color-mix(in_srgb,var(--material-floating)_78%,transparent)]"
         >
           <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden>
             <circle

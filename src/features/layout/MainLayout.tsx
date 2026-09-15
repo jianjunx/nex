@@ -1,16 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { TopBar } from "./TopBar";
-import { IconBar } from "./IconBar";
-import { useUiStore } from "../../stores/ui.store";
-import {
-  EDITOR_MIN,
-  SIDE_PANEL_MIN,
-  beginColResize,
-  displayedEditorWidth,
-  displayedSideWidth,
-  editorWidthBudget,
-  sideWidthBudget,
-} from "./panelResize";
+import { WorkspaceSidebar } from "./WorkspaceSidebar";
+import { useUiStore } from "@/stores/ui.store";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { SIDE_PANEL_MIN, beginColResize } from "./panelResize";
 
 interface MainLayoutProps {
   mainContent: ReactNode;
@@ -18,137 +11,87 @@ interface MainLayoutProps {
   sidePanel: ReactNode;
 }
 
-function useWindowWidth(): number {
-  const [w, setW] = useState(() => window.innerWidth);
+export function MainLayout({
+  mainContent,
+  editorPanel,
+  sidePanel,
+}: MainLayoutProps) {
+  const visible = useUiStore((s) => s.sidePanelVisible);
+  const width = useUiStore((s) => s.sidePanelWidth);
+  const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
   useEffect(() => {
-    const onResize = () => setW(window.innerWidth);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+    const resize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
   }, []);
-  return w;
-}
-
-export function MainLayout({ mainContent, editorPanel, sidePanel }: MainLayoutProps) {
-  const sidePanelVisible = useUiStore((s) => s.sidePanelVisible);
-  const sidePanelWidth = useUiStore((s) => s.sidePanelWidth);
-  const setSidePanelWidth = useUiStore((s) => s.setSidePanelWidth);
-  const editorWidth = useUiStore((s) => s.editorWidth);
-  const setEditorWidth = useUiStore((s) => s.setEditorWidth);
-  const winW = useWindowWidth();
-
-  const hasEditor = Boolean(editorPanel);
-  // Display clamp: editor first (leave at least SIDE_PANEL_MIN), then side
-  // takes the leftover. Drag startWidth must use these painted values — the
-  // persisted store can be larger than the budget after a window resize.
-  const editorEffective = hasEditor
-    ? displayedEditorWidth(
-        editorWidth,
-        winW,
-        sidePanelVisible ? SIDE_PANEL_MIN : null,
-      )
-    : 0;
-  const sideEffective = sidePanelVisible
-    ? displayedSideWidth(sidePanelWidth, winW, hasEditor ? editorEffective : null)
-    : 0;
-
-  const editorRef = useRef<HTMLDivElement>(null);
   const sideRef = useRef<HTMLDivElement>(null);
-  const liveEditorRef = useRef<number | null>(null);
-  const liveSideRef = useRef<number | null>(null);
-
-  // Drag the handle on the panel's left edge: moving left widens the panel.
-  const startSideDrag = (e: React.PointerEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    const startWidth = liveSideRef.current ?? sideEffective;
-    beginColResize({
-      pointerId: e.pointerId,
-      startX: e.clientX,
-      startWidth,
-      min: SIDE_PANEL_MIN,
-      max: () =>
-        sideWidthBudget(
-          window.innerWidth,
-          hasEditor ? (liveEditorRef.current ?? editorEffective) : null,
-        ),
-      pane: sideRef.current,
-      liveRef: liveSideRef,
-      persist: setSidePanelWidth,
-    });
-  };
-
-  const startEditorDrag = (e: React.PointerEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    const startWidth = liveEditorRef.current ?? editorEffective;
-    beginColResize({
-      pointerId: e.pointerId,
-      startX: e.clientX,
-      startWidth,
-      min: EDITOR_MIN,
-      max: () =>
-        editorWidthBudget(
-          window.innerWidth,
-          sidePanelVisible ? (liveSideRef.current ?? sideEffective) : null,
-        ),
-      pane: editorRef.current,
-      liveRef: liveEditorRef,
-      persist: setEditorWidth,
-    });
-  };
-
+  const liveRef = useRef<number | null>(null);
+  const budget = () => Math.max(SIDE_PANEL_MIN, window.innerWidth - 208 - 280);
+  const paintedWidth = Math.min(
+    width,
+    Math.max(SIDE_PANEL_MIN, windowWidth - 208 - 280),
+  );
   return (
-    <div className="flex flex-col h-full w-full bg-[var(--material-canvas)]">
+    <div className="flex h-full w-full flex-col bg-[var(--material-canvas)]">
       <TopBar />
-      <div className="flex flex-1 overflow-hidden">
-        {/* Main content area */}
-        <div className="flex-1 flex flex-col overflow-hidden min-w-[280px] bg-transparent">
-          {mainContent}
-        </div>
-
-        {/* Editor panel + resize handle (mounted only while a file is open) */}
-        {editorPanel && (
-          <>
-            <div
-              data-testid="editor-resize-handle"
-              onPointerDown={startEditorDrag}
-              className="nex-handle-col"
-            />
-            <div
-              ref={editorRef}
-              data-testid="editor-pane"
-              className="nex-layout-pane flex min-h-0 shrink-0 flex-col self-stretch border-l border-[color:var(--hairline-soft)] nex-material-panel overflow-hidden animate-in fade-in"
-              style={{ width: liveEditorRef.current ?? editorEffective }}
-            >
-              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                {editorPanel}
-              </div>
-            </div>
-          </>
-        )}
-
-        {/* Side panel + resize handle */}
-        {sidePanelVisible && (
-          <>
-            <div
-              data-testid="side-resize-handle"
-              onPointerDown={startSideDrag}
-              className="nex-handle-col"
-            />
-            <div
-              ref={sideRef}
-              data-testid="side-pane"
-              className="nex-layout-pane flex shrink-0 flex-col border-l border-[color:var(--hairline-soft)] nex-material-sidebar overflow-hidden animate-in fade-in"
-              style={{ width: liveSideRef.current ?? sideEffective }}
-            >
-              <div className="flex-1 overflow-hidden">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <WorkspaceSidebar />
+        <div className="nex-workbench-body relative flex min-w-0 flex-1 overflow-hidden">
+          <main className="nex-workbench-main flex min-w-0 flex-1 flex-col overflow-hidden">
+            {mainContent}
+          </main>
+          {visible && (
+            <>
+              <div
+                data-testid="side-resize-handle"
+                className="nex-handle-col"
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  beginColResize({
+                    pointerId: e.pointerId,
+                    startX: e.clientX,
+                    startWidth: liveRef.current ?? paintedWidth,
+                    min: SIDE_PANEL_MIN,
+                    max: budget,
+                    pane: sideRef.current,
+                    liveRef,
+                    persist: useUiStore.getState().setSidePanelWidth,
+                  });
+                }}
+              />
+              <div
+                id="workspace-side-panel"
+                data-testid="side-pane"
+                ref={sideRef}
+                className="nex-layout-pane nex-material-sidebar flex min-h-0 shrink-0 flex-col overflow-hidden border-l border-[var(--hairline-soft)]"
+                style={{ width: paintedWidth }}
+              >
                 {sidePanel}
               </div>
-            </div>
-          </>
-        )}
-
-        {/* Icon bar */}
-        <IconBar />
+            </>
+          )}
+        </div>
       </div>
+      <Dialog
+        open={Boolean(editorPanel)}
+        onOpenChange={(open) => {
+          if (!open) useUiStore.getState().setEditorVisible(false);
+        }}
+      >
+        <DialogContent
+          aria-describedby={undefined}
+          className="flex h-[85vh] w-[92vw] max-w-[1200px] flex-col gap-2 overflow-hidden p-3 sm:max-w-[1200px]"
+          onInteractOutside={(e) => e.preventDefault()}
+        >
+          <DialogTitle className="pr-10 text-sm">文件预览与编辑</DialogTitle>
+          <div
+            data-testid="editor-dialog"
+            className="flex min-h-0 flex-1 flex-col overflow-hidden"
+          >
+            {editorPanel}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

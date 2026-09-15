@@ -1,3 +1,4 @@
+import AgentUiDiffTable from "@/components/agent-ui/beautiful-ui/DiffTable";
 import FileIcon from "../../files/FileIcon";
 import { fileBasename, relativeToProject } from "../../editor/pathUtils";
 import { openPathToken } from "./pathToken";
@@ -19,7 +20,7 @@ function sendToSession(conversationId: string, sessionId: string, text: string) 
   void useAgentStore.getState().sendPrompt(sessionId, [{ type: "text", text }]);
 }
 
-export function FilesChangedCard({ files }: { files: ChangedFile[] }) {
+function FilesChangedCardContent({ files }: { files: ChangedFile[] }) {
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const projectPath = useProjectStore((s) => s.projects.find((p) => p.id === s.activeProjectId)?.path);
   const activeTabId = useConversationStore((s) => selectProjectActiveTabId(s, activeProjectId));
@@ -48,7 +49,7 @@ export function FilesChangedCard({ files }: { files: ChangedFile[] }) {
   };
 
   return (
-    <div className="max-w-[96%] overflow-hidden rounded-[calc(var(--radius-md)+2px)] border border-[color:var(--hairline-soft)] bg-[var(--material-floating)] shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)]">
+    <div className="max-w-[96%] overflow-hidden rounded-[calc(var(--radius-md)+2px)] border border-[color:var(--hairline-soft)] bg-[var(--material-floating)] shadow-none">
       <div className="flex items-center justify-between gap-2 px-3 py-2">
         <span className="text-xs text-[var(--text-secondary)]">
           修改了 {files.length} 个文件
@@ -93,4 +94,8 @@ export function FilesChangedCard({ files }: { files: ChangedFile[] }) {
       </ul>
     </div>
   );
+}
+
+export function FilesChangedCard(props: Parameters<typeof FilesChangedCardContent>[0]) {
+ return <AgentUiDiffTable><FilesChangedCardContent {...props}/></AgentUiDiffTable>;
 }

@@ -2,6 +2,8 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./styles/globals.css";
+import "./components/agent-ui/styles.css";
+import "./styles/agent-ui.css";
 import { useSettingsStore } from "./stores/settings.store";
 
 // Suppress the browser's native context menu globally so the app feels

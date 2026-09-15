@@ -80,6 +80,21 @@ impl Database {
         Ok(convs)
     }
 
+    /// Atomically reject agent changes after any persisted conversation content.
+    pub fn update_conversation_agent(&self, id: &str, agent: &str) -> Result<(), NexError> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "UPDATE conversations SET agent_type = ?2 WHERE id = ?1
+             AND NOT EXISTS (SELECT 1 FROM messages WHERE conversation_id = ?1)
+             AND NOT EXISTS (SELECT 1 FROM thread_entries WHERE conversation_id = ?1)",
+            params![id, agent],
+        )?;
+        if changed != 1 {
+            return Err(NexError::Database("已有对话或会话不存在，不能切换智能体".into()));
+        }
+        Ok(())
+    }
+
     pub fn append_message(
         &self,
         conversation_id: &str,
@@ -389,6 +404,21 @@ fn scrub_inline_images(value: &mut Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_change_only_allowed_for_empty_conversations() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::new(&tmp.path().join("test.db")).unwrap();
+        db.conn.lock().unwrap().execute("INSERT INTO projects (id,name,path,created_at,last_opened) VALUES ('p','P','/p',1,1)", []).unwrap();
+        let c = db.create_conversation("p", "nex").unwrap();
+        db.update_conversation_agent(&c.id, "claude-code").unwrap();
+        assert_eq!(db.list_conversations("p").unwrap()[0].agent_type, "claude-code");
+        db.append_message(&c.id, "user", "hello", None).unwrap();
+        assert!(db.update_conversation_agent(&c.id, "nex").is_err());
+        let second = db.create_conversation("p", "nex").unwrap();
+        db.conn.lock().unwrap().execute("INSERT INTO thread_entries (id,conversation_id,kind,sequence,timestamp,payload_json) VALUES ('e',?1,'user_message',0,1,'{}')", params![second.id]).unwrap();
+        assert!(db.update_conversation_agent(&second.id, "claude-code").is_err());
+    }
 
     #[test]
     fn thread_payload_scrubber_removes_user_and_tool_image_base64() {

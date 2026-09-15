@@ -26,7 +26,7 @@ export function ThreadImageThumb({ image }: { image: UserMessageImage }) {
       </button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent
-          className="max-w-[min(92vw,900px)] p-2 border-[color:var(--glass-border)] bg-[var(--glass-3-surface)]"
+          className="max-w-[min(92vw,900px)] p-2 border-[color:var(--hairline-strong)] bg-[var(--material-floating)]"
           showCloseButton
         >
           <DialogTitle className="sr-only">图片预览</DialogTitle>

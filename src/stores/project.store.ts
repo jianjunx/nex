@@ -1,11 +1,18 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { persist } from "zustand/middleware";
-import { projectOpen, projectList, projectRemove, projectTouch, type Project } from "../bridge/tauri";
+import {
+  projectOpen,
+  projectList,
+  projectRemove,
+  projectTouch,
+  type Project,
+} from "../bridge/tauri";
 import { errorMessage } from "../lib/errors";
 
 interface ProjectStore {
   projects: Project[];
+  projectOrder: string[];
   activeProjectId: string | null;
   loading: boolean;
   error: string | null;
@@ -17,12 +24,26 @@ interface ProjectStore {
 }
 
 // Backend errors arrive as { type, message }; fall back to String(err).
-function sortByLastOpened(projects: Project[]): Project[] {
-  return [...projects].sort((a, b) => b.last_opened - a.last_opened);
+function sortByProjectOrder(projects: Project[]): Project[] {
+  const order = useProjectStore.getState().projectOrder;
+  return [...projects].sort((a, b) => {
+    const ai = order.indexOf(a.id),
+      bi = order.indexOf(b.id);
+    return (
+      (ai < 0 ? Number.MAX_SAFE_INTEGER : ai) -
+        (bi < 0 ? Number.MAX_SAFE_INTEGER : bi) ||
+      a.created_at - b.created_at ||
+      a.id.localeCompare(b.id)
+    );
+  });
 }
 
-function bumpLastOpened(projects: Project[], id: string, lastOpened: number): Project[] {
-  return sortByLastOpened(
+function bumpLastOpened(
+  projects: Project[],
+  id: string,
+  lastOpened: number,
+): Project[] {
+  return sortByProjectOrder(
     projects.map((p) => (p.id === id ? { ...p, last_opened: lastOpened } : p)),
   );
 }
@@ -31,39 +52,58 @@ export const useProjectStore = create<ProjectStore>()(
   persist(
     immer((set) => ({
       projects: [],
+      projectOrder: [],
       activeProjectId: null,
       loading: false,
       error: null,
 
       loadProjects: async () => {
-        set((s) => { s.loading = true; s.error = null; });
+        set((s) => {
+          s.loading = true;
+          s.error = null;
+        });
         try {
-          // Backend already ORDER BY last_opened DESC; keep client sort defensive.
-          const projects = sortByLastOpened(await projectList());
-          set((s) => { s.projects = projects; });
+          // The saved sidebar order takes precedence over backend activity order.
+          const projects = sortByProjectOrder(await projectList());
+          set((s) => {
+            s.projects = projects;
+            s.projectOrder = projects.map((p) => p.id);
+          });
         } catch (err) {
-          set((s) => { s.error = errorMessage(err); });
+          set((s) => {
+            s.error = errorMessage(err);
+          });
         } finally {
-          set((s) => { s.loading = false; });
+          set((s) => {
+            s.loading = false;
+          });
         }
       },
 
       openProject: async (path: string) => {
-        set((s) => { s.loading = true; s.error = null; });
+        set((s) => {
+          s.loading = true;
+          s.error = null;
+        });
         try {
           const project = await projectOpen(path);
           set((s) => {
             // project_open upserts by path, so the project may already be listed
-            s.projects = sortByLastOpened([
+            s.projects = sortByProjectOrder([
               project,
               ...s.projects.filter((p) => p.id !== project.id),
             ]);
+            s.projectOrder = s.projects.map((p) => p.id);
             s.activeProjectId = project.id;
           });
         } catch (err) {
-          set((s) => { s.error = errorMessage(err); });
+          set((s) => {
+            s.error = errorMessage(err);
+          });
         } finally {
-          set((s) => { s.loading = false; });
+          set((s) => {
+            s.loading = false;
+          });
         }
       },
 
@@ -71,7 +111,7 @@ export const useProjectStore = create<ProjectStore>()(
         const now = Date.now();
         set((s) => {
           s.activeProjectId = id;
-          // Optimistic reorder so the dropdown reflects activity immediately.
+          // Update recency metadata without moving the project in the sidebar.
           s.projects = bumpLastOpened(s.projects, id, now);
         });
         void projectTouch(id)
@@ -100,9 +140,11 @@ export const useProjectStore = create<ProjectStore>()(
     })),
     {
       name: "nex-project",
-      // Only the last active project id is worth saving; the project list is
-      // always re-fetched from the backend on startup.
-      partialize: (s) => ({ activeProjectId: s.activeProjectId }),
-    }
-  )
+      // Keep sidebar order across restarts; project metadata still comes from the backend.
+      partialize: (s) => ({
+        activeProjectId: s.activeProjectId,
+        projectOrder: s.projectOrder,
+      }),
+    },
+  ),
 );

@@ -84,6 +84,10 @@ export async function conversationGetMessages(conversationId: string, limit = 50
   return invoke(COMMANDS.CONVERSATION_GET_MESSAGES, { conversationId, limit, offset });
 }
 
+export async function conversationUpdateAgent(conversationId: string, agentType: string): Promise<void> {
+  return invoke(COMMANDS.CONVERSATION_UPDATE_AGENT, { conversationId, agentType });
+}
+
 export async function conversationUpdateTitle(conversationId: string, title: string): Promise<void> {
   return invoke(COMMANDS.CONVERSATION_UPDATE_TITLE, { conversationId, title });
 }

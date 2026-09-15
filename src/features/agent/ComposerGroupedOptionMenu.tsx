@@ -59,7 +59,7 @@ export function ComposerGroupedOptionMenu({
           disabled={disabled || options.length === 0}
           aria-label={ariaLabel}
           title={ariaLabel}
-          className="nex-interactive-chrome nex-pressable h-7 max-w-[12rem] shrink-0 gap-1 rounded-[var(--radius-md)] border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_78%,transparent)] px-2.5 text-xs font-medium tracking-[-0.01em] text-[var(--text-secondary)] shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)] hover:bg-[color:color-mix(in_srgb,var(--material-floating)_78%,transparent)] hover:text-[var(--text-primary)] data-[state=open]:bg-[color:color-mix(in_srgb,var(--material-elevated)_88%,transparent)] data-[state=open]:text-[var(--text-primary)]"
+          className="nex-interactive-chrome nex-pressable h-7 max-w-[12rem] shrink-0 gap-1 rounded-[var(--radius-md)] border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_78%,transparent)] px-2.5 text-xs font-medium tracking-[-0.01em] text-[var(--text-secondary)] shadow-none hover:bg-[color:color-mix(in_srgb,var(--material-floating)_78%,transparent)] hover:text-[var(--text-primary)] data-[state=open]:bg-[color:color-mix(in_srgb,var(--material-elevated)_88%,transparent)] data-[state=open]:text-[var(--text-primary)]"
         >
           <span className="truncate">{label}</span>
           <ChevronDown size={12} className="shrink-0 opacity-50" />

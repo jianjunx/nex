@@ -1,4 +1,5 @@
-import { useRef } from "react";
+import AgentUiRecommendationCard from "@/components/agent-ui/beautiful-ui/RecommendationCard";
+import { useRef, useState } from "react";
 import { CheckCircle2, ListTodo, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAgentStore } from "../../../stores/agent.store";
@@ -8,22 +9,25 @@ import type { PlanApprovalEntry } from "./types";
  * In-thread Cursor plan approval card. Buttons sit under the plan body so the
  * user can confirm execution without a blocking modal.
  */
-export function PlanApprovalCard({ entry }: { entry: PlanApprovalEntry }) {
+function PlanApprovalCardContent({ entry }: { entry: PlanApprovalEntry }) {
   const respondPlan = useAgentStore((s) => s.respondPlan);
   const submittingRef = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
   const pending = entry.status === "pending";
   const title = entry.name?.trim() || "确认执行计划";
 
   const respondOnce = (outcome: "accepted" | "rejected" | "cancelled") => {
     if (!pending || submittingRef.current) return;
     submittingRef.current = true;
+    setSubmitting(true);
     void respondPlan(entry.requestId, outcome).finally(() => {
       submittingRef.current = false;
+      setSubmitting(false);
     });
   };
 
   return (
-    <div className="rounded-[var(--radius-md)] border border-[color:var(--border-subtle)] bg-[var(--glass-2-surface)] px-3 py-2.5">
+    <div className="nex-approval-surface">
       <div className="mb-2 flex items-center gap-2 text-sm text-[var(--text-primary)]">
         <ListTodo size={14} className="shrink-0 text-[var(--accent)]" />
         <span className="font-medium">{title}</span>
@@ -45,11 +49,13 @@ export function PlanApprovalCard({ entry }: { entry: PlanApprovalEntry }) {
       </div>
 
       {entry.overview?.trim() && (
-        <p className="mb-2 text-sm text-[var(--text-secondary)]">{entry.overview}</p>
+        <p className="mb-2 text-sm text-[var(--text-secondary)]">
+          {entry.overview}
+        </p>
       )}
 
       {entry.plan.trim() && (
-        <pre className="mb-2 max-h-64 overflow-y-auto whitespace-pre-wrap rounded bg-[var(--glass-1-surface,transparent)] p-2 text-xs text-[var(--text-secondary)]">
+        <pre className="mb-2 max-h-64 overflow-y-auto whitespace-pre-wrap rounded bg-[var(--material-sidebar,transparent)] p-2 text-xs text-[var(--text-secondary)]">
           {entry.plan}
         </pre>
       )}
@@ -71,15 +77,29 @@ export function PlanApprovalCard({ entry }: { entry: PlanApprovalEntry }) {
       )}
 
       {pending && (
-        <div className="flex flex-wrap justify-end gap-2 pt-1">
-          <Button variant="ghost" size="sm" onClick={() => respondOnce("rejected")}>
+        <div className="nex-approval-actions">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => respondOnce("rejected")}
+          >
             拒绝
           </Button>
-          <Button size="sm" onClick={() => respondOnce("accepted")}>
-            确认执行
+          <Button size="sm" disabled={submitting} onClick={() => respondOnce("accepted")}>
+            {submitting ? "正在提交…" : "确认执行"}
           </Button>
         </div>
       )}
     </div>
+  );
+}
+
+export function PlanApprovalCard(
+  props: Parameters<typeof PlanApprovalCardContent>[0],
+) {
+  return (
+    <AgentUiRecommendationCard>
+      <PlanApprovalCardContent {...props} />
+    </AgentUiRecommendationCard>
   );
 }

@@ -1,6 +1,6 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
-import { Loader2 } from "lucide-react";
+import LoadingState from "@/components/agent-ui/beautiful-ui/LoadingState";
 import { useAgentStore } from "../../../stores/agent.store";
 import { useProjectStore } from "../../../stores/project.store";
 import { selectProjectActiveTabId, useConversationStore } from "../../../stores/conversation.store";
@@ -369,8 +369,7 @@ function AgentLoadingIndicator() {
       role="status"
       aria-live="polite"
     >
-      <Loader2 size={14} className="animate-spin text-[var(--accent)] shrink-0" />
-      <span>正在思考…</span>
+      <div className="beautiful-ui"><LoadingState variant="Dots" label="正在思考…" /></div>
     </div>
   );
 }

@@ -1,5 +1,13 @@
+import AgentUiToolChips from "@/components/agent-ui/beautiful-ui/ToolChips";
 import { useEffect } from "react";
-import { CheckCircle2, ChevronRight, Circle, Loader2, Pencil, Wrench } from "lucide-react";
+import {
+  CheckCircle2,
+  ChevronRight,
+  Circle,
+  Loader2,
+  Pencil,
+  Wrench,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { ToolCallEntry } from "./types";
@@ -11,7 +19,7 @@ import { useAgentStore } from "../../../stores/agent.store";
 import { fileBasename } from "../../editor/pathUtils";
 import { looksLikeFilePath, openPathToken } from "./pathToken";
 
-export function ToolCallCard({
+function ToolCallCardContent({
   entry,
   defaultOpen,
 }: {
@@ -20,9 +28,11 @@ export function ToolCallCard({
 }) {
   const isEdit = isEditTool(entry);
   const waiting = entry.status === "waiting_for_confirmation";
-  const override = useToolCardExpansionStore((s) => s.overrides[entry.toolCallId]);
+  const override = useToolCardExpansionStore(
+    (s) => s.overrides[entry.toolCallId],
+  );
   const setExpanded = useToolCardExpansionStore((s) => s.setExpanded);
-  const open = override ?? (defaultOpen ?? (isEdit || waiting));
+  const open = override ?? defaultOpen ?? (isEdit || waiting);
   const respondPermission = useAgentStore((s) => s.respondPermission);
   const Icon = isEdit ? Pencil : Wrench;
   const rawInputText = formatToolRawInput(entry.rawInput);
@@ -35,16 +45,25 @@ export function ToolCallCard({
   }, [waiting, entry.toolCallId, setExpanded]);
 
   return (
-    <div className="rounded-[calc(var(--radius-md)+2px)] border border-[color:var(--hairline-soft)] bg-[var(--material-floating)] overflow-hidden shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)]">
-      <div className="nex-interactive-chrome flex items-center gap-2 px-2.5 py-1.5 text-sm hover:bg-[color:color-mix(in_srgb,var(--material-elevated)_86%,transparent)]">
+    <div className="nex-tool-row">
+      <div className="nex-tool-heading">
         <button
           type="button"
           className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
+          aria-expanded={open}
           onClick={() => setExpanded(entry.toolCallId, !open)}
         >
+          <ChevronRight
+            size={12}
+            className={cn("nex-tool-chevron", open && "rotate-90")}
+          />
           <Icon size={14} className="text-[var(--text-tertiary)] shrink-0" />
-          <span className="font-mono text-xs text-[var(--text-tertiary)] shrink-0">{entry.toolKind}</span>
-          {!titleIsPath && <span className="truncate flex-1">{entry.title}</span>}
+          <span className="font-mono text-xs text-[var(--text-tertiary)] shrink-0">
+            {entry.toolKind}
+          </span>
+          {!titleIsPath && (
+            <span className="truncate flex-1">{entry.title}</span>
+          )}
           <StatusIcon status={entry.status} />
         </button>
         {filePath && (
@@ -62,7 +81,7 @@ export function ToolCallCard({
       {(open || waiting) && (
         <div
           className={cn(
-            "px-2.5 pb-2 space-y-1.5 border-t border-[color:var(--hairline-soft)]",
+            "nex-tool-detail space-y-1.5",
             isEdit && "max-h-[350px] overflow-y-auto",
           )}
         >
@@ -134,7 +153,12 @@ export function ToolCallCard({
                   key={opt.optionId}
                   variant="outline"
                   size="sm"
-                  onClick={() => void respondPermission(entry.permissionRequestId!, opt.optionId)}
+                  onClick={() =>
+                    void respondPermission(
+                      entry.permissionRequestId!,
+                      opt.optionId,
+                    )
+                  }
                 >
                   {opt.label}
                 </Button>
@@ -142,7 +166,9 @@ export function ToolCallCard({
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => void respondPermission(entry.permissionRequestId!, null)}
+                onClick={() =>
+                  void respondPermission(entry.permissionRequestId!, null)
+                }
               >
                 Deny
               </Button>
@@ -157,7 +183,9 @@ export function ToolCallCard({
 /** Collapsed run of adjacent tool calls (edits included; permission prompts stay standalone). */
 export function ToolCallGroup({ entries }: { entries: ToolCallEntry[] }) {
   const groupKey = `group:${entries[0]?.id}`;
-  const needsPermission = entries.some((e) => e.status === "waiting_for_confirmation");
+  const needsPermission = entries.some(
+    (e) => e.status === "waiting_for_confirmation",
+  );
   const override = useToolCardExpansionStore((s) => s.overrides[groupKey]);
   const setExpanded = useToolCardExpansionStore((s) => s.setExpanded);
   const open = override ?? needsPermission;
@@ -202,10 +230,25 @@ export function ToolCallGroup({ entries }: { entries: ToolCallEntry[] }) {
 }
 
 function StatusIcon({ status }: { status: ToolCallEntry["status"] }) {
-  if (status === "completed") return <CheckCircle2 size={14} className="text-emerald-500 shrink-0" />;
-  if (status === "failed") return <Circle size={14} className="text-red-500 shrink-0" />;
+  if (status === "completed")
+    return <CheckCircle2 size={14} className="text-emerald-500 shrink-0" />;
+  if (status === "failed")
+    return <Circle size={14} className="text-red-500 shrink-0" />;
   if (status === "in_progress" || status === "waiting_for_confirmation") {
-    return <Loader2 size={14} className="animate-spin text-[var(--accent)] shrink-0" />;
+    return (
+      <Loader2
+        size={14}
+        className="animate-spin text-[var(--accent)] shrink-0"
+      />
+    );
   }
   return <Circle size={14} className="text-[var(--text-tertiary)] shrink-0" />;
+}
+
+export function ToolCallCard(props: Parameters<typeof ToolCallCardContent>[0]) {
+  return (
+    <AgentUiToolChips>
+      <ToolCallCardContent {...props} />
+    </AgentUiToolChips>
+  );
 }

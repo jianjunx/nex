@@ -109,7 +109,7 @@ describe("Markdown", () => {
       (el) => el.textContent?.trim().toLowerCase() === "python",
     );
     expect(label).not.toBeUndefined();
-    expect(label!.className).toMatch(/uppercase/);
+    expect(container.querySelector('button[aria-label="Copy code"]')).not.toBeNull();
   });
 
   it("routes ```mermaid blocks to MermaidBlock instead of raw code", async () => {

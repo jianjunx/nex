@@ -1,41 +1,51 @@
-import { useLayoutEffect, useRef, useState } from "react";
-import { Brain, ChevronDown, ChevronRight } from "lucide-react";
+import { useId, useLayoutEffect, useRef, useState } from "react";
+import { ChevronDown, Sparkles } from "lucide-react";
 import { Markdown } from "./Markdown";
 
-export function ThinkingBlock({ text, defaultOpen = true }: { text: string; defaultOpen?: boolean }) {
+/** Live reasoning trace using Beautiful UI's compact disclosure and inset rail. */
+export function ThinkingBlock({
+  text,
+  defaultOpen = false,
+}: {
+  text: string;
+  defaultOpen?: boolean;
+}) {
   const [open, setOpen] = useState(defaultOpen);
-  const bodyRef = useRef<HTMLDivElement>(null);
-
-  // 流式追加时始终贴底，方便跟最新思考内容。
+  const id = useId();
+  const body = useRef<HTMLDivElement>(null);
+  const following = useRef(true);
   useLayoutEffect(() => {
-    if (!open) return;
-    const el = bodyRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
+    if (open && following.current && body.current)
+      body.current.scrollTop = body.current.scrollHeight;
   }, [text, open]);
-
   return (
-    <div className="rounded-[var(--radius-md)] border border-[color:var(--border-subtle)] bg-[var(--glass-2-surface)] overflow-hidden">
+    <div className="beautiful-ui nex-reasoning">
       <button
         type="button"
-        className="flex w-full cursor-pointer items-center gap-2 px-2.5 py-1.5 text-xs text-[var(--text-primary)] hover:bg-[var(--glass-3-surface)]"
-        title={open ? "收起" : "展开"}
+        aria-expanded={open}
+        aria-controls={id}
+        className="nex-trace-toggle"
         onClick={() => setOpen((v) => !v)}
       >
-        <Brain size={14} />
-        <span className="font-medium">Thinking</span>
-        {open ? (
-          <ChevronDown size={14} className="ml-auto opacity-60" />
-        ) : (
-          <ChevronRight size={14} className="ml-auto opacity-60" />
-        )}
+        <Sparkles size={15} />
+        <span>思考过程</span>
+        <ChevronDown size={13} className={open ? "rotate-180" : ""} />
       </button>
       {open && (
         <div
-          ref={bodyRef}
-          className="max-h-[300px] overflow-y-auto px-2.5 pb-2 text-sm"
+          id={id}
+          className="nex-trace-body"
+          ref={body}
+          onScroll={() => {
+            const el = body.current;
+            if (el)
+              following.current =
+                el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+          }}
         >
-          <Markdown compact muted>{text}</Markdown>
+          <Markdown compact muted>
+            {text}
+          </Markdown>
         </div>
       )}
     </div>

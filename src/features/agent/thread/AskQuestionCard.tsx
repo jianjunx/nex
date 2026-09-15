@@ -1,5 +1,13 @@
+import AgentUiApprovalCard from "@/components/agent-ui/beautiful-ui/ApprovalCard";
 import { useEffect, useRef, useState } from "react";
-import { CheckCircle2, CheckSquare, Circle, HelpCircle, Square, XCircle } from "lucide-react";
+import {
+  CheckCircle2,
+  CheckSquare,
+  Circle,
+  HelpCircle,
+  Square,
+  XCircle,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { AskQuestionAnswerPayload } from "../../../bridge/events";
@@ -10,7 +18,7 @@ import type { AskQuestionEntry } from "./types";
  * In-thread AskUserQuestion card. Options sit in the conversation so the
  * user can answer without a blocking modal.
  */
-export function AskQuestionCard({ entry }: { entry: AskQuestionEntry }) {
+function AskQuestionCardContent({ entry }: { entry: AskQuestionEntry }) {
   const respondAskQuestion = useAgentStore((s) => s.respondAskQuestion);
   const submittingRef = useRef(false);
   const pending = entry.status === "pending";
@@ -60,7 +68,11 @@ export function AskQuestionCard({ entry }: { entry: AskQuestionEntry }) {
     });
   };
 
-  const toggleOption = (questionId: string, optionId: string, allowMultiple: boolean) => {
+  const toggleOption = (
+    questionId: string,
+    optionId: string,
+    allowMultiple: boolean,
+  ) => {
     setCustomTexts((prev) => ({ ...prev, [questionId]: "" }));
     setSelections((prev) => {
       const current = prev[questionId] ?? [];
@@ -77,9 +89,15 @@ export function AskQuestionCard({ entry }: { entry: AskQuestionEntry }) {
   // Fast path: one single-select question — clicking an option submits immediately
   // (unless the user is typing a custom answer).
   const singleFastPath =
-    pending && entry.questions.length === 1 && !entry.questions[0].allowMultiple;
+    pending &&
+    entry.questions.length === 1 &&
+    !entry.questions[0].allowMultiple;
 
-  const onOptionClick = (questionId: string, optionId: string, allowMultiple: boolean) => {
+  const onOptionClick = (
+    questionId: string,
+    optionId: string,
+    allowMultiple: boolean,
+  ) => {
     if (!pending) return;
     if (singleFastPath && !customTexts[questionId]?.trim()) {
       respondOnce("answered", [{ questionId, selectedOptionIds: [optionId] }]);
@@ -99,7 +117,7 @@ export function AskQuestionCard({ entry }: { entry: AskQuestionEntry }) {
     entry.answers?.find((a) => a.questionId === questionId);
 
   return (
-    <div className="nex-material-panel rounded-[calc(var(--radius-md)+2px)] border border-[color:var(--hairline-soft)] px-3 py-2.5 shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)]">
+    <div className="nex-approval-surface">
       <div className="mb-2 flex items-center gap-2 text-sm text-[var(--text-primary)]">
         <HelpCircle size={14} className="shrink-0 text-[var(--accent)]" />
         <span className="font-medium">{title}</span>
@@ -129,7 +147,9 @@ export function AskQuestionCard({ entry }: { entry: AskQuestionEntry }) {
                 <p className="text-sm text-[var(--text-primary)]">{q.prompt}</p>
               )}
               {entry.questions.length === 1 && q.prompt !== title && (
-                <p className="text-sm text-[var(--text-secondary)]">{q.prompt}</p>
+                <p className="text-sm text-[var(--text-secondary)]">
+                  {q.prompt}
+                </p>
               )}
               {q.allowMultiple && pending && (
                 <p className="text-xs text-[var(--text-tertiary)]">可多选</p>
@@ -159,18 +179,22 @@ export function AskQuestionCard({ entry }: { entry: AskQuestionEntry }) {
                       aria-checked={selected}
                       disabled={!pending}
                       className={cn(
-                        "nex-interactive-chrome nex-pressable h-auto w-full items-start justify-start gap-2.5 whitespace-normal py-2 text-left font-medium",
+                        "nex-approval-option nex-interactive-chrome h-auto w-full items-start justify-start gap-2.5 whitespace-normal py-2 text-left font-medium",
                         selected
-                          ? "border border-[color:var(--accent)] bg-[color:color-mix(in_srgb,var(--accent)_16%,transparent)] text-[var(--text-primary)] shadow-[inset_0_1px_0_0_var(--edge-highlight-bright)] hover:bg-[color:color-mix(in_srgb,var(--accent)_22%,transparent)] disabled:opacity-100 dark:border-[color:var(--accent)] dark:bg-[color:color-mix(in_srgb,var(--accent)_16%,transparent)] dark:hover:bg-[color:color-mix(in_srgb,var(--accent)_22%,transparent)]"
+                          ? "border border-[color:var(--accent)] bg-[color:color-mix(in_srgb,var(--accent)_16%,transparent)] text-[var(--text-primary)] shadow-none hover:bg-[color:color-mix(in_srgb,var(--accent)_22%,transparent)] disabled:opacity-100 dark:border-[color:var(--accent)] dark:bg-[color:color-mix(in_srgb,var(--accent)_16%,transparent)] dark:hover:bg-[color:color-mix(in_srgb,var(--accent)_22%,transparent)]"
                           : "border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_56%,transparent)] text-[var(--text-primary)] hover:border-[color:var(--hairline-strong)] hover:bg-[color:color-mix(in_srgb,var(--material-elevated)_86%,transparent)] disabled:opacity-40",
                       )}
-                      onClick={() => onOptionClick(q.id, opt.id, q.allowMultiple)}
+                      onClick={() =>
+                        onOptionClick(q.id, opt.id, q.allowMultiple)
+                      }
                     >
                       <Indicator
                         size={16}
                         className={cn(
                           "mt-0.5 shrink-0",
-                          selected ? "text-[var(--accent)]" : "text-[var(--text-tertiary)]",
+                          selected
+                            ? "text-[var(--accent)]"
+                            : "text-[var(--text-tertiary)]",
                         )}
                       />
                       <span className="flex min-w-0 flex-1 flex-col items-start gap-0.5">
@@ -187,7 +211,10 @@ export function AskQuestionCard({ entry }: { entry: AskQuestionEntry }) {
               </div>
               {pending ? (
                 <div className="space-y-1">
-                  <label className="text-xs text-[var(--text-tertiary)]" htmlFor={`ask-other-${q.id}`}>
+                  <label
+                    className="text-xs text-[var(--text-tertiary)]"
+                    htmlFor={`ask-other-${q.id}`}
+                  >
                     其他（可选）
                   </label>
                   <input
@@ -217,16 +244,35 @@ export function AskQuestionCard({ entry }: { entry: AskQuestionEntry }) {
 
       {pending && (
         <div className="flex flex-wrap justify-end gap-2 pt-3">
-          <Button variant="ghost" size="sm" onClick={() => respondOnce("skipped")}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => respondOnce("skipped")}
+          >
             跳过
           </Button>
-          {(!singleFastPath || Object.values(customTexts).some((t) => t.trim())) && (
-            <Button size="sm" disabled={!allAnswered} onClick={() => respondOnce("answered", buildAnswers())}>
+          {(!singleFastPath ||
+            Object.values(customTexts).some((t) => t.trim())) && (
+            <Button
+              size="sm"
+              disabled={!allAnswered}
+              onClick={() => respondOnce("answered", buildAnswers())}
+            >
               提交
             </Button>
           )}
         </div>
       )}
     </div>
+  );
+}
+
+export function AskQuestionCard(
+  props: Parameters<typeof AskQuestionCardContent>[0],
+) {
+  return (
+    <AgentUiApprovalCard>
+      <AskQuestionCardContent {...props} />
+    </AgentUiApprovalCard>
   );
 }

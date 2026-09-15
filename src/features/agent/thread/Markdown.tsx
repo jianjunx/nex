@@ -1,4 +1,5 @@
-import { isValidElement, memo } from "react";
+import { Children, isValidElement, memo, type ReactNode } from "react";
+import CodeBlock from "@/components/agent-ui/beautiful-ui/CodeBlock";
 import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
@@ -98,21 +99,15 @@ const components: Components = {
       if (m) language = m[1];
     }
     return (
-      <div className="my-2.5 relative group/codeblock">
-        {language ? (
-          <span
-            className="absolute right-2.5 top-1.5 text-[10px] font-medium uppercase tracking-wider text-[var(--text-tertiary)] select-none pointer-events-none"
-            aria-hidden
-          >
-            {language}
-          </span>
-        ) : null}
+      <div className="beautiful-ui nex-ui-code my-2.5 relative group/codeblock">
+        <CodeBlock filename={language ?? "代码"} code={codeText(children)} labels={{ copy: "复制", copied: "已复制" }}>
         <pre
-          className="overflow-x-auto rounded-[var(--radius-md)] border border-[color:var(--border-subtle)] bg-[var(--glass-3-surface)] py-2.5 px-3 pr-14 text-xs leading-relaxed font-mono"
+          className="overflow-x-auto rounded-[var(--radius-md)] border border-[color:var(--border-subtle)] bg-[var(--material-floating)] py-2.5 px-3 pr-14 text-xs leading-relaxed font-mono"
           {...rest}
         >
           {children}
         </pre>
+        </CodeBlock>
       </div>
     );
   },
@@ -245,7 +240,7 @@ const components: Components = {
   blockquote({ children, ...rest }) {
     return (
       <blockquote
-        className="border-l-2 border-[color:var(--accent)] bg-[var(--glass-2-surface)]/60 pl-3 pr-2 py-1 my-2 text-[var(--text-secondary)] not-italic rounded-r-[var(--radius-sm)]"
+        className="border-l-2 border-[color:var(--accent)] bg-[var(--material-panel)]/60 pl-3 pr-2 py-1 my-2 text-[var(--text-secondary)] not-italic rounded-r-[var(--radius-sm)]"
         {...rest}
       >
         {children}
@@ -363,3 +358,7 @@ const components: Components = {
     );
   },
 };
+
+function codeText(node: ReactNode): string {
+  return Children.toArray(node).map((child) => isValidElement<{ children?: ReactNode }>(child) ? codeText(child.props.children) : String(child)).join("");
+}

@@ -8,105 +8,102 @@
     light values
    live under [data-theme="light"] for the app theme-switch mechanism. */
 :root {
-  /* macOS Pro dark workbench */
-  --background: #0f1115;
-  --foreground: #d7dbe3;
+  /* Beautiful UI neutral dark palette */
+  --background: var(--material-canvas);
+  --foreground: var(--text-primary);
 
-  --card: rgba(26, 29, 36, 0.88);
-  --card-foreground: #d7dbe3;
+  --card: var(--material-panel);
+  --card-foreground: var(--text-primary);
 
-  --popover: rgba(21, 24, 30, 0.92);
-  --popover-foreground: #d7dbe3;
+  --popover: var(--material-floating);
+  --popover-foreground: var(--text-primary);
 
-  --primary: #61afef;
-  --primary-foreground: #f8fafd;
+  --primary: var(--text-primary);
+  --primary-foreground: var(--material-panel);
 
-  --secondary: rgba(255, 255, 255, 0.08);
-  --secondary-foreground: #c8ced8;
+  --secondary: var(--overlay-ghost);
+  --secondary-foreground: var(--text-primary);
 
-  --muted: rgba(255, 255, 255, 0.06);
-  --muted-foreground: #7d8696;
+  --muted: var(--overlay-ghost);
+  --muted-foreground: var(--text-secondary);
 
-  --accent-foreground: #eef3ff;
+  --accent-foreground: var(--text-primary);
 
   --destructive: #e06c75;
   --destructive-foreground: #f8fafd;
 
-  --border: rgba(255, 255, 255, 0.08);
-  --input: rgba(255, 255, 255, 0.08);
-  --ring: #7ab7ff;
+  --border: var(--hairline-soft);
+  --input: var(--hairline-strong);
+  --ring: var(--text-secondary);
 
   --radius: 0.625rem;
 
   /* ─── App semantic tokens ───────────────────────────── */
   /* Hairlines sit between surfaces — not a black trench. */
-  --border-subtle: rgba(255, 255, 255, 0.07);
-  --border-default: rgba(255, 255, 255, 0.12);
+  --border-subtle: var(--hairline-soft);
+  --border-default: var(--hairline-strong);
 
-  --overlay-hover: rgba(255, 255, 255, 0.06);
-  --overlay-ghost: rgba(255, 255, 255, 0.045);
-  --overlay-active: rgba(122, 183, 255, 0.16);
+  --overlay-hover: #ffffff0a;
+  --overlay-ghost: #ffffff0b;
+  --overlay-active: #ffffff14;
 
   --scrollbar-thumb: rgba(157, 168, 184, 0.28);
   --scrollbar-thumb-hover: rgba(185, 196, 212, 0.42);
 
-  --text-primary: #d7dbe3;
-  --text-secondary: #a5aebb;
-  --text-tertiary: #7d8696;
+  --text-primary: #ececec;
+  --text-secondary: #a6a6a6;
+  --text-tertiary: #858585;
 
   /* malibu / cursor blue — ODP accent */
-  --accent: #7ab7ff;
-  --accent-hover: #98c8ff;
-  --accent-glow: rgba(122, 183, 255, 0.24);
+  --accent: #d4d4d4;
+  --accent-hover: #ffffff;
+  --accent-glow: transparent;
   /* Subtle surface used by shadcn hover/focus states (bg-accent utility).
      Kept separate from the brand --accent so ghost buttons don't turn solid
      blue on hover. */
-  --accent-surface: rgba(255, 255, 255, 0.07);
+  --accent-surface: var(--overlay-hover);
 
   --success: #98c379;
   --warning: #d19a66;
   --error: #e06c75;
 
   --radius-sm: 6px;
-  --radius-md: 10px;
+  --radius-md: 8px;
   --radius-lg: 14px;
-  --radius-xl: 20px;
+  --radius-xl: 16px;
 
   /* Surfaces and materials */
   --surface-sidebar: rgba(23, 27, 34, 0.74);
   --surface-highlight: rgba(255, 255, 255, 0.08);
-  --material-canvas: linear-gradient(180deg, #151821 0%, #101217 100%);
-  --material-toolbar: rgba(25, 28, 35, 0.7);
-  --material-sidebar: rgba(23, 27, 34, 0.76);
-  --material-panel: rgba(20, 23, 30, 0.72);
-  --material-floating: rgba(27, 31, 39, 0.82);
-  --material-elevated: rgba(30, 34, 43, 0.9);
-  --hairline-soft: rgba(255, 255, 255, 0.045);
-  --hairline-strong: rgba(255, 255, 255, 0.09);
-  --edge-highlight-soft: rgba(255, 255, 255, 0.08);
-  --edge-highlight-bright: rgba(255, 255, 255, 0.18);
-  --blur-toolbar: 20px;
-  --blur-sidebar: 26px;
-  --blur-floating: 32px;
-  --material-saturation: 165%;
+  --material-canvas: #17191c;
+  --material-toolbar: #1b1d20;
+  --material-sidebar: #1b1d20;
+  --material-panel: #202225;
+  --material-floating: #25272b;
+  --material-elevated: #2b2d32;
+  --hairline-soft: #ffffff10;
+  --hairline-strong: #ffffff20;
+  --edge-highlight-soft: transparent;
+  --edge-highlight-bright: transparent;
+  --blur-toolbar: 0px;
+  --blur-sidebar: 0px;
+  --blur-floating: 0px;
+  --material-saturation: 100%;
 
-  /* Legacy glass aliases mapped onto the new material system. */
-  --glass-1-surface: var(--material-sidebar);
-  --glass-2-surface: var(--material-panel);
-  --glass-3-surface: var(--material-floating);
-  --glass-border: var(--hairline-strong);
+  /* Shared border mapping. */
+
   --color-border: var(--border-default);
 
   /* Phosphor edge + quiet elevation (menus, composer, dialogs). */
-  --edge-highlight: var(--edge-highlight-soft);
-  --shadow-toolbar: inset 0 1px 0 0 var(--edge-highlight-soft), 0 14px 30px -24px rgba(0, 0, 0, 0.9);
-  --shadow-floating: inset 0 1px 0 0 var(--edge-highlight-soft), 0 18px 45px -26px rgba(0, 0, 0, 0.72);
-  --shadow-elevated: inset 0 1px 0 0 var(--edge-highlight-soft), 0 18px 40px -22px rgba(0, 0, 0, 0.66);
-  --shadow-dialog: inset 0 1px 0 0 var(--edge-highlight-bright), 0 30px 60px -24px rgba(0, 0, 0, 0.7);
-  --shadow-sheet: inset 0 1px 0 0 var(--edge-highlight-soft), 0 24px 56px -28px rgba(0, 0, 0, 0.72);
+  --edge-highlight: transparent;
+  --shadow-toolbar: none;
+  --shadow-floating: 0 0 0 1px var(--hairline-soft), 0 4px 16px #00000012;
+  --shadow-elevated: var(--shadow-floating);
+  --shadow-dialog: 0 0 0 1px var(--hairline-strong), 0 12px 36px #00000024;
+  --shadow-sheet: none;
 
   /* Motion + interaction */
-  --press-scale: 0.985;
+  --press-scale: 1;
   --duration-instant: 90ms;
   --duration-fast: 140ms;
   --duration-medium: 220ms;
@@ -114,83 +111,80 @@
 
 /* Light mode override */
 [data-theme="light"] {
-  --background: oklch(0.98 0.002 260);
-  --foreground: oklch(0.2 0.01 260);
+  --background: var(--material-canvas);
+  --foreground: var(--text-primary);
 
-  --card: oklch(0.99 0.002 260);
-  --card-foreground: oklch(0.20 0.01 260);
+  --card: var(--material-panel);
+  --card-foreground: var(--text-primary);
 
-  --popover: oklch(0.99 0.002 260);
-  --popover-foreground: oklch(0.20 0.01 260);
+  --popover: var(--material-floating);
+  --popover-foreground: var(--text-primary);
 
-  --primary: oklch(0.55 0.19 258);
-  --primary-foreground: oklch(0.99 0.003 260);
+  --primary: var(--text-primary);
+  --primary-foreground: var(--material-panel);
 
-  --secondary: oklch(0.94 0.005 260);
-  --secondary-foreground: oklch(0.30 0.01 260);
+  --secondary: var(--overlay-ghost);
+  --secondary-foreground: var(--text-primary);
 
-  --muted: oklch(0.94 0.005 260);
-  --muted-foreground: oklch(0.50 0.01 260);
+  --muted: var(--overlay-ghost);
+  --muted-foreground: var(--text-secondary);
 
-  --accent-foreground: oklch(0.20 0.01 260);
+  --accent-foreground: var(--text-primary);
 
   --destructive: oklch(0.55 0.2 25);
   --destructive-foreground: oklch(0.99 0.003 25);
 
-  --border: rgba(0, 0, 0, 0.08);
-  --input: rgba(0, 0, 0, 0.10);
-  --ring: oklch(0.55 0.19 258);
+  --border: var(--hairline-soft);
+  --input: var(--hairline-strong);
+  --ring: var(--text-secondary);
 
   /* App semantic tokens – light */
-  --border-subtle: rgba(26, 31, 47, 0.06);
-  --border-default: rgba(26, 31, 47, 0.1);
+  --border-subtle: var(--hairline-soft);
+  --border-default: var(--hairline-strong);
 
-  --overlay-hover: rgba(91, 103, 232, 0.06);
-  --overlay-ghost: rgba(91, 103, 232, 0.08);
-  --overlay-active: rgba(91, 103, 232, 0.14);
+  --overlay-hover: #00000006;
+  --overlay-ghost: #00000009;
+  --overlay-active: #0000000f;
 
   --scrollbar-thumb: rgba(58, 65, 88, 0.16);
   --scrollbar-thumb-hover: rgba(58, 65, 88, 0.28);
 
-  --text-primary: rgba(16, 21, 32, 0.9);
-  --text-secondary: rgba(32, 39, 58, 0.64);
-  --text-tertiary: rgba(44, 53, 74, 0.42);
+  --text-primary: #262626;
+  --text-secondary: #737373;
+  --text-tertiary: #929292;
 
-  --accent: #5B67E8;
-  --accent-hover: #4A55CC;
-  --accent-glow: rgba(91, 103, 232, 0.18);
-  --accent-surface: rgba(91, 103, 232, 0.08);
+  --accent: #404040;
+  --accent-hover: #171717;
+  --accent-glow: transparent;
+  --accent-surface: var(--overlay-hover);
 
   --surface-sidebar: rgba(249, 250, 255, 0.74);
   --surface-highlight: rgba(255, 255, 255, 0.74);
-  --material-canvas: linear-gradient(180deg, oklch(0.988 0.003 260) 0%, oklch(0.968 0.006 260) 62%, oklch(0.952 0.01 260) 100%);
-  --material-toolbar: rgba(252, 252, 255, 0.64);
-  --material-sidebar: rgba(247, 248, 253, 0.76);
-  --material-panel: rgba(255, 255, 255, 0.68);
-  --material-floating: rgba(255, 255, 255, 0.82);
-  --material-elevated: rgba(255, 255, 255, 0.92);
-  --hairline-soft: rgba(255, 255, 255, 0.52);
-  --hairline-strong: rgba(39, 47, 70, 0.1);
-  --edge-highlight-soft: rgba(255, 255, 255, 0.82);
-  --edge-highlight-bright: rgba(255, 255, 255, 0.96);
-  --blur-toolbar: 20px;
-  --blur-sidebar: 24px;
-  --blur-floating: 30px;
-  --material-saturation: 165%;
+  --material-canvas: #f5f5f5;
+  --material-toolbar: #fafafa;
+  --material-sidebar: #f5f5f5;
+  --material-panel: #ffffff;
+  --material-floating: #ffffff;
+  --material-elevated: #ffffff;
+  --hairline-soft: #0000000d;
+  --hairline-strong: #00000018;
+  --edge-highlight-soft: transparent;
+  --edge-highlight-bright: transparent;
+  --blur-toolbar: 0px;
+  --blur-sidebar: 0px;
+  --blur-floating: 0px;
+  --material-saturation: 100%;
 
-  /* Glass surfaces – light */
-  --glass-1-surface: var(--material-sidebar);
-  --glass-2-surface: var(--material-panel);
-  --glass-3-surface: var(--material-floating);
-  --glass-border: var(--hairline-strong);
+  /* Shared border mapping — light */
+
   --color-border: rgba(39, 47, 70, 0.1);
 
-  --edge-highlight: var(--edge-highlight-soft);
-  --shadow-toolbar: inset 0 1px 0 0 var(--edge-highlight-soft), 0 14px 28px -22px rgba(53, 61, 93, 0.12);
-  --shadow-floating: inset 0 1px 0 0 var(--edge-highlight-soft), 0 18px 42px -24px rgba(53, 61, 93, 0.18);
-  --shadow-elevated: inset 0 1px 0 0 var(--edge-highlight-soft), 0 10px 28px -14px rgba(53, 61, 93, 0.14);
-  --shadow-dialog: inset 0 1px 0 0 var(--edge-highlight-soft), 0 24px 48px -18px rgba(53, 61, 93, 0.18);
-  --shadow-sheet: inset 0 1px 0 0 var(--edge-highlight-soft), 0 22px 48px -24px rgba(53, 61, 93, 0.16);
+  --edge-highlight: transparent;
+  --shadow-toolbar: none;
+  --shadow-floating: 0 0 0 1px var(--hairline-soft), 0 4px 16px #00000012;
+  --shadow-elevated: var(--shadow-floating);
+  --shadow-dialog: 0 0 0 1px var(--hairline-strong), 0 12px 36px #00000024;
+  --shadow-sheet: none;
 }
 
 /* ─── Tailwind v4 theme mapping ─────────────────────────────────────────
@@ -220,16 +214,16 @@
   --color-ring: var(--ring);
 
   --radius-sm: 6px;
-  --radius-md: 10px;
+  --radius-md: 8px;
   --radius-lg: 14px;
-  --radius-xl: 20px;
+  --radius-xl: 16px;
 
   /* ─── Motion easing (native-feel curves) ────────────────────────────
      --ease-spring: decelerate with a slight overshoot (macOS-style pop)
      for dialog/menu entrances. --ease-smooth: pure deceleration for exits.
      tw-animate-css animations read --tw-ease, so the ease-* utilities
      driven by these tokens also time the animate-in/out keyframes. */
-  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-spring: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-smooth: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-fluid: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-decelerate: cubic-bezier(0.16, 1, 0.3, 1);
@@ -242,7 +236,8 @@
    `@import "tailwindcss"` already resets margin/padding/box-sizing in
    `@layer base`, where utilities can still override it. */
 
-html, body {
+html,
+body {
   height: 100%;
   width: 100%;
   overflow: hidden;
@@ -250,7 +245,8 @@ html, body {
      surface hurt readability). var(--background) follows the light/dark
      theme via the token overrides above. */
   background: var(--material-canvas) !important;
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
   color: var(--text-primary);
   letter-spacing: -0.006em;
   -webkit-font-smoothing: antialiased;
@@ -292,30 +288,26 @@ html, body {
   }
   .nex-material-toolbar {
     background: var(--material-toolbar);
-    backdrop-filter: blur(var(--blur-toolbar)) saturate(var(--material-saturation));
-    -webkit-backdrop-filter: blur(var(--blur-toolbar)) saturate(var(--material-saturation));
+
     box-shadow: var(--shadow-toolbar);
   }
   .nex-material-sidebar {
     background: var(--material-sidebar);
-    backdrop-filter: blur(var(--blur-sidebar)) saturate(var(--material-saturation));
-    -webkit-backdrop-filter: blur(var(--blur-sidebar)) saturate(var(--material-saturation));
+
     box-shadow: var(--shadow-sheet);
   }
   .nex-material-panel {
     background: var(--material-panel);
-    backdrop-filter: blur(var(--blur-sidebar)) saturate(var(--material-saturation));
-    -webkit-backdrop-filter: blur(var(--blur-sidebar)) saturate(var(--material-saturation));
-    box-shadow: inset 0 1px 0 0 var(--edge-highlight-soft), inset 1px 0 0 0 var(--hairline-soft);
+
+    box-shadow: none;
   }
   .nex-material-floating {
     background: var(--material-floating);
-    backdrop-filter: blur(var(--blur-floating)) saturate(var(--material-saturation));
-    -webkit-backdrop-filter: blur(var(--blur-floating)) saturate(var(--material-saturation));
+
     box-shadow: var(--shadow-floating);
   }
   .nex-chrome-edge {
-    box-shadow: inset 0 1px 0 0 var(--edge-highlight-soft);
+    box-shadow: none;
   }
   .nex-interactive-chrome {
     transition:
@@ -367,7 +359,9 @@ html, body {
     content: "";
     position: absolute;
     background: transparent;
-    transition: background-color var(--duration-fast) var(--ease-fluid), box-shadow var(--duration-fast) var(--ease-fluid);
+    transition:
+      background-color var(--duration-fast) var(--ease-fluid),
+      box-shadow var(--duration-fast) var(--ease-fluid);
   }
   .nex-handle-col::after {
     top: 0;
@@ -408,18 +402,7 @@ html, body {
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  :root {
-    --material-toolbar: rgba(25, 28, 35, 0.96);
-    --material-sidebar: rgba(23, 27, 34, 0.98);
-    --material-panel: rgba(20, 23, 30, 0.96);
-    --material-floating: rgba(27, 31, 39, 0.98);
-  }
-  [data-theme="light"] {
-    --material-toolbar: rgba(252, 252, 255, 0.9);
-    --material-sidebar: rgba(250, 250, 255, 0.94);
-    --material-panel: rgba(255, 255, 255, 0.92);
-    --material-floating: rgba(255, 255, 255, 0.96);
-  }
+  /* Surfaces are already opaque in both themes. */
   .nex-material-toolbar,
   .nex-material-sidebar,
   .nex-material-panel,
@@ -475,8 +458,12 @@ html, body {
 /* Search panel micro-interactions (Plan 5) — restraint: 150ms, no new deps. */
 
 @keyframes nex-project-running-rotate {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 .nex-project-running-rotate {
   animation: nex-project-running-rotate 5.8s linear infinite;
@@ -491,8 +478,14 @@ html, body {
 
 /* 结果行 stagger 渐显；animation-delay 由行内样式按索引给出（上限前 20 条）。 */
 @keyframes search-stagger-in {
-  from { opacity: 0; transform: translateY(2px); }
-  to { opacity: 1; transform: none; }
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 .search-stagger {
   animation: search-stagger-in 150ms ease-out both;
@@ -500,9 +493,15 @@ html, body {
 
 /* 搜索跳转定位：目标行背景高亮闪烁后淡化（EditorPanel.applyPendingLine）。 */
 @keyframes nex-jump-highlight-fade {
-  0% { background-color: color-mix(in srgb, var(--accent) 30%, transparent); }
-  60% { background-color: color-mix(in srgb, var(--accent) 22%, transparent); }
-  100% { background-color: transparent; }
+  0% {
+    background-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+  60% {
+    background-color: color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  100% {
+    background-color: transparent;
+  }
 }
 .nex-jump-highlight {
   animation: nex-jump-highlight-fade 2s ease-out both;
@@ -556,7 +555,7 @@ html, body {
     height: 14px;
     border: 1px solid var(--border-default);
     border-radius: 3px;
-    background: var(--glass-1-surface);
+    background: var(--material-sidebar);
     vertical-align: -2px;
     cursor: default;
     flex-shrink: 0;
@@ -596,7 +595,7 @@ html, body {
      helps the chip stand out from regular text without yelling; the hairline
      border matches the surrounding card surface. */
   .markdown-body code:not(pre code) {
-    background: var(--glass-3-surface);
+    background: var(--material-floating);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
     padding: 0 5px;
@@ -694,7 +693,7 @@ html, body {
     margin: 0 1px;
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
-    background: var(--glass-2-surface);
+    background: var(--material-panel);
     color: var(--text-secondary);
     font-size: 12px;
     line-height: 18px;

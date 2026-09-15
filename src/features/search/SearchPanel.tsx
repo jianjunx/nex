@@ -1,3 +1,4 @@
+import AgentUiSearch from "@/components/agent-ui/beautiful-ui/Search";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Loader2, RefreshCw, Replace, X } from "lucide-react";
 import FileIcon from "../files/FileIcon";
@@ -80,7 +81,7 @@ function Highlighted({ text, ranges }: { text: string; ranges: MatchRange[] }) {
   return <>{parts}</>;
 }
 
-export function SearchPanel() {
+function SearchPanelContent() {
   const [query, setQuery] = useState(() => readSearchQuery());
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [showReplace, setShowReplace] = useState(false);
@@ -440,7 +441,7 @@ export function SearchPanel() {
                         <button
                           key={`${m.path}:${m.line ?? 0}:${i}`}
                           onClick={() => void openFile(m.path, m.line != null ? { line: m.line } : undefined)}
-                          className={`group/row search-stagger relative w-full text-left pl-7 pr-7 py-1 rounded-[var(--radius-sm)] hover:bg-[var(--glass-2-surface)] transition-colors ${rowOffset + i === activeIndex ? "bg-[var(--overlay-ghost)]" : ""}`}
+                          className={`group/row search-stagger relative w-full text-left pl-7 pr-7 py-1 rounded-[var(--radius-sm)] hover:bg-[var(--material-panel)] transition-colors ${rowOffset + i === activeIndex ? "bg-[var(--overlay-ghost)]" : ""}`}
                           style={{ animationDelay: `${Math.min(rowOffset + i, 19) * 25}ms` }}
                         >
                           {m.line != null ? (
@@ -497,4 +498,8 @@ export function SearchPanel() {
       </AlertDialog>
     </div>
   );
+}
+
+export function SearchPanel() {
+ return <AgentUiSearch><SearchPanelContent /></AgentUiSearch>;
 }

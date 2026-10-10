@@ -1,3 +1,11 @@
+//! Filesystem Tauri commands.
+//!
+//! Sync commands run on the main thread, so anything that walks the project
+//! tree (read/search/replace) goes on the blocking pool as an `async fn` +
+//! `tauri::async_runtime::spawn_blocking` — see `fs_watch_start` for the
+//! pattern. Single-file / single-entry operations stay sync (cheap, and the
+//! UI is idle while they run).
+
 use crate::error::NexError;
 use crate::fs::create::{create_dir, create_file};
 use crate::fs::operations::{copy_entry, delete_entry, import_file, move_entry, rename_entry};
@@ -67,35 +75,45 @@ pub fn fs_watch_stop(state: State<'_, AppState>, project_path: String) -> Result
 
 /// Global project search with match rules (case / whole-word / regex).
 /// `options = None` keeps the historical case-insensitive substring behavior.
+/// Blocking-pool (see module docs): a full-tree walk + read + line-regex
+/// takes seconds on large projects and must not block the main thread.
 #[tauri::command]
-pub fn fs_search(
+pub async fn fs_search(
     project_path: String,
     query: String,
     options: Option<SearchOptions>,
 ) -> Result<Vec<SearchMatch>, NexError> {
-    search(Path::new(&project_path), &query, options)
+    tauri::async_runtime::spawn_blocking(move || search(Path::new(&project_path), &query, options))
+        .await
+        .map_err(|e| NexError::FileSystem(format!("fs_search join: {e}")))?
 }
 
 /// Project-wide replace PREVIEW: per-file replacement counts, writes nothing.
 /// Honors the same MAX_RESULTS/.gitignore/size constraints as search.
+/// Blocking-pool (see module docs).
 #[tauri::command]
-pub fn fs_search_replace(
+pub async fn fs_search_replace(
     project_path: String,
     query: String,
     replacement: String,
     options: Option<SearchOptions>,
 ) -> Result<ReplacePreview, NexError> {
-    search_replace(Path::new(&project_path), &query, &replacement, options)
+    tauri::async_runtime::spawn_blocking(move || {
+        search_replace(Path::new(&project_path), &query, &replacement, options)
+    })
+    .await
+    .map_err(|e| NexError::FileSystem(format!("fs_search_replace join: {e}")))?
 }
 
 /// Project-wide replace: writes to disk atomically (fs/write.rs).
-/// `paths` limits the scope to explicit files (single-file replace);
-/// `limit_per_file` caps replacements per file (single-match = Some(1)).
+/// `paths` limits which files get rewritten (the whole tree is still walked
+/// to find them — see replace_candidates); `limit_per_file` caps
+/// replacements per file (single-match = Some(1)).
 /// After the write, the existing fs-changed watcher syncs open editors
 /// (clean → silent reload, dirty → stale banner) — intentionally not
-/// suppressed.
+/// suppressed. Blocking-pool (see module docs).
 #[tauri::command]
-pub fn fs_apply_replace(
+pub async fn fs_apply_replace(
     project_path: String,
     query: String,
     replacement: String,
@@ -103,14 +121,18 @@ pub fn fs_apply_replace(
     paths: Option<Vec<String>>,
     limit_per_file: Option<usize>,
 ) -> Result<ReplaceResult, NexError> {
-    apply_replace(
-        Path::new(&project_path),
-        &query,
-        &replacement,
-        options,
-        paths,
-        limit_per_file,
-    )
+    tauri::async_runtime::spawn_blocking(move || {
+        apply_replace(
+            Path::new(&project_path),
+            &query,
+            &replacement,
+            options,
+            paths,
+            limit_per_file,
+        )
+    })
+    .await
+    .map_err(|e| NexError::FileSystem(format!("fs_apply_replace join: {e}")))?
 }
 
 #[tauri::command]

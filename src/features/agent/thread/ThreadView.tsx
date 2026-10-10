@@ -1,12 +1,14 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
-import LoadingState from "@/components/agent-ui/beautiful-ui/LoadingState";
+import { AgentLoadingIndicator } from "./AgentLoadingIndicator";
+import { loadingContextFor } from "./loadingPhrases";
 import { useAgentStore } from "../../../stores/agent.store";
 import { useProjectStore } from "../../../stores/project.store";
 import { selectProjectActiveTabId, useConversationStore } from "../../../stores/conversation.store";
 import { EntryView } from "./EntryView";
 import { ProcessGroup } from "./ProcessGroup";
 import { FilesChangedCard } from "./FilesChangedCard";
+import { FILES_CHANGED_ROW_HEIGHT, FILES_CHANGED_VISIBLE_ROWS } from "./filesChanged";
 import { groupThreadEntries, type ThreadRenderItem } from "./groupThreadEntries";
 import {
   pickStickyUserMessage,
@@ -33,7 +35,9 @@ const measuredHeights = new Map<string, number>();
 function estimateRowHeight(item: ThreadRenderItem | undefined): number {
   if (!item) return 40; // 加载指示器行
   if (item.type === "process_group") return 32;
-  if (item.type === "files_changed") return 44 + item.files.length * 28;
+  if (item.type === "files_changed") {
+    return 44 + Math.min(item.files.length, FILES_CHANGED_VISIBLE_ROWS) * FILES_CHANGED_ROW_HEIGHT;
+  }
   const e = item.entry;
   if (e.kind === "user_message") return 48;
   if (e.kind === "turn_summary") return 20;
@@ -161,6 +165,8 @@ export function ThreadView() {
     activeTabId ? s.sessions[activeTabId]?.status : undefined,
   );
   const showLoading = shouldShowAgentLoading(sessionStatus, entries);
+  // 仅看末尾条目，O(1)；字符串值稳定，不会让 memo 化的提示组件随流式更新重渲染。
+  const loadingContext = loadingContextFor(entries);
   const lastTurnComplete = sessionStatus !== "running" && sessionStatus !== "starting" && sessionStatus !== "waiting";
   const renderItems = useMemo(
     () => groupThreadEntries(entries, { lastTurnComplete }),
@@ -323,7 +329,9 @@ export function ThreadView() {
                     top: 0,
                     left: 0,
                     width: "100%",
-                    transform: `translateY(${vi.start}px)`,
+                    // 行高实测带小数(正文 14px×1.6=22.4px),累加出的 start 也带小数;
+                    // 小数 translate 会让整行文字按亚像素重新光栅化而发虚,取整对齐物理像素。
+                    transform: `translateY(${Math.round(vi.start)}px)`,
                   }}
                 >
                   {item ? (
@@ -344,7 +352,7 @@ export function ThreadView() {
                       />
                     )
                   ) : (
-                    <AgentLoadingIndicator />
+                    <AgentLoadingIndicator context={loadingContext} />
                   )}
                 </div>
               );
@@ -356,7 +364,7 @@ export function ThreadView() {
         <div
           data-sticky-user-message={stickyEntry.id}
           className="pointer-events-none absolute inset-x-0 top-0 z-20 px-2 pt-3"
-          style={{ transform: `translateY(${sticky.translateY}px)` }}
+          style={{ transform: `translateY(${Math.round(sticky.translateY)}px)` }}
         >
           <div className="pointer-events-auto mx-auto w-full max-w-[900px] px-4">
             <EntryView
@@ -372,14 +380,3 @@ export function ThreadView() {
   );
 }
 
-function AgentLoadingIndicator() {
-  return (
-    <div
-      className="flex items-center gap-2 max-w-[96%] text-sm text-[var(--text-tertiary)]"
-      role="status"
-      aria-live="polite"
-    >
-      <div className="beautiful-ui"><LoadingState variant="Dots" label="正在思考…" /></div>
-    </div>
-  );
-}

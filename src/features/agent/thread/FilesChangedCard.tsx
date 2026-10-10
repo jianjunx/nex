@@ -2,7 +2,11 @@ import AgentUiDiffTable from "@/components/agent-ui/beautiful-ui/DiffTable";
 import FileIcon from "../../files/FileIcon";
 import { fileBasename, relativeToProject } from "../../editor/pathUtils";
 import { openPathToken } from "./pathToken";
-import type { ChangedFile } from "./filesChanged";
+import {
+  FILES_CHANGED_ROW_HEIGHT,
+  FILES_CHANGED_VISIBLE_ROWS,
+  type ChangedFile,
+} from "./filesChanged";
 import { useProjectStore } from "../../../stores/project.store";
 import { selectProjectActiveTabId, useConversationStore } from "../../../stores/conversation.store";
 import { useAgentStore } from "../../../stores/agent.store";
@@ -66,7 +70,11 @@ function FilesChangedCardContent({ files }: { files: ChangedFile[] }) {
           </button>
         </div>
       </div>
-      <ul>
+      <ul
+        data-testid="files-changed-list"
+        className="overflow-y-auto"
+        style={{ maxHeight: FILES_CHANGED_VISIBLE_ROWS * FILES_CHANGED_ROW_HEIGHT }}
+      >
         {files.map((f) => {
           const name = fileBasename(f.path);
           return (
@@ -74,7 +82,8 @@ function FilesChangedCardContent({ files }: { files: ChangedFile[] }) {
               <button
                 type="button"
                 title={f.path}
-                className="nex-interactive-chrome flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left hover:bg-[color:color-mix(in_srgb,var(--material-elevated)_86%,transparent)]"
+                style={{ height: FILES_CHANGED_ROW_HEIGHT }}
+                className="nex-interactive-chrome flex w-full cursor-pointer items-center gap-2 px-3 text-left hover:bg-[color:color-mix(in_srgb,var(--material-elevated)_86%,transparent)]"
                 onClick={() => void openPathToken(f.path)}
               >
                 <FileIcon filename={name} size={14} className="shrink-0" />

@@ -227,6 +227,26 @@ describe("ThreadView 虚拟化", () => {
     expect(pinned[0].getAttribute("data-sticky-user-message")).toBe("e2");
   });
 
+  it("行高带小数时行偏移仍取整，避免文字因亚像素 translate 而发虚", async () => {
+    // 正文 14px × 1.6 = 22.4px，累加出的 start 必然带小数。
+    installVirtualListMocks({ rowHeight: 22.4 });
+    setupThreadStores("A", { A: makeEntries(30) });
+    const { container } = render(<ThreadView />);
+    const scroller = getScroller(container);
+    setMockScrollHeight(scroller, 30 * 22.4);
+    await act(async () => {});
+
+    const rows = [...scroller.querySelectorAll<HTMLElement>("[data-index]")];
+    expect(rows.length).toBeGreaterThan(3);
+    for (const row of rows) {
+      const y = /translateY\(([-\d.]+)px\)/.exec(row.style.transform)?.[1];
+      expect(y).toBeDefined();
+      expect(Number.isInteger(Number(y))).toBe(true);
+    }
+    // 确认测试前提成立：行确实被测成了小数高度。
+    expect(rows[0]!.getBoundingClientRect().height).toBeCloseTo(22.4);
+  });
+
   it("在列表顶部时不吸顶", async () => {
     setupThreadStores("A", { A: makeEntries(40) });
     const { container } = render(<ThreadView />);

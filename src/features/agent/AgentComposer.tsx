@@ -962,7 +962,9 @@ function AgentComposerContent() {
                 />
               )}
               {session?.sessionId && meta && (() => {
-                const configOpts = (meta.configOptions ?? []).filter((o) => o.options.length > 0);
+                const configOpts = (meta.configOptions ?? []).filter(
+                  (o) => o.options.length > 0 && !HIDDEN_CONFIG_OPTION_IDS.has(o.id),
+                );
                 const hasConfigMode = configOpts.some(
                   (o) => o.id === "mode" || o.category === "mode",
                 );
@@ -1069,6 +1071,9 @@ function AgentComposerContent() {
     </div>
   );
 }
+
+/** Agent-reported options that stay out of the composer toolbar (Claude's "agent" persona picker). */
+const HIDDEN_CONFIG_OPTION_IDS: ReadonlySet<string> = new Set(["agent"]);
 
 function pathToFileUri(path: string): string {
   const normalized = path.replace(/\\/g, "/");

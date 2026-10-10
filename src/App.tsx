@@ -42,35 +42,42 @@ function App() {
     // zustand persist middleware (localStorage); we validate them against
     // the freshly-loaded backend data before using them.
     void (async () => {
-      await loadProjects();
-      const { activeProjectId, projects } = useProjectStore.getState();
-      if (!activeProjectId) return;
+      try {
+        await loadProjects();
+        const { activeProjectId, projects } = useProjectStore.getState();
+        if (!activeProjectId) return;
 
-      const activeProject = projects.find((p) => p.id === activeProjectId);
-      // The persisted project was deleted from the DB meanwhile — clear it
-      // so we don't keep restoring a dead id on every launch.
-      if (!activeProject) {
-        useProjectStore.setState({ activeProjectId: null });
-        return;
+        const activeProject = projects.find((p) => p.id === activeProjectId);
+        // The persisted project was deleted from the DB meanwhile — clear it
+        // so we don't keep restoring a dead id on every launch.
+        if (!activeProject) {
+          useProjectStore.setState({ activeProjectId: null });
+          return;
+        }
+
+        // Watcher failures are non-fatal (e.g. path no longer exists).
+        const watchP = fsWatchStart(activeProject.path).catch(() => {});
+
+        // Validate persisted tabs (incl. one-shot legacy migration) against
+        // backend conversations, then reload each surviving tab's messages.
+        // Editor restore runs in parallel with conversation hydrate.
+        await Promise.all([
+          restoreProjectConversationTabs(activeProjectId),
+          useFsStore.getState().loadEditorState(activeProjectId),
+          watchP,
+        ]);
+        useFsStore.getState().switchSearchProject(activeProjectId);
+        useUiStore.getState().syncTerminalVisibleForProject(activeProjectId);
+        useUiStore.getState().syncEditorVisibleForProject(
+          activeProjectId,
+          useFsStore.getState().openFiles.length > 0,
+        );
+      } finally {
+        // Terminal visibility is now final: unblock the tray so it renders
+        // once with the settled value instead of flashing the persisted one.
+        // Runs on every early-return path too (incl. loadProjects failure).
+        useUiStore.getState().markTerminalStartupSettled();
       }
-
-      // Watcher failures are non-fatal (e.g. path no longer exists).
-      const watchP = fsWatchStart(activeProject.path).catch(() => {});
-
-      // Validate persisted tabs (incl. one-shot legacy migration) against
-      // backend conversations, then reload each surviving tab's messages.
-      // Editor restore runs in parallel with conversation hydrate.
-      await Promise.all([
-        restoreProjectConversationTabs(activeProjectId),
-        useFsStore.getState().loadEditorState(activeProjectId),
-        watchP,
-      ]);
-      useFsStore.getState().switchSearchProject(activeProjectId);
-      useUiStore.getState().syncTerminalVisibleForProject(activeProjectId);
-      useUiStore.getState().syncEditorVisibleForProject(
-        activeProjectId,
-        useFsStore.getState().openFiles.length > 0,
-      );
     })();
 
     // External-change events: the file tree and git panel only render the

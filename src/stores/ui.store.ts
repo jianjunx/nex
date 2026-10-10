@@ -33,6 +33,17 @@ interface UiState {
   terminalVisible: boolean;
   /** Per-project terminal tray visibility; survives project switches. */
   terminalVisibleByProject: Record<string, boolean>;
+  /**
+   * False until App's startup restore has run its final terminal sync.
+   * The persisted `terminalVisible=true` would otherwise paint the tray on
+   * first frame, only for the startup sync chain (project validation,
+   * per-project map) to flip it back — a visible flash. Gating the tray on
+   * this flag defers mounting until the value is final. Not persisted
+   * (absent from partialize) so every launch starts unsettled.
+   */
+  terminalStartupSettled: boolean;
+  /** Mark startup terminal sync done; the tray may now render. */
+  markTerminalStartupSettled: () => void;
   sidePanelWidth: number;
   terminalHeight: number;
   /** Editor panel visible for the *current* project (mirrored from by-project map). */
@@ -100,6 +111,7 @@ export const useUiStore = create<UiState>()(
       sidePanelTab: "files",
       terminalVisible: false,
       terminalVisibleByProject: {},
+      terminalStartupSettled: false,
       sidePanelWidth: 320,
       terminalHeight: 200,
       editorVisible: false,
@@ -128,6 +140,9 @@ export const useUiStore = create<UiState>()(
       }),
       setTerminalVisible: (v) => set((s) => {
         rememberTerminalVisible(s, v);
+      }),
+      markTerminalStartupSettled: () => set((s) => {
+        if (!s.terminalStartupSettled) s.terminalStartupSettled = true;
       }),
       syncTerminalVisibleForProject: (projectId) => set((s) => {
         if (!projectId) {

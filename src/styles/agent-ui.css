@@ -286,7 +286,7 @@ button,
 }
 .nex-trace-toggle svg,
 .nex-tool-chevron {
-  transition: transform 200ms var(--ease-out-strong);
+  transition: transform var(--duration-medium) var(--ease-out-strong);
   flex-shrink: 0;
 }
 .nex-trace-body {

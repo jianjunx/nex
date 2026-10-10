@@ -104,9 +104,9 @@
 
   /* Motion + interaction */
   --press-scale: 1;
-  --duration-instant: 90ms;
-  --duration-fast: 140ms;
-  --duration-medium: 220ms;
+  --duration-instant: 60ms;
+  --duration-fast: 100ms;
+  --duration-medium: 150ms;
 }
 
 /* Light mode override */

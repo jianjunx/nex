@@ -36,12 +36,13 @@ export function TerminalPanel() {
   const project = projects.find((p) => p.id === activeProjectId);
   const sessions = selectProjectSessions(allSessions, activeProjectId);
 
-  // Open = usable: the tray mounts only when the terminal is toggled visible
-  // (SidePanel gates it on terminalVisible), so creating a session on mount
-  // makes "open the terminal" immediately yield a live shell instead of an
-  // empty black box that waits for a manual "+". A manual kill of the last
-  // session does NOT respawn (this effect won't re-run); reopening the tray
-  // remounts and respawns, which matches "open = usable".
+  // Open = usable: the tray renders only when the terminal is toggled visible
+  // (ConversationTerminal gates it on terminalVisible + startup settled), so
+  // creating a session on mount makes "open the terminal" immediately yield a
+  // live shell instead of an empty black box that waits for a manual "+". A
+  // manual kill of the last session does NOT respawn (this effect won't
+  // re-run); reopening the tray remounts and respawns, which matches
+  // "open = usable".
   const autoCreatedFor = useRef<string | null>(null);
 
   // When the active project changes, show that project's PTY tabs without

@@ -5,6 +5,12 @@ import { useProjectStore } from "@/stores/project.store";
 import { TerminalPanel } from "./TerminalPanel";
 export function ConversationTerminal() {
   const visible = useUiStore((s) => s.terminalVisible);
+  // Don't render the tray until App's startup restore settled the final
+  // visibility: the persisted flag would paint it on the first frame, only
+  // for the startup sync chain (project validation, per-project map) to flip
+  // visibility back — a visible flash. After settling the value is final and
+  // the normal presence transition takes over.
+  const startupSettled = useUiStore((s) => s.terminalStartupSettled);
   const height = useUiStore((s) => s.terminalHeight);
   const projectId = useProjectStore((s) => s.activeProjectId);
   const presence = usePresence<HTMLElement>(visible);
@@ -14,7 +20,7 @@ export function ConversationTerminal() {
   useEffect(() => {
     useUiStore.getState().syncTerminalVisibleForProject(projectId);
   }, [projectId]);
-  if (!presence.mounted) return null;
+  if (!startupSettled || !presence.mounted) return null;
   const shown = presence.shown;
   return (
     <section

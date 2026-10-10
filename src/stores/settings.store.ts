@@ -61,7 +61,7 @@ export const useSettingsStore = create<SettingsState>()(
     terminalFontFamily: TERMINAL_DEFAULTS.fontFamily,
     terminalScrollback: TERMINAL_DEFAULTS.scrollback,
     editorAutoSave: true,
-    editorWordWrap: true,
+    editorWordWrap: false,
     editorWrapColumn: 70,
 
     // Reads every key, keeping the built-in default for missing/invalid

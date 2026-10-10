@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { Collapse } from "@/components/ui/Collapse";
 
 /* ─────────────────────────────────────────────────────────
  * TOOL CHIPS
@@ -458,6 +459,245 @@ function ToolChipsPreview({
           document.body,
         )}
     </div>
+  );
+}
+
+export type ToolChipIcon = "think" | "write" | "run" | "read";
+
+const CHIP_CLASS =
+  "inline-flex h-5.5 items-center rounded-chip bg-field px-1.5 text-[11.5px] text-ink-2 shadow-hairline";
+
+function Glyph({
+  name,
+  className,
+}: {
+  name: ToolChipIcon;
+  className?: string;
+}) {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill={name === "think" ? "currentColor" : "none"}
+      stroke="currentColor"
+      className={className}
+    >
+      {Icons[name]}
+    </svg>
+  );
+}
+
+function RowChevron({ open, className }: { open: boolean; className?: string }) {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      style={{ transform: open ? "rotate(0deg)" : "rotate(-90deg)" }}
+    >
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  );
+}
+
+/** Collapsed run header: chevron plus a one-line summary. */
+export function ToolRunHeader({
+  open,
+  label,
+  onToggle,
+  busy = false,
+}: {
+  open: boolean;
+  label: string;
+  onToggle: () => void;
+  busy?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      aria-expanded={open}
+      onClick={onToggle}
+      className="-mx-1.5 flex w-fit max-w-full items-center gap-1.5 rounded-control px-1.5 py-1 text-left text-[12.5px] text-ink-2 transition-colors duration-100 hover:bg-hover-2"
+    >
+      <RowChevron
+        open={open}
+        className="shrink-0 transition-transform duration-200"
+      />
+      {busy && (
+        <span
+          aria-hidden
+          className="inline-block size-3 shrink-0 animate-spin rounded-full border border-current border-t-transparent"
+        />
+      )}
+      <span className="truncate tabular-nums">{label}</span>
+    </button>
+  );
+}
+
+/**
+ * One tool row: icon swaps to a chevron, then a label and an inline chip.
+ * Real detail (diffs, output) goes in children; no demo timer.
+ */
+export function ToolChipRow({
+  icon,
+  label,
+  chip,
+  mono = true,
+  open,
+  onToggle,
+  onChipClick,
+  chipTitle,
+  /** File names stay fully visible. Other chips may ellipsize. */
+  fitChip = false,
+  busy = false,
+  failed = false,
+  children,
+}: {
+  icon: ToolChipIcon;
+  label: string;
+  chip: string;
+  mono?: boolean;
+  open: boolean;
+  onToggle: () => void;
+  onChipClick?: () => void;
+  chipTitle?: string;
+  fitChip?: boolean;
+  busy?: boolean;
+  failed?: boolean;
+  children?: ReactNode;
+}) {
+  const chipClass = fitChip
+    ? `${CHIP_CLASS} w-fit max-w-full shrink-0 whitespace-nowrap text-left ${mono ? "font-mono" : ""}`
+    : `${CHIP_CLASS} min-w-0 flex-1 truncate text-left ${mono ? "font-mono" : ""}`;
+  const mark = (
+    <span className="relative flex size-4 shrink-0 items-center justify-center text-ink-3">
+      {busy ? (
+        <span
+          className={`size-3 animate-spin rounded-full border border-current border-t-transparent transition-opacity duration-100 group-hover/row:opacity-0 ${open ? "opacity-0" : ""}`}
+        />
+      ) : (
+        <Glyph
+          name={icon}
+          className={`transition-opacity duration-100 group-hover/row:opacity-0 ${open ? "opacity-0" : ""}`}
+        />
+      )}
+      <RowChevron
+        open={open}
+        className={`absolute transition-[opacity,transform] duration-150 group-hover/row:opacity-100 ${open ? "opacity-100" : "opacity-0"}`}
+      />
+    </span>
+  );
+  const labelNode = (
+    <span
+      className={`max-w-40 truncate text-[12.5px] font-medium ${failed ? "text-red" : "text-ink"}`}
+    >
+      {label}
+    </span>
+  );
+  const rowClass =
+    "group/row -mx-[3px] flex min-h-7 w-fit max-w-full min-w-0 flex-wrap items-center gap-2 rounded-control px-[3px] text-left transition-colors duration-100 hover:bg-hover-2";
+  return (
+    <div>
+      {onChipClick ? (
+        <div className={rowClass}>
+          <button
+            type="button"
+            aria-expanded={open}
+            onClick={onToggle}
+            className="flex min-w-0 shrink-0 items-center gap-2"
+          >
+            {mark}
+            {labelNode}
+          </button>
+          <button
+            type="button"
+            title={chipTitle ?? chip}
+            onClick={onChipClick}
+            className={`${chipClass} cursor-pointer transition-colors duration-100 hover:bg-hover-2`}
+          >
+            {chip}
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={onToggle}
+          className={rowClass}
+        >
+          {mark}
+          {labelNode}
+          <span className={chipClass}>{chip}</span>
+        </button>
+      )}
+      {children != null && (
+        <Collapse open={open}>
+          <div className="mt-0.5 mb-1 ml-2 flex flex-col gap-1.5 border-l border-line py-0.5 pl-3.5">
+            {children}
+          </div>
+        </Collapse>
+      )}
+    </div>
+  );
+}
+
+/** File-diff chip from the bottom of a tool run. */
+export function ToolDiffChip({
+  file,
+  add,
+  del,
+  title,
+  onClick,
+}: {
+  file: string;
+  add: number;
+  del: number;
+  title?: string;
+  onClick?: () => void;
+}) {
+  return (
+    <span data-diffchip className="relative max-w-full">
+      <button
+        type="button"
+        title={title ?? file}
+        onClick={onClick}
+        className="inline-flex h-7 max-w-full items-center gap-2 rounded-chip bg-surface px-2 font-mono text-[11.5px] text-ink shadow-btn transition-colors duration-100 hover:bg-hover"
+      >
+        <span className="min-w-0 truncate">{file}</span>
+        {add > 0 && (
+          <span className="shrink-0 text-green tabular-nums">+{add}</span>
+        )}
+        {del > 0 && (
+          <span className="shrink-0 text-red tabular-nums">−{del}</span>
+        )}
+      </button>
+    </span>
+  );
+}
+
+export function ToolDiffMore({
+  hidden,
+  onClick,
+}: {
+  hidden: number;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={`还有 ${hidden} 个文件`}
+      onClick={onClick}
+      className="inline-flex h-7 items-center rounded-chip px-1.5 font-mono text-[11.5px] text-ink-3 underline decoration-transparent underline-offset-2 transition-colors duration-100 hover:text-ink-2 hover:decoration-current"
+    >
+      +{hidden} more
+    </button>
   );
 }
 

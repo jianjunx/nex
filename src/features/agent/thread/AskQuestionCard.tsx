@@ -1,32 +1,24 @@
-import AgentUiApprovalCard from "@/components/agent-ui/beautiful-ui/ApprovalCard";
 import { useEffect, useRef, useState } from "react";
-import {
-  CheckCircle2,
-  CheckSquare,
-  Circle,
-  HelpCircle,
-  Square,
-  XCircle,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { ApprovalPromptCard } from "@/components/agent-ui/beautiful-ui/ApprovalCard";
 import type { AskQuestionAnswerPayload } from "../../../bridge/events";
 import { useAgentStore } from "../../../stores/agent.store";
 import type { AskQuestionEntry } from "./types";
 
 /**
- * In-thread AskUserQuestion card. Options sit in the conversation so the
- * user can answer without a blocking modal.
+ * In-thread AskUserQuestion card. One question at a time, matching Approval Card,
+ * with the original answer / skip callbacks.
  */
 function AskQuestionCardContent({ entry }: { entry: AskQuestionEntry }) {
   const respondAskQuestion = useAgentStore((s) => s.respondAskQuestion);
   const submittingRef = useRef(false);
   const pending = entry.status === "pending";
+  const [qi, setQi] = useState(0);
   const [selections, setSelections] = useState<Record<string, string[]>>({});
   const [customTexts, setCustomTexts] = useState<Record<string, string>>({});
 
   useEffect(() => {
     submittingRef.current = false;
+    setQi(0);
     const init: Record<string, string[]> = {};
     const customs: Record<string, string> = {};
     for (const q of entry.questions) {
@@ -36,8 +28,6 @@ function AskQuestionCardContent({ entry }: { entry: AskQuestionEntry }) {
     setSelections(init);
     setCustomTexts(customs);
   }, [entry.requestId, entry.questions]);
-
-  const title = entry.title?.trim() || "需要你的选择";
 
   const isAnswered = (questionId: string) => {
     const custom = customTexts[questionId]?.trim();
@@ -86,8 +76,6 @@ function AskQuestionCardContent({ entry }: { entry: AskQuestionEntry }) {
     });
   };
 
-  // Fast path: one single-select question — clicking an option submits immediately
-  // (unless the user is typing a custom answer).
   const singleFastPath =
     pending &&
     entry.questions.length === 1 &&
@@ -116,163 +104,91 @@ function AskQuestionCardContent({ entry }: { entry: AskQuestionEntry }) {
   const resolvedAnswer = (questionId: string) =>
     entry.answers?.find((a) => a.questionId === questionId);
 
+  const index = Math.min(qi, Math.max(0, entry.questions.length - 1));
+  const visible = pending && entry.questions.length > 1
+    ? [entry.questions[index]]
+    : entry.questions;
+  const current = entry.questions[index];
+  const hasCustom = Object.values(customTexts).some((t) => t.trim());
+  const showSubmit = pending && (!singleFastPath || hasCustom);
+  const last = index >= entry.questions.length - 1;
+  const submitDisabled = entry.questions.length > 1
+    ? last
+      ? !allAnswered
+      : !current || !isAnswered(current.id)
+    : !allAnswered;
+
   return (
-    <div className="nex-approval-surface">
-      <div className="mb-2 flex items-center gap-2 text-sm text-[var(--text-primary)]">
-        <HelpCircle size={14} className="shrink-0 text-[var(--accent)]" />
-        <span className="font-medium">{title}</span>
-        {!pending && (
-          <span className="ml-auto inline-flex items-center gap-1 text-xs text-[var(--text-tertiary)]">
-            {entry.status === "answered" ? (
-              <>
-                <CheckCircle2 size={12} className="text-emerald-500" />
-                {statusLabel}
-              </>
-            ) : (
-              <>
-                <XCircle size={12} />
-                {statusLabel}
-              </>
-            )}
-          </span>
-        )}
-      </div>
-
-      <div className="space-y-4">
-        {entry.questions.map((q) => {
-          const submitted = resolvedAnswer(q.id);
-          return (
-            <div key={q.id} className="space-y-2">
-              {entry.questions.length > 1 && (
-                <p className="text-sm text-[var(--text-primary)]">{q.prompt}</p>
-              )}
-              {entry.questions.length === 1 && q.prompt !== title && (
-                <p className="text-sm text-[var(--text-secondary)]">
-                  {q.prompt}
-                </p>
-              )}
-              {q.allowMultiple && pending && (
-                <p className="text-xs text-[var(--text-tertiary)]">可多选</p>
-              )}
-              <div
-                className="space-y-1.5"
-                role={q.allowMultiple ? "group" : "radiogroup"}
-                aria-label={q.prompt}
-              >
-                {q.options.map((opt) => {
-                  const selected = pending
-                    ? (selections[q.id] ?? []).includes(opt.id)
-                    : (submitted?.selectedOptionIds ?? []).includes(opt.id);
-                  const Indicator = q.allowMultiple
-                    ? selected
-                      ? CheckSquare
-                      : Square
-                    : selected
-                      ? CheckCircle2
-                      : Circle;
-                  return (
-                    <Button
-                      key={opt.id}
-                      type="button"
-                      variant="ghost"
-                      role={q.allowMultiple ? "checkbox" : "radio"}
-                      aria-checked={selected}
-                      disabled={!pending}
-                      className={cn(
-                        "nex-approval-option nex-interactive-chrome h-auto w-full items-start justify-start gap-2.5 whitespace-normal py-2 text-left font-medium",
-                        selected
-                          ? "border border-[color:var(--accent)] bg-[color:color-mix(in_srgb,var(--accent)_16%,transparent)] text-[var(--text-primary)] shadow-none hover:bg-[color:color-mix(in_srgb,var(--accent)_22%,transparent)] disabled:opacity-100 dark:border-[color:var(--accent)] dark:bg-[color:color-mix(in_srgb,var(--accent)_16%,transparent)] dark:hover:bg-[color:color-mix(in_srgb,var(--accent)_22%,transparent)]"
-                          : "border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_56%,transparent)] text-[var(--text-primary)] hover:border-[color:var(--hairline-strong)] hover:bg-[color:color-mix(in_srgb,var(--material-elevated)_86%,transparent)] disabled:opacity-40",
-                      )}
-                      onClick={() =>
-                        onOptionClick(q.id, opt.id, q.allowMultiple)
-                      }
-                    >
-                      <Indicator
-                        size={16}
-                        className={cn(
-                          "mt-0.5 shrink-0",
-                          selected
-                            ? "text-[var(--accent)]"
-                            : "text-[var(--text-tertiary)]",
-                        )}
-                      />
-                      <span className="flex min-w-0 flex-1 flex-col items-start gap-0.5">
-                        <span>{opt.label}</span>
-                        {opt.description?.trim() && (
-                          <span className="text-xs font-normal text-[var(--text-tertiary)]">
-                            {opt.description}
-                          </span>
-                        )}
-                      </span>
-                    </Button>
-                  );
-                })}
-              </div>
-              {pending ? (
-                <div className="space-y-1">
-                  <label
-                    className="text-xs text-[var(--text-tertiary)]"
-                    htmlFor={`ask-other-${q.id}`}
-                  >
-                    其他（可选）
-                  </label>
-                  <input
-                    id={`ask-other-${q.id}`}
-                    type="text"
-                    value={customTexts[q.id] ?? ""}
-                    placeholder="输入自定义答案…"
-                    className="w-full rounded-[var(--radius-md)] border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_72%,transparent)] px-2.5 py-1.5 text-sm text-[var(--text-primary)] outline-none"
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setCustomTexts((prev) => ({ ...prev, [q.id]: value }));
-                      if (value.trim()) {
-                        setSelections((prev) => ({ ...prev, [q.id]: [] }));
-                      }
-                    }}
-                  />
-                </div>
-              ) : submitted?.customText?.trim() ? (
-                <p className="text-sm text-[var(--text-secondary)]">
-                  其他：{submitted.customText.trim()}
-                </p>
-              ) : null}
-            </div>
-          );
-        })}
-      </div>
-
-      {pending && (
-        <div className="flex flex-wrap justify-end gap-2 pt-3">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => respondOnce("skipped")}
-          >
-            跳过
-          </Button>
-          {(!singleFastPath ||
-            Object.values(customTexts).some((t) => t.trim())) && (
-            <Button
-              size="sm"
-              disabled={!allAnswered}
-              onClick={() => respondOnce("answered", buildAnswers())}
-            >
-              提交
-            </Button>
-          )}
-        </div>
-      )}
-    </div>
+    <ApprovalPromptCard
+      status={
+        pending
+          ? null
+          : { label: statusLabel, tone: entry.status === "answered" ? "ok" : "muted" }
+      }
+      sections={visible.map((q) => {
+        const submitted = resolvedAnswer(q.id);
+        const prompt =
+          entry.questions.length === 1 && q.prompt === (entry.title?.trim() || q.prompt)
+            ? entry.title?.trim() || q.prompt
+            : q.prompt;
+        return {
+          id: q.id,
+          prompt,
+          hint: q.allowMultiple && pending ? "可多选" : undefined,
+          type: q.allowMultiple ? "check" as const : "radio" as const,
+          options: q.options.map((opt) => ({
+            id: opt.id,
+            label: opt.label,
+            description: opt.description,
+          })),
+          selectedIds: pending
+            ? (selections[q.id] ?? [])
+            : (submitted?.selectedOptionIds ?? []),
+          customText: pending ? (customTexts[q.id] ?? "") : (submitted?.customText ?? ""),
+          pending,
+          customPlaceholder: "其他…",
+          onToggle: (optionId) => onOptionClick(q.id, optionId, q.allowMultiple),
+          onCustomChange: (value) => {
+            setCustomTexts((prev) => ({ ...prev, [q.id]: value }));
+            if (value.trim()) setSelections((prev) => ({ ...prev, [q.id]: [] }));
+          },
+          onCustomKeyDown: (event) => {
+            if (event.key === "Enter" && isAnswered(q.id)) {
+              event.preventDefault();
+              if (entry.questions.length > 1 && !last) setQi((i) => i + 1);
+              else respondOnce("answered", buildAnswers());
+            }
+          },
+        };
+      })}
+      step={
+        pending && entry.questions.length > 1
+          ? {
+              index,
+              total: entry.questions.length,
+              onPrev: () => setQi((i) => Math.max(0, i - 1)),
+              onNext: () => setQi((i) => Math.min(entry.questions.length - 1, i + 1)),
+            }
+          : null
+      }
+      skipLabel="跳过"
+      onSkip={pending ? () => respondOnce("skipped") : undefined}
+      showSubmit={showSubmit}
+      submitLabel={entry.questions.length > 1 && !last ? "继续" : "提交"}
+      submitDisabled={submitDisabled}
+      onSubmit={() => {
+        if (entry.questions.length > 1 && !last) {
+          setQi((i) => i + 1);
+          return;
+        }
+        respondOnce("answered", buildAnswers());
+      }}
+    />
   );
 }
 
 export function AskQuestionCard(
   props: Parameters<typeof AskQuestionCardContent>[0],
 ) {
-  return (
-    <AgentUiApprovalCard>
-      <AskQuestionCardContent {...props} />
-    </AgentUiApprovalCard>
-  );
+  return <AskQuestionCardContent {...props} />;
 }

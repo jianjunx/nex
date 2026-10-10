@@ -97,6 +97,12 @@
   border-radius: 14px;
   box-shadow: var(--shadow-dialog);
 }
+[data-slot="dialog-content"].nex-approval-dialog {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+}
 [data-slot="dropdown-menu-content"],
 [data-slot="dropdown-menu-sub-content"],
 [data-slot="context-menu-content"],

@@ -1,7 +1,6 @@
 import { memo } from "react";
-import { ChevronRight, Loader2, Sparkles } from "lucide-react";
+import ToolChips, { ToolRunHeader } from "@/components/agent-ui/beautiful-ui/ToolChips";
 import { Collapse } from "@/components/ui/Collapse";
-import { cn } from "@/lib/utils";
 import type { ProcessPart } from "./groupThreadEntries";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { ToolCallCard } from "./ToolCallCard";
@@ -62,32 +61,20 @@ export const ProcessGroup = memo(function ProcessGroup({
   const open = override ?? active;
   const stats = summarize(parts);
   const label = active ? `${liveLabel(parts)}` : doneLabel(stats);
+  const suffix =
+    active && (stats.tools > 0 || stats.thoughts > 1) ? ` · ${doneLabel(stats)}` : "";
   const lastIndex = parts.length - 1;
 
   return (
-    <div className="max-w-[96%]">
-      <button
-        type="button"
-        aria-expanded={open}
-        className="inline-flex max-w-full cursor-pointer items-center gap-1.5 text-xs text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-secondary)]"
-        onClick={() => setExpanded(groupKey, !open)}
-      >
-        {active ? (
-          <Loader2 size={12} className="shrink-0 animate-spin text-[var(--accent)]" />
-        ) : (
-          <Sparkles size={12} className="shrink-0" />
-        )}
-        <span className="truncate">{label}</span>
-        {active && (stats.tools > 0 || stats.thoughts > 1) && (
-          <span className="shrink-0 opacity-70">· {doneLabel(stats)}</span>
-        )}
-        <ChevronRight
-          size={12}
-          className={cn("shrink-0 transition-transform", open && "rotate-90")}
-        />
-      </button>
+    <ToolChips className="max-w-[96%]">
+      <ToolRunHeader
+        open={open}
+        busy={active}
+        label={`${label}${suffix}`}
+        onToggle={() => setExpanded(groupKey, !open)}
+      />
       <Collapse open={open}>
-        <div className="mt-1.5 ml-1.5 space-y-1.5 border-l border-[color:var(--hairline-soft)] pl-3">
+        <div className="mt-1.5 flex flex-col gap-1">
           {parts.map((p, i) =>
             p.type === "thought" ? (
               <ThinkingBlock
@@ -106,6 +93,6 @@ export const ProcessGroup = memo(function ProcessGroup({
           )}
         </div>
       </Collapse>
-    </div>
+    </ToolChips>
   );
 });

@@ -9,7 +9,6 @@ import { selectProjectActiveTabId, useConversationStore } from "../../../stores/
 import { EntryView } from "./EntryView";
 import { ProcessGroup } from "./ProcessGroup";
 import { FilesChangedCard } from "./FilesChangedCard";
-import { FILES_CHANGED_ROW_HEIGHT, FILES_CHANGED_VISIBLE_ROWS } from "./filesChanged";
 import { groupThreadEntries, type ThreadRenderItem } from "./groupThreadEntries";
 import {
   pickStickyUserMessage,
@@ -37,14 +36,12 @@ const measuredHeights = new Map<string, number>();
 function estimateRowHeight(item: ThreadRenderItem | undefined): number {
   if (!item) return 40; // 加载指示器行
   if (item.type === "process_group") return 32;
-  if (item.type === "files_changed") {
-    return 44 + Math.min(item.files.length, FILES_CHANGED_VISIBLE_ROWS) * FILES_CHANGED_ROW_HEIGHT;
-  }
+  if (item.type === "files_changed") return 76;
   const e = item.entry;
   if (e.kind === "user_message") return 48;
   if (e.kind === "turn_summary") return 20;
   if (e.kind === "tool_call") {
-    return e.status === "waiting_for_confirmation" ? 96 : 48;
+    return e.status === "waiting_for_confirmation" ? 240 : 48;
   }
   if (e.kind === "plan_approval") return 220;
   if (e.kind === "ask_question") return 280;

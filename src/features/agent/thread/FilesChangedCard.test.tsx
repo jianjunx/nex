@@ -31,7 +31,7 @@ vi.mock("./pathToken", () => ({
 }));
 
 import { FilesChangedCard } from "./FilesChangedCard";
-import { FILES_CHANGED_ROW_HEIGHT, FILES_CHANGED_VISIBLE_ROWS } from "./filesChanged";
+import { FILES_CHANGED_VISIBLE_ROWS } from "./filesChanged";
 import { useProjectStore } from "../../../stores/project.store";
 import { useConversationStore } from "../../../stores/conversation.store";
 import { useAgentStore } from "../../../stores/agent.store";
@@ -63,7 +63,7 @@ afterEach(() => {
 });
 
 describe("FilesChangedCard", () => {
-  it("caps the file list at 3 rows and scrolls the rest", () => {
+  it("shows three file chips, then the rest", () => {
     const many = Array.from({ length: 11 }, (_, i) => ({
       path: `/repo/src/f${i}.ts`,
       additions: 1,
@@ -71,12 +71,9 @@ describe("FilesChangedCard", () => {
     }));
     render(<FilesChangedCard files={many} />);
     const list = screen.getByTestId("files-changed-list");
-    expect(list.style.maxHeight).toBe(`${FILES_CHANGED_VISIBLE_ROWS * FILES_CHANGED_ROW_HEIGHT}px`);
-    expect(list.className).toContain("overflow-y-auto");
-    // 全部文件仍在 DOM 中（靠滚动查看），行高固定。
-    expect(list.querySelectorAll("li")).toHaveLength(11);
-    const row = list.querySelector("button") as HTMLElement;
-    expect(row.style.height).toBe(`${FILES_CHANGED_ROW_HEIGHT}px`);
+    expect(list.querySelectorAll("[data-diffchip]")).toHaveLength(FILES_CHANGED_VISIBLE_ROWS);
+    fireEvent.click(screen.getByRole("button", { name: "还有 8 个文件" }));
+    expect(list.querySelectorAll("[data-diffchip]")).toHaveLength(11);
   });
 
   it("renders file names, counts, and opens a file on row click", () => {

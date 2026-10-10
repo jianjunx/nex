@@ -143,8 +143,8 @@ describe("Markdown", () => {
     expect(a!.getAttribute("target")).toBe("_blank");
     expect(a!.getAttribute("rel")).toBe("noopener noreferrer");
     expect(a!.getAttribute("href")).toBe("https://example.com");
-    // Links should be visually anchored (no surprise hover-only underline).
-    expect(a!.className).toMatch(/underline/);
+    // Underline color lives in `.nex-hover-underline` and only paints on hover/focus.
+    expect(a!.className).toMatch(/nex-hover-underline/);
   });
 
   it("renders a blockquote with the accent left border", () => {

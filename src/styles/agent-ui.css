@@ -179,14 +179,35 @@
 .nex-user-bubble-floating {
   box-shadow: var(--shadow-card);
 }
+/* 可点击文字的下划线默认透明，悬停或键盘聚焦才显出来。
+   不用 Tailwind 的 decoration-transparent：后加载的
+   `.beautiful-ui .decoration-transparent` 特异性相同，会把悬停色盖掉。 */
+.nex-hover-underline {
+  text-decoration-line: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 2px;
+  transition: text-decoration-color 120ms ease-out, color 120ms ease-out;
+}
+.nex-hover-underline:hover,
+.nex-hover-underline:focus-visible {
+  text-decoration-color: var(--accent);
+}
 .nex-assistant-prose {
-  padding: 2px 0;
-  font-size: 14px;
-  line-height: 1.6;
+  padding: 4px 0;
+  font-size: 15px;
+  line-height: 1.75;
+  letter-spacing: 0.01em;
 }
 .nex-assistant-prose .markdown-body {
   font-size: inherit;
   line-height: inherit;
+}
+.nex-assistant-prose .markdown-body :is(p, ul, ol) {
+  margin-top: 0.7em;
+  margin-bottom: 0.7em;
+}
+.nex-assistant-prose .markdown-body :is(ul, ol) > li + li {
+  margin-top: 0.35em;
 }
 .nex-reasoning {
   padding: 2px 0;

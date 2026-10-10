@@ -591,18 +591,18 @@ body {
     background: var(--scrollbar-thumb-hover);
   }
 
-  /* Inline code chip — only `code` not inside `<pre>`. The `:not(pre code)`
-     selector avoids double-styling fenced-block code. The accent colour
-     helps the chip stand out from regular text without yelling; the hairline
-     border matches the surrounding card surface. */
+  /* Inline code chip — only `code` not inside `<pre>`. Mix a little ink
+     into the panel so the chip stays visible on a white (or near-white)
+     surface; `--material-floating` is the same white as the panel in light
+     mode and the chip disappeared into the paragraph. */
   .markdown-body code:not(pre code) {
-    background: var(--material-floating);
-    border: 1px solid var(--border-subtle);
+    background: color-mix(in srgb, var(--text-primary) 9%, var(--material-panel));
+    border: 0;
     border-radius: var(--radius-sm);
-    padding: 0 5px;
-    font-size: 0.85em;
+    padding: 0.05em 0.4em;
+    font-size: 0.88em;
     font-family: "JetBrains Mono", Menlo, Consolas, monospace;
-    color: var(--accent);
+    color: var(--text-primary);
     word-break: break-word;
   }
   /* Fenced-block code: transparent so the <pre> surface shows through,

@@ -70,7 +70,7 @@ function ToolCallCardContent({
           <button
             type="button"
             title="在编辑器中打开"
-            className="max-w-[60%] shrink cursor-pointer truncate font-mono text-xs text-[var(--accent)] underline decoration-[color:var(--accent)]/30 underline-offset-2 hover:decoration-[color:var(--accent)]"
+            className="nex-hover-underline max-w-[60%] shrink cursor-pointer truncate font-mono text-xs text-[var(--accent)]"
             onClick={() => void openPathToken(filePath)}
           >
             {titleIsPath ? entry.title : fileBasename(filePath)}

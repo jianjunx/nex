@@ -329,7 +329,7 @@ export function ThreadView() {
                     top: 0,
                     left: 0,
                     width: "100%",
-                    // 行高实测带小数(正文 14px×1.6=22.4px),累加出的 start 也带小数;
+                    // 行高实测带小数(正文 15px×1.75 不是整数像素),累加出的 start 也带小数;
                     // 小数 translate 会让整行文字按亚像素重新光栅化而发虚,取整对齐物理像素。
                     transform: `translateY(${Math.round(vi.start)}px)`,
                   }}

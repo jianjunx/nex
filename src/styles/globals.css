@@ -342,18 +342,36 @@ body {
   .nex-handle-col {
     width: 4px;
     cursor: col-resize;
+    transition: width var(--duration-medium) var(--ease-fluid);
+  }
+  html[data-nex-resizing] .nex-handle-col {
+    transition: none !important;
   }
   .nex-handle-row {
     height: 4px;
     cursor: row-resize;
   }
-  /* Width is pointer-driven. `duration-*` on these nodes interpolates width
-     and makes the splitter jump instead of tracking the cursor. */
-  .nex-layout-pane {
-    transition: none;
+  /* Pane show/hide eases width or height. Pointer resize sets
+     data-nex-resizing (or data-dragging) so the splitter stays 1:1. */
+  .nex-layout-pane,
+  .nex-terminal-pane {
+    transition:
+      width var(--duration-medium) var(--ease-fluid),
+      height var(--duration-medium) var(--ease-fluid),
+      min-height var(--duration-medium) var(--ease-fluid);
   }
-  html[data-nex-resizing] .nex-layout-pane {
+  html[data-nex-resizing] .nex-layout-pane,
+  html[data-nex-resizing] .nex-terminal-pane,
+  .nex-layout-pane[data-dragging="true"],
+  .nex-terminal-pane[data-dragging="true"] {
+    transition: none !important;
     animation: none !important;
+  }
+  .nex-sidebar-slot {
+    transition: width var(--duration-medium) var(--ease-fluid);
+  }
+  html[data-nex-resizing] .nex-sidebar-slot {
+    transition: none !important;
   }
   .nex-handle-col::after,
   .nex-handle-row::after {
@@ -388,10 +406,26 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .nex-handle-col,
   .nex-handle-col::after,
   .nex-handle-row::after,
-  .nex-interactive-chrome {
-    transition: none;
+  .nex-interactive-chrome,
+  .nex-layout-pane,
+  .nex-terminal-pane,
+  .nex-sidebar-slot,
+  .nex-workspace-sidebar,
+  .nex-collapse,
+  .nex-collapse-height,
+  button,
+  [role="button"],
+  [role="option"],
+  [role="menuitem"],
+  [role="menuitemcheckbox"],
+  [role="menuitemradio"],
+  [role="tab"],
+  .nex-hoverable,
+  .nex-glide-highlight {
+    transition: none !important;
   }
   .nex-pressable:active {
     transform: none;
@@ -509,14 +543,24 @@ body {
   border-radius: 3px;
 }
 
-/* 组折叠高度过渡：grid-template-rows 0fr ↔ 1fr 技巧（150ms）。 */
-.search-collapse {
+/* 折叠高度：grid-template-rows 0fr ↔ 1fr。搜索组保持挂载；会话/树用 Collapse 在结束后卸载。 */
+.search-collapse,
+.nex-collapse {
   display: grid;
-  transition: grid-template-rows 150ms ease-out;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--duration-medium) var(--ease-fluid);
 }
-.search-collapse-inner {
+.search-collapse,
+.nex-collapse[data-open="true"] {
+  grid-template-rows: 1fr;
+}
+.search-collapse-inner,
+.nex-collapse-inner {
   overflow: hidden;
   min-height: 0;
+}
+.nex-collapse-height {
+  transition: max-height var(--duration-medium) var(--ease-fluid);
 }
 
 /* ─── Markdown body + highlight.js theme (token colors via CSS variables
@@ -591,18 +635,18 @@ body {
     background: var(--scrollbar-thumb-hover);
   }
 
-  /* Inline code chip — only `code` not inside `<pre>`. The `:not(pre code)`
-     selector avoids double-styling fenced-block code. The accent colour
-     helps the chip stand out from regular text without yelling; the hairline
-     border matches the surrounding card surface. */
+  /* Inline code chip — only `code` not inside `<pre>`. Mix a little ink
+     into the panel so the chip stays visible on a white (or near-white)
+     surface; `--material-floating` is the same white as the panel in light
+     mode and the chip disappeared into the paragraph. */
   .markdown-body code:not(pre code) {
-    background: var(--material-floating);
-    border: 1px solid var(--border-subtle);
+    background: color-mix(in srgb, var(--text-primary) 9%, var(--material-panel));
+    border: 0;
     border-radius: var(--radius-sm);
-    padding: 0 5px;
-    font-size: 0.85em;
+    padding: 0.05em 0.4em;
+    font-size: 0.88em;
     font-family: "JetBrains Mono", Menlo, Consolas, monospace;
-    color: var(--accent);
+    color: var(--text-primary);
     word-break: break-word;
   }
   /* Fenced-block code: transparent so the <pre> surface shows through,

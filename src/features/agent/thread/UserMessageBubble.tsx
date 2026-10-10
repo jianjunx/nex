@@ -53,13 +53,14 @@ export function UserMessageBubble({
             <div
               ref={bodyRef}
               data-user-msg-body=""
-              className={
+              className={cn(
+                "nex-collapse-height",
                 collapsed
                   ? "overflow-hidden"
                   : expandedScrollable
                     ? "overflow-y-auto"
-                    : undefined
-              }
+                    : undefined,
+              )}
               style={
                 collapsed
                   ? { maxHeight: USER_MESSAGE_COLLAPSE_HEIGHT }

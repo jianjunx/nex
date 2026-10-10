@@ -49,9 +49,11 @@
   border-radius: 8px;
   font-size: 14px;
   transition:
-    background-color 100ms,
-    color 100ms,
-    opacity 100ms;
+    background-color var(--duration-fast) var(--ease-fluid),
+    color var(--duration-fast) var(--ease-fluid),
+    border-color var(--duration-fast) var(--ease-fluid),
+    box-shadow var(--duration-fast) var(--ease-fluid),
+    opacity var(--duration-fast) var(--ease-fluid);
 }
 [data-slot="button"]:active {
   transform: none;
@@ -95,6 +97,12 @@
   border-radius: 14px;
   box-shadow: var(--shadow-dialog);
 }
+[data-slot="dialog-content"].nex-approval-dialog {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+}
 [data-slot="dropdown-menu-content"],
 [data-slot="dropdown-menu-sub-content"],
 [data-slot="context-menu-content"],
@@ -116,6 +124,40 @@
 }
 [data-slot*="menu-"][data-highlighted] {
   background: var(--overlay-hover);
+}
+/* Rows, menus and file entries fade their hover fill. Lists inside .nex-glide
+   use a sliding pill instead, so their own hover fill stays clear. */
+button,
+[role="button"],
+[role="option"],
+[role="menuitem"],
+[role="menuitemcheckbox"],
+[role="menuitemradio"],
+[role="tab"],
+.nex-hoverable {
+  transition:
+    background-color var(--duration-fast) var(--ease-fluid),
+    color var(--duration-fast) var(--ease-fluid),
+    border-color var(--duration-fast) var(--ease-fluid),
+    box-shadow var(--duration-fast) var(--ease-fluid),
+    opacity var(--duration-fast) var(--ease-fluid);
+}
+.nex-glide-highlight {
+  z-index: 0;
+  border-radius: 8px;
+  background: var(--overlay-active);
+}
+.nex-glide [data-row] {
+  position: relative;
+  z-index: 1;
+}
+.nex-glide [data-row]:hover:not([data-drop-target]),
+.nex-glide [data-slot*="menu-"][data-highlighted],
+.nex-glide [data-row][data-state="open"] {
+  background-color: transparent;
+}
+.nex-glide:hover [data-row][aria-selected="true"]:not([data-drop-target]) {
+  background-color: transparent;
 }
 @media (prefers-reduced-motion: reduce) {
   [data-slot] {
@@ -179,14 +221,47 @@
 .nex-user-bubble-floating {
   box-shadow: var(--shadow-card);
 }
+/* 可点击文字的下划线默认透明，悬停或键盘聚焦才显出来。
+   不用 Tailwind 的 decoration-transparent：后加载的
+   `.beautiful-ui .decoration-transparent` 特异性相同，会把悬停色盖掉。 */
+.nex-hover-underline {
+  text-decoration-line: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 2px;
+  transition: text-decoration-color 120ms ease-out, color 120ms ease-out;
+}
+.nex-hover-underline:hover,
+.nex-hover-underline:focus-visible {
+  text-decoration-color: var(--accent);
+}
 .nex-assistant-prose {
-  padding: 2px 0;
-  font-size: 14px;
-  line-height: 1.6;
+  padding: 4px 0;
+  font-size: 15px;
+  line-height: 1.75;
+  letter-spacing: 0.01em;
 }
 .nex-assistant-prose .markdown-body {
   font-size: inherit;
   line-height: inherit;
+}
+.nex-assistant-prose .markdown-body :is(p, ul, ol) {
+  margin-top: 0.7em;
+  margin-bottom: 0.7em;
+}
+.nex-assistant-prose .markdown-body :is(ul, ol) > li + li {
+  margin-top: 0.35em;
+}
+/* 光标画在最后一段里面，避免另起一行。节奏对齐 beautiful-ui 的 fade-in 细光标。 */
+.nex-stream-live.is-active .markdown-body > :last-child::after {
+  content: "";
+  display: inline-block;
+  width: 2px;
+  height: 0.72em;
+  margin-left: 3px;
+  border-radius: 999px;
+  background: currentColor;
+  vertical-align: -1px;
+  animation: fade-in 150ms ease-out both;
 }
 .nex-reasoning {
   padding: 2px 0;
@@ -220,11 +295,18 @@
   border-left: 1px solid var(--line-strong);
   max-height: 240px;
   overflow-y: auto;
-  font-size: 12.5px;
+  /* 12.5px 会落在半像素上，再叠全局 antialiased 和 tertiary 浅灰，小字会发虚。 */
+  font-size: 13px;
+  line-height: 1.65;
+  letter-spacing: 0;
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
   animation: nex-trace-in 180ms ease-out;
 }
 .nex-trace-body .markdown-body {
   font-size: inherit;
+  line-height: inherit;
+  color: var(--text-secondary);
 }
 .nex-ui-ToolChips > .nex-tool-row {
   border: 0;
@@ -334,6 +416,11 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+  overflow: hidden;
+  transition: width var(--duration-medium) var(--ease-fluid);
+}
+html[data-nex-resizing] .nex-workspace-sidebar {
+  transition: none !important;
 }
 .nex-workspace-sidebar nav {
   display: flex;
@@ -513,6 +600,16 @@
 .nex-workspace-sidebar .nex-conversation-row:hover {
   background: var(--overlay-hover);
 }
+.nex-workspace-sidebar .nex-glide .nex-conversation-row:hover,
+.nex-workspace-sidebar .nex-glide .nex-project-row:hover > button:not(.nex-icon-btn) {
+  background-color: transparent;
+  box-shadow: none;
+}
+.nex-workspace-sidebar .nex-glide:hover .nex-conversation-row[data-current="true"],
+.nex-workspace-sidebar .nex-glide:hover button[aria-current="page"] {
+  background-color: transparent;
+  box-shadow: none;
+}
 .nex-workspace-sidebar .nex-conversation-row[data-current="true"] {
   background: var(--material-panel);
   box-shadow: inset 0 0 0 1px var(--hairline-strong);
@@ -527,7 +624,10 @@
 .nex-workspace-sidebar .nex-project-row > .nex-icon-btn,
 .nex-workspace-sidebar .nex-conversation-row > .nex-icon-btn {
   opacity: 0;
-  transition: opacity 100ms;
+  transition:
+    opacity 100ms,
+    background-color var(--duration-fast) var(--ease-fluid),
+    color var(--duration-fast) var(--ease-fluid);
 }
 .nex-workspace-sidebar .nex-project-row:hover > .nex-icon-btn,
 .nex-workspace-sidebar .nex-project-row:focus-within > .nex-icon-btn,
@@ -555,7 +655,8 @@
   width: 28px;
   flex-shrink: 0;
 }
-.nex-workspace-sidebar nav > div {
+.nex-workspace-sidebar nav > div,
+.nex-workspace-sidebar .nex-glide > div {
   min-width: 0;
 }
 .nex-workspace-sidebar nav > div > button {

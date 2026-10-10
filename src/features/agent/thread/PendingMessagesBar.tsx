@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Clock, ChevronRight, Send, X } from "lucide-react";
+import { Collapse } from "@/components/ui/Collapse";
 import { cn } from "@/lib/utils";
 import type { PendingMessage, pendingMessagePreview } from "../../../stores/agent.store";
 
@@ -33,7 +34,7 @@ export function PendingMessagesBar({
           className={cn("ml-auto shrink-0 transition-transform", open && "rotate-90")}
         />
       </button>
-      {open && (
+      <Collapse open={open}>
         <ul className="space-y-1 mt-1.5">
           {messages.map((m) => (
             <li key={m.id} className="flex items-center gap-2 text-xs text-[var(--text-primary)] group">
@@ -65,7 +66,7 @@ export function PendingMessagesBar({
             </li>
           ))}
         </ul>
-      )}
+      </Collapse>
     </div>
   );
 }

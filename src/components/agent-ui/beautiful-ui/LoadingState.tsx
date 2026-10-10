@@ -83,12 +83,15 @@ function useElapsed() {
 
 export default function LoadingState({
   label,
+  /** 给读屏用的稳定名称。设置后可见文案对读屏隐藏，文案轮换时不会反复播报。 */
+  statusLabel,
   variant = "Drive",
   /** the meme feed for the Surfer variant; hosted on Vercel Blob so it plays in
    *  production (the local /public/subway-surfers.mp4 stays gitignored) */
   videoSrc = "https://95dnc2a95qgwt9ff.public.blob.vercel-storage.com/subway-surfers.mp4",
 }: {
   label?: string;
+  statusLabel?: string;
   variant?: string;
   videoSrc?: string;
 }) {
@@ -100,6 +103,7 @@ export default function LoadingState({
 
   const labelEl = (
     <span
+      aria-hidden={statusLabel ? true : undefined}
       className="bg-clip-text text-[13px] font-medium text-transparent"
       style={{
         backgroundImage:
@@ -166,7 +170,7 @@ export default function LoadingState({
   }
 
   return (
-    <div role="status" className="flex w-fit items-center gap-2.5">
+    <div role="status" aria-label={statusLabel} className="flex w-fit items-center gap-2.5">
       <LoaderGrid delays={delays} dur={dur} round={round} />
       {labelEl}
       {elapsedEl}

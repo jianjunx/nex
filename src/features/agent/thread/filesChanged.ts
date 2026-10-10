@@ -1,6 +1,11 @@
 import type { ToolCallEntry } from "./types";
 import { entryChangeHunks, isEditTool, toolEntryFilePath } from "./toolCallUtils";
 
+/** 文件变更卡片列表区最多同时显示的行数，超出滚动。 */
+export const FILES_CHANGED_VISIBLE_ROWS = 3;
+/** 文件行固定高度(px)。固定后"最多 3 行"才是精确的，也便于虚拟列表估高。 */
+export const FILES_CHANGED_ROW_HEIGHT = 32;
+
 export type ChangedFile = {
   path: string;
   additions: number;

@@ -1,6 +1,8 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
-import LoadingState from "@/components/agent-ui/beautiful-ui/LoadingState";
+import { AgentLoadingIndicator } from "./AgentLoadingIndicator";
+import { loadingContextFor } from "./loadingPhrases";
+import { streamingEntryId } from "./streamingReveal";
 import { useAgentStore } from "../../../stores/agent.store";
 import { useProjectStore } from "../../../stores/project.store";
 import { selectProjectActiveTabId, useConversationStore } from "../../../stores/conversation.store";
@@ -14,6 +16,7 @@ import {
   type UserStickyCandidate,
 } from "./stickyUserMessage";
 import type { ThreadEntry } from "./types";
+import { easeScrollTop, isEaseFollow } from "./easeScrollTop";
 
 const EMPTY_ENTRIES: ThreadEntry[] = [];
 const EMPTY_EXPANDED = new Set<string>();
@@ -33,11 +36,12 @@ const measuredHeights = new Map<string, number>();
 function estimateRowHeight(item: ThreadRenderItem | undefined): number {
   if (!item) return 40; // 加载指示器行
   if (item.type === "process_group") return 32;
-  if (item.type === "files_changed") return 44 + item.files.length * 28;
+  if (item.type === "files_changed") return 76;
   const e = item.entry;
-  if (e.kind === "user_message") return 48;
+  if (e.kind === "user_message") return 84;
+  if (e.kind === "turn_summary") return 20;
   if (e.kind === "tool_call") {
-    return e.status === "waiting_for_confirmation" ? 96 : 48;
+    return e.status === "waiting_for_confirmation" ? 240 : 48;
   }
   if (e.kind === "plan_approval") return 220;
   if (e.kind === "ask_question") return 280;
@@ -117,7 +121,7 @@ function followThreadEnd(
   const scrollHeight = scroller.scrollHeight || virtualizer.getTotalSize();
   // 内容不足一屏:钉在顶部,不要用 padding 把消息推下去,也不要滚出空白滚动条。
   if (viewport > 0 && scrollHeight <= viewport) {
-    if (scroller.scrollTop !== 0) scroller.scrollTop = 0;
+    easeScrollTop(scroller, 0);
     return;
   }
 
@@ -127,8 +131,7 @@ function followThreadEnd(
   // the viewport back to the bottom. `totalSize` already re-triggers this
   // effect as measurements change, so a direct DOM end offset keeps follow
   // logic deterministic while giving a manual scroll immediate precedence.
-  const target = Math.max(scrollHeight - viewport, 0);
-  if (scroller.scrollTop !== target) scroller.scrollTop = target;
+  easeScrollTop(scroller, Math.max(scrollHeight - viewport, 0));
 }
 
 type VirtualRange = {
@@ -160,11 +163,14 @@ export function ThreadView() {
     activeTabId ? s.sessions[activeTabId]?.status : undefined,
   );
   const showLoading = shouldShowAgentLoading(sessionStatus, entries);
+  // 仅看末尾条目，O(1)；字符串值稳定，不会让 memo 化的提示组件随流式更新重渲染。
+  const loadingContext = loadingContextFor(entries);
   const lastTurnComplete = sessionStatus !== "running" && sessionStatus !== "starting" && sessionStatus !== "waiting";
   const renderItems = useMemo(
     () => groupThreadEntries(entries, { lastTurnComplete }),
     [entries, lastTurnComplete],
   );
+  const liveEntryId = streamingEntryId(renderItems, lastTurnComplete);
 
   const scrollerRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
@@ -228,8 +234,10 @@ export function ThreadView() {
   const onScroll = useCallback(() => {
     const el = scrollerRef.current;
     if (!el) return;
-    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-    stickToBottomRef.current = distance <= NEAR_BOTTOM_PX;
+    if (!isEaseFollow(el)) {
+      const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+      stickToBottomRef.current = distance <= NEAR_BOTTOM_PX;
+    }
     syncSticky(el.scrollTop);
   }, [syncSticky]);
 
@@ -311,18 +319,21 @@ export function ThreadView() {
               if (!vi) return null;
               const item = renderItems[vi.index];
               const isPinnedOriginal = sticky != null && sticky.id === rowKey(item);
+              const isUserMessage = item?.type === "entry" && item.entry.kind === "user_message";
               return (
                 <div
                   key={vi.key}
                   data-index={vi.index}
                   ref={virtualizer.measureElement}
-                  className={`pb-3${isPinnedOriginal ? " invisible" : ""}`}
+                  className={`${isUserMessage ? "pt-[18px] pb-[30px]" : "pb-3"}${isPinnedOriginal ? " invisible" : ""}`}
                   style={{
                     position: "absolute",
                     top: 0,
                     left: 0,
                     width: "100%",
-                    transform: `translateY(${vi.start}px)`,
+                    // 行高实测带小数(正文 15px×1.75 不是整数像素),累加出的 start 也带小数;
+                    // 小数 translate 会让整行文字按亚像素重新光栅化而发虚,取整对齐物理像素。
+                    transform: `translateY(${Math.round(vi.start)}px)`,
                   }}
                 >
                   {item ? (
@@ -340,10 +351,11 @@ export function ThreadView() {
                         entry={item.entry}
                         userExpanded={expandedUserIds.has(item.entry.id)}
                         onToggleUserExpand={toggleUserExpand}
+                        streaming={item.entry.id === liveEntryId}
                       />
                     )
                   ) : (
-                    <AgentLoadingIndicator />
+                    <AgentLoadingIndicator context={loadingContext} />
                   )}
                 </div>
               );
@@ -355,7 +367,7 @@ export function ThreadView() {
         <div
           data-sticky-user-message={stickyEntry.id}
           className="pointer-events-none absolute inset-x-0 top-0 z-20 px-2 pt-3"
-          style={{ transform: `translateY(${sticky.translateY}px)` }}
+          style={{ transform: `translateY(${Math.round(sticky.translateY)}px)` }}
         >
           <div className="pointer-events-auto mx-auto w-full max-w-[900px] px-4">
             <EntryView
@@ -371,14 +383,3 @@ export function ThreadView() {
   );
 }
 
-function AgentLoadingIndicator() {
-  return (
-    <div
-      className="flex items-center gap-2 max-w-[96%] text-sm text-[var(--text-tertiary)]"
-      role="status"
-      aria-live="polite"
-    >
-      <div className="beautiful-ui"><LoadingState variant="Dots" label="正在思考…" /></div>
-    </div>
-  );
-}

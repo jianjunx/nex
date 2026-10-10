@@ -35,6 +35,7 @@ import { fuzzyFilter } from "./composerFuzzy";
 import { setComposerSuggestOpen } from "./composerPanelState";
 import { fileBasename, relativeToProject } from "../editor/pathUtils";
 import FileIcon from "../files/FileIcon";
+import GlideMenu from "@/components/agent-ui/primitives/GlideMenu";
 import type { AvailableCommand } from "./thread/types";
 import { ComposerEditor, type ComposerEditorHandle } from "./ComposerEditor";
 import { ComposerStatusNotice } from "./ComposerStatusNotice";
@@ -745,6 +746,12 @@ function AgentComposerContent() {
               ref={suggestListRef}
               className="min-w-[150px] max-w-[min(92vw,480px)] w-max max-h-56 overflow-y-auto overflow-x-hidden rounded-[var(--radius-md)] border border-[color:var(--hairline-strong)] bg-[var(--card)] nex-elevated [scrollbar-width:none] [&::-webkit-scrollbar]:w-0 [&::-webkit-scrollbar]:h-0"
             >
+              <GlideMenu
+                rowSelector="[data-row]"
+                activeSelector="[data-active='true']"
+                fitRow
+                highlightClassName="nex-glide-highlight"
+              >
               {slashOpen && filteredCommands.length === 0 && (
                 <div className="px-2 py-1 text-[12px] leading-4 text-[var(--text-tertiary)] whitespace-nowrap">
                   {(meta?.availableCommands.length ?? 0) === 0
@@ -757,10 +764,10 @@ function AgentComposerContent() {
                   <button
                     key={c.name}
                     type="button"
+                    data-row=""
                     data-suggest-index={i}
-                    className={`block min-w-full text-left px-2 py-0.5 text-[12px] leading-4 whitespace-nowrap ${
-                      i === suggestIndex ? "bg-[var(--overlay-active)]" : "hover:bg-[var(--material-panel)]"
-                    }`}
+                    data-active={i === suggestIndex ? "true" : undefined}
+                    className="block min-w-full text-left px-2 py-0.5 text-[12px] leading-4 whitespace-nowrap"
                     onMouseEnter={() => setSuggestIndex(i)}
                     onClick={() => pickCommand(c.name)}
                   >
@@ -779,11 +786,11 @@ function AgentComposerContent() {
                     <button
                       key={hit.path}
                       type="button"
+                      data-row=""
                       data-suggest-index={i}
+                      data-active={i === suggestIndex ? "true" : undefined}
                       title={dir ? `${dir}${name}` : name}
-                      className={`flex min-w-full items-center gap-1.5 text-left px-2 py-0.5 text-[12px] leading-4 whitespace-nowrap ${
-                        i === suggestIndex ? "bg-[var(--overlay-active)]" : "hover:bg-[var(--material-panel)]"
-                      }`}
+                      className="flex min-w-full items-center gap-1.5 text-left px-2 py-0.5 text-[12px] leading-4 whitespace-nowrap"
                       onMouseEnter={() => setSuggestIndex(i)}
                       onClick={() => pickFile(hit)}
                     >
@@ -795,6 +802,7 @@ function AgentComposerContent() {
                     </button>
                   );
                 })}
+              </GlideMenu>
             </div>
             {activeSlashCmd && (
               <div className="ml-1 min-w-[150px] w-[200px] max-h-56 overflow-y-auto overflow-x-hidden rounded-[var(--radius-md)] border border-[color:var(--hairline-strong)] bg-[var(--material-panel)] nex-elevated px-2 py-1.5 text-[12px] leading-4 text-[var(--text-secondary)] [scrollbar-width:none] [&::-webkit-scrollbar]:w-0 [&::-webkit-scrollbar]:h-0">

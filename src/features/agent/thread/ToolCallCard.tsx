@@ -1,15 +1,8 @@
-import AgentUiToolChips from "@/components/agent-ui/beautiful-ui/ToolChips";
 import { useEffect } from "react";
-import {
-  CheckCircle2,
-  ChevronRight,
-  Circle,
-  Loader2,
-  Pencil,
-  Wrench,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import ToolChips, {
+  ToolChipRow,
+  type ToolChipIcon,
+} from "@/components/agent-ui/beautiful-ui/ToolChips";
 import type { ToolCallEntry } from "./types";
 import { formatToolRawInput } from "./applySessionUpdate";
 import { entryDiffs, isEditTool, toolEntryFilePath } from "./toolCallUtils";
@@ -18,6 +11,40 @@ import { useToolCardExpansionStore } from "./toolCardExpansion";
 import { useAgentStore } from "../../../stores/agent.store";
 import { fileBasename } from "../../editor/pathUtils";
 import { looksLikeFilePath, openPathToken } from "./pathToken";
+import { PermissionApproval } from "../PermissionApproval";
+
+function prettyKind(kind: string): string {
+  const trimmed = kind.trim();
+  if (!trimmed) return "工具";
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+}
+
+/** Verb beside the row, and the text that follows it. File tools show the basename only. */
+function toolRowText(
+  entry: ToolCallEntry,
+  filePath: string | null,
+): { label: string; chip: string } {
+  const title = entry.title.trim();
+  if (!filePath) return { label: prettyKind(entry.toolKind), chip: title };
+  const base = fileBasename(filePath);
+  let rest = title;
+  if (filePath && rest.endsWith(filePath)) rest = rest.slice(0, -filePath.length).trim();
+  else if (base && rest.endsWith(base)) rest = rest.slice(0, -base.length).trim();
+  rest = rest.replace(/['"`]+$/g, "").trim();
+  if (/[/\\]/.test(rest)) {
+    rest = /^[A-Za-z][\w-]*/.exec(rest)?.[0] ?? "";
+  }
+  if (!rest || looksLikeFilePath(rest)) rest = prettyKind(entry.toolKind);
+  return { label: rest, chip: base };
+}
+
+function iconForKind(kind: string): ToolChipIcon {
+  const k = kind.toLowerCase();
+  if (/(think|reason|plan)/.test(k)) return "think";
+  if (/(edit|write|patch|delete|strreplace|apply)/.test(k)) return "write";
+  if (/(read|search|grep|glob|list|fetch|open)/.test(k)) return "read";
+  return "run";
+}
 
 function ToolCallCardContent({
   entry,
@@ -34,172 +61,114 @@ function ToolCallCardContent({
   const setExpanded = useToolCardExpansionStore((s) => s.setExpanded);
   const open = override ?? defaultOpen ?? (isEdit || waiting);
   const respondPermission = useAgentStore((s) => s.respondPermission);
-  const Icon = isEdit ? Pencil : Wrench;
   const rawInputText = formatToolRawInput(entry.rawInput);
   const filePath = toolEntryFilePath(entry);
-  const titleIsPath = !!filePath && looksLikeFilePath(entry.title);
+  const { label, chip } = toolRowText(entry, filePath);
+  const busy =
+    entry.status === "in_progress" || entry.status === "waiting_for_confirmation";
 
   // Permission prompts must surface even if the card started collapsed.
   useEffect(() => {
     if (waiting) setExpanded(entry.toolCallId, true);
   }, [waiting, entry.toolCallId, setExpanded]);
 
-  return (
-    <div className="nex-tool-row">
-      <div className="nex-tool-heading">
-        <button
-          type="button"
-          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
-          aria-expanded={open}
-          onClick={() => setExpanded(entry.toolCallId, !open)}
-        >
-          <ChevronRight
-            size={12}
-            className={cn("nex-tool-chevron", open && "rotate-90")}
-          />
-          <Icon size={14} className="text-[var(--text-tertiary)] shrink-0" />
-          <span className="font-mono text-xs text-[var(--text-tertiary)] shrink-0">
-            {entry.toolKind}
-          </span>
-          {!titleIsPath && (
-            <span className="truncate flex-1">{entry.title}</span>
-          )}
-          <StatusIcon status={entry.status} />
-        </button>
-        {filePath && (
-          <button
-            type="button"
-            title="在编辑器中打开"
-            className="max-w-[60%] shrink cursor-pointer truncate font-mono text-xs text-[var(--accent)] underline decoration-[color:var(--accent)]/30 underline-offset-2 hover:decoration-[color:var(--accent)]"
-            onClick={() => void openPathToken(filePath)}
-          >
-            {titleIsPath ? entry.title : fileBasename(filePath)}
-          </button>
-        )}
-      </div>
+  const hasDetail =
+    entryDiffs(entry).length > 0 ||
+    entry.content.length > 0 ||
+    Boolean(rawInputText);
 
-      {(open || waiting) && (
-        <div
-          className={cn(
-            "nex-tool-detail space-y-1.5",
-            isEdit && "max-h-[350px] overflow-y-auto",
-          )}
-        >
-          {/* 内嵌 diff：标准 ACP 的 diff 块 + NexAgent 从 rawInput 合成的伪 diff */}
-          {entryDiffs(entry).map((d, i) => (
-            <ThreadDiffBlock
-              key={`diff-${i}`}
-              cacheKey={`${entry.id}:diff-${i}`}
-              path={d.path}
-              oldText={d.oldText}
-              newText={d.newText}
-            />
-          ))}
-          {entry.content.map((c, i) => {
-            if (c.type === "diff") {
-              // 已在上面 entryDiffs 渲染，避免重复。
-              return null;
-            }
-            if (c.type === "image" && c.data) {
-              const src = `data:${c.mimeType || "image/png"};base64,${c.data}`;
-              return (
-                <a
-                  key={i}
-                  href={src}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="block"
-                  title={c.path || "image"}
-                >
-                  <img
-                    src={src}
-                    alt={c.path || "generated"}
-                    className="max-h-64 max-w-full rounded-[var(--radius-md)] border border-[color:var(--hairline-soft)] object-contain"
-                  />
-                </a>
-              );
-            }
-            if (c.type === "terminal") {
+  return (
+    <ToolChips>
+      <ToolChipRow
+        icon={iconForKind(entry.toolKind)}
+        label={label}
+        chip={chip}
+        mono={Boolean(filePath)}
+        fitChip={Boolean(filePath)}
+        open={open || waiting}
+        busy={busy}
+        failed={entry.status === "failed"}
+        chipTitle={filePath ?? undefined}
+        onChipClick={
+          filePath ? () => void openPathToken(filePath) : undefined
+        }
+        onToggle={() => setExpanded(entry.toolCallId, !open)}
+      >
+        {hasDetail ? (
+          <>
+            {entryDiffs(entry).map((d, i) => (
+              <ThreadDiffBlock
+                key={`diff-${i}`}
+                cacheKey={`${entry.id}:diff-${i}`}
+                path={d.path}
+                oldText={d.oldText}
+                newText={d.newText}
+              />
+            ))}
+            {entry.content.map((c, i) => {
+              if (c.type === "diff") return null;
+              if (c.type === "image" && c.data) {
+                const src = `data:${c.mimeType || "image/png"};base64,${c.data}`;
+                return (
+                  <a
+                    key={i}
+                    href={src}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block"
+                    title={c.path || "image"}
+                  >
+                    <img
+                      src={src}
+                      alt={c.path || "generated"}
+                      className="max-h-64 max-w-full rounded-control border border-line object-contain"
+                    />
+                  </a>
+                );
+              }
+              if (c.type === "terminal") {
+                return (
+                  <pre
+                    key={i}
+                    className="overflow-x-auto rounded-control bg-inset p-2 font-mono text-[11.5px] whitespace-pre-wrap text-green"
+                  >
+                    {c.terminalId ? `$ terminal ${c.terminalId}\n` : ""}
+                    {c.text}
+                  </pre>
+                );
+              }
               return (
                 <pre
                   key={i}
-                  className="overflow-x-auto rounded-[var(--radius-md)] bg-black/80 p-2 text-xs font-mono whitespace-pre-wrap text-emerald-200/90"
+                  className="overflow-x-auto rounded-control bg-inset p-2 font-mono text-[11.5px] whitespace-pre-wrap text-ink-2"
                 >
-                  {c.terminalId ? `$ terminal ${c.terminalId}\n` : ""}
                   {c.text}
                 </pre>
               );
-            }
-            return (
-              <pre
-                key={i}
-                className="overflow-x-auto rounded-[var(--radius-md)] border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_72%,transparent)] p-2 text-xs whitespace-pre-wrap text-[var(--text-secondary)]"
-              >
-                {c.text}
+            })}
+            {entry.content.length === 0 && rawInputText && (
+              <pre className="overflow-x-auto rounded-control bg-inset p-2 font-mono text-[11.5px] whitespace-pre-wrap text-ink-2">
+                {rawInputText}
               </pre>
-            );
-          })}
-
-          {entry.content.length === 0 && rawInputText && (
-            <pre className="overflow-x-auto rounded-[var(--radius-md)] border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_72%,transparent)] p-2 text-xs whitespace-pre-wrap text-[var(--text-secondary)]">
-              {rawInputText}
-            </pre>
-          )}
-
-          {waiting && entry.options && entry.permissionRequestId && (
-            <div className="flex flex-wrap gap-2 pt-1">
-              {entry.options.map((opt) => (
-                <Button
-                  key={opt.optionId}
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    void respondPermission(
-                      entry.permissionRequestId!,
-                      opt.optionId,
-                    )
-                  }
-                >
-                  {opt.label}
-                </Button>
-              ))}
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() =>
-                  void respondPermission(entry.permissionRequestId!, null)
-                }
-              >
-                Deny
-              </Button>
-            </div>
-          )}
+            )}
+          </>
+        ) : null}
+      </ToolChipRow>
+      {waiting && entry.options && entry.permissionRequestId && (
+        <div className="mt-2">
+          <PermissionApproval
+            title={entry.title || "需要你的确认"}
+            options={entry.options}
+            onRespond={(optionId) =>
+              void respondPermission(entry.permissionRequestId!, optionId)
+            }
+          />
         </div>
       )}
-    </div>
+    </ToolChips>
   );
-}
-
-function StatusIcon({ status }: { status: ToolCallEntry["status"] }) {
-  if (status === "completed")
-    return <CheckCircle2 size={14} className="text-emerald-500 shrink-0" />;
-  if (status === "failed")
-    return <Circle size={14} className="text-red-500 shrink-0" />;
-  if (status === "in_progress" || status === "waiting_for_confirmation") {
-    return (
-      <Loader2
-        size={14}
-        className="animate-spin text-[var(--accent)] shrink-0"
-      />
-    );
-  }
-  return <Circle size={14} className="text-[var(--text-tertiary)] shrink-0" />;
 }
 
 export function ToolCallCard(props: Parameters<typeof ToolCallCardContent>[0]) {
-  return (
-    <AgentUiToolChips>
-      <ToolCallCardContent {...props} />
-    </AgentUiToolChips>
-  );
+  return <ToolCallCardContent {...props} />;
 }

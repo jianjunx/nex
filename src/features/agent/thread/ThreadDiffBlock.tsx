@@ -136,7 +136,7 @@ export function ThreadDiffBlock({
         <button
           type="button"
           title="在编辑器中打开"
-          className="block w-full truncate px-2 py-1 text-left text-[10px] font-mono text-[var(--accent)] underline decoration-[color:var(--accent)]/30 underline-offset-2 hover:decoration-[color:var(--accent)] border-b border-[color:var(--border-subtle)]"
+          className="nex-hover-underline block w-full truncate px-2 py-1 text-left text-[10px] font-mono text-[var(--accent)] border-b border-[color:var(--border-subtle)]"
           onClick={() => void openPathToken(path)}
         >
           {path}

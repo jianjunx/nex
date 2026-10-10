@@ -1,4 +1,9 @@
-import type { AssistantMessageEntry, ThreadEntry, ToolCallEntry } from "./types";
+import type {
+  AssistantMessageEntry,
+  ThreadEntry,
+  ToolCallEntry,
+  TurnSummaryEntry,
+} from "./types";
 import { groupChunks } from "./groupChunks";
 import { collectChangedFiles, type ChangedFile } from "./filesChanged";
 import { isEditTool } from "./toolCallUtils";
@@ -81,6 +86,8 @@ export function groupThreadEntries(
   const items: ThreadRenderItem[] = [];
   let toolBuf: ProcessPart[] = [];
   let turnEdits: ToolCallEntry[] = [];
+  /** 本轮用量摘要：始终排在整轮最末（文件变更卡片之后）。 */
+  let turnFooter: TurnSummaryEntry | null = null;
   let turn = 0;
 
   const flushTools = () => {
@@ -107,10 +114,19 @@ export function groupThreadEntries(
       }
     }
     turnEdits = [];
+    if (turnFooter) {
+      items.push({ type: "entry", entry: turnFooter });
+      turnFooter = null;
+    }
     turn += 1;
   };
 
   for (const entry of entries) {
+    if (entry.kind === "turn_summary") {
+      flushTools();
+      turnFooter = entry;
+      continue;
+    }
     if (entry.kind === "user_message") {
       flushTurnSummary(true);
       items.push({ type: "entry", entry });

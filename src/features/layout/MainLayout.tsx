@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { usePresence } from "@/components/ui/usePresence";
 import { TopBar } from "./TopBar";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 import { useUiStore } from "@/stores/ui.store";
@@ -23,6 +24,7 @@ export function MainLayout({
   sidePanel,
 }: MainLayoutProps) {
   const visible = useUiStore((s) => s.sidePanelVisible);
+  const side = usePresence(visible);
   const width = useUiStore((s) => s.sidePanelWidth);
   const collapsed = useUiStore((s) => s.sidebarCollapsed);
   const storedSidebarWidth = useUiStore((s) => s.sidebarWidth);
@@ -92,11 +94,12 @@ export function MainLayout({
           <main className="nex-workbench-main flex min-w-0 flex-1 flex-col overflow-hidden">
             {mainContent}
           </main>
-          {visible && (
+          {side.mounted && (
             <>
               <div
                 data-testid="side-resize-handle"
                 className="nex-handle-col"
+                style={side.shown ? undefined : { width: 0, overflow: "hidden" }}
                 onPointerDown={(e) => {
                   e.preventDefault();
                   beginColResize({
@@ -114,9 +117,12 @@ export function MainLayout({
               <div
                 id="workspace-side-panel"
                 data-testid="side-pane"
-                ref={sideRef}
+                ref={(node) => {
+                  sideRef.current = node;
+                  side.ref.current = node;
+                }}
                 className="nex-layout-pane nex-material-sidebar flex min-h-0 shrink-0 flex-col overflow-hidden border-l border-[var(--hairline-soft)]"
-                style={{ width: paintedWidth }}
+                style={{ width: side.shown ? paintedWidth : 0 }}
               >
                 {sidePanel}
               </div>

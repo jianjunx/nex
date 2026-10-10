@@ -1,4 +1,5 @@
 import AgentUiRecordsTable from "@/components/agent-ui/beautiful-ui/RecordsTable";
+import { Collapse } from "@/components/ui/Collapse";
 import { ChevronRight, FilePlus, FolderPlus, RefreshCw, ChevronsDownUp } from "lucide-react";
 import { useFsStore } from "../../stores/fs.store";
 import { useProjectStore } from "../../stores/project.store";
@@ -22,7 +23,9 @@ function uniqueByPath<T extends { path: string }>(nodes: T[] | undefined): T[] {
 function focusVisibleTreeRelative(currentEl: HTMLElement, delta: -1 | 1): void {
   const container = currentEl.closest("[data-file-tree]");
   if (!(container instanceof HTMLElement)) return;
-  const items = Array.from(container.querySelectorAll<HTMLElement>("[role='treeitem']"));
+  const items = Array.from(container.querySelectorAll<HTMLElement>("[role='treeitem']")).filter(
+    (el) => !el.closest(".nex-collapse[data-open='false']"),
+  );
   const index = items.indexOf(currentEl);
   if (index < 0) return;
   const next = items[index + delta];
@@ -310,7 +313,7 @@ function TreeNode({
           // Pointer drag (move / attach to composer); 5px threshold keeps
           // plain clicks intact. Root rows are not draggable.
           onPointerDown={isRoot ? undefined : (e) => onNodePointerDown(e, node)}
-          className={`flex items-center gap-1.5 px-2 py-[3px] text-sm cursor-pointer rounded-[var(--radius-sm)] transition-colors duration-100 outline-none group ${
+          className={`flex items-center gap-1.5 px-2 py-[3px] text-sm cursor-pointer rounded-[var(--radius-sm)] outline-none group ${
             isDropTarget
               ? "bg-[var(--accent)]/30 ring-1 ring-[var(--accent)]"
               : isSelected
@@ -356,32 +359,30 @@ function TreeNode({
           )}
         </div>
       )}
-      {isExpanded && (
-        <>
-          {isCreatingHere && creatingType && (
-            <CreatingInput
-              type={creatingType}
-              depth={depth + 1}
-              onDone={(name) => onCreatingDone(name, node.path)}
-            />
-          )}
-          {uniqueByPath(children).map((child) => (
-            <MemoTreeNode
-              key={child.path}
-              node={child}
-              depth={depth + 1}
-              creatingIn={creatingIn}
-              creatingType={creatingType}
-              onCreatingDone={onCreatingDone}
-              renamingPath={renamingPath}
-              onRenameStart={onRenameStart}
-              onRenameDone={onRenameDone}
-              onContextMenu={onContextMenu}
-              onNodePointerDown={onNodePointerDown}
-            />
-          ))}
-        </>
-      )}
+      <Collapse open={isExpanded}>
+        {isCreatingHere && creatingType && (
+          <CreatingInput
+            type={creatingType}
+            depth={depth + 1}
+            onDone={(name) => onCreatingDone(name, node.path)}
+          />
+        )}
+        {uniqueByPath(children).map((child) => (
+          <MemoTreeNode
+            key={child.path}
+            node={child}
+            depth={depth + 1}
+            creatingIn={creatingIn}
+            creatingType={creatingType}
+            onCreatingDone={onCreatingDone}
+            renamingPath={renamingPath}
+            onRenameStart={onRenameStart}
+            onRenameDone={onRenameDone}
+            onContextMenu={onContextMenu}
+            onNodePointerDown={onNodePointerDown}
+          />
+        ))}
+      </Collapse>
     </div>
   );
 }

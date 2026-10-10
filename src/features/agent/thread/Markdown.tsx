@@ -73,7 +73,7 @@ const components: Components = {
     if (!className && !/\n/.test(text) && looksLikeFilePath(text)) {
       return (
         <code
-          className="cursor-pointer text-[var(--accent)] underline decoration-[color:var(--accent)]/30 underline-offset-2 hover:decoration-[color:var(--accent)] transition-colors"
+          className="nex-hover-underline cursor-pointer text-[var(--accent)]"
           title="在编辑器中打开"
           onClick={() => void openPathToken(text)}
         >
@@ -183,7 +183,7 @@ const components: Components = {
       return (
         <a
           href={href}
-          className="cursor-pointer text-[var(--accent)] underline decoration-[color:var(--accent)]/30 underline-offset-2 hover:decoration-[color:var(--accent)] hover:text-[var(--accent-hover)] transition-colors"
+          className="nex-hover-underline cursor-pointer text-[var(--accent)] hover:text-[var(--accent-hover)]"
           title="在编辑器中打开"
           onClick={(e) => {
             e.preventDefault();
@@ -199,7 +199,7 @@ const components: Components = {
         href={href}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-[var(--accent)] underline decoration-[color:var(--accent)]/30 underline-offset-2 hover:decoration-[color:var(--accent)] hover:text-[var(--accent-hover)] transition-colors"
+        className="nex-hover-underline text-[var(--accent)] hover:text-[var(--accent-hover)]"
         {...rest}
       >
         {children}

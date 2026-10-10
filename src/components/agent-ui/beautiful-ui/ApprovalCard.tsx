@@ -538,6 +538,259 @@ function ApprovalCardPreview({
   );
 }
 
+export type ApprovalChoice = {
+  id: string;
+  label: string;
+  description?: string | null;
+};
+
+export type ApprovalPromptSection = {
+  id: string;
+  prompt: string;
+  hint?: string;
+  type: "radio" | "check";
+  options: ApprovalChoice[];
+  selectedIds: string[];
+  customText?: string;
+  pending: boolean;
+  customPlaceholder?: string;
+  onToggle?: (optionId: string) => void;
+  onCustomChange?: (value: string) => void;
+  onCustomKeyDown?: (event: React.KeyboardEvent<HTMLInputElement>) => void;
+  extra?: import("react").ReactNode;
+};
+
+const SKIP_CLASS =
+  "inline-flex h-[27px] items-center justify-center rounded-full bg-hover-2 px-3 text-[13px] font-medium text-ink transition-colors duration-150 hover:bg-line-strong";
+const SEND_CLASS =
+  "inline-flex h-[27px] items-center justify-center rounded-full bg-ink px-3 text-[13px] font-medium text-canvas transition-opacity duration-150 hover:opacity-90 disabled:pointer-events-none disabled:opacity-50";
+
+function ChoiceMark({
+  type,
+  on,
+}: {
+  type: "radio" | "check";
+  on: boolean;
+}) {
+  return (
+    <span
+      className={`flex size-4 shrink-0 items-center justify-center transition-colors duration-200 ${
+        type === "radio" ? "rounded-full" : "rounded-[5px]"
+      } ${on ? "bg-ink text-canvas" : "text-transparent shadow-[inset_0_0_0_1.5px_var(--line-strong)]"}`}
+    >
+      {type === "radio" ? (
+        <span
+          className="size-1.5 rounded-full bg-canvas transition-transform duration-200"
+          style={{ transform: on ? "scale(1)" : "scale(0)" }}
+        />
+      ) : (
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M20 6L9 17l-5-5" />
+        </svg>
+      )}
+    </span>
+  );
+}
+
+/**
+ * Live approval surface. Same card, option rows and footer as the preview,
+ * driven by the host's questions or permission options. No demo timer.
+ */
+export function ApprovalPromptCard({
+  sections,
+  detail,
+  note,
+  status,
+  step,
+  skipLabel,
+  onSkip,
+  submitLabel,
+  onSubmit,
+  submitDisabled = false,
+  showSubmit = false,
+}: {
+  sections: ApprovalPromptSection[];
+  detail?: string | null;
+  note?: string | null;
+  status?: { label: string; tone: "ok" | "muted" } | null;
+  step?: { index: number; total: number; onPrev: () => void; onNext: () => void } | null;
+  skipLabel?: string;
+  onSkip?: () => void;
+  submitLabel?: string;
+  onSubmit?: () => void;
+  submitDisabled?: boolean;
+  showSubmit?: boolean;
+}) {
+  const showFooter = Boolean(onSkip || showSubmit || step);
+  return (
+    <div
+      data-agent-ui="ApprovalCard"
+      className="beautiful-ui nex-ui-ApprovalCard w-full max-w-80"
+    >
+      <div className="relative overflow-hidden rounded-card bg-surface shadow-card">
+        <div className="primitive-card-pad">
+          {status &&
+            (status.tone === "ok" ? (
+              <span className="mb-2.5 inline-flex items-center gap-1.5 rounded-full bg-green-tint py-1 pr-2.5 pl-1 text-[12.5px] font-medium text-green">
+                <span className="flex size-4 items-center justify-center rounded-full bg-green text-white">
+                  <svg
+                    width="11"
+                    height="11"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="3"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M20 6L9 17l-5-5" />
+                  </svg>
+                </span>
+                {status.label}
+              </span>
+            ) : (
+              <span className="mb-2.5 inline-flex items-center rounded-full bg-hover-2 px-2.5 py-1 text-[12.5px] font-medium text-ink-3">
+                {status.label}
+              </span>
+            ))}
+          {detail && (
+            <pre className="mb-2.5 max-h-36 overflow-auto whitespace-pre-wrap rounded-control bg-inset p-2 font-mono text-[11.5px] leading-relaxed text-ink-2">
+              {detail}
+            </pre>
+          )}
+          <div className="flex flex-col gap-4">
+            {sections.map((section) => (
+              <div key={section.id}>
+                <div className="text-[14px] font-medium text-ink">{section.prompt}</div>
+                {section.hint && (
+                  <p className="mt-1 text-[12px] text-ink-3">{section.hint}</p>
+                )}
+                {section.extra}
+                {(section.options.length > 0 || section.onCustomChange) && (
+                <GlideMenu
+                  className="mt-2.5 flex flex-col gap-1"
+                  highlightClassName="inset-x-0 rounded-control bg-hover"
+                >
+                  {section.options.map((option) => {
+                    const on = section.selectedIds.includes(option.id);
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        data-menu-row
+                        role={section.type === "check" ? "checkbox" : "radio"}
+                        aria-checked={on}
+                        disabled={!section.pending}
+                        onClick={() => section.onToggle?.(option.id)}
+                        className="relative z-10 flex items-start gap-1.5 rounded-control py-1 pr-2 pl-1 text-left transition-colors duration-100 disabled:opacity-100"
+                      >
+                        <span className="mt-0.5">
+                          <ChoiceMark type={section.type} on={on} />
+                        </span>
+                        <span className="flex min-w-0 flex-1 flex-col items-start gap-0.5">
+                          <span
+                            className={`text-[13px] leading-snug transition-colors duration-200 ${on ? "text-ink" : "text-ink-2"}`}
+                          >
+                            {option.label}
+                          </span>
+                          {option.description?.trim() && (
+                            <span className="text-[12px] leading-snug font-normal text-ink-3">
+                              {option.description}
+                            </span>
+                          )}
+                        </span>
+                      </button>
+                    );
+                  })}
+                  {section.pending && section.onCustomChange && (
+                    <label
+                      data-menu-row
+                      className="relative z-10 flex items-center gap-1.5 rounded-control py-1 pr-2 pl-1"
+                    >
+                      <input
+                        value={section.customText ?? ""}
+                        onChange={(event) => section.onCustomChange?.(event.target.value)}
+                        onKeyDown={section.onCustomKeyDown}
+                        placeholder={section.customPlaceholder ?? "其他…"}
+                        aria-label="其他"
+                        className="min-w-0 flex-1 bg-transparent pl-1.5 text-[13px] text-ink outline-none placeholder:text-ink-3"
+                      />
+                    </label>
+                  )}
+                </GlideMenu>
+                )}
+                {!section.pending && section.customText?.trim() && (
+                  <p className="mt-1.5 text-[13px] text-ink-2">
+                    其他：{section.customText.trim()}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+          {note && <p className="mt-2.5 text-[12px] text-ink-3">{note}</p>}
+        </div>
+        {showFooter && (
+          <div className="primitive-card-footer flex items-center justify-between gap-3">
+            <div className="flex items-center gap-1 text-ink-3">
+              {step && (
+                <>
+                  <button
+                    type="button"
+                    aria-label="上一题"
+                    disabled={step.index <= 0}
+                    onClick={step.onPrev}
+                    className="flex size-[18px] items-center justify-center rounded-[5px] transition-colors duration-100 enabled:hover:text-ink disabled:opacity-30"
+                  >
+                    <Ico size={14} path={<path d="M18 15l-6-6-6 6" />} />
+                  </button>
+                  <span className="text-[12px] font-medium tabular-nums">
+                    {step.index + 1} / {step.total}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label="下一题"
+                    disabled={step.index >= step.total - 1}
+                    onClick={step.onNext}
+                    className="flex size-[18px] items-center justify-center rounded-[5px] transition-colors duration-100 enabled:hover:text-ink disabled:opacity-30"
+                  >
+                    <Ico size={14} path={<path d="M6 9l6 6 6-6" />} />
+                  </button>
+                </>
+              )}
+            </div>
+            <div className="-mr-0.5 flex items-center gap-1.5">
+              {onSkip && (
+                <button type="button" className={SKIP_CLASS} onClick={onSkip}>
+                  {skipLabel ?? "跳过"}
+                </button>
+              )}
+              {showSubmit && (
+                <button
+                  type="button"
+                  className={SEND_CLASS}
+                  disabled={submitDisabled}
+                  onClick={onSubmit}
+                >
+                  {submitLabel ?? "提交"}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** Live host content keeps Nex state, permissions and editor behavior authoritative. */
 export default function ApprovalCard(
   props: NonNullable<Parameters<typeof ApprovalCardPreview>[0]> & {

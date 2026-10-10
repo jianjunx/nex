@@ -9,6 +9,8 @@ import { MessageContextMenu } from "./MessageContextMenu";
 import { Markdown } from "./Markdown";
 import { groupChunks } from "./groupChunks";
 import { UserMessageBubble } from "./UserMessageBubble";
+import { TurnSummaryLine } from "./TurnSummaryLine";
+import { StreamingProse } from "./StreamingProse";
 import type { ThreadEntry } from "./types";
 
 /**
@@ -20,16 +22,20 @@ export const EntryView = memo(function EntryView({
   userExpanded = false,
   onToggleUserExpand,
   floating = false,
+  streaming = false,
 }: {
   entry: ThreadEntry;
   userExpanded?: boolean;
   onToggleUserExpand?: (id: string) => void;
   floating?: boolean;
+  /** 这条助手正文仍在生成。只作用于最后一段正文。 */
+  streaming?: boolean;
 }) {
   const groupedChunks = useMemo(
     () => (entry.kind === "assistant_message" ? groupChunks(entry.chunks) : []),
     [entry],
   );
+  const lastMessageIndex = groupedChunks.findLastIndex((chunk) => chunk.type === "message");
 
   switch (entry.kind) {
     case "user_message":
@@ -51,7 +57,11 @@ export const EntryView = memo(function EntryView({
               <MessageContextMenu key={i} textContent={g.text}>
                 <StreamingText loop={false} fill>
                   <div className="nex-assistant-prose">
-                    <Markdown>{g.text}</Markdown>
+                    {streaming && i === lastMessageIndex ? (
+                      <StreamingProse text={g.text} active />
+                    ) : (
+                      <Markdown>{g.text}</Markdown>
+                    )}
                   </div>
                 </StreamingText>
               </MessageContextMenu>
@@ -107,5 +117,7 @@ export const EntryView = memo(function EntryView({
           <AskQuestionCard entry={entry} />
         </div>
       );
+    case "turn_summary":
+      return <TurnSummaryLine entry={entry} />;
   }
 });

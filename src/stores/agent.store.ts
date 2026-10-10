@@ -30,6 +30,7 @@ import {
   type SessionTarget,
   type CustomServer,
   type CreateSessionResult,
+  type ContextStatsDto,
 } from "../bridge/tauri";
 import type {
   AgentAskQuestionRequestPayload,
@@ -47,6 +48,7 @@ import {
 } from "../features/agent/thread/applySessionUpdate";
 import type { PlanEntry, SessionMeta, ThreadEntry } from "../features/agent/thread/types";
 import { assistantTextAfterLastUser } from "../features/agent/thread/messagesToThreadEntries";
+import { buildTurnSummary } from "../features/agent/thread/turnSummary";
 import { useConversationStore } from "./conversation.store";
 import { useNotificationStore } from "./notification.store";
 import { resolveSessionTarget } from "../features/agent/sessionTarget";
@@ -1076,6 +1078,14 @@ export const useAgentStore = create<AgentStore>()(
         return;
       }
       const promptGen = bumpPromptGeneration(session.conversationId);
+      // 本轮用量摘要的起点：计时与模型都在发出 prompt 前确定，
+      // 避免轮中切换模型/排队消息让摘要对不上这一轮。
+      const turnStartedAt = Date.now();
+      const turnMeta = get().metaByConversation[session.conversationId];
+      const turnModel = turnMeta?.currentModelId
+        ? (turnMeta.models.find((m) => m.id === turnMeta.currentModelId)?.name ?? turnMeta.currentModelId)
+        : null;
+      let turnStats: ContextStatsDto | null = null;
       set((s) => {
         s.sessions[session.conversationId].status = "running";
         clearConversationError(s, session.conversationId);
@@ -1091,6 +1101,7 @@ export const useAgentStore = create<AgentStore>()(
         hadMutations = !!result?.hadMutations;
         if (result?.stopReason) stopReason = result.stopReason;
         if (result?.contextStats) {
+          turnStats = result.contextStats;
           set((s) => {
             const stats = result.contextStats!;
             s.contextStatsByConversation[session.conversationId] = stats;
@@ -1151,6 +1162,24 @@ export const useAgentStore = create<AgentStore>()(
             });
           });
         }
+      }
+      // 正常结束的一轮在末尾追加用量摘要（耗时 / token / 模型）。
+      // 失败与取消的轮次不追加：前者已有错误提示，后者的用量没有意义。
+      if (!promptFailed && !cancelled) {
+        const summary = buildTurnSummary({
+          startedAt: turnStartedAt,
+          endedAt: Date.now(),
+          model: turnModel,
+          stats: turnStats,
+        });
+        set((s) => {
+          s.entriesByConversation[session.conversationId]?.push({
+            id: crypto.randomUUID(),
+            kind: "turn_summary",
+            timestamp: Date.now(),
+            ...summary,
+          });
+        });
       }
       // Persist full thread snapshot (thought/tool_call/etc.) so the UI can
       // restore complete history after restart. If this turn leaves the session

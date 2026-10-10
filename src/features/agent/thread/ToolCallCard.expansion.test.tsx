@@ -40,4 +40,24 @@ describe("ToolCallCard 展开态外提", () => {
     render(<ToolCallCard entry={entry} />);
     expect(screen.getByText("结果")).toBeTruthy(); // 重挂后仍展开
   });
+
+  it("文件工具只显示文件名，不显示路径", () => {
+    render(
+      <ToolCallCard
+        entry={{
+          ...entry,
+          id: "t2",
+          toolCallId: "tc2",
+          toolKind: "read",
+          title: "Read src/features/search/SearchPanel.tsx",
+          rawInput: { path: "src/features/search/SearchPanel.tsx" },
+          content: [],
+        }}
+      />,
+    );
+    const name = screen.getByText("SearchPanel.tsx");
+    expect(name.className).not.toContain("truncate");
+    expect(screen.queryByText(/src\/features\/search/)).toBeNull();
+    expect(screen.getByText("Read")).toBeTruthy();
+  });
 });

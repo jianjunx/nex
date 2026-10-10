@@ -60,6 +60,7 @@ vi.mock("../bridge/tauri", () => ({
 
 import { resetAgentPromptTrackingForTests, useAgentStore } from "./agent.store";
 import { useConversationStore } from "./conversation.store";
+import { emptySessionMeta } from "../features/agent/thread/applySessionUpdate";
 
 const SERVER = { id: "s1", name: "测试智能体", version: "1.0", description: "", icon: null, kind: "registry" };
 
@@ -428,6 +429,128 @@ describe("agent.store conversation-scoped errors", () => {
     expect(useAgentStore.getState().errorsByConversation).toEqual({
       "conv-2": "conversation two failed",
     });
+  });
+});
+
+describe("agent.store turn summary", () => {
+  const summaryOf = () =>
+    (useAgentStore.getState().entriesByConversation["conv-1"] ?? []).filter(
+      (e) => e.kind === "turn_summary",
+    );
+
+  function seed(meta?: { currentModelId: string; models: { id: string; name: string }[] }) {
+    useAgentStore.setState({
+      sessions: {
+        "conv-1": { sessionId: "sid-1", conversationId: "conv-1", status: "idle" },
+      },
+      metaByConversation: meta
+        ? { "conv-1": { ...emptySessionMeta(), ...meta } }
+        : {},
+      entriesByConversation: {
+        "conv-1": [{ id: "u1", kind: "user_message", text: "hello", timestamp: 1 }],
+      },
+    });
+  }
+
+  it("appends duration, turn-wide tokens and the model name at the end of a finished turn", async () => {
+    agentSendPrompt.mockResolvedValue({
+      hadMutations: false,
+      stopReason: "end_turn",
+      contextStats: {
+        schemaVersion: 4,
+        initialTokens: 0,
+        finalTokens: 0,
+        compactionPasses: 0,
+        snippedMessages: 0,
+        foldedMessages: 0,
+        archiveFilesWritten: 0,
+        toolResults: 0,
+        partialToolResults: 0,
+        cacheHitTokens: 1,
+        promptTokens: 20,
+        turnPromptTokens: 5000,
+        turnCompletionTokens: 700,
+        turnCacheHitTokens: 3000,
+        usedSummaryFallback: false,
+        overBudget: false,
+      },
+    });
+    seed({ currentModelId: "m-1", models: [{ id: "m-1", name: "DeepSeek Chat" }] });
+
+    await useAgentStore.getState().sendPrompt("sid-1", [{ type: "text", text: "hello" }]);
+
+    const entries = useAgentStore.getState().entriesByConversation["conv-1"] ?? [];
+    expect(entries[entries.length - 1]).toMatchObject({
+      kind: "turn_summary",
+      model: "DeepSeek Chat",
+      promptTokens: 5000,
+      completionTokens: 700,
+      cacheHitTokens: 3000,
+    });
+    expect(summaryOf()).toHaveLength(1);
+    expect(entries[entries.length - 1]).toHaveProperty("durationMs");
+  });
+
+  it("falls back to the model id and omits tokens when the agent reports no usage", async () => {
+    seed({ currentModelId: "claude-x", models: [] });
+
+    await useAgentStore.getState().sendPrompt("sid-1", [{ type: "text", text: "hello" }]);
+
+    const [summary] = summaryOf();
+    expect(summary).toMatchObject({ kind: "turn_summary", model: "claude-x" });
+    expect(summary).not.toHaveProperty("promptTokens");
+  });
+
+  it("uses the model that was active when the turn started", async () => {
+    let release!: (v: unknown) => void;
+    agentSendPrompt.mockImplementationOnce(() => new Promise((r) => (release = r)));
+    seed({
+      currentModelId: "m-1",
+      models: [
+        { id: "m-1", name: "Model One" },
+        { id: "m-2", name: "Model Two" },
+      ],
+    });
+
+    const pending = useAgentStore.getState().sendPrompt("sid-1", [{ type: "text", text: "hello" }]);
+    await vi.waitFor(() => expect(agentSendPrompt).toHaveBeenCalledTimes(1));
+    useAgentStore.setState((s) => ({
+      metaByConversation: {
+        ...s.metaByConversation,
+        "conv-1": { ...s.metaByConversation["conv-1"], currentModelId: "m-2" },
+      },
+    }));
+    release({ hadMutations: false, stopReason: "end_turn" });
+    await pending;
+
+    expect(summaryOf()[0]).toMatchObject({ model: "Model One" });
+  });
+
+  it("does not append a summary for cancelled turns", async () => {
+    agentSendPrompt.mockResolvedValue({ hadMutations: false, stopReason: "cancelled" });
+    seed();
+
+    await useAgentStore.getState().sendPrompt("sid-1", [{ type: "text", text: "hello" }]);
+
+    expect(summaryOf()).toHaveLength(0);
+  });
+
+  it("does not append a summary when the prompt failed", async () => {
+    agentSendPrompt.mockRejectedValue(new Error("boom"));
+    seed();
+
+    await useAgentStore.getState().sendPrompt("sid-1", [{ type: "text", text: "hello" }]);
+
+    expect(summaryOf()).toHaveLength(0);
+  });
+
+  it("persists the summary with the thread snapshot", async () => {
+    seed();
+
+    await useAgentStore.getState().sendPrompt("sid-1", [{ type: "text", text: "hello" }]);
+
+    const saved = conversationReplaceThreadEntries.mock.calls.at(-1)?.[1] as { kind: string }[];
+    expect(saved.map((e) => e.kind)).toContain("turn_summary");
   });
 });
 

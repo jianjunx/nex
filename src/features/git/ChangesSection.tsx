@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Collapse } from "@/components/ui/Collapse";
 import { ChevronRight, File, Minus, Plus, Undo2 } from "lucide-react";
 import FileIcon from "../files/FileIcon";
 import { useGitStore } from "../../stores/git.store";
@@ -51,7 +52,7 @@ function FileRow({ projectPath, file, display, busy, onDiscard }: FileRowProps) 
   return (
     <div
       data-testid={`row-${file.path}`}
-      className="group flex cursor-pointer items-center gap-1.5 rounded-[var(--radius-sm)] px-2 py-1 transition-colors duration-100 hover:bg-[var(--overlay-hover)]"
+      className="nex-hoverable group flex cursor-pointer items-center gap-1.5 rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[var(--overlay-hover)]"
       onClick={() => void openDiffInEditor(projectPath, file.path, file.staged)}
     >
       {/* 与文件树同款类型图标 */}
@@ -191,7 +192,7 @@ function ChangeTreeView({ projectPath, files, busy, onDiscard }: ChangeTreeViewP
       <div key={`dir-${dir.path}`}>
         <div
           data-testid={`dir-${dir.path}`}
-          className="flex cursor-pointer items-center gap-1.5 rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[var(--overlay-hover)]"
+          className="nex-hoverable flex cursor-pointer items-center gap-1.5 rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[var(--overlay-hover)]"
           style={{ paddingLeft: depth * 10 + 10 }}
           onClick={() => toggle(dir.path)}
         >
@@ -202,22 +203,20 @@ function ChangeTreeView({ projectPath, files, busy, onDiscard }: ChangeTreeViewP
           <FileIcon filename={dir.name} isFolder size={13} className="shrink-0" />
           <span className="truncate text-[var(--text-secondary)]">{dir.name}</span>
         </div>
-        {!isCollapsed && (
-          <>
-            {dir.dirs.map((d) => renderDir(d, depth + 1))}
-            {dir.files.map((f) => (
-              <div key={`${f.staged ? "s" : "u"}:${f.path}`} style={{ paddingLeft: (depth + 1) * 12 }}>
-                <FileRow
-                  projectPath={projectPath}
-                  file={f}
-                  display={basename(f.path)}
-                  busy={busy}
-                  onDiscard={onDiscard}
-                />
-              </div>
-            ))}
-          </>
-        )}
+        <Collapse open={!isCollapsed}>
+          {dir.dirs.map((d) => renderDir(d, depth + 1))}
+          {dir.files.map((f) => (
+            <div key={`${f.staged ? "s" : "u"}:${f.path}`} style={{ paddingLeft: (depth + 1) * 12 }}>
+              <FileRow
+                projectPath={projectPath}
+                file={f}
+                display={basename(f.path)}
+                busy={busy}
+                onDiscard={onDiscard}
+              />
+            </div>
+          ))}
+        </Collapse>
       </div>
     );
   };
@@ -253,7 +252,7 @@ function FileGroup({ projectPath, title, files, staged, busy, treeView, onDiscar
     <div className="mb-2">
       <div
         data-testid={staged ? "group-staged" : "group-unstaged"}
-        className="flex cursor-pointer items-center gap-1.5 px-2 py-1.5 text-xs text-[var(--text-tertiary)] hover:bg-[var(--overlay-hover)]"
+        className="nex-hoverable flex cursor-pointer items-center gap-1.5 px-2 py-1.5 text-xs text-[var(--text-tertiary)] hover:bg-[var(--overlay-hover)]"
         onClick={() => setCollapsed((c) => !c)}
       >
         <ChevronRight size={12} className={`transition-transform duration-150 ${collapsed ? "" : "rotate-90"}`} />
@@ -317,14 +316,15 @@ function FileGroup({ projectPath, title, files, staged, busy, treeView, onDiscar
           </>
         )}
       </div>
-      {!collapsed &&
-        (treeView ? (
+      <Collapse open={!collapsed}>
+        {treeView ? (
           <ChangeTreeView projectPath={projectPath} files={files} busy={busy} onDiscard={onDiscard} />
         ) : (
           files.map((f) => (
             <FileRow key={`${f.staged ? "s" : "u"}:${f.path}`} projectPath={projectPath} file={f} display={f.path} busy={busy} onDiscard={onDiscard} />
           ))
-        ))}
+        )}
+      </Collapse>
     </div>
   );
 }

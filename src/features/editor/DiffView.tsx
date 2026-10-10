@@ -20,6 +20,13 @@ const patchTheme = EditorView.baseTheme({
   ".cm-patch-del": { backgroundColor: "color-mix(in srgb, var(--error) 14%, transparent)" },
 });
 
+/** merge 用底边 2px 渐变给新增字符画绿下划线。行底色和左侧绿条仍保留。 */
+const insertedTextTheme = EditorView.theme({
+  "&.cm-merge-b .cm-changedText": {
+    background: "none",
+  },
+});
+
 function buildPatchDecorations(state: EditorState): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   const classes = patchLineClasses(state.doc.toString());
@@ -105,6 +112,7 @@ export function DiffView({
           mergeControls: false, // 只读视图不需要接受/拒绝控件
           collapseUnchanged: { margin: 3, minSize: 8 },
         }),
+        insertedTextTheme,
       ]}
       onCreateEditor={(view) => onCreateEditor?.(view)}
       height={height}

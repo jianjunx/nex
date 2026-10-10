@@ -1,14 +1,17 @@
-import AgentUiDiffTable from "@/components/agent-ui/beautiful-ui/DiffTable";
-import FileIcon from "../../files/FileIcon";
+import { useState } from "react";
+import ToolChips, {
+  ToolDiffChip,
+  ToolDiffMore,
+} from "@/components/agent-ui/beautiful-ui/ToolChips";
 import { fileBasename, relativeToProject } from "../../editor/pathUtils";
 import { openPathToken } from "./pathToken";
-import type { ChangedFile } from "./filesChanged";
+import { FILES_CHANGED_VISIBLE_ROWS, type ChangedFile } from "./filesChanged";
 import { useProjectStore } from "../../../stores/project.store";
 import { selectProjectActiveTabId, useConversationStore } from "../../../stores/conversation.store";
 import { useAgentStore } from "../../../stores/agent.store";
 
-const ACTION_BTN =
-  "nex-interactive-chrome shrink-0 cursor-pointer rounded-[var(--radius-sm)] px-1 py-0.5 text-xs text-[var(--text-tertiary)] hover:bg-[var(--overlay-hover)] hover:text-[var(--text-primary)] disabled:cursor-default disabled:opacity-40";
+const ACTION =
+  "text-[12.5px] text-ink-3 underline decoration-transparent underline-offset-2 transition-colors duration-100 hover:text-ink-2 hover:decoration-current disabled:pointer-events-none disabled:opacity-40";
 
 function repoRelativePaths(files: ChangedFile[], projectPath: string | undefined): string[] {
   if (!projectPath) return files.map((f) => f.path.replace(/\\/g, "/"));
@@ -26,10 +29,13 @@ function FilesChangedCardContent({ files }: { files: ChangedFile[] }) {
   const activeTabId = useConversationStore((s) => selectProjectActiveTabId(s, activeProjectId));
   const session = useAgentStore((s) => (activeTabId ? s.sessions[activeTabId] : undefined));
   const canPrompt = !!session?.sessionId && session.status === "idle";
+  const [showAll, setShowAll] = useState(false);
 
   if (files.length === 0) return null;
 
   const rels = repoRelativePaths(files, projectPath);
+  const hidden = Math.max(0, files.length - FILES_CHANGED_VISIBLE_ROWS);
+  const shown = showAll || hidden === 0 ? files : files.slice(0, FILES_CHANGED_VISIBLE_ROWS);
 
   const reviewAll = () => {
     void (async () => {
@@ -49,53 +55,44 @@ function FilesChangedCardContent({ files }: { files: ChangedFile[] }) {
   };
 
   return (
-    <div className="max-w-[96%] overflow-hidden rounded-[calc(var(--radius-md)+2px)] border border-[color:var(--hairline-soft)] bg-[var(--material-floating)] shadow-none">
-      <div className="flex items-center justify-between gap-2 px-3 py-2">
-        <span className="text-xs text-[var(--text-secondary)]">
-          修改了 {files.length} 个文件
-        </span>
-        <div className="flex shrink-0 items-center gap-2.5">
-          <button type="button" className={ACTION_BTN} disabled={!canPrompt} onClick={commitAndPush}>
-            Commit & Push
-          </button>
-          <button type="button" className={ACTION_BTN} disabled={!canPrompt} onClick={reviewFiles}>
-            Review
-          </button>
-          <button type="button" className={ACTION_BTN} onClick={reviewAll}>
-            查看
-          </button>
-        </div>
+    <ToolChips className="max-w-[96%]">
+      <div className="flex flex-wrap items-center gap-x-1.5 text-[12.5px] text-ink-2">
+        <span>修改了 {files.length} 个文件</span>
+        <span aria-hidden>·</span>
+        <button type="button" className={ACTION} disabled={!canPrompt} onClick={commitAndPush}>
+          Commit & Push
+        </button>
+        <span aria-hidden>·</span>
+        <button type="button" className={ACTION} disabled={!canPrompt} onClick={reviewFiles}>
+          Review
+        </button>
+        <span aria-hidden>·</span>
+        <button type="button" className={ACTION} onClick={reviewAll}>
+          查看
+        </button>
       </div>
-      <ul>
-        {files.map((f) => {
-          const name = fileBasename(f.path);
-          return (
-            <li key={f.path.replace(/\\/g, "/")}>
-              <button
-                type="button"
-                title={f.path}
-                className="nex-interactive-chrome flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left hover:bg-[color:color-mix(in_srgb,var(--material-elevated)_86%,transparent)]"
-                onClick={() => void openPathToken(f.path)}
-              >
-                <FileIcon filename={name} size={14} className="shrink-0" />
-                <span className="min-w-0 flex-1 truncate text-sm text-[var(--text-primary)]">{name}</span>
-                <span className="flex shrink-0 items-center gap-1.5 font-mono text-[11px] tabular-nums">
-                  {f.additions > 0 && (
-                    <span className="text-[var(--success)]">+{f.additions}</span>
-                  )}
-                  {f.deletions > 0 && (
-                    <span className="text-[var(--error)]">−{f.deletions}</span>
-                  )}
-                </span>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-    </div>
+      <div
+        data-testid="files-changed-list"
+        className="mt-1.5 flex max-w-full flex-wrap gap-1.5"
+      >
+        {shown.map((f) => (
+          <ToolDiffChip
+            key={f.path.replace(/\\/g, "/")}
+            file={fileBasename(f.path)}
+            add={f.additions}
+            del={f.deletions}
+            title={f.path}
+            onClick={() => void openPathToken(f.path)}
+          />
+        ))}
+        {!showAll && hidden > 0 && (
+          <ToolDiffMore hidden={hidden} onClick={() => setShowAll(true)} />
+        )}
+      </div>
+    </ToolChips>
   );
 }
 
 export function FilesChangedCard(props: Parameters<typeof FilesChangedCardContent>[0]) {
- return <AgentUiDiffTable><FilesChangedCardContent {...props}/></AgentUiDiffTable>;
+  return <FilesChangedCardContent {...props} />;
 }

@@ -31,6 +31,7 @@ vi.mock("./pathToken", () => ({
 }));
 
 import { FilesChangedCard } from "./FilesChangedCard";
+import { FILES_CHANGED_VISIBLE_ROWS } from "./filesChanged";
 import { useProjectStore } from "../../../stores/project.store";
 import { useConversationStore } from "../../../stores/conversation.store";
 import { useAgentStore } from "../../../stores/agent.store";
@@ -62,6 +63,19 @@ afterEach(() => {
 });
 
 describe("FilesChangedCard", () => {
+  it("shows three file chips, then the rest", () => {
+    const many = Array.from({ length: 11 }, (_, i) => ({
+      path: `/repo/src/f${i}.ts`,
+      additions: 1,
+      deletions: 0,
+    }));
+    render(<FilesChangedCard files={many} />);
+    const list = screen.getByTestId("files-changed-list");
+    expect(list.querySelectorAll("[data-diffchip]")).toHaveLength(FILES_CHANGED_VISIBLE_ROWS);
+    fireEvent.click(screen.getByRole("button", { name: "还有 8 个文件" }));
+    expect(list.querySelectorAll("[data-diffchip]")).toHaveLength(11);
+  });
+
   it("renders file names, counts, and opens a file on row click", () => {
     render(<FilesChangedCard files={FILES} />);
     expect(screen.getByText("修改了 2 个文件")).toBeTruthy();

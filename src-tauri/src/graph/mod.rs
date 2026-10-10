@@ -170,7 +170,7 @@ where
 {
     let key = canonical_or(cwd);
     let status = {
-        let mut map = statuses.lock().unwrap();
+        let mut map = statuses.lock().unwrap_or_else(|e| e.into_inner());
         map.entry(key)
             .or_insert_with(|| {
                 Arc::new(ProjectStatus {
@@ -181,12 +181,27 @@ where
             .clone()
     };
     {
-        let mut g = status.inner.lock().unwrap();
+        let mut g = status.inner.lock().unwrap_or_else(|e| e.into_inner());
         g.indexing = true;
         status.cv.notify_all();
     }
-    let result = f();
-    let mut g = status.inner.lock().unwrap();
+    // A panic inside the job (a crate assert like ignore's gitignore matcher,
+    // a sqlite unwrap) must not kill the worker thread: the channel would
+    // keep accepting jobs nobody consumes and indexing would silently stop
+    // for the rest of the session. Contain it here and record a failure —
+    // the job's own locks are never held across f(), but recover from a
+    // poisoned one anyway so a future job can't re-kill the thread here.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
+        .map_err(|e| {
+            let msg = e
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_else(|| "unknown panic".to_string());
+            format!("index job panicked: {msg}")
+        })
+        .and_then(|r| r);
+    let mut g = status.inner.lock().unwrap_or_else(|e| e.into_inner());
     g.indexing = false;
     match result {
         Ok(stats) => {
@@ -195,6 +210,9 @@ where
             g.total = stats.scanned;
         }
         Err(e) => {
+            // `ready` keeps its last-good value: an already-indexed project
+            // stays queryable (with stale data) rather than going dark. The
+            // failure surfaces in the log only.
             log::warn!("code graph index failed for {}: {e}", cwd.display());
         }
     }
@@ -303,6 +321,31 @@ mod tests {
             .query(cwd, &serde_json::json!({"action": "overview"}))
             .unwrap();
         assert!(overview.contains("files="), "{overview}");
+    }
+
+    #[test]
+    fn run_job_survives_a_panicking_job() {
+        let statuses: Mutex<HashMap<PathBuf, Arc<ProjectStatus>>> = Mutex::new(HashMap::new());
+        let cwd = std::env::temp_dir().join("nex-graph-panic-probe");
+        run_job(&statuses, &cwd, || panic!("boom"));
+        // The panic must be contained: the job reports failure and leaves no
+        // stuck "indexing" state. (Before catch_unwind, this killed the
+        // worker thread and every later job was silently dropped.)
+        let key = canonical_or(&cwd);
+        let status = statuses.lock().unwrap().get(&key).cloned().unwrap();
+        let g = status.inner.lock().unwrap();
+        assert!(!g.indexing, "a panicked job must not leave indexing=true");
+        assert!(!g.ready, "a first-job panic must not mark the project ready");
+        drop(g);
+
+        // A panic AFTER a successful index keeps the last-good `ready` flag:
+        // the project stays queryable with stale data instead of going dark.
+        let ok = index::BuildStats { parsed: 3, skipped: 1, ..Default::default() };
+        run_job(&statuses, &cwd, || Ok(ok));
+        run_job(&statuses, &cwd, || panic!("boom again"));
+        let g = status.inner.lock().unwrap();
+        assert!(g.ready, "a later panic must keep the last-good ready flag");
+        assert!(!g.indexing, "a panicked job must not leave indexing=true");
     }
 
     #[test]

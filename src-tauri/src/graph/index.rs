@@ -31,11 +31,47 @@ pub fn build_project(cwd: &Path) -> Result<BuildStats, String> {
 }
 
 /// Re-index only `paths` (absolute or workspace-relative). Missing files
-/// are deleted from the store.
+/// are deleted from the store. Paths that do not resolve under the workspace
+/// root are ignored entirely (neither indexed nor deleted) — watcher events
+/// can address files in a form that does not share the canonicalized root
+/// prefix, and the gitignore matcher panics on such paths.
 pub fn update_paths(cwd: &Path, paths: &[PathBuf]) -> Result<BuildStats, String> {
     build_inner(cwd, Some(paths))
 }
 
+/// Strip the Windows verbatim (`\\?\`) prefix so a path compares equal to its
+/// non-verbatim form. No-op on other platforms / already-plain paths.
+/// `Path::canonicalize` returns verbatim paths on Windows while watcher
+/// events and DB-stored project paths keep the plain form, so every
+/// root-prefix comparison must go through this first.
+fn strip_verbatim(p: &Path) -> &Path {
+    p.strip_prefix(r"\\?\").unwrap_or(p)
+}
+
+/// Workspace-relative path of an event path, tolerating the forms watchers
+/// actually deliver: verbatim `\\?\` prefixes on Windows (canonicalize adds
+/// them, notify does not) and symlinked roots (macOS `/var` → `/private/var`
+/// — `canonicalize` resolves the link, the watcher keeps the alias).
+/// Returns `None` when the file is genuinely outside the workspace: those are
+/// skipped, and must never reach the gitignore matcher (it panics on paths
+/// outside its root, which used to kill the worker thread).
+fn rel_under_root(cwd: &Path, abs: &Path) -> Option<PathBuf> {
+    if let Ok(rel) = strip_verbatim(abs).strip_prefix(strip_verbatim(cwd)) {
+        return Some(rel.to_path_buf());
+    }
+    // Symlinked root: canonicalize the event path and retry against the
+    // canonical root. Already-deleted files fail to canonicalize — they are
+    // simply not indexed this round (the next full build reaps them).
+    let canon = abs.canonicalize().ok()?;
+    canon.strip_prefix(cwd).ok().map(|r| r.to_path_buf())
+}
+
+/// Walk the workspace and upsert parsed files into the sqlite index.
+///
+/// Invariant: the gitignore matcher is built with the canonicalized `cwd` as
+/// its root, and `matched_path_or_any_parents` panics on paths outside that
+/// root — so every path that reaches [`should_skip`] must first be resolved
+/// under `cwd` via [`rel_under_root`] and re-anchored with `cwd.join(rel)`.
 fn build_inner(cwd: &Path, only: Option<&[PathBuf]>) -> Result<BuildStats, String> {
     let cwd = cwd
         .canonicalize()
@@ -43,6 +79,9 @@ fn build_inner(cwd: &Path, only: Option<&[PathBuf]>) -> Result<BuildStats, Strin
     let cfg = GraphConfig::load(&cwd);
     let mut stats = BuildStats::default();
     let gitignore = load_gitignore(&cwd);
+    // The gitignore matcher was built with `cwd` as its root; paths outside
+    // it must never reach matched_path_or_any_parents (it panics).
+    let gitignore_ref = gitignore.as_ref().map(|g| (g, cwd.as_path()));
 
     if let Some(paths) = only {
         let mut seen = HashSet::new();
@@ -53,8 +92,19 @@ fn build_inner(cwd: &Path, only: Option<&[PathBuf]>) -> Result<BuildStats, Strin
             } else {
                 cwd.join(raw)
             };
+            // Resolve the event path against the workspace root, tolerating
+            // verbatim/plain prefix mismatches (canonicalize vs watcher form)
+            // and symlinked roots. Genuinely-outside paths are skipped — and
+            // so is anything that would panic the gitignore matcher, which
+            // used to kill the worker thread for the rest of the session.
+            let Some(rel_os) = rel_under_root(&cwd, &abs) else {
+                continue;
+            };
+            // Re-anchor under the canonical root so every downstream consumer
+            // (rel path, gitignore match, fs read) sees one consistent form.
+            let abs = cwd.join(&rel_os);
             let rel = paths::rel_path(&cwd, &abs);
-            if should_skip(&rel, &abs, &cfg, gitignore.as_ref()) {
+            if should_skip(&rel, &abs, &cfg, gitignore_ref) {
                 continue;
             }
             if !seen.insert(rel.clone()) {
@@ -114,7 +164,7 @@ fn build_inner(cwd: &Path, only: Option<&[PathBuf]>) -> Result<BuildStats, Strin
         }
         let abs = entry.path();
         let rel = paths::rel_path(&cwd, abs);
-        if should_skip(&rel, abs, &cfg, gitignore.as_ref()) {
+        if should_skip(&rel, abs, &cfg, gitignore_ref) {
             continue;
         }
         stats.scanned += 1;
@@ -229,7 +279,7 @@ fn should_skip(
     rel: &str,
     abs: &Path,
     cfg: &GraphConfig,
-    gitignore: Option<&ignore::gitignore::Gitignore>,
+    gitignore: Option<(&ignore::gitignore::Gitignore, &Path)>,
 ) -> bool {
     if rel.starts_with(".nex/") {
         return true;
@@ -243,7 +293,16 @@ fn should_skip(
     if cfg.is_excluded(rel) {
         return true;
     }
-    gitignore.is_some_and(|g| g.matched_path_or_any_parents(abs, false).is_ignore())
+    // matched_path_or_any_parents PANICS on paths outside the matcher's root
+    // (its strip leaves a rooted path). Callers normally pre-filter to the
+    // workspace; this guard keeps a stray path a no-op instead of a dead
+    // worker thread. `gitignore.1` is the root the matcher was built with.
+    if let Some((g, root)) = gitignore {
+        if abs.strip_prefix(root).is_ok() {
+            return g.matched_path_or_any_parents(abs, false).is_ignore();
+        }
+    }
+    false
 }
 
 fn git_head(cwd: &Path) -> Option<String> {
@@ -365,6 +424,49 @@ mod tests {
             })
             .unwrap();
         assert_eq!(beta, 0);
+    }
+
+    #[test]
+    fn update_paths_outside_workspace_does_not_panic() {
+        // Watcher events can carry paths that do not share the canonicalized
+        // root prefix (verbatim \\?\ prefixes, symlinked temp dirs). The
+        // gitignore matcher panics on paths outside its root, which used to
+        // kill the code-graph worker thread for the rest of the session.
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd_buf = tmp.path().canonicalize().unwrap();
+        let cwd = cwd_buf.as_path();
+        std::fs::write(cwd.join(".gitignore"), "*.log\n").unwrap();
+        std::fs::create_dir_all(cwd.join("src")).unwrap();
+        std::fs::write(cwd.join("src/lib.rs"), "pub fn alpha() {}\n").unwrap();
+        // A real file outside the workspace, addressed in non-canonical form.
+        let outside = std::env::temp_dir().join("nex-graph-outside-probe.rs");
+        std::fs::write(&outside, "pub fn stranger() {}\n").unwrap();
+
+        let stats = update_paths(cwd, std::slice::from_ref(&outside));
+        assert!(stats.is_ok(), "outside path must not panic: {stats:?}");
+        let stats = stats.unwrap();
+        assert_eq!(stats.scanned, 0, "outside path must not be indexed");
+
+        let store = Store::open(cwd).unwrap();
+        let stranger: i64 = store
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM nodes WHERE name = 'stranger'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(stranger, 0);
+        let _ = std::fs::remove_file(&outside);
+
+        // The same file addressed in watcher form (plain prefix, root
+        // canonicalized to verbatim on Windows) MUST still be indexed —
+        // skipping it would silently stop all incremental indexing.
+        let plain_cwd = PathBuf::from(cwd.to_string_lossy().trim_start_matches(r"\\?\"));
+        let watcher_path = plain_cwd.join("src/lib.rs");
+        assert_ne!(watcher_path, cwd.join("src/lib.rs"));
+        let stats = update_paths(cwd, std::slice::from_ref(&watcher_path)).unwrap();
+        assert_eq!(stats.parsed, 1, "watcher-form path must be indexed: {stats:?}");
     }
 
     #[test]

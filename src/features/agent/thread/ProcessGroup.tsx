@@ -93,6 +93,7 @@ export const ProcessGroup = memo(function ProcessGroup({
                 key={p.key}
                 text={p.text}
                 defaultOpen={active && i === lastIndex}
+                streaming={active && i === lastIndex}
               />
             ) : (
               <ToolCallCard

@@ -28,7 +28,7 @@ export const EntryView = memo(function EntryView({
   userExpanded?: boolean;
   onToggleUserExpand?: (id: string) => void;
   floating?: boolean;
-  /** 这条助手正文仍在生成。只作用于最后一段正文，思考过程不重播。 */
+  /** 这条助手正文仍在生成。只作用于最后一段正文。 */
   streaming?: boolean;
 }) {
   const groupedChunks = useMemo(

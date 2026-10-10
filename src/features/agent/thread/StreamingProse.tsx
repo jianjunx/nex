@@ -16,14 +16,31 @@ function prefersReducedMotion(): boolean {
  * 已揭示的部分整段走 Markdown（不把句尾拆到另一层），光标贴在最后一段末尾。
  * 挂载时已经到达的文字直接显示，只对之后新到的词做动画。
  */
-export function StreamingProse({ text, active }: { text: string; active: boolean }) {
+export function StreamingProse({
+  text,
+  active,
+  compact = false,
+  muted = false,
+  onIdle,
+}: {
+  text: string;
+  active: boolean;
+  /** 思考过程用更紧的字号。 */
+  compact?: boolean;
+  /** 思考过程用次级文字色。 */
+  muted?: boolean;
+  /** 生成已结束且文字已经全部显示。 */
+  onIdle?: () => void;
+}) {
   const reduce = useRef(prefersReducedMotion());
   const shownRef = useRef(reduce.current ? text.length : text.length);
   const [shown, setShown] = useState(shownRef.current);
   const textRef = useRef(text);
   const activeRef = useRef(active);
+  const onIdleRef = useRef(onIdle);
   textRef.current = text;
   activeRef.current = active;
+  onIdleRef.current = onIdle;
 
   useEffect(() => {
     if (reduce.current) return;
@@ -44,13 +61,28 @@ export function StreamingProse({ text, active }: { text: string; active: boolean
     return () => window.clearInterval(timer);
   }, []);
 
-  if (reduce.current || (!active && shown >= text.length)) return <Markdown>{text}</Markdown>;
+  useEffect(() => {
+    if (active) return;
+    if (reduce.current || shown >= text.length) onIdleRef.current?.();
+  }, [active, shown, text]);
+
+  if (reduce.current || (!active && shown >= text.length)) {
+    return (
+      <Markdown compact={compact} muted={muted}>
+        {text}
+      </Markdown>
+    );
+  }
 
   const visible = text.slice(0, Math.min(shown, text.length));
   const streaming = active || shown < text.length;
   return (
     <div className={streaming ? "nex-stream-live is-active" : "nex-stream-live"}>
-      {visible ? <Markdown>{visible}</Markdown> : null}
+      {visible ? (
+        <Markdown compact={compact} muted={muted}>
+          {visible}
+        </Markdown>
+      ) : null}
     </div>
   );
 }

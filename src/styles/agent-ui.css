@@ -209,9 +209,17 @@
 .nex-assistant-prose .markdown-body :is(ul, ol) > li + li {
   margin-top: 0.35em;
 }
-/* 吐字时最后一段和模糊尾巴、光标留在同一行。更早的段落保持块级。 */
-.nex-stream-live .markdown-body > p:last-child {
-  display: inline;
+/* 光标画在最后一段里面，避免另起一行。节奏对齐 beautiful-ui 的 fade-in 细光标。 */
+.nex-stream-live.is-active .markdown-body > :last-child::after {
+  content: "";
+  display: inline-block;
+  width: 2px;
+  height: 0.72em;
+  margin-left: 3px;
+  border-radius: 999px;
+  background: currentColor;
+  vertical-align: -1px;
+  animation: fade-in 150ms ease-out both;
 }
 .nex-reasoning {
   padding: 2px 0;

@@ -38,7 +38,7 @@ function estimateRowHeight(item: ThreadRenderItem | undefined): number {
   if (item.type === "process_group") return 32;
   if (item.type === "files_changed") return 76;
   const e = item.entry;
-  if (e.kind === "user_message") return 48;
+  if (e.kind === "user_message") return 84;
   if (e.kind === "turn_summary") return 20;
   if (e.kind === "tool_call") {
     return e.status === "waiting_for_confirmation" ? 240 : 48;
@@ -319,12 +319,13 @@ export function ThreadView() {
               if (!vi) return null;
               const item = renderItems[vi.index];
               const isPinnedOriginal = sticky != null && sticky.id === rowKey(item);
+              const isUserMessage = item?.type === "entry" && item.entry.kind === "user_message";
               return (
                 <div
                   key={vi.key}
                   data-index={vi.index}
                   ref={virtualizer.measureElement}
-                  className={`pb-3${isPinnedOriginal ? " invisible" : ""}`}
+                  className={`${isUserMessage ? "pt-[18px] pb-[30px]" : "pb-3"}${isPinnedOriginal ? " invisible" : ""}`}
                   style={{
                     position: "absolute",
                     top: 0,

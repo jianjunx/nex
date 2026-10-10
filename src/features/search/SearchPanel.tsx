@@ -322,7 +322,7 @@ function SearchPanelContent() {
             onKeyDown={handleSearchKeyDown}
             placeholder="输入关键词搜索文件名与内容。"
             aria-label="搜索"
-            className={`h-8 ${inlineError ? "border-[var(--error)] focus-visible:ring-[var(--error)]" : ""}`}
+            className={`h-8 ${inlineError ? "border-[var(--error)]" : ""}`}
           />
           <FlagToggle
             pressed={searchOptions.caseSensitive}
@@ -452,7 +452,9 @@ function SearchPanelContent() {
                               </span>
                             </>
                           ) : (
-                            <span className="text-xs text-[var(--text-tertiary)] italic">文件名匹配</span>
+                            <span className="text-xs text-[var(--text-tertiary)] italic">
+                              {m.pathOnly ? "路径匹配" : "文件名匹配"}
+                            </span>
                           )}
                           <span
                             role="button"

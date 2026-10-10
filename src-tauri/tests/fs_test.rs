@@ -165,6 +165,52 @@ fn test_search_filename_hits_rank_before_content_hits() {
 }
 
 #[test]
+fn test_search_directory_name_hits_do_not_starve_content_hits() {
+    let dir = tempdir().unwrap();
+    // 300 个文件都因目录名 "company" 而成为路径命中，另有一个文件内容含 "company"。
+    let module = dir.path().join("cmp-mod-company-service");
+    fs::create_dir_all(&module).unwrap();
+    for i in 0..300 {
+        fs::write(module.join(format!("Vo{i:03}.java")), "class A {}\n").unwrap();
+    }
+    fs::write(dir.path().join("README.md"), "the company handbook\n").unwrap();
+
+    let results = search(dir.path(), "company", None).unwrap();
+    assert!(results.len() <= 200);
+    assert!(
+        results
+            .iter()
+            .any(|m| m.name == "README.md" && m.line == Some(1)),
+        "content hit must survive a flood of path-only name hits"
+    );
+}
+
+#[test]
+fn test_search_path_only_hits_are_flagged_and_rank_last() {
+    let dir = tempdir().unwrap();
+    let module = dir.path().join("cmp-mod-company-service");
+    fs::create_dir_all(&module).unwrap();
+    fs::write(module.join("Vo.java"), "class A {}\n").unwrap();
+    fs::write(dir.path().join("company.md"), "readme\n").unwrap();
+    fs::write(dir.path().join("notes.txt"), "the company handbook\n").unwrap();
+
+    let results = search(dir.path(), "company", None).unwrap();
+    let order: Vec<_> = results
+        .iter()
+        .map(|m| (m.name.as_str(), m.line, m.path_only))
+        .collect();
+    // 真正的文件名命中 → 内容命中 → 仅目录名命中的路径命中
+    assert_eq!(
+        order,
+        vec![
+            ("company.md", None, false),
+            ("notes.txt", Some(1), false),
+            ("Vo.java", None, true),
+        ]
+    );
+}
+
+#[test]
 fn test_search_prefers_stronger_filename_match_ordering() {
     let dir = tempdir().unwrap();
     fs::write(dir.path().join("components.json"), "{}\n").unwrap();

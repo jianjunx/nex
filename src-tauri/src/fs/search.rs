@@ -14,6 +14,9 @@ pub struct SearchMatch {
     pub name: String,
     pub line: Option<u32>,
     pub text: String,
+    /// File-name hit whose NAME did not match: only a parent directory in the
+    /// relative path did. The UI labels these "路径匹配" and they rank last.
+    pub path_only: bool,
 }
 
 /// Match-rule toggles shared by search and replace. All false = the
@@ -33,6 +36,12 @@ pub struct SearchOptions {
 /// Total matches returned per query (name + content combined). Replace
 /// previews and writes honor the SAME budget (spec: 替换同受约束).
 const MAX_RESULTS: usize = 200;
+/// Fuzzy (default) mode: content hits are guaranteed at least this many of the
+/// MAX_RESULTS slots. File-name matching also scores the relative path, so a
+/// directory such as `cmp-mod-company-service/` makes every file inside it a
+/// "name" hit; without a reserved share those hits filled the whole budget and
+/// no line match was ever shown.
+const MIN_CONTENT_RESULTS: usize = MAX_RESULTS / 2;
 /// Files larger than this are skipped for content search (name still matches).
 const MAX_CONTENT_FILE_SIZE: u64 = 1024 * 1024;
 /// Matched lines are truncated to this many characters.
@@ -88,15 +97,14 @@ fn fuzzy_score(query: &str, target: &str) -> Option<i64> {
     Some(score)
 }
 
-fn fuzzy_name_score(query: &str, name: &str, relative_path: &str) -> Option<i64> {
-    let name_score = fuzzy_score(query, name).map(|score| score + 1_000_000);
-    let path_score = fuzzy_score(query, relative_path);
-    match (name_score, path_score) {
-        (Some(a), Some(b)) => Some(a.max(b)),
-        (Some(a), None) => Some(a),
-        (None, Some(b)) => Some(b),
-        (None, None) => None,
+/// Score a file for the fuzzy name search. `(score, path_only)`: a hit on the
+/// file name always outranks a hit that only came from the relative path
+/// (typically a parent directory), which is flagged `path_only`.
+fn fuzzy_name_score(query: &str, name: &str, relative_path: &str) -> Option<(i64, bool)> {
+    if let Some(score) = fuzzy_score(query, name) {
+        return Some((score + 1_000_000, false));
     }
+    fuzzy_score(query, relative_path).map(|score| (score, true))
 }
 
 /// Compile query + options into one `regex::Regex`: plain queries become
@@ -166,6 +174,7 @@ pub fn search(
                 name,
                 line: None,
                 text: String::new(),
+                path_only: false,
             });
         }
         return Ok(results);
@@ -175,6 +184,7 @@ pub fn search(
     let fuzzy_name_search = !opts.case_sensitive && !opts.whole_word && !opts.regex;
     let mut results = Vec::new();
     let mut file_name_hits: Vec<(i64, SearchMatch)> = Vec::new();
+    let mut path_only_hits: Vec<(i64, SearchMatch)> = Vec::new();
     let mut content_hits = Vec::new();
     let walker = WalkBuilder::new(project_path)
         .hidden(true) // skip dotfiles/dirs (notably .git)
@@ -209,16 +219,19 @@ pub fn search(
             .replace('\\', "/");
 
         if fuzzy_name_search {
-            if let Some(score) = fuzzy_name_score(query, &name, &relative_path) {
-                file_name_hits.push((
-                    score,
-                    SearchMatch {
-                        path: path_str.clone(),
-                        name: name.clone(),
-                        line: None,
-                        text: String::new(),
-                    },
-                ));
+            if let Some((score, path_only)) = fuzzy_name_score(query, &name, &relative_path) {
+                let hit = SearchMatch {
+                    path: path_str.clone(),
+                    name: name.clone(),
+                    line: None,
+                    text: String::new(),
+                    path_only,
+                };
+                if path_only {
+                    path_only_hits.push((score, hit));
+                } else {
+                    file_name_hits.push((score, hit));
+                }
             }
         } else if re.is_match(&name) {
             results.push(SearchMatch {
@@ -226,11 +239,17 @@ pub fn search(
                 name,
                 line: None,
                 text: String::new(),
+                path_only: false,
             });
             continue;
         }
 
         if metadata.len() > MAX_CONTENT_FILE_SIZE {
+            continue;
+        }
+        // Fuzzy mode keeps walking for name hits after the content budget is
+        // spent; do not read (and regex-scan) every remaining file for nothing.
+        if fuzzy_name_search && content_hits.len() >= MAX_RESULTS {
             continue;
         }
         // Non-UTF-8 (binary) files fail to read as text and are skipped.
@@ -249,6 +268,7 @@ pub fn search(
                     name: name.clone(),
                     line: Some(idx as u32 + 1),
                     text: line.trim().chars().take(MAX_LINE_LEN).collect(),
+                    path_only: false,
                 };
                 if fuzzy_name_search {
                     content_hits.push(hit);
@@ -260,15 +280,32 @@ pub fn search(
     }
 
     if fuzzy_name_search {
-        file_name_hits.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.path.cmp(&b.1.path)));
+        let by_score = |a: &(i64, SearchMatch), b: &(i64, SearchMatch)| {
+            b.0.cmp(&a.0).then_with(|| a.1.path.cmp(&b.1.path))
+        };
+        file_name_hits.sort_by(by_score);
+        path_only_hits.sort_by(by_score);
+        // Order: real name hits, then line matches, then path-only hits (they
+        // only exist because a parent directory matched, so they must never
+        // crowd out the others). Content keeps a guaranteed share; name hits
+        // may use what content leaves free, up to MAX_RESULTS.
+        let content_wanted = content_hits.len().min(MIN_CONTENT_RESULTS);
+        let name_take = file_name_hits.len().min(MAX_RESULTS - content_wanted);
         results.extend(
             file_name_hits
                 .into_iter()
-                .take(MAX_RESULTS)
+                .take(name_take)
                 .map(|(_, hit)| hit),
         );
         let remaining = MAX_RESULTS.saturating_sub(results.len());
         results.extend(content_hits.into_iter().take(remaining));
+        let remaining = MAX_RESULTS.saturating_sub(results.len());
+        results.extend(
+            path_only_hits
+                .into_iter()
+                .take(remaining)
+                .map(|(_, hit)| hit),
+        );
     }
 
     Ok(results)

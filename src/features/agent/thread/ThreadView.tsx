@@ -2,6 +2,7 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import { AgentLoadingIndicator } from "./AgentLoadingIndicator";
 import { loadingContextFor } from "./loadingPhrases";
+import { streamingEntryId } from "./streamingReveal";
 import { useAgentStore } from "../../../stores/agent.store";
 import { useProjectStore } from "../../../stores/project.store";
 import { selectProjectActiveTabId, useConversationStore } from "../../../stores/conversation.store";
@@ -172,6 +173,7 @@ export function ThreadView() {
     () => groupThreadEntries(entries, { lastTurnComplete }),
     [entries, lastTurnComplete],
   );
+  const liveEntryId = streamingEntryId(renderItems, lastTurnComplete);
 
   const scrollerRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
@@ -349,6 +351,7 @@ export function ThreadView() {
                         entry={item.entry}
                         userExpanded={expandedUserIds.has(item.entry.id)}
                         onToggleUserExpand={toggleUserExpand}
+                        streaming={item.entry.id === liveEntryId}
                       />
                     )
                   ) : (

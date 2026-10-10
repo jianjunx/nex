@@ -209,6 +209,10 @@
 .nex-assistant-prose .markdown-body :is(ul, ol) > li + li {
   margin-top: 0.35em;
 }
+/* 吐字时最后一段和模糊尾巴、光标留在同一行。更早的段落保持块级。 */
+.nex-stream-live .markdown-body > p:last-child {
+  display: inline;
+}
 .nex-reasoning {
   padding: 2px 0;
 }

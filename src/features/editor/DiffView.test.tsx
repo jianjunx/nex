@@ -59,4 +59,17 @@ describe("DiffView", () => {
     );
     expect(container.querySelector(".cm-editor")).toBeTruthy();
   });
+
+  it("does not underline inserted text in merge mode", () => {
+    const { container } = render(
+      <DiffView
+        payload={{ ...base, mode: "merge", original: "v1", revised: "v2" }}
+        theme={[]}
+        extensions={[]}
+      />,
+    );
+    const inserted = container.querySelector(".cm-changedText");
+    expect(inserted).toBeTruthy();
+    expect(getComputedStyle(inserted!).backgroundImage).toBe("none");
+  });
 });

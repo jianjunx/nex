@@ -4,7 +4,7 @@ import { useUiStore } from "@/stores/ui.store";
 import { useProjectStore } from "@/stores/project.store";
 import { useConversationStore } from "@/stores/conversation.store";
 import { IconBar } from "./IconBar";
-import { SIDEBAR_WIDTH, SIDEBAR_WIDTH_VAR } from "./sidebarMetrics";
+import { RAIL_WIDTH, SIDEBAR_WIDTH, SIDEBAR_WIDTH_VAR } from "./sidebarMetrics";
 import { WindowControls } from "./WindowControls";
 import {
   MAC_TRAFFIC_LIGHT_PAD_PX,
@@ -39,15 +39,16 @@ export function TopBar() {
       onMouseDown={handleMouseDown}
       className={`flex shrink-0 select-none items-center bg-[var(--material-sidebar)] pr-3 ${TITLE_BAR_HEIGHT_CLASS}`}
     >
-      {/* Expanded: this zone is exactly as wide as the sidebar, so the divider
-          below lands on the sidebar/workbench edge and the toggle sits at its right end.
-          Collapsed: it hugs the icon. */}
+      {/* Expanded: this zone matches the sidebar so the divider sits on its edge.
+          Collapsed: it shrinks down to the icon, clear of the macOS traffic lights. */}
       <div
-        className={`flex shrink-0 items-center ${collapsed ? "" : "justify-end"}`}
+        className="nex-sidebar-slot flex shrink-0 items-center justify-end"
         style={{
           paddingLeft: padLeft,
           paddingRight: 8,
-          width: collapsed ? undefined : `var(${SIDEBAR_WIDTH_VAR}, ${SIDEBAR_WIDTH}px)`,
+          width: collapsed
+            ? Math.max(RAIL_WIDTH, padLeft + 32 + 8)
+            : `var(${SIDEBAR_WIDTH_VAR}, ${SIDEBAR_WIDTH}px)`,
         }}
       >
         <Button

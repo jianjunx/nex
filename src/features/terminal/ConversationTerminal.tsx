@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { usePresence } from "@/components/ui/usePresence";
 import { useUiStore } from "@/stores/ui.store";
 import { useProjectStore } from "@/stores/project.store";
 import { TerminalPanel } from "./TerminalPanel";
@@ -6,19 +7,26 @@ export function ConversationTerminal() {
   const visible = useUiStore((s) => s.terminalVisible);
   const height = useUiStore((s) => s.terminalHeight);
   const projectId = useProjectStore((s) => s.activeProjectId);
-  const root = useRef<HTMLDivElement>(null);
+  const presence = usePresence<HTMLElement>(visible);
   const [live, setLive] = useState<number | null>(null);
+  const [dragging, setDragging] = useState(false);
   const drag = useRef<{ y: number; height: number; max: number } | null>(null);
   useEffect(() => {
     useUiStore.getState().syncTerminalVisibleForProject(projectId);
   }, [projectId]);
-  if (!visible) return null;
+  if (!presence.mounted) return null;
+  const shown = presence.shown;
   return (
     <section
-      ref={root}
+      ref={presence.ref}
       aria-label="对话终端"
-      className="shrink-0 overflow-hidden border-t border-[var(--hairline-soft)]"
-      style={{ height: live ?? height, maxHeight: "50%", minHeight: 100 }}
+      data-dragging={dragging ? "true" : undefined}
+      className="nex-terminal-pane shrink-0 overflow-hidden border-t border-[var(--hairline-soft)]"
+      style={{
+        height: shown ? (live ?? height) : 0,
+        maxHeight: "50%",
+        minHeight: shown ? 100 : 0,
+      }}
     >
       <div
         role="separator"
@@ -42,12 +50,14 @@ export function ConversationTerminal() {
         onPointerDown={(e) => {
           e.preventDefault();
           e.currentTarget.setPointerCapture(e.pointerId);
+          presence.ref.current?.setAttribute("data-dragging", "true");
+          setDragging(true);
           drag.current = {
             y: e.clientY,
-            height: root.current?.clientHeight ?? height,
+            height: presence.ref.current?.clientHeight ?? height,
             max: Math.max(
               100,
-              (root.current?.parentElement?.clientHeight ?? 600) / 2,
+              (presence.ref.current?.parentElement?.clientHeight ?? 600) / 2,
             ),
           };
         }}
@@ -66,10 +76,14 @@ export function ConversationTerminal() {
         onPointerUp={() => {
           if (live !== null) useUiStore.getState().setTerminalHeight(live);
           drag.current = null;
+          presence.ref.current?.removeAttribute("data-dragging");
+          setDragging(false);
           setLive(null);
         }}
         onPointerCancel={() => {
           drag.current = null;
+          presence.ref.current?.removeAttribute("data-dragging");
+          setDragging(false);
           setLive(null);
         }}
       />

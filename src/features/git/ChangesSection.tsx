@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Collapse } from "@/components/ui/Collapse";
 import { ChevronRight, File, Minus, Plus, Undo2 } from "lucide-react";
 import FileIcon from "../files/FileIcon";
 import { useGitStore } from "../../stores/git.store";
@@ -202,22 +203,20 @@ function ChangeTreeView({ projectPath, files, busy, onDiscard }: ChangeTreeViewP
           <FileIcon filename={dir.name} isFolder size={13} className="shrink-0" />
           <span className="truncate text-[var(--text-secondary)]">{dir.name}</span>
         </div>
-        {!isCollapsed && (
-          <>
-            {dir.dirs.map((d) => renderDir(d, depth + 1))}
-            {dir.files.map((f) => (
-              <div key={`${f.staged ? "s" : "u"}:${f.path}`} style={{ paddingLeft: (depth + 1) * 12 }}>
-                <FileRow
-                  projectPath={projectPath}
-                  file={f}
-                  display={basename(f.path)}
-                  busy={busy}
-                  onDiscard={onDiscard}
-                />
-              </div>
-            ))}
-          </>
-        )}
+        <Collapse open={!isCollapsed}>
+          {dir.dirs.map((d) => renderDir(d, depth + 1))}
+          {dir.files.map((f) => (
+            <div key={`${f.staged ? "s" : "u"}:${f.path}`} style={{ paddingLeft: (depth + 1) * 12 }}>
+              <FileRow
+                projectPath={projectPath}
+                file={f}
+                display={basename(f.path)}
+                busy={busy}
+                onDiscard={onDiscard}
+              />
+            </div>
+          ))}
+        </Collapse>
       </div>
     );
   };
@@ -317,14 +316,15 @@ function FileGroup({ projectPath, title, files, staged, busy, treeView, onDiscar
           </>
         )}
       </div>
-      {!collapsed &&
-        (treeView ? (
+      <Collapse open={!collapsed}>
+        {treeView ? (
           <ChangeTreeView projectPath={projectPath} files={files} busy={busy} onDiscard={onDiscard} />
         ) : (
           files.map((f) => (
             <FileRow key={`${f.staged ? "s" : "u"}:${f.path}`} projectPath={projectPath} file={f} display={f.path} busy={busy} onDiscard={onDiscard} />
           ))
-        ))}
+        )}
+      </Collapse>
     </div>
   );
 }

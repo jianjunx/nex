@@ -1,5 +1,6 @@
 import { memo } from "react";
 import { ChevronRight, Loader2, Sparkles } from "lucide-react";
+import { Collapse } from "@/components/ui/Collapse";
 import { cn } from "@/lib/utils";
 import type { ProcessPart } from "./groupThreadEntries";
 import { ThinkingBlock } from "./ThinkingBlock";
@@ -85,7 +86,7 @@ export const ProcessGroup = memo(function ProcessGroup({
           className={cn("shrink-0 transition-transform", open && "rotate-90")}
         />
       </button>
-      {open && (
+      <Collapse open={open}>
         <div className="mt-1.5 ml-1.5 space-y-1.5 border-l border-[color:var(--hairline-soft)] pl-3">
           {parts.map((p, i) =>
             p.type === "thought" ? (
@@ -104,7 +105,7 @@ export const ProcessGroup = memo(function ProcessGroup({
             ),
           )}
         </div>
-      )}
+      </Collapse>
     </div>
   );
 });

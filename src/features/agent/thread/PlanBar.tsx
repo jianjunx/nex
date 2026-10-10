@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ChevronRight, ListTodo, Loader2 } from "lucide-react";
+import { Collapse } from "@/components/ui/Collapse";
 import TaskRows from "@/components/agent-ui/beautiful-ui/TaskRows";
 import { cn } from "@/lib/utils";
 import type { PlanEntry } from "./types";
@@ -32,11 +33,11 @@ export function PlanBar({ entries }: { entries: PlanEntry[] }) {
           className={cn("ml-auto shrink-0 transition-transform", open && "rotate-90")}
         />
       </button>
-      {open && (
+      <Collapse open={open}>
         <div role="list" className="beautiful-ui nex-ui-tasks mt-2">
           <TaskRows variant="List" labels={{ completed: "已完成", failed: "失败" }} rows={entries.map((e, i) => ({ key: String(i), label: e.content, amount: "", step: i + 1, status: e.status === "completed" ? "done" : e.status === "in_progress" ? "running" : "pending", details: [] }))}/>
         </div>
-      )}
+      </Collapse>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown, Sparkles } from "lucide-react";
+import { Collapse } from "@/components/ui/Collapse";
 import { Markdown } from "./Markdown";
 import { StreamingProse } from "./StreamingProse";
 
@@ -54,9 +55,8 @@ export function ThinkingBlock({
         <span>思考过程</span>
         <ChevronDown size={13} className={open ? "rotate-180" : ""} />
       </button>
-      {open && (
+      <Collapse open={open} id={id}>
         <div
-          id={id}
           className="nex-trace-body"
           ref={body}
           onScroll={() => {
@@ -74,7 +74,7 @@ export function ThinkingBlock({
             </Markdown>
           )}
         </div>
-      )}
+      </Collapse>
     </div>
   );
 }

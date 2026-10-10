@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNod
 import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Loader2, RefreshCw, Replace, X } from "lucide-react";
 import FileIcon from "../files/FileIcon";
 import { Button } from "@/components/ui/button";
+import { Collapse } from "@/components/ui/Collapse";
 import { Input } from "@/components/ui/input";
 import {
   AlertDialog,
@@ -352,7 +353,7 @@ function SearchPanelContent() {
       </div>
 
       {/* 替换行：默认折叠，由搜索行左侧箭头展开 */}
-      {showReplace && (
+      <Collapse open={showReplace}>
         <div className="px-1 pb-2 pl-7">
           <div className="flex items-center gap-1">
             <Input
@@ -379,7 +380,7 @@ function SearchPanelContent() {
             </Button>
           </div>
         </div>
-      )}
+      </Collapse>
 
       {/* 统计条 */}
       {query.trim() && !regexError && (

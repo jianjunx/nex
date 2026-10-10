@@ -342,18 +342,36 @@ body {
   .nex-handle-col {
     width: 4px;
     cursor: col-resize;
+    transition: width var(--duration-medium) var(--ease-fluid);
+  }
+  html[data-nex-resizing] .nex-handle-col {
+    transition: none !important;
   }
   .nex-handle-row {
     height: 4px;
     cursor: row-resize;
   }
-  /* Width is pointer-driven. `duration-*` on these nodes interpolates width
-     and makes the splitter jump instead of tracking the cursor. */
-  .nex-layout-pane {
-    transition: none;
+  /* Pane show/hide eases width or height. Pointer resize sets
+     data-nex-resizing (or data-dragging) so the splitter stays 1:1. */
+  .nex-layout-pane,
+  .nex-terminal-pane {
+    transition:
+      width var(--duration-medium) var(--ease-fluid),
+      height var(--duration-medium) var(--ease-fluid),
+      min-height var(--duration-medium) var(--ease-fluid);
   }
-  html[data-nex-resizing] .nex-layout-pane {
+  html[data-nex-resizing] .nex-layout-pane,
+  html[data-nex-resizing] .nex-terminal-pane,
+  .nex-layout-pane[data-dragging="true"],
+  .nex-terminal-pane[data-dragging="true"] {
+    transition: none !important;
     animation: none !important;
+  }
+  .nex-sidebar-slot {
+    transition: width var(--duration-medium) var(--ease-fluid);
+  }
+  html[data-nex-resizing] .nex-sidebar-slot {
+    transition: none !important;
   }
   .nex-handle-col::after,
   .nex-handle-row::after {
@@ -388,10 +406,17 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .nex-handle-col,
   .nex-handle-col::after,
   .nex-handle-row::after,
-  .nex-interactive-chrome {
-    transition: none;
+  .nex-interactive-chrome,
+  .nex-layout-pane,
+  .nex-terminal-pane,
+  .nex-sidebar-slot,
+  .nex-workspace-sidebar,
+  .nex-collapse,
+  .nex-collapse-height {
+    transition: none !important;
   }
   .nex-pressable:active {
     transform: none;
@@ -509,14 +534,24 @@ body {
   border-radius: 3px;
 }
 
-/* 组折叠高度过渡：grid-template-rows 0fr ↔ 1fr 技巧（150ms）。 */
-.search-collapse {
+/* 折叠高度：grid-template-rows 0fr ↔ 1fr。搜索组保持挂载；会话/树用 Collapse 在结束后卸载。 */
+.search-collapse,
+.nex-collapse {
   display: grid;
-  transition: grid-template-rows 150ms ease-out;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--duration-medium) var(--ease-fluid);
 }
-.search-collapse-inner {
+.search-collapse,
+.nex-collapse[data-open="true"] {
+  grid-template-rows: 1fr;
+}
+.search-collapse-inner,
+.nex-collapse-inner {
   overflow: hidden;
   min-height: 0;
+}
+.nex-collapse-height {
+  transition: max-height var(--duration-medium) var(--ease-fluid);
 }
 
 /* ─── Markdown body + highlight.js theme (token colors via CSS variables

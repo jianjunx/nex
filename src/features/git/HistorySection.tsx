@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronRight, RefreshCw } from "lucide-react";
+import { Collapse } from "@/components/ui/Collapse";
 import { useGitStore } from "../../stores/git.store";
 
 /**
@@ -56,7 +57,7 @@ export function HistorySection({ projectPath }: { projectPath: string }) {
           <RefreshCw size={12} className={historyLoading ? "animate-spin" : ""} />
         </button>
       </div>
-      {historyOpen && (
+      <Collapse open={historyOpen}>
         <div className="max-h-56 overflow-y-auto pb-1">
           {commits.length === 0 && (
             <div className="px-3 py-1.5 text-xs text-[var(--text-tertiary)]">暂无提交历史</div>
@@ -80,7 +81,7 @@ export function HistorySection({ projectPath }: { projectPath: string }) {
             </div>
           ))}
         </div>
-      )}
+      </Collapse>
     </div>
   );
 }

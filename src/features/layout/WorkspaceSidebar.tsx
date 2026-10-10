@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { cn } from "@/lib/utils";
+import { Collapse } from "@/components/ui/Collapse";
 import {
   Folder,
   FolderOpen,
@@ -168,44 +170,104 @@ export function WorkspaceSidebar() {
     }
   };
 
-  if (railMode) {
-    return (
-      <SidebarNav className="nex-workspace-sidebar nex-workspace-rail">
-        <NewConversationDropdown triggerSize="icon-sm" compact />
-        <nav aria-label="项目" className="nex-rail-projects">
-          {projects.map((project) => (
-            <button
-              key={project.id}
-              disabled={busy}
-              title={project.name}
-              aria-label={project.name}
-              aria-current={projectId === project.id ? "page" : undefined}
-              className="nex-rail-project"
-              onClick={() => void select(project)}
-            >
-              {projectInitial(project.name)}
-            </button>
-          ))}
-        </nav>
-        {error && (
-          <p role="alert" className="px-1 text-center text-xs text-[var(--status-danger)]">
-            {error}
-          </p>
-        )}
-        <button
-          className="nex-rail-settings"
-          title="设置"
-          aria-label="设置"
-          onClick={() => useUiStore.getState().openSettings()}
-        >
-          <Settings size={16} />
-        </button>
-      </SidebarNav>
-    );
-  }
-
   return (
-    <SidebarNav className="nex-workspace-sidebar">
+    <SidebarNav className={cn("nex-workspace-sidebar", railMode && "nex-workspace-rail")}>
+      {!railMode ? (
+        <ExpandedSidebar
+          projects={projects}
+          projectId={projectId}
+          conversations={conversations}
+          activeTabs={activeTabs}
+          busy={busy}
+          error={error}
+          collapsed={collapsed}
+          setCollapsed={setCollapsed}
+          setBusy={setBusy}
+          setError={setError}
+          select={select}
+          createTask={createTask}
+          pendingDeleteId={pendingDeleteId}
+          setPendingDeleteId={setPendingDeleteId}
+          deleting={deleting}
+          pendingStatus={pendingStatus}
+          confirmDelete={confirmDelete}
+        />
+      ) : (
+        <>
+          <NewConversationDropdown triggerSize="icon-sm" compact />
+          <nav aria-label="项目" className="nex-rail-projects">
+            {projects.map((project) => (
+              <button
+                key={project.id}
+                disabled={busy}
+                title={project.name}
+                aria-label={project.name}
+                aria-current={projectId === project.id ? "page" : undefined}
+                className="nex-rail-project"
+                onClick={() => void select(project)}
+              >
+                {projectInitial(project.name)}
+              </button>
+            ))}
+          </nav>
+          {error && (
+            <p role="alert" className="px-1 text-center text-xs text-[var(--status-danger)]">
+              {error}
+            </p>
+          )}
+          <button
+            className="nex-rail-settings"
+            title="设置"
+            aria-label="设置"
+            onClick={() => useUiStore.getState().openSettings()}
+          >
+            <Settings size={16} />
+          </button>
+        </>
+      )}
+    </SidebarNav>
+  );
+}
+
+function ExpandedSidebar({
+  projects,
+  projectId,
+  conversations,
+  activeTabs,
+  busy,
+  error,
+  collapsed,
+  setCollapsed,
+  setBusy,
+  setError,
+  select,
+  createTask,
+  pendingDeleteId,
+  setPendingDeleteId,
+  deleting,
+  pendingStatus,
+  confirmDelete,
+}: {
+  projects: Project[];
+  projectId: string | null;
+  conversations: ReturnType<typeof useConversationStore.getState>["conversationsByProject"];
+  activeTabs: ReturnType<typeof useConversationStore.getState>["activeTabByProject"];
+  busy: boolean;
+  error: string | null;
+  collapsed: Record<string, boolean>;
+  setCollapsed: Dispatch<SetStateAction<Record<string, boolean>>>;
+  setBusy: (busy: boolean) => void;
+  setError: (error: string | null) => void;
+  select: (project: Project, conversationId?: string) => Promise<void>;
+  createTask: (project: Project) => Promise<void>;
+  pendingDeleteId: string | null;
+  setPendingDeleteId: (id: string | null) => void;
+  deleting: boolean;
+  pendingStatus: "starting" | "idle" | "running" | "waiting" | null;
+  confirmDelete: () => Promise<void>;
+}) {
+  return (
+    <>
       <div className="nex-workspace-brand">
         <Sparkles size={19} /> Nex <small>WORKSPACE</small>
       </div>
@@ -265,8 +327,8 @@ export function WorkspaceSidebar() {
                     <MessageSquarePlus size={15} />
                   </button>
                 </div>
-                {expanded &&
-                  (conversations[project.id] ?? []).map((c) => (
+                <Collapse open={expanded}>
+                  {(conversations[project.id] ?? []).map((c) => (
                     <ConversationRow
                       key={c.id}
                       conversationId={c.id}
@@ -281,6 +343,7 @@ export function WorkspaceSidebar() {
                       onDelete={() => setPendingDeleteId(c.id)}
                     />
                   ))}
+                </Collapse>
               </div>
             );
           })}
@@ -310,6 +373,6 @@ export function WorkspaceSidebar() {
         <Settings size={16} />
         设置
       </button>
-    </SidebarNav>
+    </>
   );
 }

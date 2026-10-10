@@ -1,4 +1,5 @@
 import AgentUiToolChips from "@/components/agent-ui/beautiful-ui/ToolChips";
+import { Collapse } from "@/components/ui/Collapse";
 import { useEffect } from "react";
 import {
   CheckCircle2,
@@ -78,7 +79,7 @@ function ToolCallCardContent({
         )}
       </div>
 
-      {(open || waiting) && (
+      <Collapse open={open || waiting}>
         <div
           className={cn(
             "nex-tool-detail space-y-1.5",
@@ -175,7 +176,7 @@ function ToolCallCardContent({
             </div>
           )}
         </div>
-      )}
+      </Collapse>
     </div>
   );
 }

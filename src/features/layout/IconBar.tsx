@@ -16,44 +16,53 @@ export function IconBar() {
       aria-label="工作区工具"
       className="flex shrink-0 items-center gap-1"
     >
-      {(
-        [
-          { id: "files", label: "文件", icon: FolderTree },
-          { id: "search", label: "搜索", icon: Search },
-          { id: "git", label: "Git", icon: GitBranch },
-        ] as const
-      ).map(({ id, label, icon: Icon }) => (
-        <Button
-          key={id}
-          variant="ghost"
-          size="icon-sm"
-          title={label}
-          aria-label={label}
-          aria-pressed={visible && selected === id}
-          aria-controls="workspace-side-panel"
-          className={
-            visible && selected === id
-              ? "text-[var(--accent)]"
-              : "text-[var(--text-tertiary)]"
-          }
-          onClick={() => useUiStore.getState().toggleSidePanelTab(id)}
-        >
-          <Icon size={15} />
-          {id === "git" && count > 0 && (
-            <span className="text-[10px]">{count > 99 ? "99+" : count}</span>
-          )}
-        </Button>
-      ))}
       <Button
         variant="ghost"
         size="icon-sm"
         title="终端"
         aria-label="终端"
         aria-pressed={terminal}
+        className={terminal ? "text-[var(--accent)]" : "text-[var(--text-tertiary)]"}
         onClick={() => useUiStore.getState().toggleTerminal()}
       >
         <Terminal size={15} />
       </Button>
+      {(
+        [
+          { id: "files", label: "文件", icon: FolderTree },
+          { id: "git", label: "Git", icon: GitBranch },
+          { id: "search", label: "搜索", icon: Search },
+        ] as const
+      ).map(({ id, label, icon: Icon }) => {
+        const badge = id === "git" && count > 0 ? (count > 99 ? "99+" : String(count)) : null;
+        return (
+          <Button
+            key={id}
+            variant="ghost"
+            size="icon-sm"
+            title={badge ? `${label}（${count} 项更改）` : label}
+            aria-label={label}
+            aria-pressed={visible && selected === id}
+            aria-controls="workspace-side-panel"
+            className={`relative ${
+              visible && selected === id
+                ? "text-[var(--accent)]"
+                : "text-[var(--text-tertiary)]"
+            }`}
+            onClick={() => useUiStore.getState().toggleSidePanelTab(id)}
+          >
+            <Icon size={15} />
+            {badge && (
+              <span
+                aria-hidden
+                className="pointer-events-none absolute top-0.5 right-0 flex h-[14px] min-w-[14px] items-center justify-center rounded-full bg-[var(--text-primary)] px-1 text-[9px] font-semibold leading-none text-[var(--material-canvas)]"
+              >
+                {badge}
+              </span>
+            )}
+          </Button>
+        );
+      })}
     </div>
   );
 }

@@ -82,7 +82,9 @@ describe("MainLayout side-panel resize", () => {
     expect(screen.getByRole("dialog")).toBeTruthy();
     expect(screen.queryByTestId("editor-pane")).toBeNull();
     expect(screen.queryByTestId("editor-resize-handle")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    // The close button lives in EditorPanel's tab row; Esc still dismisses.
+    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     expect(useUiStore.getState().editorVisible).toBe(false);
   });
 });

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // mock 桥接层：模块级可变 fn + 工厂闭包延迟读取（调用时才命中当前 mock 实现）。
 const agentListServers = vi.fn();
@@ -1460,5 +1460,73 @@ describe("native auto /review", () => {
 
     await useAgentStore.getState().sendPrompt("sid-1", [{ type: "text", text: "edit" }]);
     expect(agentSendPrompt).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("agent.store prewarmSession", () => {
+  const created = (id: string) => ({
+    sessionId: id,
+    modes: [],
+    models: [],
+    configOptions: [],
+    availableCommands: [],
+  });
+
+  afterEach(() => vi.useRealTimers());
+  beforeEach(() => {
+    vi.useFakeTimers();
+    agentListServers.mockResolvedValue([]);
+    useAgentStore.setState({ servers: [SERVER as never] });
+  });
+
+  it("多次快速切换只启动最后一个 agent", async () => {
+    agentCreateSession.mockResolvedValue(created("sess-last"));
+    const { prewarmSession } = useAgentStore.getState();
+    prewarmSession("c1", "a", "/p");
+    prewarmSession("c1", "b", "/p");
+    prewarmSession("c1", "s1", "/p");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(agentCreateSession).toHaveBeenCalledTimes(1);
+    expect(agentCreateSession).toHaveBeenCalledWith(
+      "c1",
+      { type: "registry", id: "s1" },
+      "/p",
+    );
+  });
+
+  it("已有会话（用户已发送）时不重复启动", async () => {
+    useAgentStore.setState({
+      sessions: { c1: { sessionId: "live", conversationId: "c1", status: "idle" } },
+    });
+    useAgentStore.getState().prewarmSession("c1", "s1", "/p");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(agentCreateSession).not.toHaveBeenCalled();
+  });
+
+  it("启动中被 removeSession 取代：迟到的会话被关闭且不写入 store", async () => {
+    let resolveStart!: (v: ReturnType<typeof created>) => void;
+    agentCreateSession.mockReturnValueOnce(
+      new Promise((r) => {
+        resolveStart = r;
+      }),
+    );
+    useAgentStore.getState().prewarmSession("c1", "s1", "/p", { debounceMs: 0 });
+    await vi.advanceTimersByTimeAsync(10);
+    expect(useAgentStore.getState().sessions.c1?.status).toBe("starting");
+
+    await useAgentStore.getState().removeSession("c1");
+    resolveStart(created("stale"));
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(agentCloseSession).toHaveBeenCalledWith("stale");
+    expect(useAgentStore.getState().sessions.c1).toBeUndefined();
+    expect(useAgentStore.getState().errorsByConversation.c1).toBeUndefined();
+  });
+
+  it("removeSession 取消尚未触发的预初始化", async () => {
+    useAgentStore.getState().prewarmSession("c1", "s1", "/p");
+    await useAgentStore.getState().removeSession("c1");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(agentCreateSession).not.toHaveBeenCalled();
   });
 });

@@ -61,7 +61,6 @@ useConversationStore.setState({
   },
 });
 useUiStore.setState({
-  overviewOpen: false,
   sidePanelVisible: true,
   sidePanelTab: "files",
   sidePanelWidth: 260,

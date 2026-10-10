@@ -15,11 +15,12 @@ import {
   selectProjectConversations,
   useConversationStore,
 } from "../../stores/conversation.store";
-import { fsSearch, fsReadFile, type PromptBlock, type SearchMatch, type SessionTarget } from "../../bridge/tauri";
+import { fsSearch, fsReadFile, type PromptBlock, type SearchMatch } from "../../bridge/tauri";
+import { resolveSessionTarget } from "./sessionTarget";
 import { ComposerOptionMenu } from "./ComposerOptionMenu";
 import { ComposerGroupedOptionMenu } from "./ComposerGroupedOptionMenu";
 import { ContextUsageRing, resolveContextRingUsage, summarizeRecentCacheHits } from "./ContextUsageRing";
-import { AgentSelector } from "./AgentSelector";
+import { NewTaskBar } from "./NewTaskBar";
 import { BranchSelector } from "../git/BranchSelector";
 import { useGitStore } from "../../stores/git.store";
 import { useDragDropStore } from "../../stores/dragDrop.store";
@@ -373,14 +374,10 @@ function AgentComposerContent() {
     }
     const servers = useAgentStore.getState().servers;
     if (servers.length === 0) await useAgentStore.getState().loadServers();
-    const descriptor =
-      useAgentStore.getState().servers.find((s) => s.id === activeConversation.agent_type) ?? null;
-    const target: SessionTarget =
-      descriptor?.kind === "custom"
-        ? { type: "custom", id: activeConversation.agent_type }
-        : (descriptor?.kind === "native" || activeConversation.agent_type === "nex")
-          ? { type: "native" }
-          : { type: "registry", id: activeConversation.agent_type };
+    const target = resolveSessionTarget(
+      activeConversation.agent_type,
+      useAgentStore.getState().servers,
+    );
     try {
       return await createSession(activeTabId, target, project.path);
     } catch {
@@ -813,6 +810,15 @@ function AgentComposerContent() {
           </div>
         )}
 
+        {activeTabId && activeConversation && project && (
+          <NewTaskBar
+            key={activeTabId}
+            conversation={activeConversation}
+            project={project}
+            onBusyChange={setAgentChanging}
+          />
+        )}
+
         <div
           className={`nex-prompt-surface flex flex-col gap-2 p-2.5${
             composerDropHover || osDropHover
@@ -885,7 +891,7 @@ function AgentComposerContent() {
                 size="icon-sm"
                 disabled={!activeTabId}
                 title="添加图片或文件"
-                className="nex-interactive-chrome nex-pressable rounded-full shrink-0 border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_78%,transparent)] shadow-none hover:bg-[color:color-mix(in_srgb,var(--material-floating)_78%,transparent)]"
+                className="nex-interactive-chrome nex-pressable rounded-full shrink-0 border border-transparent bg-transparent shadow-none hover:bg-[var(--overlay-hover)]"
                 onClick={() => setPlusOpen((v) => !v)}
               >
                 <Plus size={16} />
@@ -936,7 +942,6 @@ function AgentComposerContent() {
               />
             )}
 
-            {activeTabId && activeConversation && <AgentSelector key={activeTabId} conversationId={activeTabId} agentType={activeConversation.agent_type} onBusyChange={setAgentChanging}/>}
             <div className="ml-auto flex items-center gap-0.5 min-w-0">
               {showAuthMode && activeTabId && (
                 <ComposerOptionMenu
@@ -1025,7 +1030,7 @@ function AgentComposerContent() {
                   size="icon-sm"
                   onClick={() => session?.sessionId && void cancel(session.sessionId)}
                   title="Stop"
-                  className="nex-interactive-chrome nex-pressable rounded-full shrink-0 border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_78%,transparent)] shadow-none hover:bg-[color:color-mix(in_srgb,var(--material-floating)_78%,transparent)]"
+                  className="nex-interactive-chrome nex-pressable rounded-full shrink-0 border border-transparent bg-transparent shadow-none hover:bg-[var(--overlay-hover)]"
                 >
                   <Square size={14} />
                 </Button>

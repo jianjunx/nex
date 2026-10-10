@@ -32,14 +32,20 @@ beforeEach(() => {
   useUiStore.setState({ newConversationOpen: false });
 });
 afterEach(cleanup);
-it("creates in the first project regardless of current project", async () => {
+it("creates in the currently selected project", async () => {
+  render(<NewConversationDropdown triggerSize="icon" />);
+  fireEvent.click(screen.getByRole("button", { name: "新建任务" }));
+  await waitFor(() => expect(create).toHaveBeenCalledWith("second", "nex"));
+  expect(activateProject).toHaveBeenCalledWith(
+    expect.objectContaining({ id: "second" }),
+  );
+  expect(screen.queryByRole("menu")).toBeNull();
+});
+it("falls back to the first project when none is selected", async () => {
+  useProjectStore.setState({ activeProjectId: null });
   render(<NewConversationDropdown triggerSize="icon" />);
   fireEvent.click(screen.getByRole("button", { name: "新建任务" }));
   await waitFor(() => expect(create).toHaveBeenCalledWith("first", "nex"));
-  expect(activateProject).toHaveBeenCalledWith(
-    expect.objectContaining({ id: "first" }),
-  );
-  expect(screen.queryByRole("menu")).toBeNull();
 });
 it("reports missing project without creating a conversation", () => {
   useProjectStore.setState({ projects: [] });

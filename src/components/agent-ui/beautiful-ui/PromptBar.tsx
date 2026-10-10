@@ -687,7 +687,7 @@ function PromptBarPreview({
 
         {/* ── composer ───────────────────────────────────── */}
         <div
-          className={`relative isolate flex flex-col overflow-hidden border border-line bg-surface shadow-card transition-[border-color,border-radius] duration-150 focus-within:border-line-strong ${
+          className={`relative isolate flex flex-col overflow-hidden border border-line bg-surface shadow-card transition-[border-color,border-radius] duration-150 ${
             tall ? "gap-2.5 p-3.5" : "gap-1.5 p-1.5"
           } ${
             pill

@@ -22,8 +22,6 @@ export type SettingsSection =
   | "about";
 
 interface UiState {
-  overviewOpen: boolean;
-  setOverviewOpen: (open: boolean) => void;
   sidePanelVisible: boolean;
   sidePanelTab: SidePanelTab;
   /** Visible terminal tray for the *current* project (mirrored from by-project map). */
@@ -89,8 +87,6 @@ function rememberEditorVisible(s: UiState, visible: boolean) {
 export const useUiStore = create<UiState>()(
   persist(
     immer((set) => ({
-      overviewOpen: false,
-      setOverviewOpen: (open) => set((s) => { s.overviewOpen = open; }),
       sidePanelVisible: true,
       sidePanelTab: "files",
       terminalVisible: false,

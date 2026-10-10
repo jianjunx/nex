@@ -27,6 +27,7 @@ const threadDiffLayout = EditorView.theme({
 });
 
 const threadDiffLight = EditorView.theme({
+  "&.cm-focused": { outline: "none" },
   "&": {
     fontSize: "12px",
     backgroundColor: "transparent",

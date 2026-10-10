@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { Folder, FolderOpen, Settings, Sparkles, Plus } from "lucide-react";
+import {
+  Folder,
+  FolderOpen,
+  MessageSquarePlus,
+  Plus,
+  Settings,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
 import SidebarNav from "@/components/agent-ui/beautiful-ui/SidebarNav";
 import { useUiStore } from "@/stores/ui.store";
 import { useProjectStore } from "@/stores/project.store";
@@ -7,9 +15,60 @@ import { useConversationStore } from "@/stores/conversation.store";
 import { activateProject } from "../projects/activateProject";
 import { restoreProjectConversationTabs } from "../projects/restoreProjectConversationTabs";
 import { NewConversationDropdown } from "../projects/NewConversationDropdown";
+import { startNewTask } from "../projects/startTask";
+import { AgentIcon } from "../agent/AgentIcon";
+import { useAgentStore } from "@/stores/agent.store";
+import { CloseTabConfirmDialog } from "../agent/CloseTabConfirmDialog";
 import { openProjectFolder } from "../projects/openProjectFolder";
 import { errorMessage } from "@/lib/errors";
 import type { Project } from "@/bridge/tauri";
+
+function ConversationRow({
+  conversationId,
+  title,
+  agentType,
+  current,
+  disabled,
+  onSelect,
+  onDelete,
+}: {
+  conversationId: string;
+  title: string;
+  agentType: string;
+  current: boolean;
+  disabled: boolean;
+  onSelect: () => void;
+  onDelete: () => void;
+}) {
+  // Subscribe to this row's status only, so a streaming turn elsewhere does
+  // not re-render the whole project list.
+  const status = useAgentStore((s) => s.sessions[conversationId]?.status ?? null);
+  return (
+    <div className="nex-conversation-row" data-current={current}>
+      <button
+        disabled={disabled}
+        className="nex-project-conversation"
+        title={title}
+        aria-current={current ? "page" : undefined}
+        onClick={onSelect}
+      >
+        <span aria-hidden className="inline-flex shrink-0">
+          <AgentIcon agentType={agentType} status={status} size={13} />
+        </span>
+        <span className="truncate">{title}</span>
+      </button>
+      <button
+        className="nex-icon-btn"
+        disabled={disabled}
+        aria-label={`删除对话 ${title}`}
+        title="删除对话"
+        onClick={onDelete}
+      >
+        <Trash2 size={14} />
+      </button>
+    </div>
+  );
+}
 
 export function WorkspaceSidebar() {
   const projects = useProjectStore((s) => s.projects);
@@ -63,7 +122,41 @@ export function WorkspaceSidebar() {
         }
         useConversationStore.getState().switchTab(conversationId);
       }
-      useUiStore.getState().setOverviewOpen(false);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      lock.current = false;
+      setBusy(false);
+    }
+  };
+
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const pendingStatus = useAgentStore((s) =>
+    pendingDeleteId ? (s.sessions[pendingDeleteId]?.status ?? null) : null,
+  );
+  const confirmDelete = async () => {
+    if (!pendingDeleteId || deleting) return;
+    const id = pendingDeleteId;
+    setDeleting(true);
+    try {
+      await useAgentStore.getState().removeSession(id);
+      await useConversationStore.getState().removeConversation(id);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setDeleting(false);
+      setPendingDeleteId(null);
+    }
+  };
+
+  const createTask = async (project: Project) => {
+    if (lock.current) return;
+    lock.current = true;
+    setBusy(true);
+    setError(null);
+    try {
+      await startNewTask(project);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -82,7 +175,7 @@ export function WorkspaceSidebar() {
         <div className="flex items-center justify-between">
           <h2>项目</h2>
           <button
-            style={{ width: 28 }}
+            className="nex-icon-btn"
             aria-label="新增项目"
             title="打开文件夹新增项目"
             disabled={busy}
@@ -94,7 +187,7 @@ export function WorkspaceSidebar() {
                 .finally(() => setBusy(false));
             }}
           >
-            <Plus size={15} />
+            <Plus size={16} />
           </button>
         </div>
         <nav aria-label="项目与会话">
@@ -103,39 +196,51 @@ export function WorkspaceSidebar() {
             const Icon = expanded ? FolderOpen : Folder;
             return (
               <div key={project.id}>
-                <button
-                  disabled={busy}
-                  title={project.path}
-                  aria-expanded={expanded}
-                  onClick={() => {
-                    if (projectId === project.id)
-                      setCollapsed((s) => ({ ...s, [project.id]: expanded }));
-                    else {
+                <div className="nex-project-row">
+                  <button
+                    disabled={busy}
+                    title={project.path}
+                    aria-expanded={expanded}
+                    onClick={() => {
+                      if (projectId === project.id)
+                        setCollapsed((s) => ({ ...s, [project.id]: expanded }));
+                      else {
+                        setCollapsed((s) => ({ ...s, [project.id]: false }));
+                        void select(project);
+                      }
+                    }}
+                  >
+                    <Icon size={15} className="shrink-0" />
+                    <span className="truncate">{project.name}</span>
+                  </button>
+                  <button
+                    className="nex-icon-btn"
+                    disabled={busy}
+                    aria-label={`在 ${project.name} 中新建任务`}
+                    title="新建任务"
+                    onClick={() => {
                       setCollapsed((s) => ({ ...s, [project.id]: false }));
-                      void select(project);
-                    }
-                  }}
-                >
-                  <Icon size={15} className="shrink-0" />
-                  <span className="truncate">{project.name}</span>
-                </button>
+                      void createTask(project);
+                    }}
+                  >
+                    <MessageSquarePlus size={15} />
+                  </button>
+                </div>
                 {expanded &&
                   (conversations[project.id] ?? []).map((c) => (
-                    <button
+                    <ConversationRow
                       key={c.id}
-                      disabled={busy}
-                      className="nex-project-conversation"
+                      conversationId={c.id}
                       title={c.title}
-                      aria-current={
+                      agentType={c.agent_type}
+                      disabled={busy}
+                      current={
                         projectId === project.id &&
                         activeTabs[project.id] === c.id
-                          ? "page"
-                          : undefined
                       }
-                      onClick={() => void select(project, c.id)}
-                    >
-                      <span className="truncate">{c.title}</span>
-                    </button>
+                      onSelect={() => void select(project, c.id)}
+                      onDelete={() => setPendingDeleteId(c.id)}
+                    />
                   ))}
               </div>
             );
@@ -152,6 +257,16 @@ export function WorkspaceSidebar() {
           </p>
         )}
       </section>
+      <CloseTabConfirmDialog
+        mode="delete"
+        open={pendingDeleteId !== null}
+        busy={deleting}
+        status={pendingStatus}
+        onCancel={() => {
+          if (!deleting) setPendingDeleteId(null);
+        }}
+        onConfirm={() => void confirmDelete()}
+      />
       <button onClick={() => useUiStore.getState().openSettings()}>
         <Settings size={16} />
         设置

@@ -9,14 +9,17 @@ import {
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useProjectStore } from "@/stores/project.store";
 import { useConversationStore } from "@/stores/conversation.store";
-import { useUiStore } from "@/stores/ui.store";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 import { activateProject } from "../projects/activateProject";
+import { startNewTask } from "../projects/startTask";
 
 vi.mock("../projects/NewConversationDropdown", () => ({
   NewConversationDropdown: () => null,
 }));
 vi.mock("../projects/ProjectSelector", () => ({ ProjectSelector: () => null }));
+vi.mock("../projects/startTask", () => ({
+  startNewTask: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("../projects/activateProject", () => ({ activateProject: vi.fn() }));
 vi.mock("../projects/restoreProjectConversationTabs", () => ({
   restoreProjectConversationTabs: vi.fn(),
@@ -56,7 +59,6 @@ beforeEach(() => {
     tabsByProject: { p1: ["cp1"], p2: ["cp2"] },
     activeTabByProject: { p1: "cp1", p2: "cp2" },
   });
-  useUiStore.setState({ overviewOpen: false });
 });
 it("groups conversations by project instead of recent tasks and tabs", async () => {
   render(<WorkspaceSidebar />);
@@ -81,6 +83,29 @@ it("collapses the current project without deleting its conversations", () => {
   render(<WorkspaceSidebar />);
   fireEvent.click(screen.getByRole("button", { name: "p1" }));
   expect(screen.queryByRole("button", { name: "任务 p1" })).toBeNull();
+  expect(
+    useConversationStore.getState().conversationsByProject.p1,
+  ).toHaveLength(1);
+});
+
+it("adds a new-task button at the end of each project row", async () => {
+  render(<WorkspaceSidebar />);
+  fireEvent.click(screen.getByRole("button", { name: "在 p2 中新建任务" }));
+  await waitFor(() =>
+    expect(startNewTask).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "p2" }),
+    ),
+  );
+});
+it("shows the agent icon before each conversation title", () => {
+  render(<WorkspaceSidebar />);
+  const row = screen.getByRole("button", { name: "任务 p1" });
+  expect(row.querySelector("svg[aria-label='Nex agent']")).toBeTruthy();
+});
+it("deletes a conversation only after confirmation", async () => {
+  render(<WorkspaceSidebar />);
+  fireEvent.click(screen.getByRole("button", { name: "删除对话 任务 p1" }));
+  expect(await screen.findByText("删除对话？")).toBeTruthy();
   expect(
     useConversationStore.getState().conversationsByProject.p1,
   ).toHaveLength(1);

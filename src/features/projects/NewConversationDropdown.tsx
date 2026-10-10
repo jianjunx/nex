@@ -2,8 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 import { useUiStore } from "@/stores/ui.store";
 import { useProjectStore } from "@/stores/project.store";
-import { useConversationStore } from "@/stores/conversation.store";
-import { activateProject } from "./activateProject";
+import { startNewTask } from "./startTask";
 import { errorMessage } from "@/lib/errors";
 
 /** Kept under its former export name for command consumers; no agent picker here. */
@@ -18,7 +17,8 @@ export function NewConversationDropdown({
   const [error, setError] = useState<string | null>(null);
   const create = async () => {
     if (lock.current) return;
-    const project = useProjectStore.getState().projects[0];
+    const { projects, activeProjectId } = useProjectStore.getState();
+    const project = projects.find((p) => p.id === activeProjectId) ?? projects[0];
     if (!project) {
       setError("请先添加项目");
       useUiStore.getState().closeNewConversation();
@@ -29,10 +29,7 @@ export function NewConversationDropdown({
     setError(null);
     useUiStore.getState().closeNewConversation();
     try {
-      await activateProject(project);
-      await useConversationStore
-        .getState()
-        .createConversation(project.id, "nex");
+      await startNewTask(project);
     } catch (err) {
       setError(errorMessage(err));
     } finally {

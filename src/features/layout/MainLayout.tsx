@@ -80,10 +80,11 @@ export function MainLayout({
       >
         <DialogContent
           aria-describedby={undefined}
-          className="flex h-[85vh] w-[92vw] max-w-[1200px] flex-col gap-2 overflow-hidden p-3 sm:max-w-[1200px]"
+          showCloseButton={false}
+          className="flex h-[85vh] w-[92vw] max-w-[1200px] flex-col gap-0 overflow-hidden p-0 sm:max-w-[1200px]"
           onInteractOutside={(e) => e.preventDefault()}
         >
-          <DialogTitle className="pr-10 text-sm">文件预览与编辑</DialogTitle>
+          <DialogTitle className="sr-only">文件预览与编辑</DialogTitle>
           <div
             data-testid="editor-dialog"
             className="flex min-h-0 flex-1 flex-col overflow-hidden"

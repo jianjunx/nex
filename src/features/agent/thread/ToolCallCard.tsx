@@ -180,55 +180,6 @@ function ToolCallCardContent({
   );
 }
 
-/** Collapsed run of adjacent tool calls (edits included; permission prompts stay standalone). */
-export function ToolCallGroup({ entries }: { entries: ToolCallEntry[] }) {
-  const groupKey = `group:${entries[0]?.id}`;
-  const needsPermission = entries.some(
-    (e) => e.status === "waiting_for_confirmation",
-  );
-  const override = useToolCardExpansionStore((s) => s.overrides[groupKey]);
-  const setExpanded = useToolCardExpansionStore((s) => s.setExpanded);
-  const open = override ?? needsPermission;
-
-  useEffect(() => {
-    if (needsPermission) setExpanded(groupKey, true);
-  }, [needsPermission, groupKey, setExpanded]);
-
-  const busy = entries.some(
-    (e) =>
-      e.status === "in_progress" ||
-      e.status === "waiting_for_confirmation" ||
-      e.status === "pending",
-  );
-
-  return (
-    <div className="max-w-[96%]">
-      <button
-        type="button"
-        className="inline-flex cursor-pointer items-center gap-1 text-xs text-[var(--text-tertiary)] transition-colors hover:text-[var(--text-secondary)]"
-        onClick={() => setExpanded(groupKey, !open)}
-      >
-        <span>查看工具调用（{entries.length}）</span>
-        {busy && !open ? (
-          <Loader2 size={12} className="animate-spin text-[var(--accent)]" />
-        ) : (
-          <ChevronRight
-            size={12}
-            className={cn("transition-transform", open && "rotate-90")}
-          />
-        )}
-      </button>
-      {open && (
-        <div className="mt-2 space-y-2">
-          {entries.map((e) => (
-            <ToolCallCard key={e.id} entry={e} defaultOpen={false} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function StatusIcon({ status }: { status: ToolCallEntry["status"] }) {
   if (status === "completed")
     return <CheckCircle2 size={14} className="text-emerald-500 shrink-0" />;

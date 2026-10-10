@@ -15,6 +15,7 @@ vi.mock("@/bridge/tauri", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/bridge/tauri")>()),
   conversationUpdateAgent: vi.fn().mockResolvedValue(undefined),
 }));
+const prewarmSession = vi.fn();
 beforeEach(() => {
   vi.clearAllMocks();
   useAgentStore.setState({
@@ -32,6 +33,7 @@ beforeEach(() => {
       },
     ],
     removeSession: vi.fn().mockResolvedValue(undefined),
+    prewarmSession,
   });
   useConversationStore.setState({
     messagesByConversation: {},
@@ -56,18 +58,37 @@ it("allows selecting an agent for an empty conversation and persists it", async 
     <AgentSelector
       conversationId="c"
       agentType="nex"
+      projectPath="/proj"
       onBusyChange={() => {}}
     />,
   );
-  fireEvent.change(screen.getByRole("combobox", { name: "智能体" }), {
-    target: { value: "other" },
-  });
+  // radix DropdownMenuTrigger 只以 onPointerDown/onKeyDown 开启
+  fireEvent.pointerDown(screen.getByRole("button", { name: "智能体" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Other" }));
   await waitFor(() =>
     expect(
       useConversationStore.getState().conversationsByProject.p[0].agent_type,
     ).toBe("other"),
   );
   expect(conversationUpdateAgent).toHaveBeenCalledWith("c", "other");
+  expect(prewarmSession).toHaveBeenCalledWith("c", "other", "/proj");
+});
+it("keeps the selector usable while the agent is only pre-initializing", () => {
+  useAgentStore.setState({
+    sessions: { c: { sessionId: "", conversationId: "c", status: "starting" } },
+  });
+  render(
+    <AgentSelector
+      conversationId="c"
+      agentType="nex"
+      projectPath="/proj"
+      onBusyChange={() => {}}
+    />,
+  );
+  expect(
+    (screen.getByRole("button", { name: "智能体" }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(false);
 });
 it("locks selection as soon as a user message exists", () => {
   useAgentStore.setState({
@@ -79,12 +100,14 @@ it("locks selection as soon as a user message exists", () => {
     <AgentSelector
       conversationId="c"
       agentType="nex"
+      projectPath="/proj"
       onBusyChange={() => {}}
     />,
   );
-  expect((screen.getByRole("combobox") as HTMLSelectElement).disabled).toBe(
-    true,
-  );
+  expect(
+    (screen.getByRole("button", { name: "智能体" }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(true);
 });
 it("locks selection for persisted messages or queued prompts", () => {
   useConversationStore.setState({
@@ -106,10 +129,12 @@ it("locks selection for persisted messages or queued prompts", () => {
     <AgentSelector
       conversationId="c"
       agentType="nex"
+      projectPath="/proj"
       onBusyChange={() => {}}
     />,
   );
-  expect((screen.getByRole("combobox") as HTMLSelectElement).disabled).toBe(
-    true,
-  );
+  expect(
+    (screen.getByRole("button", { name: "智能体" }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(true);
 });

@@ -10,7 +10,10 @@ export function ThinkingBlock({
   text: string;
   defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  // Follow `defaultOpen` (live reasoning shows itself, then folds when the
+  // turn moves on) until the user toggles it explicitly.
+  const [override, setOverride] = useState<boolean | null>(null);
+  const open = override ?? defaultOpen;
   const id = useId();
   const body = useRef<HTMLDivElement>(null);
   const following = useRef(true);
@@ -25,7 +28,7 @@ export function ThinkingBlock({
         aria-expanded={open}
         aria-controls={id}
         className="nex-trace-toggle"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setOverride(!open)}
       >
         <Sparkles size={15} />
         <span>思考过程</span>

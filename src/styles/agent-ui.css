@@ -47,7 +47,7 @@
 /* Shared primitives also style portaled surfaces outside .beautiful-ui. */
 [data-slot="button"] {
   border-radius: 8px;
-  font-size: 13px;
+  font-size: 14px;
   transition:
     background-color 100ms,
     color 100ms,
@@ -74,13 +74,13 @@
   border-radius: 8px;
   border-color: var(--hairline-strong);
   background: var(--overlay-ghost);
-  font-size: 13px;
+  font-size: 14px;
   box-shadow: none;
 }
+/* Text fields show focus through the caret alone: no ring, outline or highlighted border. */
 [data-slot="input"]:focus-visible,
 [data-slot="textarea"]:focus-visible {
-  outline: 2px solid var(--text-secondary);
-  outline-offset: 2px;
+  outline: none;
   box-shadow: none;
 }
 [data-slot="card"] {
@@ -111,7 +111,7 @@
 [data-slot="context-menu-checkbox-item"],
 [data-slot="dropdown-menu-radio-item"],
 [data-slot="context-menu-radio-item"] {
-  font-size: 13px;
+  font-size: 14px;
   border-radius: 6px;
 }
 [data-slot*="menu-"][data-highlighted] {
@@ -181,7 +181,7 @@
 }
 .nex-assistant-prose {
   padding: 2px 0;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.6;
 }
 .nex-assistant-prose .markdown-body {
@@ -200,7 +200,7 @@
   margin-left: -6px;
   border-radius: 8px;
   color: var(--ink-2);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   cursor: pointer;
   transition: background-color 100ms;
@@ -257,7 +257,7 @@
   border-radius: 14px;
   background: var(--surface);
   box-shadow: var(--shadow-card);
-  font-size: 13px;
+  font-size: 14px;
 }
 .nex-approval-surface .nex-approval-option {
   border: 1px solid var(--line);
@@ -265,7 +265,7 @@
   background: var(--field);
   color: var(--ink);
   box-shadow: none;
-  font-size: 13px;
+  font-size: 14px;
 }
 .nex-approval-surface .nex-approval-option[aria-checked="true"] {
   border-color: var(--ink-3);
@@ -299,11 +299,7 @@
     border-color 150ms,
     box-shadow 150ms;
 }
-.nex-ui-PromptBar .nex-prompt-surface:focus-within {
-  border-color: var(--line-strong);
-  box-shadow: 0 1px 2px #00000006;
-}
-.nex-prompt-surface button[data-size="icon-sm"] {
+.nex-prompt-surface button[data-size="icon-sm"]:not(.nex-prompt-send) {
   border-radius: 8px;
   box-shadow: none;
   border-color: transparent;
@@ -354,7 +350,7 @@
   padding: 8px 10px;
   border-radius: 9px;
   text-align: left;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-secondary);
 }
 .nex-workspace-sidebar button:hover {
@@ -364,14 +360,16 @@
 .nex-workspace-sidebar button[aria-current="page"] {
   background: var(--material-panel);
   color: var(--text-primary);
-  box-shadow: var(--shadow-btn);
+  /* inset: the recents list clips overflow, so an outer shadow got cut off. */
+  box-shadow: inset 0 0 0 1px var(--hairline-strong);
 }
 .nex-workspace-sidebar button:active {
   transform: scale(0.98);
 }
 .nex-workspace-sidebar button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline: none;
+  background: var(--overlay-hover);
+  color: var(--text-primary);
 }
 .nex-workspace-sidebar h2 {
   padding: 0 10px;
@@ -412,40 +410,6 @@
   letter-spacing: 0;
   margin-left: auto;
 }
-.nex-workspace-overview {
-  width: 100%;
-  max-width: 920px;
-  margin: auto;
-  padding: 32px 16px;
-}
-.nex-workspace-overview h1 {
-  font-size: 26px;
-  font-weight: 600;
-  letter-spacing: -0.04em;
-  margin-bottom: 8px;
-}
-.nex-workspace-overview p {
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-.nex-overview-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 24px;
-  margin-top: 28px;
-}
-.nex-overview-grid > section {
-  min-width: 0;
-}
-.nex-overview-grid h2 {
-  font-size: 12px;
-  font-weight: 600;
-  margin-bottom: 12px;
-}
-.nex-overview-grid section > div {
-  max-width: none;
-  min-height: 0;
-}
 .nex-workbench-body {
   padding: 0;
   gap: 0;
@@ -475,13 +439,77 @@
 .beautiful-ui [hidden] {
   display: none !important;
 }
-.beautiful-ui button:focus-visible,
-.beautiful-ui input:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+/* Keyboard focus: a thin neutral outline, never the accent ring. */
+.beautiful-ui button:focus-visible {
+  outline: 1px solid var(--hairline-strong);
+  outline-offset: 1px;
+}
+/* Inside the prompt box and the sidebar, focus is a background wash instead. */
+.nex-prompt-surface button:not(.nex-prompt-send):focus-visible {
+  outline: none;
+  background: var(--overlay-hover);
 }
 .nex-workspace-sidebar .nex-project-conversation {
-  padding-left: 32px;
+  padding-left: 28px;
+  gap: 8px;
+}
+.nex-workspace-sidebar .nex-project-row,
+.nex-workspace-sidebar .nex-conversation-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.nex-workspace-sidebar .nex-project-row > button:first-child,
+.nex-workspace-sidebar .nex-conversation-row > button:first-child {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+/* The selected conversation highlights the whole row, delete action included. */
+.nex-workspace-sidebar .nex-conversation-row {
+  border-radius: 9px;
+}
+.nex-workspace-sidebar .nex-conversation-row:hover {
+  background: var(--overlay-hover);
+}
+.nex-workspace-sidebar .nex-conversation-row[data-current="true"] {
+  background: var(--material-panel);
+  box-shadow: inset 0 0 0 1px var(--hairline-strong);
+}
+.nex-workspace-sidebar .nex-conversation-row > button:first-child,
+.nex-workspace-sidebar .nex-conversation-row > button:first-child:hover,
+.nex-workspace-sidebar .nex-conversation-row > button[aria-current="page"] {
+  background: transparent;
+  box-shadow: none;
+}
+/* Row actions stay hidden until the row is hovered or focused. */
+.nex-workspace-sidebar .nex-project-row > .nex-icon-btn,
+.nex-workspace-sidebar .nex-conversation-row > .nex-icon-btn {
+  opacity: 0;
+  transition: opacity 100ms;
+}
+.nex-workspace-sidebar .nex-project-row:hover > .nex-icon-btn,
+.nex-workspace-sidebar .nex-project-row:focus-within > .nex-icon-btn,
+.nex-workspace-sidebar .nex-conversation-row:hover > .nex-icon-btn,
+.nex-workspace-sidebar .nex-conversation-row:focus-within > .nex-icon-btn {
+  opacity: 1;
+}
+.nex-workspace-sidebar .nex-conversation-row > .nex-icon-btn:hover {
+  color: var(--error);
+}
+/* Square icon-only sidebar action (section "+", per-project "+"). */
+.nex-workspace-sidebar .nex-icon-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  flex: 0 0 28px;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--text-tertiary);
+}
+.nex-workspace-sidebar .nex-icon-btn:hover {
+  color: var(--text-primary);
 }
 .nex-workspace-sidebar .nex-sidebar-new button {
   width: 28px;
@@ -503,14 +531,6 @@
     z-index: 20;
     max-width: 100%;
     box-shadow: -8px 0 24px #0002;
-  }
-}
-@media (max-width: 640px) {
-  .nex-overview-grid {
-    grid-template-columns: 1fr;
-  }
-  .nex-workspace-overview {
-    padding: 20px 4px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

@@ -7,10 +7,6 @@ import type { ThreadEntry } from "../agent/thread/types";
 /** Bumped on every restore call so stale async work can bail out. */
 let restoreGeneration = 0;
 
-export function currentRestoreGeneration(): number {
-  return restoreGeneration;
-}
-
 async function hydrateTab(tabId: string): Promise<void> {
   const agentStore = useAgentStore.getState();
   let payloads: ThreadEntryPayloadDto[] = [];

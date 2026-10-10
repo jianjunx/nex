@@ -222,7 +222,7 @@ function AskQuestionCardContent({ entry }: { entry: AskQuestionEntry }) {
                     type="text"
                     value={customTexts[q.id] ?? ""}
                     placeholder="输入自定义答案…"
-                    className="w-full rounded-[var(--radius-md)] border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_72%,transparent)] px-2.5 py-1.5 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+                    className="w-full rounded-[var(--radius-md)] border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_72%,transparent)] px-2.5 py-1.5 text-sm text-[var(--text-primary)] outline-none"
                     onChange={(e) => {
                       const value = e.target.value;
                       setCustomTexts((prev) => ({ ...prev, [q.id]: value }));

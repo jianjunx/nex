@@ -39,15 +39,6 @@ export function sideWidthBudget(winW: number, editorW: number | null): number {
   );
 }
 
-/** Width actually painted for the editor (stored value may exceed the budget). */
-export function displayedEditorWidth(
-  stored: number,
-  winW: number,
-  sideW: number | null,
-): number {
-  return clamp(stored, EDITOR_MIN, editorWidthBudget(winW, sideW));
-}
-
 /** Width actually painted for the side panel. */
 export function displayedSideWidth(
   stored: number,

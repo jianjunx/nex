@@ -62,7 +62,7 @@ function LatestConversationRow({ projectId }: { projectId: string }) {
   );
 }
 
-export function ProjectSelector() {
+export function ProjectSelector({ label }: { label?: string } = {}) {
   const { projects, activeProjectId, openProject } = useProjectStore();
   const activeProject = projects.find((p) => p.id === activeProjectId);
   const [openError, setOpenError] = useState<string | null>(null);
@@ -140,10 +140,10 @@ export function ProjectSelector() {
         }}
       >
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="sm" className={`nex-interactive-chrome nex-pressable cursor-pointer rounded-[calc(var(--radius-lg)+2px)] border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_72%,transparent)] px-2.5 text-xs shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)] ${isMac ? "h-8" : ""}`}>
+          <Button variant="ghost" size="sm" className={`nex-interactive-chrome nex-pressable cursor-pointer rounded-[calc(var(--radius-lg)+2px)] border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_72%,transparent)] px-2.5 text-xs shadow-none ${isMac ? "h-8" : ""}`}>
             <span className="inline-flex items-center">
               {activeProjectId && <RunningCountBadge projectId={activeProjectId} />}
-              <span className="font-semibold">{activeProject?.name || "打开项目"}</span>
+              <span className="font-semibold">{label ?? (activeProject?.name || "打开项目")}</span>
               <ChevronDown
                 size={12}
                 className={cn(
@@ -179,7 +179,7 @@ export function ProjectSelector() {
                 "group/proj nex-interactive-chrome cursor-pointer items-start gap-2.5 rounded-[var(--radius-md)] px-2 py-2",
                 ITEM_HIGHLIGHT,
                 isActive
-                  ? "border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-elevated)_80%,transparent)] text-[var(--text-primary)] shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)]"
+                  ? "border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-elevated)_80%,transparent)] text-[var(--text-primary)] shadow-none"
                   : "text-[var(--text-secondary)]",
               )}
             >

@@ -1,11 +1,11 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
-import { Loader2 } from "lucide-react";
+import LoadingState from "@/components/agent-ui/beautiful-ui/LoadingState";
 import { useAgentStore } from "../../../stores/agent.store";
 import { useProjectStore } from "../../../stores/project.store";
 import { selectProjectActiveTabId, useConversationStore } from "../../../stores/conversation.store";
 import { EntryView } from "./EntryView";
-import { ToolCallGroup } from "./ToolCallCard";
+import { ProcessGroup } from "./ProcessGroup";
 import { FilesChangedCard } from "./FilesChangedCard";
 import { groupThreadEntries, type ThreadRenderItem } from "./groupThreadEntries";
 import {
@@ -32,7 +32,7 @@ const measuredHeights = new Map<string, number>();
 /** 行高估值:只影响滚动条精度,measureElement 实测持续校正。 */
 function estimateRowHeight(item: ThreadRenderItem | undefined): number {
   if (!item) return 40; // 加载指示器行
-  if (item.type === "tool_group") return 40;
+  if (item.type === "process_group") return 32;
   if (item.type === "files_changed") return 44 + item.files.length * 28;
   const e = item.entry;
   if (e.kind === "user_message") return 48;
@@ -49,7 +49,7 @@ function estimateRowHeight(item: ThreadRenderItem | undefined): number {
 
 function rowKey(item: ThreadRenderItem | undefined): string {
   if (!item) return "agent-loading";
-  if (item.type === "tool_group") return `g:${item.key}`;
+  if (item.type === "process_group") return `g:${item.key}`;
   if (item.type === "files_changed") return `fc:${item.key}`;
   return item.entry.id;
 }
@@ -291,7 +291,8 @@ export function ThreadView() {
       <div
         ref={scrollerRef}
         onScroll={onScroll}
-        className="min-h-0 flex-1 overflow-y-auto px-4 py-3"
+        // px-2 + 1rem inset on a 900px max column mirrors the composer (.nex-ui-PromptBar px 8 + px-4).
+        className="min-h-0 flex-1 overflow-y-auto px-2 py-3"
       >
         {entries.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-1.5 px-6 text-center">
@@ -302,7 +303,10 @@ export function ThreadView() {
             </p>
           </div>
         ) : (
-          <div style={{ height: totalSize, position: "relative" }}>
+          <div
+            className="mx-auto w-[calc(100%-2rem)] max-w-[868px]"
+            style={{ height: totalSize, position: "relative" }}
+          >
             {virtualItems.map((vi) => {
               if (!vi) return null;
               const item = renderItems[vi.index];
@@ -322,8 +326,13 @@ export function ThreadView() {
                   }}
                 >
                   {item ? (
-                    item.type === "tool_group" ? (
-                      <ToolCallGroup entries={item.entries} />
+                    item.type === "process_group" ? (
+                      <ProcessGroup
+                        parts={item.parts}
+                        // Only the tail of a live turn is "in progress"; everything
+                        // before it (or after the turn ends) folds into a summary.
+                        active={!lastTurnComplete && vi.index === renderItems.length - 1}
+                      />
                     ) : item.type === "files_changed" ? (
                       <FilesChangedCard files={item.files} />
                     ) : (
@@ -345,10 +354,10 @@ export function ThreadView() {
       {stickyEntry && sticky && (
         <div
           data-sticky-user-message={stickyEntry.id}
-          className="pointer-events-none absolute inset-x-0 top-0 z-20 px-4 pt-3"
+          className="pointer-events-none absolute inset-x-0 top-0 z-20 px-2 pt-3"
           style={{ transform: `translateY(${sticky.translateY}px)` }}
         >
-          <div className="pointer-events-auto">
+          <div className="pointer-events-auto mx-auto w-full max-w-[900px] px-4">
             <EntryView
               entry={stickyEntry}
               userExpanded={expandedUserIds.has(stickyEntry.id)}
@@ -369,8 +378,7 @@ function AgentLoadingIndicator() {
       role="status"
       aria-live="polite"
     >
-      <Loader2 size={14} className="animate-spin text-[var(--accent)] shrink-0" />
-      <span>正在思考…</span>
+      <div className="beautiful-ui"><LoadingState variant="Dots" label="正在思考…" /></div>
     </div>
   );
 }

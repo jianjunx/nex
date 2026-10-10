@@ -84,6 +84,10 @@ export async function conversationGetMessages(conversationId: string, limit = 50
   return invoke(COMMANDS.CONVERSATION_GET_MESSAGES, { conversationId, limit, offset });
 }
 
+export async function conversationUpdateAgent(conversationId: string, agentType: string): Promise<void> {
+  return invoke(COMMANDS.CONVERSATION_UPDATE_AGENT, { conversationId, agentType });
+}
+
 export async function conversationUpdateTitle(conversationId: string, title: string): Promise<void> {
   return invoke(COMMANDS.CONVERSATION_UPDATE_TITLE, { conversationId, title });
 }
@@ -359,57 +363,6 @@ export async function agentSendPrompt(
   return invoke(COMMANDS.AGENT_SEND_PROMPT, { sessionId, blocks });
 }
 
-export async function agentSteer(
-  sessionId: string,
-  blocks: PromptBlock[],
-): Promise<PromptResultDto> {
-  return invoke(COMMANDS.AGENT_STEER, { sessionId, blocks });
-}
-
-export interface NativeSessionState {
-  goal: string[];
-  taskAnchor?: string | null;
-  todos: string[];
-  openQuestions: string[];
-  modeId: string;
-  modelId: string;
-  cancelled: boolean;
-}
-
-export async function agentSetGoal(sessionId: string, goal: string): Promise<NativeSessionState> {
-  return invoke(COMMANDS.AGENT_SET_GOAL, { sessionId, goal });
-}
-
-export async function agentGetSessionState(sessionId: string): Promise<NativeSessionState> {
-  return invoke(COMMANDS.AGENT_GET_SESSION_STATE, { sessionId });
-}
-
-export async function nativeAgentForkSession(
-  sourceConversationId: string,
-  targetConversationId: string,
-  cwd: string,
-): Promise<CreateSessionResult> {
-  return invoke(COMMANDS.NATIVE_AGENT_FORK_SESSION, {
-    sourceConversationId,
-    targetConversationId,
-    cwd,
-  });
-}
-
-export interface NativeHistoryPage {
-  items: unknown[];
-  nextCursor?: number | null;
-  total: number;
-}
-
-export async function nativeAgentHistoryPage(
-  sessionId: string,
-  cursor = 0,
-  limit = 50,
-): Promise<NativeHistoryPage> {
-  return invoke(COMMANDS.NATIVE_AGENT_HISTORY_PAGE, { sessionId, cursor, limit });
-}
-
 export async function agentSetSessionMode(sessionId: string, modeId: string): Promise<void> {
   return invoke(COMMANDS.AGENT_SET_SESSION_MODE, { sessionId, modeId });
 }
@@ -579,10 +532,6 @@ export interface GitStatus {
 
 export async function gitStatus(projectPath: string): Promise<GitStatus | null> {
   return invoke(COMMANDS.GIT_STATUS, { projectPath });
-}
-
-export async function gitDiff(projectPath: string, file: string, staged: boolean): Promise<string> {
-  return invoke(COMMANDS.GIT_DIFF, { projectPath, file, staged });
 }
 
 export interface DiffContents {
@@ -763,6 +712,8 @@ export interface SearchMatch {
   name: string;
   line: number | null;
   text: string;
+  /** File-name hit that only matched through a parent directory in the path. */
+  pathOnly?: boolean;
 }
 
 /** Match-rule toggles; all false = case-insensitive substring (the default). */

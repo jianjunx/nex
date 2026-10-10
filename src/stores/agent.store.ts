@@ -49,6 +49,24 @@ import type { PlanEntry, SessionMeta, ThreadEntry } from "../features/agent/thre
 import { assistantTextAfterLastUser } from "../features/agent/thread/messagesToThreadEntries";
 import { useConversationStore } from "./conversation.store";
 import { useNotificationStore } from "./notification.store";
+import { resolveSessionTarget } from "../features/agent/sessionTarget";
+
+/** Thrown by createSession when removeSession superseded it while starting. */
+class SessionSupersededError extends Error {
+  constructor() {
+    super("session superseded");
+  }
+}
+
+/**
+ * Per-conversation epoch, bumped by removeSession. A createSession that
+ * resolves after its epoch moved on is stale (the user switched agent or
+ * closed the conversation while it was starting): its session is closed and
+ * its result never reaches the store.
+ */
+const sessionEpochs = new Map<string, number>();
+const prewarmTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const PREWARM_DEBOUNCE_MS = 400;
 
 export interface AgentSession {
   sessionId: string;
@@ -170,6 +188,20 @@ interface AgentStore {
 
   createSession: (conversationId: string, target: SessionTarget, cwd: string) => Promise<string>;
   removeSession: (conversationId: string) => Promise<void>;
+  /**
+   * Pre-initialize the agent session of a not-yet-started conversation so the
+   * first prompt does not pay the handshake. Debounced and single-flight per
+   * conversation: rapid agent switches only start the last choice, and a
+   * superseded in-flight start is discarded and closed on arrival.
+   */
+  prewarmSession: (
+    conversationId: string,
+    agentType: string,
+    cwd: string,
+    opts?: { debounceMs?: number },
+  ) => void;
+  /** Cancel a scheduled (not yet started) prewarm. */
+  cancelPrewarm: (conversationId: string) => void;
   /** Replace in-memory thread with hydrated history (used on cold restore). */
   hydrateEntries: (conversationId: string, entries: ThreadEntry[]) => void;
   /** Best-effort persist of all in-memory thread snapshots (window close / quit). */
@@ -813,6 +845,7 @@ export const useAgentStore = create<AgentStore>()(
     cacheHitHistoryByConversation: {},
 
     createSession: async (conversationId, target, cwd) => {
+      const epoch = sessionEpochs.get(conversationId) ?? 0;
       set((s) => {
         s.loading = true;
         clearConversationError(s, conversationId);
@@ -825,6 +858,10 @@ export const useAgentStore = create<AgentStore>()(
       });
       try {
         const result = await agentCreateSession(conversationId, target, cwd);
+        if ((sessionEpochs.get(conversationId) ?? 0) !== epoch) {
+          void agentCloseSession(result.sessionId).catch(() => {});
+          throw new SessionSupersededError();
+        }
         set((s) => {
           s.sessions[conversationId] = {
             sessionId: result.sessionId,
@@ -842,6 +879,13 @@ export const useAgentStore = create<AgentStore>()(
         void get().processNextPending(conversationId);
         return result.sessionId;
       } catch (err) {
+        // A superseded start belongs to a session the user already discarded;
+        // the replacement owns `sessions[conversationId]` now.
+        if (err instanceof SessionSupersededError) throw err;
+        if ((sessionEpochs.get(conversationId) ?? 0) !== epoch) {
+          // Failed after being superseded: nothing to report or clean.
+          throw new SessionSupersededError();
+        }
         set((s) => {
           delete s.sessions[conversationId];
           setConversationError(s, conversationId, errorMessage(err));
@@ -856,6 +900,8 @@ export const useAgentStore = create<AgentStore>()(
     },
 
     removeSession: async (conversationId) => {
+      sessionEpochs.set(conversationId, (sessionEpochs.get(conversationId) ?? 0) + 1);
+      get().cancelPrewarm(conversationId);
       const session = get().sessions[conversationId];
       set((s) => {
         clearConversationError(s, conversationId);
@@ -888,6 +934,37 @@ export const useAgentStore = create<AgentStore>()(
           }
         });
       }
+    },
+
+    cancelPrewarm: (conversationId) => {
+      const timer = prewarmTimers.get(conversationId);
+      if (timer !== undefined) clearTimeout(timer);
+      prewarmTimers.delete(conversationId);
+    },
+
+    prewarmSession: (conversationId, agentType, cwd, opts) => {
+      get().cancelPrewarm(conversationId);
+      const timer = setTimeout(() => {
+        prewarmTimers.delete(conversationId);
+        void (async () => {
+          // The user already sent (or something else started a session): the
+          // existing one wins; never double-start for the same conversation.
+          if (get().sessions[conversationId]) return;
+          if (get().servers.length === 0) await get().loadServers();
+          if (get().sessions[conversationId]) return;
+          try {
+            await get().createSession(
+              conversationId,
+              resolveSessionTarget(agentType, get().servers),
+              cwd,
+            );
+          } catch {
+            // Best effort: createSession already recorded the error for the
+            // composer, and the first send retries from scratch.
+          }
+        })();
+      }, opts?.debounceMs ?? PREWARM_DEBOUNCE_MS);
+      prewarmTimers.set(conversationId, timer);
     },
 
     hydrateEntries: (conversationId, entries) => {

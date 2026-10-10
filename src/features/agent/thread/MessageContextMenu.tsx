@@ -1,3 +1,4 @@
+import AgentUiSelectionActions from "@/components/agent-ui/beautiful-ui/SelectionActions";
 import { useCallback, useRef, type ReactNode } from "react";
 import { Copy, TextSelect } from "lucide-react";
 import {
@@ -22,7 +23,7 @@ const primaryLabel = detectPlatform() === "mac" ? "⌘" : "Ctrl";
  * - "复制": copies the current text selection, or the full message if nothing is selected.
  * - "全选": selects all text within the message.
  */
-export function MessageContextMenu({ textContent, children }: MessageContextMenuProps) {
+function MessageContextMenuContent({ textContent, children }: MessageContextMenuProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const { open, setOpen, pos, onContextMenu } = usePositionedContextMenu();
 
@@ -71,4 +72,8 @@ export function MessageContextMenu({ textContent, children }: MessageContextMenu
       </PositionedDropdown>
     </>
   );
+}
+
+export function MessageContextMenu(props: Parameters<typeof MessageContextMenuContent>[0]) {
+ return <AgentUiSelectionActions><MessageContextMenuContent {...props}/></AgentUiSelectionActions>;
 }

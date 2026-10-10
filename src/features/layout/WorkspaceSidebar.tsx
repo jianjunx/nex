@@ -1,0 +1,315 @@
+import { useEffect, useRef, useState } from "react";
+import {
+  Folder,
+  FolderOpen,
+  MessageSquarePlus,
+  Plus,
+  Settings,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
+import SidebarNav from "@/components/agent-ui/beautiful-ui/SidebarNav";
+import { useUiStore } from "@/stores/ui.store";
+import { useProjectStore } from "@/stores/project.store";
+import { useConversationStore } from "@/stores/conversation.store";
+import { activateProject } from "../projects/activateProject";
+import { restoreProjectConversationTabs } from "../projects/restoreProjectConversationTabs";
+import { NewConversationDropdown } from "../projects/NewConversationDropdown";
+import { startNewTask } from "../projects/startTask";
+import { AgentIcon } from "../agent/AgentIcon";
+import { useAgentStore } from "@/stores/agent.store";
+import { CloseTabConfirmDialog } from "../agent/CloseTabConfirmDialog";
+import { openProjectFolder } from "../projects/openProjectFolder";
+import { projectInitial } from "../projects/projectInitial";
+import { errorMessage } from "@/lib/errors";
+import type { Project } from "@/bridge/tauri";
+
+
+function ConversationRow({
+  conversationId,
+  title,
+  agentType,
+  current,
+  disabled,
+  onSelect,
+  onDelete,
+}: {
+  conversationId: string;
+  title: string;
+  agentType: string;
+  current: boolean;
+  disabled: boolean;
+  onSelect: () => void;
+  onDelete: () => void;
+}) {
+  // Subscribe to this row's status only, so a streaming turn elsewhere does
+  // not re-render the whole project list.
+  const status = useAgentStore((s) => s.sessions[conversationId]?.status ?? null);
+  return (
+    <div className="nex-conversation-row" data-current={current}>
+      <button
+        disabled={disabled}
+        className="nex-project-conversation"
+        title={title}
+        aria-current={current ? "page" : undefined}
+        onClick={onSelect}
+      >
+        <span aria-hidden className="inline-flex shrink-0">
+          <AgentIcon agentType={agentType} status={status} size={13} />
+        </span>
+        <span className="truncate">{title}</span>
+      </button>
+      <button
+        className="nex-icon-btn"
+        disabled={disabled}
+        aria-label={`删除对话 ${title}`}
+        title="删除对话"
+        onClick={onDelete}
+      >
+        <Trash2 size={14} />
+      </button>
+    </div>
+  );
+}
+
+export function WorkspaceSidebar() {
+  const projects = useProjectStore((s) => s.projects);
+  const projectId = useProjectStore((s) => s.activeProjectId);
+  const conversations = useConversationStore((s) => s.conversationsByProject);
+  const activeTabs = useConversationStore((s) => s.activeTabByProject);
+  const railMode = useUiStore((s) => s.sidebarCollapsed);
+  const [busy, setBusy] = useState(false);
+  const lock = useRef(false);
+  const [error, setError] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const projectIds = projects
+    .map((p) => p.id)
+    .sort()
+    .join("\n");
+  useEffect(() => {
+    // Load only metadata, never start agents or hydrate every project's history.
+    let cancelled = false;
+    void (async () => {
+      for (const id of projectIds.split("\n").filter(Boolean)) {
+        if (cancelled) return;
+        if (!useConversationStore.getState().conversationsByProject[id]) {
+          await useConversationStore.getState().loadConversations(id);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectIds]);
+
+  const select = async (project: Project, conversationId?: string) => {
+    if (lock.current) return;
+    lock.current = true;
+    setBusy(true);
+    setError(null);
+    try {
+      await activateProject(project);
+      if (conversationId) {
+        const state = useConversationStore.getState();
+        const tabs = state.tabsByProject[project.id] ?? [];
+        if (!tabs.includes(conversationId)) {
+          state.restoreTabs(
+            project.id,
+            [...tabs, conversationId],
+            conversationId,
+            new Set(
+              (state.conversationsByProject[project.id] ?? []).map((c) => c.id),
+            ),
+          );
+          await restoreProjectConversationTabs(project.id);
+        }
+        useConversationStore.getState().switchTab(conversationId);
+      }
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      lock.current = false;
+      setBusy(false);
+    }
+  };
+
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const pendingStatus = useAgentStore((s) =>
+    pendingDeleteId ? (s.sessions[pendingDeleteId]?.status ?? null) : null,
+  );
+  const confirmDelete = async () => {
+    if (!pendingDeleteId || deleting) return;
+    const id = pendingDeleteId;
+    setDeleting(true);
+    try {
+      await useAgentStore.getState().removeSession(id);
+      await useConversationStore.getState().removeConversation(id);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setDeleting(false);
+      setPendingDeleteId(null);
+    }
+  };
+
+  const createTask = async (project: Project) => {
+    if (lock.current) return;
+    lock.current = true;
+    setBusy(true);
+    setError(null);
+    try {
+      await startNewTask(project);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      lock.current = false;
+      setBusy(false);
+    }
+  };
+
+  if (railMode) {
+    return (
+      <SidebarNav className="nex-workspace-sidebar nex-workspace-rail">
+        <NewConversationDropdown triggerSize="icon-sm" compact />
+        <nav aria-label="项目" className="nex-rail-projects">
+          {projects.map((project) => (
+            <button
+              key={project.id}
+              disabled={busy}
+              title={project.name}
+              aria-label={project.name}
+              aria-current={projectId === project.id ? "page" : undefined}
+              className="nex-rail-project"
+              onClick={() => void select(project)}
+            >
+              {projectInitial(project.name)}
+            </button>
+          ))}
+        </nav>
+        {error && (
+          <p role="alert" className="px-1 text-center text-xs text-[var(--status-danger)]">
+            {error}
+          </p>
+        )}
+        <button
+          className="nex-rail-settings"
+          title="设置"
+          aria-label="设置"
+          onClick={() => useUiStore.getState().openSettings()}
+        >
+          <Settings size={16} />
+        </button>
+      </SidebarNav>
+    );
+  }
+
+  return (
+    <SidebarNav className="nex-workspace-sidebar">
+      <div className="nex-workspace-brand">
+        <Sparkles size={19} /> Nex <small>WORKSPACE</small>
+      </div>
+      <NewConversationDropdown triggerSize="icon-sm" />
+      <section className="nex-sidebar-recents" aria-busy={busy}>
+        <div className="flex items-center justify-between">
+          <h2>项目</h2>
+          <button
+            className="nex-icon-btn"
+            aria-label="新增项目"
+            title="打开文件夹新增项目"
+            disabled={busy}
+            onClick={() => {
+              setBusy(true);
+              setError(null);
+              void openProjectFolder()
+                .catch((e) => setError(errorMessage(e)))
+                .finally(() => setBusy(false));
+            }}
+          >
+            <Plus size={16} />
+          </button>
+        </div>
+        <nav aria-label="项目与会话">
+          {projects.map((project) => {
+            const expanded = !collapsed[project.id];
+            const Icon = expanded ? FolderOpen : Folder;
+            return (
+              <div key={project.id}>
+                <div className="nex-project-row">
+                  <button
+                    disabled={busy}
+                    title={project.path}
+                    aria-expanded={expanded}
+                    onClick={() => {
+                      if (projectId === project.id)
+                        setCollapsed((s) => ({ ...s, [project.id]: expanded }));
+                      else {
+                        setCollapsed((s) => ({ ...s, [project.id]: false }));
+                        void select(project);
+                      }
+                    }}
+                  >
+                    <Icon size={15} className="shrink-0" />
+                    <span className="truncate">{project.name}</span>
+                  </button>
+                  <button
+                    className="nex-icon-btn"
+                    disabled={busy}
+                    aria-label={`在 ${project.name} 中新建任务`}
+                    title="新建任务"
+                    onClick={() => {
+                      setCollapsed((s) => ({ ...s, [project.id]: false }));
+                      void createTask(project);
+                    }}
+                  >
+                    <MessageSquarePlus size={15} />
+                  </button>
+                </div>
+                {expanded &&
+                  (conversations[project.id] ?? []).map((c) => (
+                    <ConversationRow
+                      key={c.id}
+                      conversationId={c.id}
+                      title={c.title}
+                      agentType={c.agent_type}
+                      disabled={busy}
+                      current={
+                        projectId === project.id &&
+                        activeTabs[project.id] === c.id
+                      }
+                      onSelect={() => void select(project, c.id)}
+                      onDelete={() => setPendingDeleteId(c.id)}
+                    />
+                  ))}
+              </div>
+            );
+          })}
+        </nav>
+        {!projects.length && (
+          <p className="px-2 text-xs text-[var(--text-tertiary)]">
+            打开文件夹以添加项目
+          </p>
+        )}
+        {error && (
+          <p role="alert" className="px-2 text-xs text-[var(--status-danger)]">
+            {error}
+          </p>
+        )}
+      </section>
+      <CloseTabConfirmDialog
+        mode="delete"
+        open={pendingDeleteId !== null}
+        busy={deleting}
+        status={pendingStatus}
+        onCancel={() => {
+          if (!deleting) setPendingDeleteId(null);
+        }}
+        onConfirm={() => void confirmDelete()}
+      />
+      <button onClick={() => useUiStore.getState().openSettings()}>
+        <Settings size={16} />
+        设置
+      </button>
+    </SidebarNav>
+  );
+}

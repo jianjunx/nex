@@ -108,7 +108,7 @@ export function ProjectRail() {
               className={cn(
                 "nex-interactive-chrome nex-pressable rounded-[var(--radius-md)] border text-[11px] font-semibold",
                 active
-                  ? "border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-elevated)_88%,transparent)] text-[var(--accent)] shadow-[inset_0_1px_0_0_var(--edge-highlight-bright),0_10px_24px_-18px_rgba(0,0,0,0.78)]"
+                  ? "border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-elevated)_88%,transparent)] text-[var(--accent)] shadow-none"
                   : "border-transparent text-[var(--text-secondary)] hover:border-[color:var(--hairline-soft)] hover:bg-[color:color-mix(in_srgb,var(--material-floating)_72%,transparent)] hover:text-[var(--text-primary)]",
               )}
             >
@@ -127,7 +127,7 @@ export function ProjectRail() {
 
             <div
               role="tooltip"
-              className="pointer-events-none invisible absolute right-full top-1/2 z-50 mr-2 w-60 -translate-y-1/2 rounded-[calc(var(--radius-md)+2px)] border border-[color:var(--hairline-soft)] bg-[var(--material-floating)] px-3 py-2 text-right opacity-0 shadow-[0_12px_32px_-18px_rgba(0,0,0,0.72)] transition-[opacity,visibility] duration-150 group-hover/project:visible group-hover/project:opacity-100 group-focus-within/project:visible group-focus-within/project:opacity-100"
+              className="pointer-events-none invisible absolute right-full top-1/2 z-50 mr-2 w-60 -translate-y-1/2 rounded-[calc(var(--radius-md)+2px)] border border-[color:var(--hairline-soft)] bg-[var(--material-floating)] px-3 py-2 text-right opacity-0 nex-material-floating transition-[opacity,visibility] duration-150 group-hover/project:visible group-hover/project:opacity-100 group-focus-within/project:visible group-focus-within/project:opacity-100"
             >
               <div className="break-words text-[16px] font-bold text-[var(--text-primary)]">
                 {project.name}

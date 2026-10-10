@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 
 type SearchOptions = { caseSensitive: boolean; wholeWord: boolean; regex: boolean };
-type SearchMatch = { path: string; name: string; line: number | null; text: string };
+type SearchMatch = { path: string; name: string; line: number | null; text: string; pathOnly?: boolean };
 
 let fsState: {
   searchResults: SearchMatch[];
@@ -117,5 +117,17 @@ describe("grouped results", () => {
     renderWithQuery();
     fireEvent.click(screen.getByText("文件名匹配").closest("button")!);
     expect(fsState.openFile).toHaveBeenCalledWith("/proj/readme.md", undefined);
+  });
+});
+
+describe("name vs path-only hits", () => {
+  it("labels directory-only matches 路径匹配, real name matches 文件名匹配", () => {
+    fsState.searchResults = [
+      { path: "/proj/company.md", name: "company.md", line: null, text: "" },
+      { path: "/proj/cmp-company/Vo.java", name: "Vo.java", line: null, text: "", pathOnly: true },
+    ];
+    renderWithQuery();
+    expect(screen.getAllByText("文件名匹配")).toHaveLength(1);
+    expect(screen.getAllByText("路径匹配")).toHaveLength(1);
   });
 });

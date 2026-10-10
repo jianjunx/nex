@@ -1,14 +1,17 @@
+import AgentUiChatComposer from "@/components/agent-ui/beautiful-ui/ChatComposer";
 import { ThreadView } from "./thread/ThreadView";
 import { AgentComposer } from "./AgentComposer";
 import { PermissionModal } from "./PermissionModal";
-
+import { ConversationTerminal } from "../terminal/ConversationTerminal";
 export function ChatArea() {
-  // Plan approval and ask-question are in-thread cards; only Permission stays a modal.
   return (
-    <div className="flex flex-col h-full min-h-0" data-conversation-area>
-      <ThreadView />
-      <AgentComposer />
-      <PermissionModal />
-    </div>
+    <AgentUiChatComposer>
+      <div className="flex h-full min-h-0 flex-col" data-conversation-area>
+        <ThreadView />
+        <AgentComposer />
+        <ConversationTerminal />
+        <PermissionModal />
+      </div>
+    </AgentUiChatComposer>
   );
 }

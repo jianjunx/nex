@@ -235,7 +235,7 @@ export function TerminalPanel() {
             key={s.id}
             type="button"
             onClick={() => setActive(s.id)}
-            className={`nex-interactive-chrome flex items-center gap-1.5 px-2.5 py-0.5 text-xs rounded-[var(--radius-md)] border ${s.id === visibleSessionId ? "border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-elevated)_80%,transparent)] text-[var(--text-primary)] shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)]" : "border-transparent text-[var(--text-tertiary)] hover:bg-[color:color-mix(in_srgb,var(--material-floating)_72%,transparent)] hover:text-[var(--text-secondary)]"}`}
+            className={`nex-interactive-chrome flex items-center gap-1.5 px-2.5 py-0.5 text-xs rounded-[var(--radius-md)] border ${s.id === visibleSessionId ? "border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-elevated)_80%,transparent)] text-[var(--text-primary)] shadow-none" : "border-transparent text-[var(--text-tertiary)] hover:bg-[color:color-mix(in_srgb,var(--material-floating)_72%,transparent)] hover:text-[var(--text-secondary)]"}`}
           >
             <span className="truncate max-w-[120px]">{s.title}</span>
             <span

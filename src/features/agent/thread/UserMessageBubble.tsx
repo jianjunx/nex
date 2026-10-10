@@ -45,17 +45,21 @@ export function UserMessageBubble({
       <MessageContextMenu textContent={entry.text ?? ""}>
         <Card
           className={cn(
-            "relative min-w-0 max-w-full gap-0 overflow-hidden rounded-[calc(var(--radius-lg)+2px)] border px-3 py-1.5 text-sm shadow-[inset_0_1px_0_0_rgba(255,255,255,0.1)] backdrop-blur-[calc(var(--blur-floating)*0.35)]",
-            floating
-              ? "border-[color:var(--accent)]/24 bg-[color:color-mix(in_srgb,var(--accent)_10%,var(--material-floating))] shadow-[0_12px_28px_-12px_rgba(0,0,0,0.42),inset_0_1px_0_0_rgba(255,255,255,0.12)]"
-              : "border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--accent)_8%,var(--material-floating))]",
+            "nex-user-bubble relative min-w-0 max-w-full gap-0 overflow-hidden border-0 px-3 py-1.5 text-[13px] leading-[1.4]",
+            floating ? "nex-user-bubble-floating" : "",
           )}
         >
           <CardContent className="min-w-0 px-0">
             <div
               ref={bodyRef}
               data-user-msg-body=""
-              className={collapsed ? "overflow-hidden" : expandedScrollable ? "overflow-y-auto" : undefined}
+              className={
+                collapsed
+                  ? "overflow-hidden"
+                  : expandedScrollable
+                    ? "overflow-y-auto"
+                    : undefined
+              }
               style={
                 collapsed
                   ? { maxHeight: USER_MESSAGE_COLLAPSE_HEIGHT }
@@ -71,11 +75,13 @@ export function UserMessageBubble({
                   ))}
                 </div>
               )}
-              {!entry.images?.length && entry.imageCount && entry.imageCount > 0 && (
-                <p className="mb-1 text-xs text-[var(--text-tertiary)]">
-                  图片 ×{entry.imageCount}
-                </p>
-              )}
+              {!entry.images?.length &&
+                entry.imageCount &&
+                entry.imageCount > 0 && (
+                  <p className="mb-1 text-xs text-[var(--text-tertiary)]">
+                    图片 ×{entry.imageCount}
+                  </p>
+                )}
               {entry.text ? (
                 <p className="min-w-0 whitespace-pre-wrap wrap-anywhere">
                   {formatTokensForDisplay(entry.text)}
@@ -92,7 +98,7 @@ export function UserMessageBubble({
               >
                 <button
                   type="button"
-                  className="pointer-events-auto inline-flex cursor-pointer items-center gap-0.5 rounded-[var(--radius-sm)] border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-floating)_78%,transparent)] px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)] shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)] hover:text-[var(--text-primary)]"
+                  className="pointer-events-auto inline-flex cursor-pointer items-center gap-0.5 rounded-[var(--radius-sm)] border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-floating)_78%,transparent)] px-1.5 py-0.5 text-[11px] text-[var(--text-secondary)] shadow-none hover:text-[var(--text-primary)]"
                   aria-expanded={expanded}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -100,7 +106,11 @@ export function UserMessageBubble({
                   }}
                 >
                   {expanded ? "收起" : "展开"}
-                  {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                  {expanded ? (
+                    <ChevronUp size={12} />
+                  ) : (
+                    <ChevronDown size={12} />
+                  )}
                 </button>
               </div>
             )}

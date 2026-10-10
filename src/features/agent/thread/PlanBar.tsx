@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { CheckCircle2, ChevronRight, Circle, ListTodo, Loader2 } from "lucide-react";
+import { ChevronRight, ListTodo, Loader2 } from "lucide-react";
+import TaskRows from "@/components/agent-ui/beautiful-ui/TaskRows";
 import { cn } from "@/lib/utils";
 import type { PlanEntry } from "./types";
 
@@ -11,7 +12,7 @@ export function PlanBar({ entries }: { entries: PlanEntry[] }) {
   const inProgress = entries.some((e) => e.status === "in_progress");
 
   return (
-    <div className="mx-4 mb-1.5 rounded-[calc(var(--radius-md)+2px)] border border-[color:var(--hairline-soft)] bg-[var(--material-floating)] px-2.5 py-1.5 shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)]">
+    <div className="mx-4 mb-1.5 rounded-[calc(var(--radius-md)+2px)] border border-[color:var(--hairline-soft)] bg-[var(--material-floating)] px-2.5 py-1.5 shadow-none">
       <button
         type="button"
         className="flex w-full items-center gap-2 text-xs text-[var(--text-secondary)] nex-interactive-chrome hover:text-[var(--text-primary)]"
@@ -32,23 +33,10 @@ export function PlanBar({ entries }: { entries: PlanEntry[] }) {
         />
       </button>
       {open && (
-        <ul className="space-y-1 mt-1.5">
-          {entries.map((e, i) => (
-            <li key={i} className="flex items-start gap-2 text-xs text-[var(--text-primary)]">
-              <PlanStatusIcon status={e.status} />
-              <span className={e.status === "completed" ? "line-through opacity-60" : ""}>
-                {e.content}
-              </span>
-            </li>
-          ))}
-        </ul>
+        <div role="list" className="beautiful-ui nex-ui-tasks mt-2">
+          <TaskRows variant="List" labels={{ completed: "已完成", failed: "失败" }} rows={entries.map((e, i) => ({ key: String(i), label: e.content, amount: "", step: i + 1, status: e.status === "completed" ? "done" : e.status === "in_progress" ? "running" : "pending", details: [] }))}/>
+        </div>
       )}
     </div>
   );
-}
-
-function PlanStatusIcon({ status }: { status: string }) {
-  if (status === "completed") return <CheckCircle2 size={12} className="mt-0.5 text-emerald-500 shrink-0" />;
-  if (status === "in_progress") return <Loader2 size={12} className="mt-0.5 animate-spin text-[var(--accent)] shrink-0" />;
-  return <Circle size={12} className="mt-0.5 text-[var(--text-tertiary)] shrink-0" />;
 }

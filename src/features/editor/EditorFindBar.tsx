@@ -178,9 +178,9 @@ export function EditorFindBar({ view }: { view: EditorView }) {
   }, [searchText, stats]);
 
   return (
-    <div className="flex flex-col gap-1.5 bg-[var(--glass-2-surface)] px-2 py-1.5">
+    <div className="flex flex-col gap-1.5 bg-[var(--material-panel)] px-2 py-1.5">
       <div className="flex items-center gap-1.5">
-        <div className="flex min-w-0 flex-1 items-center gap-0.5 rounded-[var(--radius-sm)] border border-[color:var(--border-subtle)] bg-[var(--glass-1-surface)] px-1.5">
+        <div className="flex min-w-0 flex-1 items-center gap-0.5 rounded-[var(--radius-sm)] border border-[color:var(--border-subtle)] bg-[var(--material-sidebar)] px-1.5">
           <input
             {...{ "main-field": "true" }}
             ref={searchInputRef}
@@ -276,7 +276,7 @@ export function EditorFindBar({ view }: { view: EditorView }) {
 
       {showReplace && (
         <div className="flex items-center gap-1.5">
-          <div className="flex min-w-0 flex-1 items-center rounded-[var(--radius-sm)] border border-[color:var(--border-subtle)] bg-[var(--glass-1-surface)] px-1.5">
+          <div className="flex min-w-0 flex-1 items-center rounded-[var(--radius-sm)] border border-[color:var(--border-subtle)] bg-[var(--material-sidebar)] px-1.5">
             <input
               value={replaceText}
               placeholder="替换"

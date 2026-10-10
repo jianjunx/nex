@@ -76,6 +76,15 @@ pub fn conversation_delete(
 }
 
 #[tauri::command]
+pub fn conversation_update_agent(
+    state: State<AppState>,
+    conversation_id: String,
+    agent_type: String,
+) -> Result<(), NexError> {
+    state.db.update_conversation_agent(&conversation_id, &agent_type)
+}
+
+#[tauri::command]
 pub fn conversation_append_message(
     state: State<AppState>,
     conversation_id: String,

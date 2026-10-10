@@ -104,7 +104,7 @@ export function AboutSection() {
         </div>
 
         {downloading && progress !== null && (
-          <div className="mt-2 h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-[var(--glass-2-surface)]">
+          <div className="mt-2 h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-[var(--material-panel)]">
             <div
               className="h-full rounded-full bg-[var(--accent)] transition-[width]"
               style={{ width: `${progress}%` }}

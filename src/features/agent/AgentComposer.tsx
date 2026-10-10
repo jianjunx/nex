@@ -1,3 +1,4 @@
+import AgentUiPromptBar from "@/components/agent-ui/beautiful-ui/PromptBar";
 import { useState, useRef, useEffect, useCallback, useMemo, type CSSProperties } from "react";
 import { Send, Square, X, Plus, ImagePlus, FilePlus } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -14,10 +15,12 @@ import {
   selectProjectConversations,
   useConversationStore,
 } from "../../stores/conversation.store";
-import { fsSearch, fsReadFile, type PromptBlock, type SearchMatch, type SessionTarget } from "../../bridge/tauri";
+import { fsSearch, fsReadFile, type PromptBlock, type SearchMatch } from "../../bridge/tauri";
+import { resolveSessionTarget } from "./sessionTarget";
 import { ComposerOptionMenu } from "./ComposerOptionMenu";
 import { ComposerGroupedOptionMenu } from "./ComposerGroupedOptionMenu";
 import { ContextUsageRing, resolveContextRingUsage, summarizeRecentCacheHits } from "./ContextUsageRing";
+import { NewTaskBar } from "./NewTaskBar";
 import { BranchSelector } from "../git/BranchSelector";
 import { useGitStore } from "../../stores/git.store";
 import { useDragDropStore } from "../../stores/dragDrop.store";
@@ -112,7 +115,7 @@ function isImeKeyEvent(e: globalThis.KeyboardEvent): boolean {
   return e.isComposing || e.keyCode === 229;
 }
 
-export function AgentComposer() {
+function AgentComposerContent() {
   const [text, setText] = useState("");
   const [images, setImages] = useState<PendingImage[]>([]);
   const [slashOpen, setSlashOpen] = useState(false);
@@ -123,6 +126,7 @@ export function AgentComposer() {
   const [suggestIndex, setSuggestIndex] = useState(0);
   const [plusOpen, setPlusOpen] = useState(false);
   const [branchOpen, setBranchOpen] = useState(false);
+  const [agentChanging, setAgentChanging] = useState(false);
   const [previewImage, setPreviewImage] = useState<PendingImage | null>(null);
   const [caretPos, setCaretPos] = useState<{ top: number; left: number; lineHeight: number } | null>(null);
   const [imeComposing, setImeComposing] = useState(false);
@@ -188,7 +192,7 @@ export function AgentComposer() {
     selectProjectConversations(s, activeProjectId),
   );
   const activeConversation = conversations.find((c) => c.id === activeTabId) ?? null;
-  const canSend = (!!text.trim() || images.length > 0) && !!activeTabId;
+  const canSend = !agentChanging && (!!text.trim() || images.length > 0) && !!activeTabId;
   // Allow/Menu is Cursor-only: other ACP agents use session/request_permission
   // without this composer toggle. Native NexAgent has its own auto mode.
   const showAuthMode = activeConversation?.agent_type === "cursor";
@@ -370,14 +374,10 @@ export function AgentComposer() {
     }
     const servers = useAgentStore.getState().servers;
     if (servers.length === 0) await useAgentStore.getState().loadServers();
-    const descriptor =
-      useAgentStore.getState().servers.find((s) => s.id === activeConversation.agent_type) ?? null;
-    const target: SessionTarget =
-      descriptor?.kind === "custom"
-        ? { type: "custom", id: activeConversation.agent_type }
-        : descriptor?.kind === "native"
-          ? { type: "native" }
-          : { type: "registry", id: activeConversation.agent_type };
+    const target = resolveSessionTarget(
+      activeConversation.agent_type,
+      useAgentStore.getState().servers,
+    );
     try {
       return await createSession(activeTabId, target, project.path);
     } catch {
@@ -387,6 +387,7 @@ export function AgentComposer() {
 
   useEffect(() => {
     if (!activeTabId || !project || !activeConversation) return;
+    if (!useAgentStore.getState().entriesByConversation[activeTabId]?.length) return;
     void ensureLiveSession();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTabId, project?.path, activeConversation?.id]);
@@ -451,7 +452,7 @@ export function AgentComposer() {
   });
 
   const handleSend = async () => {
-    if ((!text.trim() && images.length === 0) || !activeTabId) return;
+    if (agentChanging || (!text.trim() && images.length === 0) || !activeTabId) return;
     // Raw document text (with `@[path]` tokens) is what the bubble shows and
     // the agent receives; attachments are parsed from the same tokens.
     const content = text;
@@ -742,7 +743,7 @@ export function AgentComposer() {
           <div style={popoverStyle} className="flex items-start gap-0 max-w-[min(92vw,640px)] pointer-events-auto">
             <div
               ref={suggestListRef}
-              className="min-w-[150px] max-w-[min(92vw,480px)] w-max max-h-56 overflow-y-auto overflow-x-hidden rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--card)] nex-elevated [scrollbar-width:none] [&::-webkit-scrollbar]:w-0 [&::-webkit-scrollbar]:h-0"
+              className="min-w-[150px] max-w-[min(92vw,480px)] w-max max-h-56 overflow-y-auto overflow-x-hidden rounded-[var(--radius-md)] border border-[color:var(--hairline-strong)] bg-[var(--card)] nex-elevated [scrollbar-width:none] [&::-webkit-scrollbar]:w-0 [&::-webkit-scrollbar]:h-0"
             >
               {slashOpen && filteredCommands.length === 0 && (
                 <div className="px-2 py-1 text-[12px] leading-4 text-[var(--text-tertiary)] whitespace-nowrap">
@@ -758,7 +759,7 @@ export function AgentComposer() {
                     type="button"
                     data-suggest-index={i}
                     className={`block min-w-full text-left px-2 py-0.5 text-[12px] leading-4 whitespace-nowrap ${
-                      i === suggestIndex ? "bg-[var(--overlay-active)]" : "hover:bg-[var(--glass-2-surface)]"
+                      i === suggestIndex ? "bg-[var(--overlay-active)]" : "hover:bg-[var(--material-panel)]"
                     }`}
                     onMouseEnter={() => setSuggestIndex(i)}
                     onClick={() => pickCommand(c.name)}
@@ -781,7 +782,7 @@ export function AgentComposer() {
                       data-suggest-index={i}
                       title={dir ? `${dir}${name}` : name}
                       className={`flex min-w-full items-center gap-1.5 text-left px-2 py-0.5 text-[12px] leading-4 whitespace-nowrap ${
-                        i === suggestIndex ? "bg-[var(--overlay-active)]" : "hover:bg-[var(--glass-2-surface)]"
+                        i === suggestIndex ? "bg-[var(--overlay-active)]" : "hover:bg-[var(--material-panel)]"
                       }`}
                       onMouseEnter={() => setSuggestIndex(i)}
                       onClick={() => pickFile(hit)}
@@ -796,7 +797,7 @@ export function AgentComposer() {
                 })}
             </div>
             {activeSlashCmd && (
-              <div className="ml-1 min-w-[150px] w-[200px] max-h-56 overflow-y-auto overflow-x-hidden rounded-[var(--radius-md)] border border-[color:var(--glass-border)] bg-[var(--glass-2-surface)] nex-elevated px-2 py-1.5 text-[12px] leading-4 text-[var(--text-secondary)] [scrollbar-width:none] [&::-webkit-scrollbar]:w-0 [&::-webkit-scrollbar]:h-0">
+              <div className="ml-1 min-w-[150px] w-[200px] max-h-56 overflow-y-auto overflow-x-hidden rounded-[var(--radius-md)] border border-[color:var(--hairline-strong)] bg-[var(--material-panel)] nex-elevated px-2 py-1.5 text-[12px] leading-4 text-[var(--text-secondary)] [scrollbar-width:none] [&::-webkit-scrollbar]:w-0 [&::-webkit-scrollbar]:h-0">
                 <div className="font-mono text-[var(--accent)] mb-1">/{activeSlashCmd.name}</div>
                 <p className="leading-relaxed whitespace-pre-wrap">
                   {activeSlashCmd.description || "无描述"}
@@ -809,10 +810,19 @@ export function AgentComposer() {
           </div>
         )}
 
+        {activeTabId && activeConversation && project && (
+          <NewTaskBar
+            key={activeTabId}
+            conversation={activeConversation}
+            project={project}
+            onBusyChange={setAgentChanging}
+          />
+        )}
+
         <div
-          className={`flex flex-col gap-1 rounded-[var(--radius-lg)] bg-[var(--glass-3-surface)] border border-[color:var(--glass-border)] px-3 pt-2.5 pb-1.5 shadow-[inset_0_1px_0_0_var(--edge-highlight)] transition-[border-color,box-shadow] duration-150 focus-within:border-[color:var(--accent)] focus-within:shadow-[inset_0_1px_0_0_var(--edge-highlight),0_0_0_3px_var(--accent-glow)]${
+          className={`nex-prompt-surface flex flex-col gap-2 p-2.5${
             composerDropHover || osDropHover
-              ? " border-[color:var(--accent)] shadow-[inset_0_1px_0_0_var(--edge-highlight),0_0_0_3px_var(--accent-glow)]"
+              ? " border-[color:var(--accent)] shadow-none"
               : ""
           }`}
           onClick={() => editorRef.current?.focus()}
@@ -881,7 +891,7 @@ export function AgentComposer() {
                 size="icon-sm"
                 disabled={!activeTabId}
                 title="添加图片或文件"
-                className="nex-interactive-chrome nex-pressable rounded-full shrink-0 border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_78%,transparent)] shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)] hover:bg-[color:color-mix(in_srgb,var(--material-floating)_78%,transparent)]"
+                className="nex-interactive-chrome nex-pressable rounded-full shrink-0 border border-transparent bg-transparent shadow-none hover:bg-[var(--overlay-hover)]"
                 onClick={() => setPlusOpen((v) => !v)}
               >
                 <Plus size={16} />
@@ -952,7 +962,9 @@ export function AgentComposer() {
                 />
               )}
               {session?.sessionId && meta && (() => {
-                const configOpts = (meta.configOptions ?? []).filter((o) => o.options.length > 0);
+                const configOpts = (meta.configOptions ?? []).filter(
+                  (o) => o.options.length > 0 && !HIDDEN_CONFIG_OPTION_IDS.has(o.id),
+                );
                 const hasConfigMode = configOpts.some(
                   (o) => o.id === "mode" || o.category === "mode",
                 );
@@ -1020,7 +1032,7 @@ export function AgentComposer() {
                   size="icon-sm"
                   onClick={() => session?.sessionId && void cancel(session.sessionId)}
                   title="Stop"
-                  className="nex-interactive-chrome nex-pressable rounded-full shrink-0 border border-[color:var(--hairline-soft)] bg-[color:color-mix(in_srgb,var(--material-panel)_78%,transparent)] shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)] hover:bg-[color:color-mix(in_srgb,var(--material-floating)_78%,transparent)]"
+                  className="nex-interactive-chrome nex-pressable rounded-full shrink-0 border border-transparent bg-transparent shadow-none hover:bg-[var(--overlay-hover)]"
                 >
                   <Square size={14} />
                 </Button>
@@ -1031,7 +1043,7 @@ export function AgentComposer() {
                   disabled={!canSend}
                   onClick={() => void handleSend()}
                   title="Send"
-                  className="rounded-full shrink-0 border border-[color:var(--hairline-soft)] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.18)]"
+                  className="nex-prompt-send shrink-0"
                 >
                   <Send size={14} />
                 </Button>
@@ -1043,7 +1055,7 @@ export function AgentComposer() {
 
       <Dialog open={!!previewImage} onOpenChange={(open) => { if (!open) setPreviewImage(null); }}>
         <DialogContent
-          className="max-w-[min(92vw,900px)] p-2 border-[color:var(--glass-border)] bg-[var(--glass-3-surface)]"
+          className="max-w-[min(92vw,900px)] p-2 border-[color:var(--hairline-strong)] bg-[var(--material-floating)]"
           showCloseButton
         >
           <DialogTitle className="sr-only">图片预览</DialogTitle>
@@ -1059,6 +1071,9 @@ export function AgentComposer() {
     </div>
   );
 }
+
+/** Agent-reported options that stay out of the composer toolbar (Claude's "agent" persona picker). */
+const HIDDEN_CONFIG_OPTION_IDS: ReadonlySet<string> = new Set(["agent"]);
 
 function pathToFileUri(path: string): string {
   const normalized = path.replace(/\\/g, "/");
@@ -1107,4 +1122,8 @@ function base64ToObjectUrl(mimeType: string, data: string): string {
     // Fall back so a corrupt draft still shows something in the strip.
     return `data:${mimeType || "image/png"};base64,${data}`;
   }
+}
+
+export function AgentComposer() {
+ return <AgentUiPromptBar demo={false}><AgentComposerContent /></AgentUiPromptBar>;
 }

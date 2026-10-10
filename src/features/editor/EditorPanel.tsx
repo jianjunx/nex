@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useCallback } from "react";
 import CodeMirror, { EditorView } from "@uiw/react-codemirror";
 import { oneDark } from "@codemirror/theme-one-dark";
 import type { Extension } from "@codemirror/state";
-import { PanelRight, X } from "lucide-react";
+import { X } from "lucide-react";
 import { registerFindBarAccessor } from "../../commands/editorKeybindings";
 import { Button } from "@/components/ui/button";
 import { useFsStore } from "../../stores/fs.store";
@@ -23,6 +23,7 @@ const editorLayoutTheme = EditorView.theme({
     height: "100%",
     fontSize: "13px",
   },
+  "&.cm-focused": { outline: "none" },
   ".cm-scroller": { overflow: "auto" },
   ".cm-content": { fontFamily: "JetBrains Mono, Menlo, Consolas, monospace" },
   // Host the custom find bar at the top without CodeMirror's default panel chrome.
@@ -207,7 +208,7 @@ export function EditorPanel() {
         ref={tabsScrollerRef}
         data-editor-tabs-scroller
         onWheel={handleTabsWheel}
-        className="flex items-center gap-1 px-1.5 py-1 border-b border-[color:var(--border-subtle)] overflow-x-auto shrink-0"
+        className="flex items-center gap-1 px-2 py-1.5 border-b border-[color:var(--border-subtle)] overflow-x-auto shrink-0"
       >
         {openFiles.map((f, index) => {
           const active = f.path === activePath;
@@ -219,7 +220,7 @@ export function EditorPanel() {
               onPointerDown={drag.onPointerDown}
               className={`group/tab flex items-center gap-1 max-w-[160px] rounded-[var(--radius-sm)] border px-2 py-1 text-xs cursor-pointer shrink-0 select-none transition-colors duration-150 ${
                 active
-                  ? "border-[color:var(--border-default)] bg-[var(--glass-2-surface)] text-[var(--text-primary)] shadow-[inset_0_1px_0_0_var(--edge-highlight)]"
+                  ? "border-[color:var(--border-default)] bg-[var(--material-panel)] text-[var(--text-primary)] shadow-none"
                   : "border-transparent text-[var(--text-secondary)] hover:bg-[var(--overlay-hover)] hover:text-[var(--text-primary)]"
               } ${draggingIndex === index ? "opacity-50" : ""}`}
               title={f.diff ? f.diff.title : relativeToProject(f.path, projectPath)}
@@ -250,13 +251,16 @@ export function EditorPanel() {
           );
         })}
         <div className="flex-1" />
+        {/* The dialog's own close button is off (MainLayout); this one sits on the tab row so both share a baseline. */}
         <Button
-          size="sm"
+          size="icon-sm"
           variant="ghost"
-          title="收起面板"
+          title="关闭"
+          aria-label="关闭"
+          className="size-6 shrink-0"
           onClick={() => useUiStore.getState().setEditorVisible(false)}
         >
-          <PanelRight size={14} />
+          <X size={14} />
         </Button>
       </div>
       {error && (

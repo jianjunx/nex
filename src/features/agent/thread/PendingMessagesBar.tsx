@@ -18,7 +18,7 @@ export function PendingMessagesBar({
   if (messages.length === 0) return null;
 
   return (
-    <div className="mx-4 mb-1.5 rounded-[calc(var(--radius-md)+2px)] border border-[color:var(--hairline-soft)] bg-[var(--material-floating)] px-2.5 py-1.5 shadow-[inset_0_1px_0_0_var(--edge-highlight-soft)]">
+    <div className="mx-4 mb-1.5 rounded-[calc(var(--radius-md)+2px)] border border-[color:var(--hairline-soft)] bg-[var(--material-floating)] px-2.5 py-1.5 shadow-none">
       <button
         type="button"
         className="flex w-full items-center gap-2 text-xs text-[var(--text-secondary)] nex-interactive-chrome hover:text-[var(--text-primary)]"

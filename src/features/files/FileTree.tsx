@@ -1,3 +1,4 @@
+import AgentUiRecordsTable from "@/components/agent-ui/beautiful-ui/RecordsTable";
 import { ChevronRight, FilePlus, FolderPlus, RefreshCw, ChevronsDownUp } from "lucide-react";
 import { useFsStore } from "../../stores/fs.store";
 import { useProjectStore } from "../../stores/project.store";
@@ -79,7 +80,7 @@ function CreatingInput({ type, depth, onDone }: {
         onChange={(e) => setName(e.target.value)}
         onKeyDown={handleKeyDown}
         onBlur={() => onDone(name.trim())}
-        className="bg-[var(--glass-2-surface)] border border-[var(--border-subtle)] rounded-[var(--radius-sm)] px-1 py-px text-sm text-[var(--text-primary)] outline-none flex-1 min-w-0"
+        className="bg-[var(--material-panel)] border border-[var(--border-subtle)] rounded-[var(--radius-sm)] px-1 py-px text-sm text-[var(--text-primary)] outline-none flex-1 min-w-0"
         placeholder={type === 'file' ? 'new file' : 'new folder'}
       />
     </div>
@@ -142,7 +143,7 @@ function RenameInput({ name, depth, isFolder, onDone }: {
           if (trimmed && trimmed !== name) onDone(trimmed);
           else onDone('');
         }}
-        className="bg-[var(--glass-2-surface)] border border-[var(--accent)] rounded-[var(--radius-sm)] px-1 py-px text-sm text-[var(--text-primary)] outline-none flex-1 min-w-0"
+        className="bg-[var(--material-panel)] border border-[var(--accent)] rounded-[var(--radius-sm)] px-1 py-px text-sm text-[var(--text-primary)] outline-none flex-1 min-w-0"
       />
     </div>
   );
@@ -390,7 +391,7 @@ function TreeNode({
 // whose own inputs didn't change — previously the whole tree re-rendered.
 const MemoTreeNode = memo(TreeNode);
 
-export function FileTree() {
+function FileTreeContent() {
   const { loadRoot, nodesByDir, expandDir, createFile, createDir, renameEntry, refreshDir, collapseAll, selectedPath, pendingRenamePath, consumePendingRename, pendingDeletePath, cancelPendingDelete, confirmPendingDelete, openFiles } = useFsStore();
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const projects = useProjectStore((s) => s.projects);
@@ -598,7 +599,7 @@ export function FileTree() {
         <div
           ref={ghostRef}
           style={{ display: "none" }}
-          className="fixed left-0 top-0 z-[100] pointer-events-none items-center gap-1.5 rounded-[var(--radius-sm)] border border-[var(--border-subtle)] bg-[var(--glass-2-surface)] px-2 py-1 text-sm text-[var(--text-primary)] shadow-lg"
+          className="fixed left-0 top-0 z-[100] pointer-events-none items-center gap-1.5 rounded-[var(--radius-sm)] border border-[var(--border-subtle)] bg-[var(--material-panel)] px-2 py-1 text-sm text-[var(--text-primary)] shadow-lg"
         >
           {dragPayload && (
             <>
@@ -648,4 +649,8 @@ export function FileTree() {
       )}
     </>
   );
+}
+
+export function FileTree() {
+ return <AgentUiRecordsTable><FileTreeContent /></AgentUiRecordsTable>;
 }

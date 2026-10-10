@@ -11,6 +11,7 @@ import {
   Trash2,
 } from "lucide-react";
 import SidebarNav from "@/components/agent-ui/beautiful-ui/SidebarNav";
+import GlideMenu from "@/components/agent-ui/primitives/GlideMenu";
 import { useUiStore } from "@/stores/ui.store";
 import { useProjectStore } from "@/stores/project.store";
 import { useConversationStore } from "@/stores/conversation.store";
@@ -48,7 +49,7 @@ function ConversationRow({
   // not re-render the whole project list.
   const status = useAgentStore((s) => s.sessions[conversationId]?.status ?? null);
   return (
-    <div className="nex-conversation-row" data-current={current}>
+    <div className="nex-conversation-row" data-current={current} data-row="">
       <button
         disabled={disabled}
         className="nex-project-conversation"
@@ -292,12 +293,18 @@ function ExpandedSidebar({
           </button>
         </div>
         <nav aria-label="项目与会话">
+          <GlideMenu
+            rowSelector="[data-row]"
+            fitRow
+            highlightClassName="nex-glide-highlight"
+            className="flex flex-col"
+          >
           {projects.map((project) => {
             const expanded = !collapsed[project.id];
             const Icon = expanded ? FolderOpen : Folder;
             return (
               <div key={project.id}>
-                <div className="nex-project-row">
+                <div className="nex-project-row" data-row="">
                   <button
                     disabled={busy}
                     title={project.path}
@@ -347,6 +354,7 @@ function ExpandedSidebar({
               </div>
             );
           })}
+          </GlideMenu>
         </nav>
         {!projects.length && (
           <p className="px-2 text-xs text-[var(--text-tertiary)]">

@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Loader2, Ref
 import FileIcon from "../files/FileIcon";
 import { Button } from "@/components/ui/button";
 import { Collapse } from "@/components/ui/Collapse";
+import GlideMenu from "@/components/agent-ui/primitives/GlideMenu";
 import { Input } from "@/components/ui/input";
 import {
   AlertDialog,
@@ -406,6 +407,12 @@ function SearchPanelContent() {
           <p className="text-sm text-[var(--text-tertiary)] px-2 py-1">没有匹配的结果</p>
         ) : (
           <div data-testid="search-result-list">
+            <GlideMenu
+              rowSelector="[data-row]"
+              activeSelector="[data-active='true']"
+              fitRow
+              highlightClassName="nex-glide-highlight"
+            >
             {groups.map((g, gi) => {
               const isCollapsed = collapsed.has(g.path);
               const rowOffset = groups.slice(0, gi).reduce((n, x) => n + x.matches.length, 0);
@@ -416,7 +423,8 @@ function SearchPanelContent() {
                     type="button"
                     aria-expanded={!isCollapsed}
                     onClick={() => toggleGroup(g.path)}
-                    className="flex w-full items-center gap-1.5 px-2 py-1 rounded-[var(--radius-sm)] hover:bg-[var(--overlay-hover)] text-left"
+                    data-row=""
+                    className="nex-hoverable flex w-full items-center gap-1.5 px-2 py-1 rounded-[var(--radius-sm)] text-left"
                   >
                     <ChevronRight size={12} className={`flex-none text-[var(--text-tertiary)] transition-transform ${isCollapsed ? "" : "rotate-90"}`} />
                     <FileIcon filename={g.name} size={13} className="flex-none" />
@@ -442,7 +450,9 @@ function SearchPanelContent() {
                         <button
                           key={`${m.path}:${m.line ?? 0}:${i}`}
                           onClick={() => void openFile(m.path, m.line != null ? { line: m.line } : undefined)}
-                          className={`group/row search-stagger relative w-full text-left pl-7 pr-7 py-1 rounded-[var(--radius-sm)] hover:bg-[var(--material-panel)] transition-colors ${rowOffset + i === activeIndex ? "bg-[var(--overlay-ghost)]" : ""}`}
+                          data-row=""
+                          data-active={rowOffset + i === activeIndex ? "true" : undefined}
+                          className="group/row search-stagger relative w-full text-left pl-7 pr-7 py-1 rounded-[var(--radius-sm)]"
                           style={{ animationDelay: `${Math.min(rowOffset + i, 19) * 25}ms` }}
                         >
                           {m.line != null ? (
@@ -475,6 +485,7 @@ function SearchPanelContent() {
                 </div>
               );
             })}
+            </GlideMenu>
           </div>
         )}
       </div>

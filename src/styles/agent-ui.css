@@ -49,9 +49,11 @@
   border-radius: 8px;
   font-size: 14px;
   transition:
-    background-color 100ms,
-    color 100ms,
-    opacity 100ms;
+    background-color var(--duration-fast) var(--ease-fluid),
+    color var(--duration-fast) var(--ease-fluid),
+    border-color var(--duration-fast) var(--ease-fluid),
+    box-shadow var(--duration-fast) var(--ease-fluid),
+    opacity var(--duration-fast) var(--ease-fluid);
 }
 [data-slot="button"]:active {
   transform: none;
@@ -116,6 +118,40 @@
 }
 [data-slot*="menu-"][data-highlighted] {
   background: var(--overlay-hover);
+}
+/* Rows, menus and file entries fade their hover fill. Lists inside .nex-glide
+   use a sliding pill instead, so their own hover fill stays clear. */
+button,
+[role="button"],
+[role="option"],
+[role="menuitem"],
+[role="menuitemcheckbox"],
+[role="menuitemradio"],
+[role="tab"],
+.nex-hoverable {
+  transition:
+    background-color var(--duration-fast) var(--ease-fluid),
+    color var(--duration-fast) var(--ease-fluid),
+    border-color var(--duration-fast) var(--ease-fluid),
+    box-shadow var(--duration-fast) var(--ease-fluid),
+    opacity var(--duration-fast) var(--ease-fluid);
+}
+.nex-glide-highlight {
+  z-index: 0;
+  border-radius: 8px;
+  background: var(--overlay-active);
+}
+.nex-glide [data-row] {
+  position: relative;
+  z-index: 1;
+}
+.nex-glide [data-row]:hover:not([data-drop-target]),
+.nex-glide [data-slot*="menu-"][data-highlighted],
+.nex-glide [data-row][data-state="open"] {
+  background-color: transparent;
+}
+.nex-glide:hover [data-row][aria-selected="true"]:not([data-drop-target]) {
+  background-color: transparent;
 }
 @media (prefers-reduced-motion: reduce) {
   [data-slot] {
@@ -558,6 +594,16 @@ html[data-nex-resizing] .nex-workspace-sidebar {
 .nex-workspace-sidebar .nex-conversation-row:hover {
   background: var(--overlay-hover);
 }
+.nex-workspace-sidebar .nex-glide .nex-conversation-row:hover,
+.nex-workspace-sidebar .nex-glide .nex-project-row:hover > button:not(.nex-icon-btn) {
+  background-color: transparent;
+  box-shadow: none;
+}
+.nex-workspace-sidebar .nex-glide:hover .nex-conversation-row[data-current="true"],
+.nex-workspace-sidebar .nex-glide:hover button[aria-current="page"] {
+  background-color: transparent;
+  box-shadow: none;
+}
 .nex-workspace-sidebar .nex-conversation-row[data-current="true"] {
   background: var(--material-panel);
   box-shadow: inset 0 0 0 1px var(--hairline-strong);
@@ -572,7 +618,10 @@ html[data-nex-resizing] .nex-workspace-sidebar {
 .nex-workspace-sidebar .nex-project-row > .nex-icon-btn,
 .nex-workspace-sidebar .nex-conversation-row > .nex-icon-btn {
   opacity: 0;
-  transition: opacity 100ms;
+  transition:
+    opacity 100ms,
+    background-color var(--duration-fast) var(--ease-fluid),
+    color var(--duration-fast) var(--ease-fluid);
 }
 .nex-workspace-sidebar .nex-project-row:hover > .nex-icon-btn,
 .nex-workspace-sidebar .nex-project-row:focus-within > .nex-icon-btn,
@@ -600,7 +649,8 @@ html[data-nex-resizing] .nex-workspace-sidebar {
   width: 28px;
   flex-shrink: 0;
 }
-.nex-workspace-sidebar nav > div {
+.nex-workspace-sidebar nav > div,
+.nex-workspace-sidebar .nex-glide > div {
   min-width: 0;
 }
 .nex-workspace-sidebar nav > div > button {

@@ -39,7 +39,7 @@ export function HistorySection({ projectPath }: { projectPath: string }) {
   return (
     <div className="border-t border-[color:var(--border-subtle)]">
       <div
-        className="flex cursor-pointer items-center gap-1.5 px-3 py-2 text-xs text-[var(--text-tertiary)] hover:bg-[var(--overlay-hover)]"
+        className="nex-hoverable flex cursor-pointer items-center gap-1.5 px-3 py-2 text-xs text-[var(--text-tertiary)] hover:bg-[var(--overlay-hover)]"
         onClick={() => setHistoryOpen(!historyOpen)}
       >
         <ChevronRight size={12} className={`transition-transform duration-150 ${historyOpen ? "rotate-90" : ""}`} />
@@ -66,7 +66,7 @@ export function HistorySection({ projectPath }: { projectPath: string }) {
             <div
               key={c.hash}
               data-testid={`commit-${c.hash}`}
-              className={`flex cursor-pointer items-baseline gap-2 px-3 py-1 text-xs transition-colors duration-100 hover:bg-[var(--overlay-hover)] ${
+              className={`nex-hoverable flex cursor-pointer items-baseline gap-2 px-3 py-1 text-xs hover:bg-[var(--overlay-hover)] ${
                 selectedCommit === c.hash ? "bg-[var(--accent)]/15" : ""
               }`}
               onClick={() => {

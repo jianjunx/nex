@@ -313,7 +313,7 @@ function TreeNode({
           // Pointer drag (move / attach to composer); 5px threshold keeps
           // plain clicks intact. Root rows are not draggable.
           onPointerDown={isRoot ? undefined : (e) => onNodePointerDown(e, node)}
-          className={`flex items-center gap-1.5 px-2 py-[3px] text-sm cursor-pointer rounded-[var(--radius-sm)] transition-colors duration-100 outline-none group ${
+          className={`flex items-center gap-1.5 px-2 py-[3px] text-sm cursor-pointer rounded-[var(--radius-sm)] outline-none group ${
             isDropTarget
               ? "bg-[var(--accent)]/30 ring-1 ring-[var(--accent)]"
               : isSelected

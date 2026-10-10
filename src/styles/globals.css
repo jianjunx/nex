@@ -415,7 +415,16 @@ body {
   .nex-sidebar-slot,
   .nex-workspace-sidebar,
   .nex-collapse,
-  .nex-collapse-height {
+  .nex-collapse-height,
+  button,
+  [role="button"],
+  [role="option"],
+  [role="menuitem"],
+  [role="menuitemcheckbox"],
+  [role="menuitemradio"],
+  [role="tab"],
+  .nex-hoverable,
+  .nex-glide-highlight {
     transition: none !important;
   }
   .nex-pressable:active {

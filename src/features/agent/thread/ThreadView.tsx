@@ -17,6 +17,7 @@ import {
   type UserStickyCandidate,
 } from "./stickyUserMessage";
 import type { ThreadEntry } from "./types";
+import { easeScrollTop, isEaseFollow } from "./easeScrollTop";
 
 const EMPTY_ENTRIES: ThreadEntry[] = [];
 const EMPTY_EXPANDED = new Set<string>();
@@ -123,7 +124,7 @@ function followThreadEnd(
   const scrollHeight = scroller.scrollHeight || virtualizer.getTotalSize();
   // 内容不足一屏:钉在顶部,不要用 padding 把消息推下去,也不要滚出空白滚动条。
   if (viewport > 0 && scrollHeight <= viewport) {
-    if (scroller.scrollTop !== 0) scroller.scrollTop = 0;
+    easeScrollTop(scroller, 0);
     return;
   }
 
@@ -133,8 +134,7 @@ function followThreadEnd(
   // the viewport back to the bottom. `totalSize` already re-triggers this
   // effect as measurements change, so a direct DOM end offset keeps follow
   // logic deterministic while giving a manual scroll immediate precedence.
-  const target = Math.max(scrollHeight - viewport, 0);
-  if (scroller.scrollTop !== target) scroller.scrollTop = target;
+  easeScrollTop(scroller, Math.max(scrollHeight - viewport, 0));
 }
 
 type VirtualRange = {
@@ -237,8 +237,10 @@ export function ThreadView() {
   const onScroll = useCallback(() => {
     const el = scrollerRef.current;
     if (!el) return;
-    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-    stickToBottomRef.current = distance <= NEAR_BOTTOM_PX;
+    if (!isEaseFollow(el)) {
+      const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+      stickToBottomRef.current = distance <= NEAR_BOTTOM_PX;
+    }
     syncSticky(el.scrollTop);
   }, [syncSticky]);
 

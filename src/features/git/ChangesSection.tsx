@@ -52,7 +52,7 @@ function FileRow({ projectPath, file, display, busy, onDiscard }: FileRowProps) 
   return (
     <div
       data-testid={`row-${file.path}`}
-      className="group flex cursor-pointer items-center gap-1.5 rounded-[var(--radius-sm)] px-2 py-1 transition-colors duration-100 hover:bg-[var(--overlay-hover)]"
+      className="nex-hoverable group flex cursor-pointer items-center gap-1.5 rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[var(--overlay-hover)]"
       onClick={() => void openDiffInEditor(projectPath, file.path, file.staged)}
     >
       {/* 与文件树同款类型图标 */}
@@ -192,7 +192,7 @@ function ChangeTreeView({ projectPath, files, busy, onDiscard }: ChangeTreeViewP
       <div key={`dir-${dir.path}`}>
         <div
           data-testid={`dir-${dir.path}`}
-          className="flex cursor-pointer items-center gap-1.5 rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[var(--overlay-hover)]"
+          className="nex-hoverable flex cursor-pointer items-center gap-1.5 rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[var(--overlay-hover)]"
           style={{ paddingLeft: depth * 10 + 10 }}
           onClick={() => toggle(dir.path)}
         >
@@ -252,7 +252,7 @@ function FileGroup({ projectPath, title, files, staged, busy, treeView, onDiscar
     <div className="mb-2">
       <div
         data-testid={staged ? "group-staged" : "group-unstaged"}
-        className="flex cursor-pointer items-center gap-1.5 px-2 py-1.5 text-xs text-[var(--text-tertiary)] hover:bg-[var(--overlay-hover)]"
+        className="nex-hoverable flex cursor-pointer items-center gap-1.5 px-2 py-1.5 text-xs text-[var(--text-tertiary)] hover:bg-[var(--overlay-hover)]"
         onClick={() => setCollapsed((c) => !c)}
       >
         <ChevronRight size={12} className={`transition-transform duration-150 ${collapsed ? "" : "rotate-90"}`} />

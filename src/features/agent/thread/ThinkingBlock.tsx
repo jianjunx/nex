@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown, Sparkles } from "lucide-react";
 import { Collapse } from "@/components/ui/Collapse";
+import { easeScrollTop, isEaseFollow } from "./easeScrollTop";
 import { Markdown } from "./Markdown";
 import { StreamingProse } from "./StreamingProse";
 
@@ -32,12 +33,12 @@ export function ThinkingBlock({
   useLayoutEffect(() => {
     const el = body.current;
     if (!open || !el) return;
-    if (following.current) el.scrollTop = el.scrollHeight;
+    if (following.current) easeScrollTop(el, el.scrollHeight);
     const inner = el.firstElementChild;
     if (!inner || typeof ResizeObserver === "undefined") return;
     // 逐词吐字时外层 text 不变，内容仍在长高，跟着滚到底。
     const observer = new ResizeObserver(() => {
-      if (following.current) el.scrollTop = el.scrollHeight;
+      if (following.current) easeScrollTop(el, el.scrollHeight);
     });
     observer.observe(inner);
     return () => observer.disconnect();
@@ -61,9 +62,9 @@ export function ThinkingBlock({
           ref={body}
           onScroll={() => {
             const el = body.current;
-            if (el)
-              following.current =
-                el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+            if (!el || isEaseFollow(el)) return;
+            following.current =
+              el.scrollHeight - el.scrollTop - el.clientHeight < 24;
           }}
         >
           {live ? (

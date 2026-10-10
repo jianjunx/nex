@@ -240,6 +240,12 @@ interface FsStore {
   /** Which project the live search* mirrors belong to. */
   searchOwnerProjectId: string | null;
   /**
+   * Monotonic search generation. fs_search runs on the blocking pool, so
+   * overlapping keystrokes can complete out of order; only the newest
+   * generation may write searchResults/searching/searchError.
+   */
+  searchSeq: number;
+  /**
    * Per-project search options (query lives in searchProjectQuery.ts to avoid
    * immer on every keystroke; results are not cached across projects).
    */
@@ -337,6 +343,7 @@ export const useFsStore = create<FsStore>()(
     selectedPath: null,
     searchResults: [],
     searching: false,
+    searchSeq: 0,
     searchOptions: { caseSensitive: false, wholeWord: false, regex: false },
     searchError: null,
     searchOwnerProjectId: null,
@@ -1042,18 +1049,25 @@ export const useFsStore = create<FsStore>()(
       }
       const ownerAtStart = get().searchOwnerProjectId;
       const queryAtStart = query.trim();
-      set((s) => { s.searching = true; s.searchError = null; });
+      // Generation guard: fs_search is concurrent on the blocking pool, so a
+      // slow scan for "ab" can finish after "abc" started. Completion order
+      // no longer implies request order — only the newest request writes.
+      const seq = get().searchSeq + 1;
+      set((s) => { s.searchSeq = seq; s.searching = true; s.searchError = null; });
       try {
         const results = await fsSearch(projectPath, queryAtStart, get().searchOptions);
-        // Drop late responses after a project switch (owner changed).
-        if (get().searchOwnerProjectId !== ownerAtStart) return;
+        // Drop late responses after a project switch (owner changed) or a
+        // newer query (generation moved on).
+        if (get().searchOwnerProjectId !== ownerAtStart || get().searchSeq !== seq) return;
         set((s) => { s.searchResults = results; });
       } catch (err) {
-        if (get().searchOwnerProjectId !== ownerAtStart) return;
+        if (get().searchOwnerProjectId !== ownerAtStart || get().searchSeq !== seq) return;
         // 独立错误槽：共享 error 会在 EditorPanel 渲染红条，搜索错误不该出现在那里。
         set((s) => { s.searchError = errorMessage(err); });
       } finally {
-        if (get().searchOwnerProjectId === ownerAtStart) {
+        // Only the newest generation may clear the spinner; a superseded
+        // request must not stop the spinner of the one that replaced it.
+        if (get().searchSeq === seq && get().searchOwnerProjectId === ownerAtStart) {
           set((s) => { s.searching = false; });
         }
       }

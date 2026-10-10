@@ -42,6 +42,7 @@ beforeEach(() => {
     loading: false,
     searchResults: [],
     searching: false,
+    searchSeq: 0,
     searchError: null,
     searchOptions: { caseSensitive: false, wholeWord: false, regex: false },
     replacePreview: null,
@@ -95,6 +96,24 @@ describe("search options", () => {
     const s = useFsStore.getState();
     expect(s.searchResults).toEqual([]);
     expect(s.searchError).toBeNull();
+    expect(s.searching).toBe(false);
+  });
+
+  it("a superseded slow search must not overwrite the newer query's results", async () => {
+    // fs_search is concurrent on the blocking pool: the "ab" scan can finish
+    // after "abc" started. Only the newest generation may write results, and
+    // the stale one must not clear the spinner of the live request.
+    let releaseAb: (v: unknown) => void = () => {};
+    fsSearch.mockImplementationOnce(
+      () => new Promise((r) => { releaseAb = r; }),
+    );
+    fsSearch.mockResolvedValueOnce(["abc-hit"]);
+    const slow = useFsStore.getState().search("/proj", "ab");
+    const fast = useFsStore.getState().search("/proj", "abc");
+    releaseAb(["ab-hit"]);
+    await Promise.all([slow, fast]);
+    const s = useFsStore.getState();
+    expect(s.searchResults).toEqual(["abc-hit"]);
     expect(s.searching).toBe(false);
   });
 });

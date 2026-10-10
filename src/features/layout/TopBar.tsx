@@ -37,7 +37,7 @@ export function TopBar() {
   return (
     <div
       onMouseDown={handleMouseDown}
-      className={`flex shrink-0 items-center bg-[var(--material-sidebar)] pr-3 ${TITLE_BAR_HEIGHT_CLASS}`}
+      className={`flex shrink-0 select-none items-center bg-[var(--material-sidebar)] pr-3 ${TITLE_BAR_HEIGHT_CLASS}`}
     >
       {/* Expanded: this zone is exactly as wide as the sidebar, so the divider
           below lands on the sidebar/workbench edge and the toggle sits at its right end.

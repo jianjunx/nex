@@ -442,7 +442,7 @@
 }
 /* The workbench is one rounded card inset into the window chrome (sidebar colour). */
 .nex-workbench-body {
-  margin: 0 8px 8px 0;
+  margin: 0 4px 4px 0;
   padding: 0;
   gap: 0;
   border-radius: 14px;

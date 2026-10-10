@@ -245,11 +245,18 @@
   border-left: 1px solid var(--line-strong);
   max-height: 240px;
   overflow-y: auto;
-  font-size: 12.5px;
+  /* 12.5px 会落在半像素上，再叠全局 antialiased 和 tertiary 浅灰，小字会发虚。 */
+  font-size: 13px;
+  line-height: 1.65;
+  letter-spacing: 0;
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
   animation: nex-trace-in 180ms ease-out;
 }
 .nex-trace-body .markdown-body {
   font-size: inherit;
+  line-height: inherit;
+  color: var(--text-secondary);
 }
 .nex-ui-ToolChips > .nex-tool-row {
   border: 0;

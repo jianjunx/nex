@@ -71,6 +71,31 @@ describe("MainLayout side-panel resize", () => {
     expect(useUiStore.getState().sidePanelWidth).toBe(painted - 10);
   });
 
+  it("drags the sidebar wider by up to 100px and persists it", () => {
+    useUiStore.setState({ sidebarCollapsed: false, sidebarWidth: 208, sidePanelVisible: false });
+    const { container } = render(
+      <MainLayout mainContent={<div>chat</div>} editorPanel={null} sidePanel={<div>files</div>} />,
+    );
+    const root = container.firstElementChild as HTMLElement;
+    expect(root.style.getPropertyValue("--nex-sidebar-w")).toBe("208px");
+
+    fireEvent.pointerDown(screen.getByTestId("sidebar-resize-handle"), { pointerId: 2, clientX: 208 });
+    window.dispatchEvent(new PointerEvent("pointermove", { pointerId: 2, clientX: 268, bubbles: true }));
+    expect(root.style.getPropertyValue("--nex-sidebar-w")).toBe("268px");
+    // Past +100px the width stops growing.
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 2, clientX: 600, bubbles: true }));
+    expect(useUiStore.getState().sidebarWidth).toBe(308);
+  });
+
+  it("has no sidebar handle while the sidebar is folded", () => {
+    useUiStore.setState({ sidebarCollapsed: true });
+    render(
+      <MainLayout mainContent={<div>chat</div>} editorPanel={null} sidePanel={<div>files</div>} />,
+    );
+    expect(screen.queryByTestId("sidebar-resize-handle")).toBeNull();
+    useUiStore.setState({ sidebarCollapsed: false });
+  });
+
   it("opens files in a dialog without an editor split pane", () => {
     render(
       <MainLayout

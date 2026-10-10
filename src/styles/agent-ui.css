@@ -328,11 +328,9 @@
   overflow: auto;
 }
 .nex-workspace-sidebar {
-  width: 208px;
+  width: var(--nex-sidebar-w, 208px);
   flex-shrink: 0;
-  border-right: 1px solid var(--hairline-soft);
-  padding: 16px 10px 10px;
-  background: var(--material-sidebar);
+  padding: 4px 10px 10px;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -389,6 +387,38 @@
   background: var(--text-primary);
   color: var(--material-canvas);
 }
+/* Collapsed rail: new task, project thumbnails, settings. */
+.nex-workspace-sidebar.nex-workspace-rail {
+  width: 56px;
+  padding: 0 8px 10px;
+  align-items: center;
+  gap: 8px;
+}
+.nex-workspace-rail > div {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+.nex-workspace-rail button {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  padding: 0;
+  justify-content: center;
+  border-radius: 10px;
+}
+.nex-workspace-rail .nex-rail-projects {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  align-items: center;
+  gap: 6px;
+  overflow-y: auto;
+}
+.nex-workspace-rail .nex-rail-project {
+  font-size: 14px;
+  font-weight: 600;
+}
 .nex-sidebar-recents {
   min-height: 0;
   overflow: auto;
@@ -410,14 +440,17 @@
   letter-spacing: 0;
   margin-left: auto;
 }
+/* The workbench is one rounded card inset into the window chrome (sidebar colour). */
 .nex-workbench-body {
+  margin: 0 8px 8px 0;
   padding: 0;
   gap: 0;
-}
-.nex-workbench-main {
-  border-radius: 16px;
+  border-radius: 14px;
   background: var(--material-panel);
   box-shadow: 0 0 0 1px var(--hairline-soft);
+}
+.nex-workbench-main {
+  background: var(--material-panel);
 }
 .beautiful-ui [data-agent-ui] {
   max-width: 100%;
@@ -450,8 +483,15 @@
   background: var(--overlay-hover);
 }
 .nex-workspace-sidebar .nex-project-conversation {
+  padding-top: 5px;
+  padding-bottom: 5px;
   padding-left: 28px;
   gap: 8px;
+}
+.nex-workspace-sidebar .nex-conversation-row > .nex-icon-btn {
+  width: 24px;
+  height: 24px;
+  flex-basis: 24px;
 }
 .nex-workspace-sidebar .nex-project-row,
 .nex-workspace-sidebar .nex-conversation-row {

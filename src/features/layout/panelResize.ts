@@ -66,8 +66,12 @@ export function beginColResize(args: {
   pane: HTMLElement | null;
   liveRef: ColResizeLiveRef;
   persist: (width: number) => void;
+  /** Pane sits left of the handle, so dragging right grows it. */
+  invert?: boolean;
+  /** Extra per-move hook for panes sized through a shared CSS variable. */
+  onLive?: (width: number) => void;
 }): void {
-  const { pointerId, startX, startWidth, min, pane, liveRef, persist } = args;
+  const { pointerId, startX, startWidth, min, pane, liveRef, persist, invert, onLive } = args;
   const prevUserSelect = document.body.style.userSelect;
   document.body.style.userSelect = "none";
   document.documentElement.dataset.nexResizing = "1";
@@ -80,9 +84,11 @@ export function beginColResize(args: {
   const maxNow = () => (typeof args.max === "function" ? args.max() : args.max);
 
   const apply = (clientX: number) => {
-    const next = clamp(startWidth + (startX - clientX), min, maxNow());
+    const delta = invert ? clientX - startX : startX - clientX;
+    const next = clamp(startWidth + delta, min, maxNow());
     liveRef.current = next;
     if (pane) pane.style.width = `${next}px`;
+    onLive?.(next);
     return next;
   };
 

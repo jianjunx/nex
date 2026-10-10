@@ -175,6 +175,18 @@ describe("compact toolbar", () => {
     expect(screen.queryByTestId("project-selector")).toBeNull();
     expect(screen.getByRole("toolbar", { name: "工作区工具" })).toBeTruthy();
   });
+  it("shows the active conversation title", () => {
+    render(<TopBar />);
+    expect(screen.getByRole("heading", { name: "第一个会话" })).toBeTruthy();
+  });
+  it("folds and unfolds the sidebar from the top bar", () => {
+    useUiStore.setState({ sidebarCollapsed: false });
+    render(<TopBar />);
+    fireEvent.click(screen.getByRole("button", { name: "收起侧栏" }));
+    expect(useUiStore.getState().sidebarCollapsed).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "展开侧栏" }));
+    expect(useUiStore.getState().sidebarCollapsed).toBe(false);
+  });
   it("toggles and switches side panels", () => {
     useUiStore.setState({ sidePanelVisible: false });
     render(<TopBar />);

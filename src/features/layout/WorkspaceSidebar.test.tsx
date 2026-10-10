@@ -9,6 +9,7 @@ import {
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useProjectStore } from "@/stores/project.store";
 import { useConversationStore } from "@/stores/conversation.store";
+import { useUiStore } from "@/stores/ui.store";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 import { activateProject } from "../projects/activateProject";
 import { startNewTask } from "../projects/startTask";
@@ -26,6 +27,7 @@ vi.mock("../projects/restoreProjectConversationTabs", () => ({
 }));
 afterEach(cleanup);
 beforeEach(() => {
+  useUiStore.setState({ sidebarCollapsed: false });
   vi.mocked(activateProject).mockImplementation(async (project) => {
     useProjectStore.setState({ activeProjectId: project.id });
   });
@@ -109,4 +111,17 @@ it("deletes a conversation only after confirmation", async () => {
   expect(
     useConversationStore.getState().conversationsByProject.p1,
   ).toHaveLength(1);
+});
+
+it("renders a rail with project initials and a settings button when folded", async () => {
+  useUiStore.setState({ sidebarCollapsed: true });
+  render(<WorkspaceSidebar />);
+  expect(screen.queryByRole("navigation", { name: "项目与会话" })).toBeNull();
+  const rail = screen.getByRole("navigation", { name: "项目" });
+  expect(rail.textContent).toBe("PP");
+  expect(screen.getByRole("button", { name: "p1" }).getAttribute("aria-current")).toBe("page");
+  expect(screen.getByRole("button", { name: "设置" })).toBeTruthy();
+
+  fireEvent.click(screen.getByRole("button", { name: "p2" }));
+  await waitFor(() => expect(useProjectStore.getState().activeProjectId).toBe("p2"));
 });

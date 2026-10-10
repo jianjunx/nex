@@ -4,6 +4,12 @@ import { WorkspaceSidebar } from "./WorkspaceSidebar";
 import { useUiStore } from "@/stores/ui.store";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { SIDE_PANEL_MIN, beginColResize } from "./panelResize";
+import {
+  RAIL_WIDTH,
+  SIDEBAR_MAX_WIDTH,
+  SIDEBAR_WIDTH,
+  SIDEBAR_WIDTH_VAR,
+} from "./sidebarMetrics";
 
 interface MainLayoutProps {
   mainContent: ReactNode;
@@ -18,6 +24,8 @@ export function MainLayout({
 }: MainLayoutProps) {
   const visible = useUiStore((s) => s.sidePanelVisible);
   const width = useUiStore((s) => s.sidePanelWidth);
+  const collapsed = useUiStore((s) => s.sidebarCollapsed);
+  const storedSidebarWidth = useUiStore((s) => s.sidebarWidth);
   const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
   useEffect(() => {
     const resize = () => setWindowWidth(window.innerWidth);
@@ -26,17 +34,61 @@ export function MainLayout({
   }, []);
   const sideRef = useRef<HTMLDivElement>(null);
   const liveRef = useRef<number | null>(null);
-  const budget = () => Math.max(SIDE_PANEL_MIN, window.innerWidth - 208 - 280);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const sidebarLiveRef = useRef<number | null>(null);
+  // Leave room for the main column and the narrowest side panel.
+  const sidebarBudget = (winW: number) =>
+    Math.max(
+      SIDEBAR_WIDTH,
+      Math.min(SIDEBAR_MAX_WIDTH, winW - 280 - (visible ? SIDE_PANEL_MIN : 0)),
+    );
+  const expandedWidth = Math.min(
+    Math.max(storedSidebarWidth, SIDEBAR_WIDTH),
+    sidebarBudget(windowWidth),
+  );
+  const sidebarWidth = collapsed ? RAIL_WIDTH : expandedWidth;
+  const budget = () => Math.max(SIDE_PANEL_MIN, window.innerWidth - sidebarWidth - 280);
   const paintedWidth = Math.min(
     width,
-    Math.max(SIDE_PANEL_MIN, windowWidth - 208 - 280),
+    Math.max(SIDE_PANEL_MIN, windowWidth - sidebarWidth - 280),
   );
   return (
-    <div className="flex h-full w-full flex-col bg-[var(--material-canvas)]">
+    <div
+      ref={rootRef}
+      className="flex h-full w-full flex-col bg-[var(--material-sidebar)]"
+      style={{ [SIDEBAR_WIDTH_VAR]: `${expandedWidth}px` } as React.CSSProperties}
+    >
       <TopBar />
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        <WorkspaceSidebar />
-        <div className="nex-workbench-body relative flex min-w-0 flex-1 overflow-hidden">
+      <div className="flex min-h-0 flex-1">
+        <div className="relative flex shrink-0">
+          <WorkspaceSidebar />
+          {!collapsed && (
+            <div
+              data-testid="sidebar-resize-handle"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="调整侧栏宽度"
+              className="nex-handle-col !absolute inset-y-0 -right-0.5"
+              onPointerDown={(e) => {
+                e.preventDefault();
+                beginColResize({
+                  pointerId: e.pointerId,
+                  startX: e.clientX,
+                  startWidth: sidebarLiveRef.current ?? expandedWidth,
+                  min: SIDEBAR_WIDTH,
+                  max: () => sidebarBudget(window.innerWidth),
+                  pane: null,
+                  liveRef: sidebarLiveRef,
+                  invert: true,
+                  onLive: (w) =>
+                    rootRef.current?.style.setProperty(SIDEBAR_WIDTH_VAR, `${w}px`),
+                  persist: useUiStore.getState().setSidebarWidth,
+                });
+              }}
+            />
+          )}
+        </div>
+        <div className="nex-workbench-body relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
           <main className="nex-workbench-main flex min-w-0 flex-1 flex-col overflow-hidden">
             {mainContent}
           </main>

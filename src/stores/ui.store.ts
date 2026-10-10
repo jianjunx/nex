@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { persist } from "zustand/middleware";
 import { useProjectStore } from "./project.store";
+import { SIDEBAR_MAX_WIDTH, SIDEBAR_WIDTH } from "../features/layout/sidebarMetrics";
 
 export type SidePanelTab = "files" | "git" | "search";
 
@@ -22,6 +23,10 @@ export type SettingsSection =
   | "about";
 
 interface UiState {
+  /** Workspace sidebar folded into a narrow icon rail. */
+  sidebarCollapsed: boolean;
+  /** Expanded sidebar width; clamped to SIDEBAR_WIDTH..SIDEBAR_MAX_WIDTH. */
+  sidebarWidth: number;
   sidePanelVisible: boolean;
   sidePanelTab: SidePanelTab;
   /** Visible terminal tray for the *current* project (mirrored from by-project map). */
@@ -44,6 +49,8 @@ interface UiState {
   /** 自增计数请求关闭当前对话页签（Cmd/Ctrl+W）；不持久化。 */
   closeTabRequest: number;
 
+  toggleSidebar: () => void;
+  setSidebarWidth: (w: number) => void;
   toggleSidePanel: () => void;
   setSidePanelTab: (tab: SidePanelTab) => void;
   /** 点亮态再点同一图标则收起；否则切换 tab 并展开面板。 */
@@ -87,6 +94,8 @@ function rememberEditorVisible(s: UiState, visible: boolean) {
 export const useUiStore = create<UiState>()(
   persist(
     immer((set) => ({
+      sidebarCollapsed: false,
+      sidebarWidth: SIDEBAR_WIDTH,
       sidePanelVisible: true,
       sidePanelTab: "files",
       terminalVisible: false,
@@ -102,6 +111,8 @@ export const useUiStore = create<UiState>()(
       searchFocusRequest: 0,
       closeTabRequest: 0,
 
+      setSidebarWidth: (w) => set((s) => { s.sidebarWidth = w; }),
+      toggleSidebar: () => set((s) => { s.sidebarCollapsed = !s.sidebarCollapsed; }),
       toggleSidePanel: () => set((s) => { s.sidePanelVisible = !s.sidePanelVisible; }),
       setSidePanelTab: (tab) => set((s) => { s.sidePanelTab = tab; s.sidePanelVisible = true; }),
       toggleSidePanelTab: (tab) => set((s) => {
@@ -161,6 +172,7 @@ export const useUiStore = create<UiState>()(
       // "Restore defaults" in the settings panel: reset sizes only, never
       // visibility, so a tidy-up can't hide the user's panels.
       resetLayoutDims: () => set((s) => {
+        s.sidebarWidth = SIDEBAR_WIDTH;
         s.sidePanelWidth = 320;
         s.terminalHeight = 200;
         s.editorWidth = 480;
@@ -183,6 +195,8 @@ export const useUiStore = create<UiState>()(
       name: "nex-ui",
       // Only persist data fields; actions are re-created from the initializer.
       partialize: (s) => ({
+        sidebarCollapsed: s.sidebarCollapsed,
+        sidebarWidth: s.sidebarWidth,
         sidePanelVisible: s.sidePanelVisible,
         sidePanelTab: s.sidePanelTab,
         terminalVisible: s.terminalVisible,
@@ -206,6 +220,8 @@ export const useUiStore = create<UiState>()(
           v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, boolean>) : {};
         return {
           ...merged,
+          sidebarCollapsed: merged.sidebarCollapsed === true,
+          sidebarWidth: clamp(merged.sidebarWidth, SIDEBAR_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_WIDTH),
           sidePanelTab: sanitizeSidePanelTab(merged.sidePanelTab),
           terminalVisibleByProject: asBoolMap(p.terminalVisibleByProject),
           editorVisibleByProject: asBoolMap(p.editorVisibleByProject),

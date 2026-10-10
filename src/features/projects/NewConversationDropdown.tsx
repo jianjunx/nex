@@ -8,8 +8,11 @@ import { errorMessage } from "@/lib/errors";
 /** Kept under its former export name for command consumers; no agent picker here. */
 export function NewConversationDropdown({
   triggerSize: _triggerSize,
+  compact = false,
 }: {
   triggerSize: "icon" | "icon-sm";
+  /** Icon-only button for the collapsed sidebar rail. */
+  compact?: boolean;
 }) {
   const requested = useUiStore((s) => s.newConversationOpen);
   const lock = useRef(false);
@@ -46,10 +49,11 @@ export function NewConversationDropdown({
         type="button"
         disabled={busy}
         aria-label="新建任务"
+        title={compact ? "新建任务" : undefined}
         onClick={() => void create()}
       >
         <Plus size={16} />
-        {busy ? "正在创建…" : "新建任务"}
+        {!compact && (busy ? "正在创建…" : "新建任务")}
       </button>
       {error && (
         <p role="alert" className="text-xs">

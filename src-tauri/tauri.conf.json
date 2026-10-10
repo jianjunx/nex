@@ -14,13 +14,14 @@
       {
         "title": "Nex",
         "hiddenTitle": true,
-        "width": 1400,
-        "height": 900,
-        "minWidth": 900,
+        "width": 1100,
+        "height": 760,
+        "minWidth": 720,
         "minHeight": 600,
         "transparent": false,
         "decorations": true,
         "titleBarStyle": "Overlay",
+        "trafficLightPosition": { "x": 20, "y": 21 },
         "dragDropEnabled": true
       }
     ],

@@ -20,8 +20,10 @@ import { AgentIcon } from "../agent/AgentIcon";
 import { useAgentStore } from "@/stores/agent.store";
 import { CloseTabConfirmDialog } from "../agent/CloseTabConfirmDialog";
 import { openProjectFolder } from "../projects/openProjectFolder";
+import { projectInitial } from "../projects/projectInitial";
 import { errorMessage } from "@/lib/errors";
 import type { Project } from "@/bridge/tauri";
+
 
 function ConversationRow({
   conversationId,
@@ -75,6 +77,7 @@ export function WorkspaceSidebar() {
   const projectId = useProjectStore((s) => s.activeProjectId);
   const conversations = useConversationStore((s) => s.conversationsByProject);
   const activeTabs = useConversationStore((s) => s.activeTabByProject);
+  const railMode = useUiStore((s) => s.sidebarCollapsed);
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
   const [error, setError] = useState<string | null>(null);
@@ -164,6 +167,42 @@ export function WorkspaceSidebar() {
       setBusy(false);
     }
   };
+
+  if (railMode) {
+    return (
+      <SidebarNav className="nex-workspace-sidebar nex-workspace-rail">
+        <NewConversationDropdown triggerSize="icon-sm" compact />
+        <nav aria-label="项目" className="nex-rail-projects">
+          {projects.map((project) => (
+            <button
+              key={project.id}
+              disabled={busy}
+              title={project.name}
+              aria-label={project.name}
+              aria-current={projectId === project.id ? "page" : undefined}
+              className="nex-rail-project"
+              onClick={() => void select(project)}
+            >
+              {projectInitial(project.name)}
+            </button>
+          ))}
+        </nav>
+        {error && (
+          <p role="alert" className="px-1 text-center text-xs text-[var(--status-danger)]">
+            {error}
+          </p>
+        )}
+        <button
+          className="nex-rail-settings"
+          title="设置"
+          aria-label="设置"
+          onClick={() => useUiStore.getState().openSettings()}
+        >
+          <Settings size={16} />
+        </button>
+      </SidebarNav>
+    );
+  }
 
   return (
     <SidebarNav className="nex-workspace-sidebar">

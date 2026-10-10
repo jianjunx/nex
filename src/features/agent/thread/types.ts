@@ -6,7 +6,8 @@ export type ThreadEntryKind =
   | "tool_call"
   | "completed_plan"
   | "plan_approval"
-  | "ask_question";
+  | "ask_question"
+  | "turn_summary";
 
 export type AssistantChunk =
   | { type: "message"; text: string }
@@ -109,13 +110,32 @@ export interface AskQuestionEntry extends ThreadEntryBase {
   answers?: AskQuestionAnswerPayload[];
 }
 
+/**
+ * 一轮对话正常结束后追加的用量摘要（耗时 / token / 模型）。
+ * token 仅在 agent 上报整轮用量时才有（NexAgent）；外部 ACP agent 缺省。
+ */
+export interface TurnSummaryEntry extends ThreadEntryBase {
+  kind: "turn_summary";
+  /** 从发出 prompt 到结束的墙钟耗时（含等待用户确认的时间）。 */
+  durationMs: number;
+  /** 本轮使用的模型展示名（取不到时为模型 id）。 */
+  model?: string;
+  /** 本轮累计输入 token（含多次 provider 请求）。 */
+  promptTokens?: number;
+  /** 本轮累计输出 token。 */
+  completionTokens?: number;
+  /** 本轮累计缓存命中 token（输入 token 的子集）。 */
+  cacheHitTokens?: number;
+}
+
 export type ThreadEntry =
   | UserMessageEntry
   | AssistantMessageEntry
   | ToolCallEntry
   | CompletedPlanEntry
   | PlanApprovalEntry
-  | AskQuestionEntry;
+  | AskQuestionEntry
+  | TurnSummaryEntry;
 
 export interface AvailableCommand {
   name: string;

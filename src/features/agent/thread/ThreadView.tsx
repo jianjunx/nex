@@ -36,6 +36,7 @@ function estimateRowHeight(item: ThreadRenderItem | undefined): number {
   if (item.type === "files_changed") return 44 + item.files.length * 28;
   const e = item.entry;
   if (e.kind === "user_message") return 48;
+  if (e.kind === "turn_summary") return 20;
   if (e.kind === "tool_call") {
     return e.status === "waiting_for_confirmation" ? 96 : 48;
   }

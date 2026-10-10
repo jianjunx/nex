@@ -9,6 +9,7 @@ import { MessageContextMenu } from "./MessageContextMenu";
 import { Markdown } from "./Markdown";
 import { groupChunks } from "./groupChunks";
 import { UserMessageBubble } from "./UserMessageBubble";
+import { TurnSummaryLine } from "./TurnSummaryLine";
 import type { ThreadEntry } from "./types";
 
 /**
@@ -107,5 +108,7 @@ export const EntryView = memo(function EntryView({
           <AskQuestionCard entry={entry} />
         </div>
       );
+    case "turn_summary":
+      return <TurnSummaryLine entry={entry} />;
   }
 });

@@ -38,6 +38,17 @@ function sortByProjectOrder(projects: Project[]): Project[] {
   });
 }
 
+/**
+ * 最近活跃的排前面（`last_opened` 降序）。时间相同按创建时间、再按 id，
+ * 保证同一次启动里顺序稳定，不会因为 sort 不稳定而抖动。
+ */
+function sortByRecency(projects: Project[]): Project[] {
+  return [...projects].sort(
+    (a, b) =>
+      b.last_opened - a.last_opened || a.created_at - b.created_at || a.id.localeCompare(b.id),
+  );
+}
+
 function bumpLastOpened(
   projects: Project[],
   id: string,
@@ -63,8 +74,11 @@ export const useProjectStore = create<ProjectStore>()(
           s.error = null;
         });
         try {
-          // The saved sidebar order takes precedence over backend activity order.
-          const projects = sortByProjectOrder(await projectList());
+          // 每次启动都按活跃时间重排：最近用过的项目排前面。持久化的
+          // projectOrder 只是会话内的侧栏顺序，启动时以后台活跃度为准重新
+          // 播种——否则上次退出前的顺序会一直压过后端的 last_opened DESC，
+          // 很久没碰的项目反而赖在最前面。
+          const projects = sortByRecency(await projectList());
           set((s) => {
             s.projects = projects;
             s.projectOrder = projects.map((p) => p.id);
@@ -89,11 +103,12 @@ export const useProjectStore = create<ProjectStore>()(
           const project = await projectOpen(path);
           set((s) => {
             // project_open upserts by path, so the project may already be listed
-            s.projects = sortByProjectOrder([
-              project,
-              ...s.projects.filter((p) => p.id !== project.id),
-            ]);
-            s.projectOrder = s.projects.map((p) => p.id);
+            const rest = s.projects.filter((p) => p.id !== project.id);
+            s.projects = [project, ...rest];
+            // 新打开的项目排到最前。必须同时改 projectOrder：它是侧栏顺序的
+            // 唯一来源，只重排数组的话 sortByProjectOrder 会按旧 order 把新
+            // 项目（旧 order 里没有 → MAX_SAFE_INTEGER）甩到末尾。
+            s.projectOrder = [project.id, ...rest.map((p) => p.id)];
             s.activeProjectId = project.id;
           });
         } catch (err) {

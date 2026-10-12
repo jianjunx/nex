@@ -22,21 +22,38 @@ beforeEach(() => {
   });
   vi.mocked(projectTouch).mockResolvedValue(999);
 });
-it("does not reorder on switch or backend reload", async () => {
+it("does not reorder on switch", async () => {
   useProjectStore.getState().switchProject("second");
   await Promise.resolve();
   expect(useProjectStore.getState().projects.map((p) => p.id)).toEqual([
     "first",
     "second",
   ]);
+});
+it("re-sorts by recency on every startup, ignoring the persisted order", async () => {
+  // 持久化顺序把 second 放前面，但 second 的 last_opened 更早——启动时必须
+  // 以活跃度为准，否则很久没碰的项目会一直赖在最前面。
+  useProjectStore.setState({ projectOrder: ["second", "first"] });
   vi.mocked(projectList).mockResolvedValue([...projects].reverse());
   await useProjectStore.getState().loadProjects();
   expect(useProjectStore.getState().projects.map((p) => p.id)).toEqual([
-    "first",
     "second",
+    "first",
   ]);
+  expect(useProjectStore.getState().projectOrder).toEqual(["second", "first"]);
 });
-it("appends a new project without moving existing projects", async () => {
+it("breaks recency ties deterministically", async () => {
+  const tied = [
+    { id: "b", name: "b", path: "/b", created_at: 5, last_opened: 100 },
+    { id: "a", name: "a", path: "/a", created_at: 9, last_opened: 100 },
+    { id: "c", name: "c", path: "/c", created_at: 1, last_opened: 100 },
+  ];
+  vi.mocked(projectList).mockResolvedValue(tied);
+  await useProjectStore.getState().loadProjects();
+  // last_opened 相同 → 按 created_at 升序（与 sortByProjectOrder 的兜底一致）
+  expect(useProjectStore.getState().projects.map((p) => p.id)).toEqual(["c", "b", "a"]);
+});
+it("puts a newly opened project first and keeps the rest in place", async () => {
   vi.mocked(projectOpen).mockResolvedValue({
     id: "new",
     name: "new",
@@ -45,9 +62,26 @@ it("appends a new project without moving existing projects", async () => {
     last_opened: 4,
   });
   await useProjectStore.getState().openProject("/new");
-  expect(useProjectStore.getState().projectOrder).toEqual([
+  expect(useProjectStore.getState().projects.map((p) => p.id)).toEqual([
+    "new",
     "first",
     "second",
-    "new",
   ]);
+  expect(useProjectStore.getState().projectOrder).toEqual(["new", "first", "second"]);
+  expect(useProjectStore.getState().activeProjectId).toBe("new");
+});
+it("re-opening a listed project promotes it instead of duplicating the row", async () => {
+  vi.mocked(projectOpen).mockResolvedValue({
+    id: "second",
+    name: "second",
+    path: "/second",
+    created_at: 1,
+    last_opened: 9,
+  });
+  await useProjectStore.getState().openProject("/second");
+  expect(useProjectStore.getState().projects.map((p) => p.id)).toEqual([
+    "second",
+    "first",
+  ]);
+  expect(useProjectStore.getState().projectOrder).toEqual(["second", "first"]);
 });

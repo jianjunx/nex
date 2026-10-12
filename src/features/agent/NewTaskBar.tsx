@@ -63,7 +63,9 @@ export function NewTaskBar({
     // races Radix focus-restore (on Windows the dialog can land behind).
     openTimer.current = setTimeout(() => {
       void run(async () => {
-        await openProjectFolder();
+        // 不自动新建任务：下面会把当前这份草稿搬到新项目，效果一样，
+        // 但不会凭空多出一个空会话。
+        await openProjectFolder({ startTask: false });
         const active = useProjectStore
           .getState()
           .projects.find((p) => p.id === useProjectStore.getState().activeProjectId);

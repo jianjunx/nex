@@ -75,3 +75,14 @@ libc = "0.2"
 # 全局声明会让所有平台都编译 OpenSSL 源码（Windows 还需要 perl）。
 [target.'cfg(target_os = "macos")'.dependencies]
 openssl = { version = "0.10", features = ["vendored"] }
+# macOS 26 液态玻璃标题栏：系统只在窗口挂着 NSToolbar 时才把标题栏（连同红绿灯）
+# 渲染成玻璃，而 tao 建的是裸 NSWindow。这里直接调 AppKit 补一个空 toolbar。
+# 仅 macOS 有意义，Windows/Linux 无对应概念，cfg 门控后自然降级为空操作。
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+  "std",
+  "objc2-core-foundation",
+  "NSToolbar",
+  "NSWindow",
+] }
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["std", "NSString"] }

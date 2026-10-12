@@ -442,11 +442,12 @@ html[data-nex-resizing] .nex-workspace-sidebar {
   background: var(--overlay-hover);
   color: var(--text-primary);
 }
+/* 选中态只靠底色区分：--material-panel 比侧栏底色亮一档，足够看出当前位置。
+   原先额外加的 inset 1px 线框（--hairline-strong = #ffffff20）在深色主题下
+   就是一圈白边，选中行像被框住，已去掉。 */
 .nex-workspace-sidebar button[aria-current="page"] {
   background: var(--material-panel);
   color: var(--text-primary);
-  /* inset: the recents list clips overflow, so an outer shadow got cut off. */
-  box-shadow: inset 0 0 0 1px var(--hairline-strong);
 }
 .nex-workspace-sidebar button:active {
   transform: scale(0.98);
@@ -610,9 +611,9 @@ html[data-nex-resizing] .nex-workspace-sidebar {
   background-color: transparent;
   box-shadow: none;
 }
+/* 同上：选中行只用底色，不再描白边。 */
 .nex-workspace-sidebar .nex-conversation-row[data-current="true"] {
   background: var(--material-panel);
-  box-shadow: inset 0 0 0 1px var(--hairline-strong);
 }
 .nex-workspace-sidebar .nex-conversation-row > button:first-child,
 .nex-workspace-sidebar .nex-conversation-row > button:first-child:hover,

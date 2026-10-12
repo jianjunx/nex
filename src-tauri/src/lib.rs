@@ -9,6 +9,7 @@ mod error;
 pub mod fs;
 pub mod git;
 pub mod graph;
+mod macos_titlebar;
 mod state;
 pub mod terminal;
 mod watcher;
@@ -175,6 +176,16 @@ pub fn run() {
                 // Hide the native title bar on Windows; we draw our own tab bar
                 // with custom window controls in the frontend.
                 let _ = window.set_decorations(false);
+            }
+
+            // macOS 26 液态玻璃标题栏：窗口挂上 NSToolbar 后系统才会把标题栏
+            // （含红绿灯）渲染成玻璃。必须拿到主窗口的 NSWindow，且失败不能挡住
+            // 后面的初始化——玻璃是锦上添花，起不来就退回扁平标题栏。
+            #[cfg(target_os = "macos")]
+            if let Some(window) = app.get_webview_window("main") {
+                if let Ok(ptr) = window.ns_window() {
+                    crate::macos_titlebar::enable_liquid_glass_titlebar(ptr);
+                }
             }
 
             // Initialize database. Returning Err lets Tauri shut down with a

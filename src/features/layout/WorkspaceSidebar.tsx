@@ -33,7 +33,6 @@ function ConversationRow({
   title,
   agentType,
   current,
-  disabled,
   onSelect,
   onDelete,
 }: {
@@ -41,7 +40,6 @@ function ConversationRow({
   title: string;
   agentType: string;
   current: boolean;
-  disabled: boolean;
   onSelect: () => void;
   onDelete: () => void;
 }) {
@@ -51,7 +49,6 @@ function ConversationRow({
   return (
     <div className="nex-conversation-row" data-current={current} data-row="">
       <button
-        disabled={disabled}
         className="nex-project-conversation"
         title={title}
         aria-current={current ? "page" : undefined}
@@ -64,7 +61,6 @@ function ConversationRow({
       </button>
       <button
         className="nex-icon-btn"
-        disabled={disabled}
         aria-label={`删除对话 ${title}`}
         title="删除对话"
         onClick={onDelete}
@@ -81,8 +77,7 @@ export function WorkspaceSidebar() {
   const conversations = useConversationStore((s) => s.conversationsByProject);
   const activeTabs = useConversationStore((s) => s.activeTabByProject);
   const railMode = useUiStore((s) => s.sidebarCollapsed);
-  const [busy, setBusy] = useState(false);
-  const lock = useRef(false);
+  const creating = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const projectIds = projects
@@ -106,12 +101,11 @@ export function WorkspaceSidebar() {
   }, [projectIds]);
 
   const select = async (project: Project, conversationId?: string) => {
-    if (lock.current) return;
-    lock.current = true;
-    setBusy(true);
     setError(null);
     try {
       await activateProject(project);
+      // A later click may already have moved on; don't retarget that project.
+      if (useProjectStore.getState().activeProjectId !== project.id) return;
       if (conversationId) {
         const state = useConversationStore.getState();
         const tabs = state.tabsByProject[project.id] ?? [];
@@ -125,14 +119,14 @@ export function WorkspaceSidebar() {
             ),
           );
           await restoreProjectConversationTabs(project.id);
+          if (useProjectStore.getState().activeProjectId !== project.id) return;
         }
         useConversationStore.getState().switchTab(conversationId);
       }
     } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      lock.current = false;
-      setBusy(false);
+      if (useProjectStore.getState().activeProjectId === project.id) {
+        setError(errorMessage(err));
+      }
     }
   };
 
@@ -157,17 +151,17 @@ export function WorkspaceSidebar() {
   };
 
   const createTask = async (project: Project) => {
-    if (lock.current) return;
-    lock.current = true;
-    setBusy(true);
+    if (creating.current) return;
+    creating.current = true;
     setError(null);
     try {
       await startNewTask(project);
     } catch (err) {
-      setError(errorMessage(err));
+      if (useProjectStore.getState().activeProjectId === project.id) {
+        setError(errorMessage(err));
+      }
     } finally {
-      lock.current = false;
-      setBusy(false);
+      creating.current = false;
     }
   };
 
@@ -179,11 +173,9 @@ export function WorkspaceSidebar() {
           projectId={projectId}
           conversations={conversations}
           activeTabs={activeTabs}
-          busy={busy}
           error={error}
           collapsed={collapsed}
           setCollapsed={setCollapsed}
-          setBusy={setBusy}
           setError={setError}
           select={select}
           createTask={createTask}
@@ -200,7 +192,6 @@ export function WorkspaceSidebar() {
             {projects.map((project) => (
               <button
                 key={project.id}
-                disabled={busy}
                 title={project.name}
                 aria-label={project.name}
                 aria-current={projectId === project.id ? "page" : undefined}
@@ -235,11 +226,9 @@ function ExpandedSidebar({
   projectId,
   conversations,
   activeTabs,
-  busy,
   error,
   collapsed,
   setCollapsed,
-  setBusy,
   setError,
   select,
   createTask,
@@ -253,11 +242,9 @@ function ExpandedSidebar({
   projectId: string | null;
   conversations: ReturnType<typeof useConversationStore.getState>["conversationsByProject"];
   activeTabs: ReturnType<typeof useConversationStore.getState>["activeTabByProject"];
-  busy: boolean;
   error: string | null;
   collapsed: Record<string, boolean>;
   setCollapsed: Dispatch<SetStateAction<Record<string, boolean>>>;
-  setBusy: (busy: boolean) => void;
   setError: (error: string | null) => void;
   select: (project: Project, conversationId?: string) => Promise<void>;
   createTask: (project: Project) => Promise<void>;
@@ -267,26 +254,27 @@ function ExpandedSidebar({
   pendingStatus: "starting" | "idle" | "running" | "waiting" | null;
   confirmDelete: () => Promise<void>;
 }) {
+  const [openingFolder, setOpeningFolder] = useState(false);
   return (
     <>
       <div className="nex-workspace-brand">
         <Sparkles size={19} /> Nex <small>WORKSPACE</small>
       </div>
       <NewConversationDropdown triggerSize="icon-sm" />
-      <section className="nex-sidebar-recents" aria-busy={busy}>
+      <section className="nex-sidebar-recents">
         <div className="flex items-center justify-between">
           <h2>项目</h2>
           <button
             className="nex-icon-btn"
             aria-label="新增项目"
             title="打开文件夹新增项目"
-            disabled={busy}
+            disabled={openingFolder}
             onClick={() => {
-              setBusy(true);
+              setOpeningFolder(true);
               setError(null);
               void openProjectFolder()
                 .catch((e) => setError(errorMessage(e)))
-                .finally(() => setBusy(false));
+                .finally(() => setOpeningFolder(false));
             }}
           >
             <Plus size={16} />
@@ -306,7 +294,6 @@ function ExpandedSidebar({
               <div key={project.id}>
                 <div className="nex-project-row" data-row="">
                   <button
-                    disabled={busy}
                     title={project.path}
                     aria-expanded={expanded}
                     onClick={() => {
@@ -323,7 +310,6 @@ function ExpandedSidebar({
                   </button>
                   <button
                     className="nex-icon-btn"
-                    disabled={busy}
                     aria-label={`在 ${project.name} 中新建任务`}
                     title="新建任务"
                     onClick={() => {
@@ -341,7 +327,6 @@ function ExpandedSidebar({
                       conversationId={c.id}
                       title={c.title}
                       agentType={c.agent_type}
-                      disabled={busy}
                       current={
                         projectId === project.id &&
                         activeTabs[project.id] === c.id

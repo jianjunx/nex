@@ -7,7 +7,7 @@ import type { ThreadEntry } from "../agent/thread/types";
 /** Bumped on every restore call so stale async work can bail out. */
 let restoreGeneration = 0;
 
-async function hydrateTab(tabId: string): Promise<void> {
+async function hydrateTab(tabId: string, isCurrent: () => boolean): Promise<void> {
   const agentStore = useAgentStore.getState();
   let payloads: ThreadEntryPayloadDto[] = [];
   try {
@@ -15,6 +15,7 @@ async function hydrateTab(tabId: string): Promise<void> {
   } catch {
     payloads = [];
   }
+  if (!isCurrent()) return;
   if (payloads.length > 0) {
     const entries = payloads.map((p) => p.payload as ThreadEntry);
     agentStore.hydrateEntries(tabId, entries);
@@ -23,7 +24,7 @@ async function hydrateTab(tabId: string): Promise<void> {
   const convStore = useConversationStore.getState();
   const msgs = await convStore.loadMessages(tabId);
   // null = load failed/aborted — hydrating with [] would blank the thread.
-  if (msgs === null) return;
+  if (msgs === null || !isCurrent()) return;
   agentStore.hydrateEntries(tabId, messagesToThreadEntries(msgs));
 }
 
@@ -39,8 +40,8 @@ function scheduleIdle(cb: () => void): void {
 
 /**
  * Load, validate, and hydrate conversation tabs for a project (startup / switch).
- * Hydrates the active tab first; remaining tabs load in idle batches and abort if
- * a newer restore (generation) has started.
+ * Resolves once the active tab is hydrated. Remaining tabs load in idle batches
+ * and abort if a newer restore (generation) has started.
  */
 export async function restoreProjectConversationTabs(projectId: string): Promise<number> {
   const gen = ++restoreGeneration;
@@ -79,31 +80,25 @@ export async function restoreProjectConversationTabs(projectId: string): Promise
 
   const [first, ...rest] = ordered;
   if (first) {
-    await hydrateTab(first);
+    await hydrateTab(first, () => gen === restoreGeneration);
     if (gen !== restoreGeneration) return gen;
   }
 
-  if (rest.length === 0) return gen;
-
-  await new Promise<void>((resolve) => {
-    let i = 0;
-    const step = () => {
-      if (gen !== restoreGeneration) {
-        resolve();
-        return;
-      }
-      const batch = rest.slice(i, i + 2);
-      i += batch.length;
-      void Promise.all(batch.map((id) => hydrateTab(id))).then(() => {
-        if (gen !== restoreGeneration || i >= rest.length) {
-          resolve();
-          return;
-        }
-        scheduleIdle(step);
-      });
-    };
-    scheduleIdle(step);
-  });
-
+  if (rest.length > 0) void hydrateRemainingTabs(gen, rest);
   return gen;
+}
+
+/** Idle-hydrate tabs the user is not looking at. Never blocks the switch. */
+function hydrateRemainingTabs(gen: number, rest: string[]): void {
+  let i = 0;
+  const step = () => {
+    if (gen !== restoreGeneration) return;
+    const batch = rest.slice(i, i + 2);
+    i += batch.length;
+    void Promise.all(batch.map((id) => hydrateTab(id, () => gen === restoreGeneration))).then(() => {
+      if (gen !== restoreGeneration || i >= rest.length) return;
+      scheduleIdle(step);
+    });
+  };
+  scheduleIdle(step);
 }

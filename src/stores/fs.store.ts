@@ -203,6 +203,9 @@ export const EDITOR_CACHE_MAX_PROJECTS = 10;
 // LRU recency order for editorCacheByProject (tail = most recent). Module
 // scope and non-reactive: it only drives eviction, never rendered UI.
 const editorCacheOrder: string[] = [];
+/** Projects whose dirty-draft flush is still in flight. Eviction skips them
+ *  so a cold restore cannot read the disk before the draft lands. */
+const editorFlushCount = new Map<string, number>();
 
 function touchEditorCache(projectId: string) {
   const i = editorCacheOrder.indexOf(projectId);
@@ -210,15 +213,22 @@ function touchEditorCache(projectId: string) {
   editorCacheOrder.push(projectId);
 }
 
-/** Pops least-recently-used ids while over the cap. */
+/** Pops least-recently-used ids while over the cap. In-flight flushes stay. */
 function overflowedEditorCacheIds(): string[] {
-  const overflow = editorCacheOrder.length - EDITOR_CACHE_MAX_PROJECTS;
-  return overflow > 0 ? editorCacheOrder.splice(0, overflow) : [];
+  const evicted: string[] = [];
+  while (editorCacheOrder.length > EDITOR_CACHE_MAX_PROJECTS) {
+    const index = editorCacheOrder.findIndex((id) => (editorFlushCount.get(id) ?? 0) === 0);
+    if (index < 0) break;
+    const id = editorCacheOrder.splice(index, 1)[0];
+    if (id) evicted.push(id);
+  }
+  return evicted;
 }
 
 /** Test-only hook: reset the module-level LRU bookkeeping. */
 export function __resetEditorCacheLru() {
   editorCacheOrder.length = 0;
+  editorFlushCount.clear();
 }
 
 /** 「打开并跳到行」的待消费目标；EditorPanel 读出即清。 */
@@ -311,10 +321,13 @@ interface FsStore {
   setPendingRename: (path: string | null) => void;
   consumePendingRename: () => string | null;
   clearError: () => void;
-  /** Flush dirty files, cache full EditorFile[] + paths for the project. Call before switching away. */
+  /** Snapshot the open editor, then flush dirty drafts. The snapshot is synchronous; disk writes follow. */
   saveCurrentEditorState: (projectId: string) => Promise<void>;
-  /** Restore editor for a project — from in-memory cache (instant) or persisted layout (re-reads disk). */
-  loadEditorState: (projectId: string) => Promise<void>;
+  /**
+   * Restore editor for a project — from in-memory cache (instant) or persisted layout (re-reads disk).
+   * `stillCurrent` lets a superseded switch drop a cold read instead of painting it.
+   */
+  loadEditorState: (projectId: string, stillCurrent?: () => boolean) => Promise<void>;
   /** Synchronously persist current open-file paths for the project (for beforeunload). */
   persistEditorLayout: (projectId: string) => void;
   /** Drop file-tree nodes that do not belong under `projectPath`. */
@@ -1153,41 +1166,68 @@ export const useFsStore = create<FsStore>()(
     },
 
     saveCurrentEditorState: async (projectId: string) => {
-      // Flush auto-save timers and persist dirty drafts to disk before
-      // swapping — mirrors closeFile's save-on-close contract.
-      const dirtyPaths = get().openFiles.filter((f) => f.dirty).map((f) => f.path);
-      for (const path of dirtyPaths) {
-        clearAutoSaveTimer(path);
-        await get().saveFile(path);
-      }
+      // Snapshot before any await so a project switch can paint the next
+      // editor immediately. Disk writes use this snapshot, not whatever
+      // tabs happen to be open when the write completes.
+      const dirty = get().openFiles.filter((f) => f.dirty && !f.stale && !f.diff);
+      for (const file of dirty) clearAutoSaveTimer(file.path);
+      const drafts = dirty.map((file) => ({ path: file.path, draft: file.draft }));
       set((s) => {
-        // Cache the full EditorFile[] so switching back is instant and
-        // preserves any drafts that failed to save.
         s.editorCacheByProject[projectId] = {
           openFiles: s.openFiles,
           activePath: s.activePath,
         };
-        // LRU eviction: keep the cache bounded; evicted projects still have
-        // their persisted layout for cold restore below.
         touchEditorCache(projectId);
-        for (const old of overflowedEditorCacheIds()) {
-          delete s.editorCacheByProject[old];
-        }
-        // Persist only paths — content is re-read from disk on cold restore.
         s.editorLayoutByProject[projectId] = {
-          paths: s.openFiles.filter((f) => !f.diff).map((f) => f.path), // diff 标签不进冷恢复
+          paths: s.openFiles.filter((f) => !f.diff).map((f) => f.path),
           activePath: s.activePath,
         };
       });
+      if (drafts.length === 0) {
+        set((s) => {
+          for (const old of overflowedEditorCacheIds()) delete s.editorCacheByProject[old];
+        });
+        return;
+      }
+
+      editorFlushCount.set(projectId, (editorFlushCount.get(projectId) ?? 0) + 1);
+      try {
+        for (const { path, draft } of drafts) {
+          try {
+            await fsWriteFile(path, draft);
+            noteSelfWrite(path, draft);
+            set((s) => {
+              const lists = [s.openFiles, s.editorCacheByProject[projectId]?.openFiles ?? []];
+              for (const list of lists) {
+                const target = list.find((f) => f.path === path);
+                if (!target || target.draft !== draft) continue;
+                target.content = draft;
+                target.dirty = false;
+              }
+            });
+          } catch (err) {
+            set((s) => { s.error = errorMessage(err); });
+          }
+        }
+      } finally {
+        const left = (editorFlushCount.get(projectId) ?? 1) - 1;
+        if (left <= 0) editorFlushCount.delete(projectId);
+        else editorFlushCount.set(projectId, left);
+        set((s) => {
+          for (const old of overflowedEditorCacheIds()) delete s.editorCacheByProject[old];
+        });
+      }
     },
 
-    loadEditorState: async (projectId: string) => {
+    loadEditorState: async (projectId: string, stillCurrent?: () => boolean) => {
+      if (stillCurrent && !stillCurrent()) return;
       // Kill any pending auto-save timers for the outgoing files.
       clearAllAutoSaveTimers();
 
       // 1. In-memory cache (instant, preserves unsaved drafts).
       const cached = get().editorCacheByProject[projectId];
       if (cached) {
+        if (stillCurrent && !stillCurrent()) return;
         touchEditorCache(projectId);
         set((s) => {
           s.openFiles = cached.openFiles;
@@ -1197,51 +1237,75 @@ export const useFsStore = create<FsStore>()(
         return;
       }
 
-      // 2. Persisted layout — re-open each file from disk as a pinned tab.
+      // 2. Persisted layout — read files off to the side, then commit once.
+      //    openFile() would mutate the live tab list as each read returns, so a
+      //    newer switch could end up showing a mix of both projects.
       const layout = get().editorLayoutByProject[projectId];
       if (layout && layout.paths.length > 0) {
-        // Snapshot preference before openFile forces visible=true into the map.
         const ui = useUiStore.getState();
         const hadPreferred = Object.prototype.hasOwnProperty.call(
           ui.editorVisibleByProject,
           projectId,
         );
         const preferred = ui.editorVisibleByProject[projectId];
+        if (stillCurrent && !stillCurrent()) return;
 
         set((s) => {
           s.openFiles = [];
           s.activePath = null;
         });
-        // Dedupe in case a prior buggy persist wrote the same path twice
-        // (React keys would collide and remount editors incorrectly).
         const uniquePaths = [...new Set(layout.paths)];
+        const loaded: EditorFile[] = [];
         const CONCURRENCY = 4;
         for (let i = 0; i < uniquePaths.length; i += CONCURRENCY) {
+          if (stillCurrent && !stillCurrent()) return;
           const chunk = uniquePaths.slice(i, i + CONCURRENCY);
-          await Promise.all(
+          const results = await Promise.all(
             chunk.map(async (path) => {
               try {
-                await get().openFile(path, true);
+                const result = await fsReadFile(path);
+                const text = result.content ?? "";
+                noteKnownDisk(path, text);
+                const file: EditorFile = {
+                  path,
+                  content: result.content ?? null,
+                  isText: result.is_text,
+                  size: result.size,
+                  draft: text,
+                  dirty: false,
+                  stale: false,
+                  pinned: true,
+                };
+                return file;
               } catch {
-                // File may have been deleted/moved since last session — skip.
+                return null;
               }
             }),
           );
+          if (stillCurrent && !stillCurrent()) return;
+          for (const file of results) {
+            if (file) loaded.push(file);
+          }
         }
-        // Restore the saved active tab if it survived re-opening.
-        if (layout.activePath && get().openFiles.some((f) => f.path === layout.activePath)) {
-          set((s) => { s.activePath = layout.activePath; });
-        }
+        if (stillCurrent && !stillCurrent()) return;
+        const activePath =
+          layout.activePath && loaded.some((f) => f.path === layout.activePath)
+            ? layout.activePath
+            : (loaded[loaded.length - 1]?.path ?? null);
+        set((s) => {
+          s.openFiles = loaded;
+          s.activePath = activePath;
+        });
         if (hadPreferred) {
-          // Re-apply Esc-hidden (or explicitly shown) preference after hydrate.
           useUiStore.getState().setEditorVisible(!!preferred);
         } else {
-          useUiStore.getState().syncEditorVisibleForProject(projectId, get().openFiles.length > 0);
+          useUiStore.getState().syncEditorVisibleForProject(projectId, loaded.length > 0);
         }
         return;
       }
 
       // 3. No saved state for this project — start with a clean editor.
+      if (stillCurrent && !stillCurrent()) return;
       set((s) => {
         s.openFiles = [];
         s.activePath = null;

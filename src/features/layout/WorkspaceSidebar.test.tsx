@@ -80,6 +80,16 @@ it("groups conversations by project instead of recent tasks and tabs", async () 
     expect.objectContaining({ id: "p2" }),
   );
 });
+it("keeps every project clickable while a switch is still settling", () => {
+  vi.mocked(activateProject).mockReturnValue(new Promise(() => {}));
+  render(<WorkspaceSidebar />);
+  fireEvent.click(screen.getByRole("button", { name: "p2" }));
+  expect(screen.getByRole("button", { name: "p1" }).hasAttribute("disabled")).toBe(false);
+  expect(screen.getByRole("button", { name: "p2" }).hasAttribute("disabled")).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "p1" }));
+  expect(activateProject).toHaveBeenCalledTimes(2);
+});
+
 it("collapses the current project without deleting its conversations", () => {
   render(<WorkspaceSidebar />);
   fireEvent.click(screen.getByRole("button", { name: "p1" }));

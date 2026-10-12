@@ -73,6 +73,41 @@ describe("activateProject", () => {
     expect(switchTab).not.toHaveBeenCalled();
   });
 
+  it("switches without waiting for the editor flush, cold restore, or file watcher", async () => {
+    useFsStore.setState({
+      // 永不 resolve：activateProject 不该等它们
+      saveCurrentEditorState: vi.fn(() => new Promise<void>(() => {})),
+      loadEditorState: vi.fn(() => new Promise<void>(() => {})),
+    });
+    fsWatchStart.mockReturnValue(new Promise<void>(() => {}));
+
+    await activateProject(projectB);
+
+    expect(useProjectStore.getState().switchProject).toHaveBeenCalledWith("p2");
+    expect(useFsStore.getState().loadEditorState).toHaveBeenCalledWith("p2", expect.any(Function));
+  });
+
+  it("does not apply a tab fallback after a newer switch has started", async () => {
+    useConversationStore.setState({
+      tabsByProject: { p2: ["conv-old", "conv-active"] },
+      activeTabByProject: { p2: null },
+    });
+    let releaseFirst: () => void = () => {};
+    restoreProjectConversationTabs
+      .mockImplementationOnce(() => new Promise<number>((resolve) => {
+        releaseFirst = () => resolve(1);
+      }))
+      .mockResolvedValue(1);
+    const switchTab = vi.spyOn(useConversationStore.getState(), "switchTab");
+
+    const first = activateProject(projectB);
+    await activateProject({ ...projectB, id: "p3", name: "gamma", path: "/tmp/gamma" });
+    releaseFirst();
+    await first;
+
+    expect(switchTab).not.toHaveBeenCalled();
+  });
+
   it("falls back to the most recent open tab when no active tab is restored", async () => {
     useConversationStore.setState({
       tabsByProject: { p2: ["conv-old", "conv-active"] },

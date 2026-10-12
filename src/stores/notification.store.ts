@@ -5,6 +5,7 @@ import { useProjectStore } from "./project.store";
 import { useConversationStore } from "./conversation.store";
 import { useFsStore } from "./fs.store";
 import { useClipboardStore } from "./clipboard.store";
+import { isCurrentActivation, nextActivationEpoch } from "./activationEpoch";
 
 /** 软件内通知（Agent 请求确认等），从左上角滑入，点击跳转到对应项目会话。 */
 export interface AppNotification {
@@ -71,40 +72,41 @@ export const useNotificationStore = create<NotificationStore>()(
       const projectId = n.projectId;
       const conversationId = n.conversationId;
       void (async () => {
+        const epoch = nextActivationEpoch();
+        const stillCurrent = () => isCurrentActivation(epoch);
         const fs = useFsStore.getState();
         const oldId = useProjectStore.getState().activeProjectId;
         if (oldId && oldId !== projectId) {
-          await fs.saveCurrentEditorState(oldId);
+          void fs.saveCurrentEditorState(oldId);
         }
         const project = useProjectStore.getState().projects.find((p) => p.id === projectId);
         useProjectStore.getState().switchProject(projectId);
         fs.clearTreeExcept(project?.path ?? "");
         useClipboardStore.getState().clear();
         fs.switchSearchProject(projectId);
-        await Promise.all([
-          fs.loadEditorState(projectId),
-          (async () => {
-            const c = useConversationStore.getState();
-            const convs = await c.loadConversations(projectId);
-            const tabs = useConversationStore.getState().tabsByProject[projectId] ?? [];
-            // 目标会话未在页签内（如页签已关）则补开一个。
-            if (convs && !tabs.includes(conversationId)) {
-              const valid = new Set(convs.map((x) => x.id));
-              if (valid.has(conversationId)) {
-                c.restoreTabs(projectId, [...tabs, conversationId], conversationId, valid);
-              }
-            }
-          })(),
-          fsWatchStart(project?.path ?? "").catch(() => {}),
-        ]);
+        void fs.loadEditorState(projectId, stillCurrent);
+        void fsWatchStart(project?.path ?? "").catch(() => {});
+        const convs = await useConversationStore.getState().loadConversations(projectId);
+        if (!stillCurrent()) return;
+        const tabs = useConversationStore.getState().tabsByProject[projectId] ?? [];
+        // 目标会话未在页签内（如页签已关）则补开一个。
+        if (convs && !tabs.includes(conversationId)) {
+          const valid = new Set(convs.map((x) => x.id));
+          if (valid.has(conversationId)) {
+            useConversationStore
+              .getState()
+              .restoreTabs(projectId, [...tabs, conversationId], conversationId, valid);
+          }
+        }
         // 末尾校验：异步流程期间用户可能又切走了项目，或目标会话已不存在
         // （restoreTabs 未执行）——此时不激活，避免 activeTabByProject
         // 指向不在 tabs 列表里的未知 id。
         const st = useConversationStore.getState();
-        const tabs = st.tabsByProject[projectId] ?? [];
+        const openTabs = st.tabsByProject[projectId] ?? [];
         if (
+          stillCurrent() &&
           useProjectStore.getState().activeProjectId === projectId &&
-          tabs.includes(conversationId)
+          openTabs.includes(conversationId)
         ) {
           st.switchTab(conversationId);
         }

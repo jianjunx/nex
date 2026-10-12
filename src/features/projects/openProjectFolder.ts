@@ -2,6 +2,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useProjectStore } from "@/stores/project.store";
 import { useFsStore } from "@/stores/fs.store";
 import { resetFsSelectionForProjectSwitch } from "./activateProject";
+import { isCurrentActivation, nextActivationEpoch } from "../../stores/activationEpoch";
 import { restoreProjectConversationTabs } from "./restoreProjectConversationTabs";
 import { startNewTask } from "./startTask";
 import { fsWatchStart } from "@/bridge/tauri";
@@ -24,19 +25,21 @@ export async function openProjectFolder(opts: OpenProjectFolderOptions = {}) {
     title: "打开文件夹新增项目",
   });
   if (typeof path !== "string") return;
+  const epoch = nextActivationEpoch();
+  const stillCurrent = () => isCurrentActivation(epoch);
   const old = useProjectStore.getState().activeProjectId;
-  if (old) await useFsStore.getState().saveCurrentEditorState(old);
+  if (old) void useFsStore.getState().saveCurrentEditorState(old);
   await useProjectStore.getState().openProject(path);
+  if (!stillCurrent()) return;
   const state = useProjectStore.getState();
   if (state.error) throw new Error(state.error);
   const project = state.projects.find((p) => p.id === state.activeProjectId);
   if (!project) return;
   resetFsSelectionForProjectSwitch(project.path);
   useFsStore.getState().switchSearchProject(project.id);
-  await Promise.all([
-    useFsStore.getState().loadEditorState(project.id),
-    restoreProjectConversationTabs(project.id),
-    fsWatchStart(project.path).catch(() => {}),
-  ]);
+  void useFsStore.getState().loadEditorState(project.id, stillCurrent);
+  void fsWatchStart(project.path).catch(() => {});
+  await restoreProjectConversationTabs(project.id);
+  if (!stillCurrent()) return;
   if (opts.startTask !== false) await startNewTask(project);
 }

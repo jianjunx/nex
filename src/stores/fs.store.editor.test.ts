@@ -15,7 +15,11 @@ vi.mock("../bridge/tauri", () => ({
 
 vi.mock("./ui.store", () => ({
   useUiStore: {
-    getState: () => ({ setEditorVisible, syncEditorVisibleForProject }),
+    getState: () => ({
+      setEditorVisible,
+      syncEditorVisibleForProject,
+      editorVisibleByProject: {},
+    }),
   },
 }));
 
@@ -330,6 +334,62 @@ describe("fs.store diff tabs", () => {
     await useFsStore.getState().reloadEditor();
     expect(fsReadFile).not.toHaveBeenCalled();
     expect(useFsStore.getState().openFiles[0].diff?.revised).toBe("v2");
+  });
+
+  it("snapshots a dirty editor before the disk write, then flushes that draft", async () => {
+    __resetEditorCacheLru();
+    fsReadFile.mockResolvedValueOnce({ is_text: true, content: "a", size: 1 });
+    await useFsStore.getState().openFile("/p/a.ts", true);
+    useFsStore.getState().setDraft("a!");
+    let resolveWrite: (value?: unknown) => void = () => {};
+    fsWriteFile.mockReturnValue(new Promise((resolve) => {
+      resolveWrite = resolve;
+    }));
+
+    const pending = useFsStore.getState().saveCurrentEditorState("proj-swap");
+    expect(useFsStore.getState().editorCacheByProject["proj-swap"]?.openFiles[0]?.draft).toBe("a!");
+    useFsStore.setState({ openFiles: [], activePath: null });
+    resolveWrite();
+    await pending;
+
+    expect(fsWriteFile).toHaveBeenCalledWith("/p/a.ts", "a!");
+    expect(useFsStore.getState().editorCacheByProject["proj-swap"]?.openFiles[0]?.dirty).toBe(false);
+  });
+
+  it("drops a cold editor restore once a newer switch has taken over", async () => {
+    let resolveRead: (value: unknown) => void = () => {};
+    fsReadFile.mockReturnValue(new Promise((resolve) => {
+      resolveRead = resolve;
+    }));
+    useFsStore.setState({
+      editorCacheByProject: {},
+      editorLayoutByProject: {
+        slow: { paths: ["/slow.ts"], activePath: "/slow.ts" },
+      },
+      openFiles: [],
+      activePath: null,
+    });
+    let current = true;
+    const pending = useFsStore.getState().loadEditorState("slow", () => current);
+    expect(useFsStore.getState().openFiles).toEqual([]);
+
+    current = false;
+    const kept = {
+      path: "/kept.ts",
+      content: "k",
+      isText: true,
+      size: 1,
+      draft: "k",
+      dirty: false,
+      stale: false,
+      pinned: true,
+    };
+    useFsStore.setState({ openFiles: [kept], activePath: "/kept.ts" });
+    resolveRead({ is_text: true, content: "slow", size: 4 });
+    await pending;
+
+    expect(useFsStore.getState().activePath).toBe("/kept.ts");
+    expect(useFsStore.getState().openFiles.map((f) => f.path)).toEqual(["/kept.ts"]);
   });
 
   it("editorCacheByProject evicts LRU projects beyond the cap (layout kept for cold restore)", async () => {

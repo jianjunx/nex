@@ -4,6 +4,7 @@ import { useClipboardStore } from "../../stores/clipboard.store";
 import { useConversationStore } from "../../stores/conversation.store";
 import { useFsStore } from "../../stores/fs.store";
 import { useProjectStore } from "../../stores/project.store";
+import { isCurrentActivation, nextActivationEpoch } from "../../stores/activationEpoch";
 import { restoreProjectConversationTabs } from "./restoreProjectConversationTabs";
 
 /** Clear selection and clipboard state that belongs to the previous project. */
@@ -13,15 +14,22 @@ export function resetFsSelectionForProjectSwitch(projectPath: string): void {
 }
 
 /**
- * Switch projects from any project picker while preserving the same state
- * restoration behavior as the top-bar project menu.
+ * Switch projects from any project picker.
+ *
+ * The active project changes immediately. Editor flush, cold file restore,
+ * thread hydration and the file watcher keep running in the background; a
+ * newer switch abandons their results.
  */
 export async function activateProject(project: Project): Promise<void> {
   const oldId = useProjectStore.getState().activeProjectId;
   if (oldId === project.id) return;
 
+  const epoch = nextActivationEpoch();
+  const stillCurrent = () => isCurrentActivation(epoch);
+
   if (oldId) {
-    await useFsStore.getState().saveCurrentEditorState(oldId);
+    // Snapshot is synchronous; dirty files flush after this returns.
+    void useFsStore.getState().saveCurrentEditorState(oldId);
   }
 
   useProjectStore.getState().switchProject(project.id);
@@ -34,11 +42,11 @@ export async function activateProject(project: Project): Promise<void> {
   const keep = new Set(useConversationStore.getState().tabsByProject[project.id] ?? []);
   useAgentStore.getState().pruneEntriesExcept(keep);
 
-  await Promise.all([
-    useFsStore.getState().loadEditorState(project.id),
-    restoreProjectConversationTabs(project.id),
-    fsWatchStart(project.path).catch(() => {}),
-  ]);
+  void useFsStore.getState().loadEditorState(project.id, stillCurrent);
+  void fsWatchStart(project.path).catch(() => {});
+
+  await restoreProjectConversationTabs(project.id);
+  if (!stillCurrent()) return;
 
   const convState = useConversationStore.getState();
   const openTabs = convState.tabsByProject[project.id] ?? [];
@@ -51,7 +59,7 @@ export async function activateProject(project: Project): Promise<void> {
   const latestId = [...convs]
     .filter((c) => openTabs.includes(c.id))
     .sort((a, b) => b.updated_at - a.updated_at)[0]?.id;
-  if (latestId) {
+  if (latestId && stillCurrent()) {
     convState.switchTab(latestId);
   }
 }

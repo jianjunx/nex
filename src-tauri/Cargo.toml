@@ -81,8 +81,13 @@ openssl = { version = "0.10", features = ["vendored"] }
 objc2-app-kit = { version = "0.3", default-features = false, features = [
   "std",
   "objc2-core-foundation",
+  "NSButton",
   "NSToolbar",
+  "NSView",
   "NSWindow",
 ] }
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["std", "NSString"] }
+# CGFloat / NSRect 等几何类型的来源；objc2-app-kit 已经传递依赖它，这里提为直接
+# 依赖只是为了能名出 CGFloat（app-kit 不重新导出）。
+objc2-core-foundation = "0.3"

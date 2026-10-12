@@ -21,7 +21,7 @@
         "transparent": false,
         "decorations": true,
         "titleBarStyle": "Overlay",
-        "trafficLightPosition": { "x": 20, "y": 21 },
+        "trafficLightPosition": { "x": 20, "y": 30 },
         "dragDropEnabled": true
       }
     ],

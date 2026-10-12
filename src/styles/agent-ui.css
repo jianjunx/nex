@@ -412,7 +412,9 @@ button,
 .nex-workspace-sidebar {
   width: var(--nex-sidebar-w, 208px);
   flex-shrink: 0;
-  padding: 4px 10px 10px;
+  /* Right padding is 0 so the project-list scrollbar can sit on the
+     workbench hairline. Other rows add the inset back themselves. */
+  padding: 4px 0 10px 10px;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -511,6 +513,12 @@ html[data-nex-resizing] .nex-workspace-sidebar {
   min-height: 0;
   overflow: auto;
   flex: 1;
+  /* Inset the rows; the scrollbar stays on the sidebar's right edge. */
+  padding-right: 10px;
+}
+.beautiful-ui.nex-workspace-sidebar:not(.nex-workspace-rail) > :not(.nex-sidebar-recents) {
+  margin-right: 10px;
+  width: auto;
 }
 .nex-workspace-brand {
   display: flex;

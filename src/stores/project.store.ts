@@ -18,7 +18,7 @@ interface ProjectStore {
   error: string | null;
 
   loadProjects: () => Promise<void>;
-  openProject: (path: string) => Promise<void>;
+  openProject: (path: string, opts?: { stillCurrent?: () => boolean }) => Promise<void>;
   switchProject: (id: string) => void;
   removeProject: (id: string) => Promise<void>;
 }
@@ -94,13 +94,17 @@ export const useProjectStore = create<ProjectStore>()(
         }
       },
 
-      openProject: async (path: string) => {
+      openProject: async (path: string, opts: { stillCurrent?: () => boolean } = {}) => {
         set((s) => {
           s.loading = true;
           s.error = null;
         });
         try {
           const project = await projectOpen(path);
+          // project_open 是一次 IPC，这期间用户可能已经点了别的项目。那时只把
+          // 新文件夹加进列表，不要抢 activeProjectId——否则侧栏高亮、文件树、
+          // 编辑器、watcher 会全指向不同项目，而且不会自愈。
+          const superseded = opts.stillCurrent ? !opts.stillCurrent() : false;
           set((s) => {
             // project_open upserts by path, so the project may already be listed
             const rest = s.projects.filter((p) => p.id !== project.id);
@@ -109,7 +113,7 @@ export const useProjectStore = create<ProjectStore>()(
             // 唯一来源，只重排数组的话 sortByProjectOrder 会按旧 order 把新
             // 项目（旧 order 里没有 → MAX_SAFE_INTEGER）甩到末尾。
             s.projectOrder = [project.id, ...rest.map((p) => p.id)];
-            s.activeProjectId = project.id;
+            if (!superseded) s.activeProjectId = project.id;
           });
         } catch (err) {
           set((s) => {

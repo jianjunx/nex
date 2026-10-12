@@ -421,3 +421,123 @@ describe("fs.store diff tabs", () => {
     expect(s.editorCacheByProject["proj-2"]).toBeUndefined();
   });
 });
+
+describe("fs.store editor restore races", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    editorAutoSave = false;
+    clearAllAutoSaveTimers();
+    __resetSelfWriteForTest();
+    __resetEditorCacheLru();
+    useFsStore.setState({
+      openFiles: [],
+      activePath: null,
+      error: null,
+      loading: false,
+      editorCacheByProject: {},
+      editorLayoutByProject: {},
+      nodesByDir: {},
+      expandedDirs: new Set(),
+      selectedPath: null,
+      pendingRenamePath: null,
+      pendingDeletePath: null,
+    });
+  });
+
+  const file = (path: string, draft = "", over: Partial<{ dirty: boolean; stale: boolean }> = {}) => ({
+    path,
+    content: draft,
+    isText: true,
+    size: 0,
+    draft,
+    dirty: false,
+    stale: false,
+    pinned: true,
+    ...over,
+  });
+
+  // 快速连切两个项目时，中间那个项目的冷恢复还没落地，openFiles 是空的。
+  // 这次快照曾把空布局持久化下去，该项目的页签就永久没了。
+  it("does not persist an empty layout for a project whose restore is in flight", async () => {
+    useFsStore.setState({
+      editorLayoutByProject: { p1: { paths: ["/p1/a.ts"], activePath: "/p1/a.ts" } },
+    });
+    // 让 p1 的冷恢复卡住，模拟"读盘还没回来"
+    let release!: () => void;
+    fsReadFile.mockImplementation(() => new Promise((r) => { release = () => r({ is_text: true, content: "x", size: 1 }); }));
+
+    const restoring = useFsStore.getState().loadEditorState("p1");
+    await Promise.resolve();
+    expect(useFsStore.getState().openFiles).toEqual([]);
+
+    // 用户在恢复落地前又切走了 → saveCurrentEditorState(p1) 必须拒绝做快照
+    await useFsStore.getState().saveCurrentEditorState("p1");
+
+    expect(useFsStore.getState().editorLayoutByProject.p1).toEqual({
+      paths: ["/p1/a.ts"],
+      activePath: "/p1/a.ts",
+    });
+    expect(useFsStore.getState().editorCacheByProject.p1).toBeUndefined();
+
+    release();
+    await restoring;
+  });
+
+  it("still saves normally once the restore has finished", async () => {
+    useFsStore.setState({ openFiles: [file("/p1/a.ts", "v")], activePath: "/p1/a.ts" });
+    await useFsStore.getState().saveCurrentEditorState("p1");
+    expect(useFsStore.getState().editorLayoutByProject.p1).toEqual({
+      paths: ["/p1/a.ts"],
+      activePath: "/p1/a.ts",
+    });
+  });
+
+  // 冷恢复跨多个 await，这期间用户手动打开的文件不能被整体赋值丢掉。
+  it("keeps tabs the user opened while a cold restore was still reading", async () => {
+    useFsStore.setState({
+      editorLayoutByProject: { p1: { paths: ["/p1/a.ts", "/p1/b.ts"], activePath: "/p1/a.ts" } },
+    });
+    fsReadFile.mockImplementation((p: string) =>
+      Promise.resolve({ is_text: true, content: `content of ${p}`, size: 4 }),
+    );
+
+    const restoring = useFsStore.getState().loadEditorState("p1");
+    await Promise.resolve();
+    // 恢复进行中，用户从文件树点开了一个不在布局里的文件
+    useFsStore.setState((s) => {
+      s.openFiles.push(file("/p1/user-picked.ts", "mine"));
+      s.activePath = "/p1/user-picked.ts";
+    });
+
+    await restoring;
+
+    const paths = useFsStore.getState().openFiles.map((f) => f.path);
+    expect(paths).toContain("/p1/user-picked.ts");
+    expect(paths).toContain("/p1/a.ts");
+    expect(paths).toContain("/p1/b.ts");
+    // 用户已经停在自已打开的文件上，别把焦点抢回布局里的活动页签
+    expect(useFsStore.getState().activePath).toBe("/p1/user-picked.ts");
+  });
+
+  // 快照之后磁盘被外部改动（stale），flush 不能把它静默回滚。
+  it("skips a draft whose file went stale after the snapshot", async () => {
+    useFsStore.setState({
+      openFiles: [
+        file("/p1/a.ts", "v2", { dirty: true }),
+        file("/p1/b.ts", "w2", { dirty: true }),
+      ],
+      activePath: "/p1/a.ts",
+    });
+    const snapshotted = useFsStore.getState().saveCurrentEditorState("p1");
+    // 第一个写盘还在飞，第二个文件被外部改动了
+    useFsStore.setState((s) => {
+      const b = s.openFiles.find((f) => f.path === "/p1/b.ts");
+      if (b) b.stale = true;
+    });
+    await snapshotted;
+
+    const written = fsWriteFile.mock.calls.map((c) => c[0]);
+    expect(written).toContain("/p1/a.ts");
+    expect(written).not.toContain("/p1/b.ts");
+  });
+});

@@ -84,7 +84,9 @@ export const useNotificationStore = create<NotificationStore>()(
         fs.clearTreeExcept(project?.path ?? "");
         useClipboardStore.getState().clear();
         fs.switchSearchProject(projectId);
-        void fs.loadEditorState(projectId, stillCurrent);
+        void fs.loadEditorState(projectId, stillCurrent).catch((err) => {
+          console.error("[notification] 恢复编辑器状态失败:", err);
+        });
         void fsWatchStart(project?.path ?? "").catch(() => {});
         const convs = await useConversationStore.getState().loadConversations(projectId);
         if (!stillCurrent()) return;

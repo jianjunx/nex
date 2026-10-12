@@ -42,7 +42,9 @@ export async function activateProject(project: Project): Promise<void> {
   const keep = new Set(useConversationStore.getState().tabsByProject[project.id] ?? []);
   useAgentStore.getState().pruneEntriesExcept(keep);
 
-  void useFsStore.getState().loadEditorState(project.id, stillCurrent);
+  void useFsStore.getState().loadEditorState(project.id, stillCurrent).catch((err) => {
+    console.error("[activateProject] 恢复编辑器状态失败:", err);
+  });
   void fsWatchStart(project.path).catch(() => {});
 
   await restoreProjectConversationTabs(project.id);

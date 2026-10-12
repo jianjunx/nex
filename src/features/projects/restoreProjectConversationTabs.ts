@@ -88,6 +88,20 @@ export async function restoreProjectConversationTabs(projectId: string): Promise
   return gen;
 }
 
+/**
+ * 立刻 hydrate 一个会话页签。
+ *
+ * `restoreProjectConversationTabs` 现在只保证活动页签 hydrate 完就返回，其余
+ * 页签走惰性队列。用户直接点某个会话行时，那个页签可能还没排到——不先 hydrate
+ * 就切过去会看到一段空白线程。调用方应只在"这个页签还没有条目"时调用，避免
+ * 无谓的 IPC。
+ */
+export async function hydrateConversationTab(tabId: string): Promise<void> {
+  // 用户的点击就是最新意图，不做代次守卫；真被更新的恢复覆盖也有 restoreTabs
+  // 的兜底（重新激活该项目会再 hydrate 一遍）。
+  await hydrateTab(tabId, () => true);
+}
+
 /** Idle-hydrate tabs the user is not looking at. Never blocks the switch. */
 function hydrateRemainingTabs(gen: number, rest: string[]): void {
   let i = 0;
@@ -95,10 +109,15 @@ function hydrateRemainingTabs(gen: number, rest: string[]): void {
     if (gen !== restoreGeneration) return;
     const batch = rest.slice(i, i + 2);
     i += batch.length;
-    void Promise.all(batch.map((id) => hydrateTab(id, () => gen === restoreGeneration))).then(() => {
-      if (gen !== restoreGeneration || i >= rest.length) return;
-      scheduleIdle(step);
-    });
+    void Promise.all(batch.map((id) => hydrateTab(id, () => gen === restoreGeneration)))
+      .then(() => {
+        if (gen !== restoreGeneration || i >= rest.length) return;
+        scheduleIdle(step);
+      })
+      .catch((err) => {
+        // 单个批次失败不该掐掉整条链，也别变成 unhandled rejection。
+        console.warn("[restoreTabs] idle hydrate batch failed:", err);
+      });
   };
   scheduleIdle(step);
 }

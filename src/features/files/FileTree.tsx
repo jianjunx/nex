@@ -428,7 +428,10 @@ function FileTreeContent() {
   // 不了，F2 / Enter 依旧没反应。handledRef 保证只在计数变化时动手——
   // 否则每次选中变动都会抢一次焦点，重命名输入框会被打断。
   const filesFocusRequest = useUiStore((s) => s.filesFocusRequest);
-  const handledFocusRequestRef = useRef(0);
+  // 用 store 里的当前值做初值，而不是 0：Files 面板被隐藏再显示（或侧栏折叠）
+  // 会重新挂载，若从 0 开始就会把上一次 ⌘⇧E 留下的计数当成"新请求"，凭空把
+  // 焦点抢进文件树。
+  const handledFocusRequestRef = useRef(useUiStore.getState().filesFocusRequest);
   useEffect(() => {
     if (filesFocusRequest === 0 || filesFocusRequest === handledFocusRequestRef.current) return;
     handledFocusRequestRef.current = filesFocusRequest;

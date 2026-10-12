@@ -29,7 +29,7 @@ export async function openProjectFolder(opts: OpenProjectFolderOptions = {}) {
   const stillCurrent = () => isCurrentActivation(epoch);
   const old = useProjectStore.getState().activeProjectId;
   if (old) void useFsStore.getState().saveCurrentEditorState(old);
-  await useProjectStore.getState().openProject(path);
+  await useProjectStore.getState().openProject(path, { stillCurrent });
   if (!stillCurrent()) return;
   const state = useProjectStore.getState();
   if (state.error) throw new Error(state.error);
@@ -37,7 +37,9 @@ export async function openProjectFolder(opts: OpenProjectFolderOptions = {}) {
   if (!project) return;
   resetFsSelectionForProjectSwitch(project.path);
   useFsStore.getState().switchSearchProject(project.id);
-  void useFsStore.getState().loadEditorState(project.id, stillCurrent);
+  void useFsStore.getState().loadEditorState(project.id, stillCurrent).catch((err) => {
+    console.error("[openProjectFolder] 恢复编辑器状态失败:", err);
+  });
   void fsWatchStart(project.path).catch(() => {});
   await restoreProjectConversationTabs(project.id);
   if (!stillCurrent()) return;

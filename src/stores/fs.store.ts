@@ -206,6 +206,11 @@ const editorCacheOrder: string[] = [];
 /** Projects whose dirty-draft flush is still in flight. Eviction skips them
  *  so a cold restore cannot read the disk before the draft lands. */
 const editorFlushCount = new Map<string, number>();
+/** Projects whose editor restore is currently running. Saving one of these is
+ *  refused: its `openFiles` is either empty (a cold restore has not landed yet)
+ *  or still holds the previous project's tabs, so a snapshot would persist a
+ *  bogus layout and permanently wipe that project's tab list. */
+const editorRestoreInFlight = new Set<string>();
 
 function touchEditorCache(projectId: string) {
   const i = editorCacheOrder.indexOf(projectId);
@@ -229,6 +234,7 @@ function overflowedEditorCacheIds(): string[] {
 export function __resetEditorCacheLru() {
   editorCacheOrder.length = 0;
   editorFlushCount.clear();
+  editorRestoreInFlight.clear();
 }
 
 /** 「打开并跳到行」的待消费目标；EditorPanel 读出即清。 */
@@ -1166,6 +1172,10 @@ export const useFsStore = create<FsStore>()(
     },
 
     saveCurrentEditorState: async (projectId: string) => {
+      // 该项目正在恢复中：此刻的 openFiles 要么是空的（冷恢复还没落地），
+      // 要么还是上一个项目的页签。拿它做快照会把一份假布局持久化下去，
+      // 该项目的页签就永久没了。直接放弃本次保存。
+      if (editorRestoreInFlight.has(projectId)) return;
       // Snapshot before any await so a project switch can paint the next
       // editor immediately. Disk writes use this snapshot, not whatever
       // tabs happen to be open when the write completes.
@@ -1182,6 +1192,8 @@ export const useFsStore = create<FsStore>()(
           paths: s.openFiles.filter((f) => !f.diff).map((f) => f.path),
           activePath: s.activePath,
         };
+        // 清掉上一次失败留下的横幅，免得它跨项目一直挂着。
+        s.error = null;
       });
       if (drafts.length === 0) {
         set((s) => {
@@ -1193,6 +1205,16 @@ export const useFsStore = create<FsStore>()(
       editorFlushCount.set(projectId, (editorFlushCount.get(projectId) ?? 0) + 1);
       try {
         for (const { path, draft } of drafts) {
+          // 快照之后磁盘可能被外部改动（watcher 会把文件标成 stale）。旧的
+          // saveFile 每次写前都重新判断，这里也必须——否则会把外部改动静默
+          // 回滚掉，而 UI 还挂着"文件已被修改"的横幅，点重新加载读到的是
+          // 被覆盖后的内容。
+          const live = findOpenFile(get().openFiles, path);
+          const cachedFile = findOpenFile(
+            get().editorCacheByProject[projectId]?.openFiles ?? [],
+            path,
+          );
+          if (live?.stale || cachedFile?.stale) continue;
           try {
             await fsWriteFile(path, draft);
             noteSelfWrite(path, draft);
@@ -1206,7 +1228,13 @@ export const useFsStore = create<FsStore>()(
               }
             });
           } catch (err) {
-            set((s) => { s.error = errorMessage(err); });
+            // 只有还停在这个项目时才弹横幅：文件已经不在眼前，报一个打不开
+            // 的文件名只会让人困惑。
+            if (useProjectStore.getState().activeProjectId === projectId) {
+              set((s) => { s.error = errorMessage(err); });
+            } else {
+              console.warn(`[fs] 后台flush写入失败（项目已切走）${path}:`, err);
+            }
           }
         }
       } finally {
@@ -1223,95 +1251,16 @@ export const useFsStore = create<FsStore>()(
       if (stillCurrent && !stillCurrent()) return;
       // Kill any pending auto-save timers for the outgoing files.
       clearAllAutoSaveTimers();
-
-      // 1. In-memory cache (instant, preserves unsaved drafts).
-      const cached = get().editorCacheByProject[projectId];
-      if (cached) {
-        if (stillCurrent && !stillCurrent()) return;
-        touchEditorCache(projectId);
-        set((s) => {
-          s.openFiles = cached.openFiles;
-          s.activePath = cached.activePath;
-        });
-        useUiStore.getState().syncEditorVisibleForProject(projectId, cached.openFiles.length > 0);
-        return;
+      // 标记"恢复中"：这期间 saveCurrentEditorState(projectId) 必须拒绝做快照，
+      // 否则一次快速切换会把空列表当成该项目的状态持久化掉。
+      editorRestoreInFlight.add(projectId);
+      try {
+        await restoreEditorState(projectId, stillCurrent);
+      } finally {
+        editorRestoreInFlight.delete(projectId);
       }
-
-      // 2. Persisted layout — read files off to the side, then commit once.
-      //    openFile() would mutate the live tab list as each read returns, so a
-      //    newer switch could end up showing a mix of both projects.
-      const layout = get().editorLayoutByProject[projectId];
-      if (layout && layout.paths.length > 0) {
-        const ui = useUiStore.getState();
-        const hadPreferred = Object.prototype.hasOwnProperty.call(
-          ui.editorVisibleByProject,
-          projectId,
-        );
-        const preferred = ui.editorVisibleByProject[projectId];
-        if (stillCurrent && !stillCurrent()) return;
-
-        set((s) => {
-          s.openFiles = [];
-          s.activePath = null;
-        });
-        const uniquePaths = [...new Set(layout.paths)];
-        const loaded: EditorFile[] = [];
-        const CONCURRENCY = 4;
-        for (let i = 0; i < uniquePaths.length; i += CONCURRENCY) {
-          if (stillCurrent && !stillCurrent()) return;
-          const chunk = uniquePaths.slice(i, i + CONCURRENCY);
-          const results = await Promise.all(
-            chunk.map(async (path) => {
-              try {
-                const result = await fsReadFile(path);
-                const text = result.content ?? "";
-                noteKnownDisk(path, text);
-                const file: EditorFile = {
-                  path,
-                  content: result.content ?? null,
-                  isText: result.is_text,
-                  size: result.size,
-                  draft: text,
-                  dirty: false,
-                  stale: false,
-                  pinned: true,
-                };
-                return file;
-              } catch {
-                return null;
-              }
-            }),
-          );
-          if (stillCurrent && !stillCurrent()) return;
-          for (const file of results) {
-            if (file) loaded.push(file);
-          }
-        }
-        if (stillCurrent && !stillCurrent()) return;
-        const activePath =
-          layout.activePath && loaded.some((f) => f.path === layout.activePath)
-            ? layout.activePath
-            : (loaded[loaded.length - 1]?.path ?? null);
-        set((s) => {
-          s.openFiles = loaded;
-          s.activePath = activePath;
-        });
-        if (hadPreferred) {
-          useUiStore.getState().setEditorVisible(!!preferred);
-        } else {
-          useUiStore.getState().syncEditorVisibleForProject(projectId, loaded.length > 0);
-        }
-        return;
-      }
-
-      // 3. No saved state for this project — start with a clean editor.
-      if (stillCurrent && !stillCurrent()) return;
-      set((s) => {
-        s.openFiles = [];
-        s.activePath = null;
-      });
-      useUiStore.getState().syncEditorVisibleForProject(projectId, false);
     },
+
 
     persistEditorLayout: (projectId: string) => {
       const { openFiles, activePath } = get();
@@ -1362,3 +1311,108 @@ export const useFsStore = create<FsStore>()(
     }
   )
 );
+
+/**
+ * 恢复某个项目的编辑器状态。抽成模块级函数只是为了给 loadEditorState 包一层
+ * try/finally（标记"恢复中"）；逻辑本身没有变化。
+ */
+async function restoreEditorState(
+  projectId: string,
+  stillCurrent?: () => boolean,
+): Promise<void> {
+      const cached = useFsStore.getState().editorCacheByProject[projectId];
+      if (cached) {
+        if (stillCurrent && !stillCurrent()) return;
+        touchEditorCache(projectId);
+        useFsStore.setState((s) => {
+          s.openFiles = cached.openFiles;
+          s.activePath = cached.activePath;
+        });
+        useUiStore.getState().syncEditorVisibleForProject(projectId, cached.openFiles.length > 0);
+        return;
+      }
+
+      // 2. Persisted layout — read files off to the side, then commit once.
+      //    openFile() would mutate the live tab list as each read returns, so a
+      //    newer switch could end up showing a mix of both projects.
+      const layout = useFsStore.getState().editorLayoutByProject[projectId];
+      if (layout && layout.paths.length > 0) {
+        const ui = useUiStore.getState();
+        const hadPreferred = Object.prototype.hasOwnProperty.call(
+          ui.editorVisibleByProject,
+          projectId,
+        );
+        const preferred = ui.editorVisibleByProject[projectId];
+        if (stillCurrent && !stillCurrent()) return;
+
+        useFsStore.setState((s) => {
+          s.openFiles = [];
+          s.activePath = null;
+        });
+        const uniquePaths = [...new Set(layout.paths)];
+        const loaded: EditorFile[] = [];
+        const CONCURRENCY = 4;
+        for (let i = 0; i < uniquePaths.length; i += CONCURRENCY) {
+          if (stillCurrent && !stillCurrent()) return;
+          const chunk = uniquePaths.slice(i, i + CONCURRENCY);
+          const results = await Promise.all(
+            chunk.map(async (path) => {
+              try {
+                const result = await fsReadFile(path);
+                const text = result.content ?? "";
+                noteKnownDisk(path, text);
+                const file: EditorFile = {
+                  path,
+                  content: result.content ?? null,
+                  isText: result.is_text,
+                  size: result.size,
+                  draft: text,
+                  dirty: false,
+                  stale: false,
+                  pinned: true,
+                };
+                return file;
+              } catch {
+                return null;
+              }
+            }),
+          );
+          if (stillCurrent && !stillCurrent()) return;
+          for (const file of results) {
+            if (file) loaded.push(file);
+          }
+        }
+        if (stillCurrent && !stillCurrent()) return;
+        const restoredActivePath =
+          layout.activePath && loaded.some((f) => f.path === layout.activePath)
+            ? layout.activePath
+            : (loaded[loaded.length - 1]?.path ?? null);
+        useFsStore.setState((s) => {
+          // 合并而不是整体替换：冷恢复要跨多个 await，这期间用户可能已经手动
+          // 打开了文件（点文件树 / 搜索结果 / agent 路径 token / git diff），
+          // 整体赋值会把那些页签悄悄丢掉。
+          const alreadyOpen = new Set(s.openFiles.map((f) => f.path));
+          for (const file of loaded) {
+            if (!alreadyOpen.has(file.path)) s.openFiles.push(file);
+          }
+          // 用户已经打开过东西（activePath 指向一个仍在列表里的文件）就别抢焦点。
+          if (!s.activePath || !s.openFiles.some((f) => f.path === s.activePath)) {
+            s.activePath = restoredActivePath;
+          }
+        });
+        if (hadPreferred) {
+          useUiStore.getState().setEditorVisible(!!preferred);
+        } else {
+          useUiStore.getState().syncEditorVisibleForProject(projectId, loaded.length > 0);
+        }
+        return;
+      }
+
+      // 3. No saved state for this project — start with a clean editor.
+      if (stillCurrent && !stillCurrent()) return;
+      useFsStore.setState((s) => {
+        s.openFiles = [];
+        s.activePath = null;
+      });
+      useUiStore.getState().syncEditorVisibleForProject(projectId, false);
+}

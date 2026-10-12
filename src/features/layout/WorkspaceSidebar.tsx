@@ -16,7 +16,10 @@ import { useUiStore } from "@/stores/ui.store";
 import { useProjectStore } from "@/stores/project.store";
 import { useConversationStore } from "@/stores/conversation.store";
 import { activateProject } from "../projects/activateProject";
-import { restoreProjectConversationTabs } from "../projects/restoreProjectConversationTabs";
+import {
+  hydrateConversationTab,
+  restoreProjectConversationTabs,
+} from "../projects/restoreProjectConversationTabs";
 import { NewConversationDropdown } from "../projects/NewConversationDropdown";
 import { startNewTask } from "../projects/startTask";
 import { AgentIcon } from "../agent/AgentIcon";
@@ -119,6 +122,12 @@ export function WorkspaceSidebar() {
             ),
           );
           await restoreProjectConversationTabs(project.id);
+          if (useProjectStore.getState().activeProjectId !== project.id) return;
+        }
+        // activateProject 只等活动页签 hydrate 完，点中的这个可能还在惰性队列里。
+        // 先补上再切，否则会看到一段空白线程。
+        if (!useAgentStore.getState().entriesByConversation[conversationId]?.length) {
+          await hydrateConversationTab(conversationId);
           if (useProjectStore.getState().activeProjectId !== project.id) return;
         }
         useConversationStore.getState().switchTab(conversationId);

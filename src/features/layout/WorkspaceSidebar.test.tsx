@@ -17,7 +17,6 @@ import { startNewTask } from "../projects/startTask";
 vi.mock("../projects/NewConversationDropdown", () => ({
   NewConversationDropdown: () => null,
 }));
-vi.mock("../projects/ProjectSelector", () => ({ ProjectSelector: () => null }));
 vi.mock("../projects/startTask", () => ({
   startNewTask: vi.fn().mockResolvedValue(undefined),
 }));

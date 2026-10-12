@@ -67,7 +67,7 @@ export const useNotificationStore = create<NotificationStore>()(
         conv.switchTab(n.conversationId);
         return;
       }
-      // 跨项目：复用 ProjectSelector 的切换流程（不裁剪线程缓存，避免依赖 agent.store 造成循环导入）。
+      // 跨项目：自己走一遍切换流程（不裁剪线程缓存，避免依赖 agent.store 造成循环导入）。
       const projectId = n.projectId;
       const conversationId = n.conversationId;
       void (async () => {

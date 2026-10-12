@@ -76,8 +76,7 @@ export function GitActionsMenu({ projectPath, onOpenBranchSelector }: GitActions
     if (selectedStash === null && stashes.length > 0) setSelectedStash(stashes[0].id);
   }, [stashes, selectedStash]);
 
-  // 照抄 ProjectSelector.tsx:85 模式：先尽力前台再开原生目录对话框，
-  // 否则 Windows 上系统对话框可能落到应用窗口后方。
+  // 先尽力前台再开原生目录对话框，否则 Windows 上系统对话框可能落到应用窗口后方。
   const pickCloneDest = async () => {
     await getCurrentWindow().setFocus().catch(() => {});
     const selected = await open({ directory: true, multiple: false, title: "选择克隆目标目录" });

@@ -27,9 +27,6 @@ vi.mock("@tauri-apps/api/window", () => ({
     onResized: () => Promise.resolve(() => {}),
   }),
 }));
-vi.mock("../projects/ProjectSelector", () => ({
-  ProjectSelector: () => <div data-testid="project-selector" />,
-}));
 vi.mock("./WindowControls", () => ({ WindowControls: () => null }));
 vi.mock("../agent/CloseTabConfirmDialog", () => ({
   CloseTabConfirmDialog: () => null,

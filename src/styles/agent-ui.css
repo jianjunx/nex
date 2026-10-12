@@ -688,3 +688,19 @@ html[data-nex-resizing] .nex-workspace-sidebar {
     --line-strong: var(--text-secondary);
   }
 }
+
+/* ─── CSS 边框转圈指示器的缺口 ─────────────────────────────────────────
+   Beautiful UI 的 spinner 用 `border border-current border-t-transparent`
+   画出"三边有色、顶边透明"的弧。但 styles.css 把颜色工具函数按
+   `.beautiful-ui .border-current { border-color: currentColor }` 的作用域
+   重新发了一遍——两条规则同在 @layer utilities，而它多一个类、特异性
+   (0,2,0) 压过主包的 `.border-t-transparent`（0,1,0）。border-color 是
+   简写，会把四条边一起刷成 currentColor，缺口消失，spinner 退化成一个
+   完整的圆环。
+
+   agent-ui.css 不带 @layer，未分层样式在级联里压过所有层（与特异性无关），
+   所以在这里补一条同名校正即可让缺口回来。改 styles.css 那份 vendored
+   快照也可以，但适配层才是 Nex 该放补丁的地方。 */
+.border-t-transparent {
+  border-top-color: transparent;
+}

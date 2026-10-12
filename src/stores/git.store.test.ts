@@ -56,6 +56,8 @@ vi.mock("./fs.store", () => ({
 }));
 
 import { useGitStore } from "./git.store";
+import { useToastStore } from "./toast.store";
+import type { GitStatus } from "../bridge/tauri";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -222,6 +224,7 @@ describe("git.store commitWith", () => {
   });
 
   it("skips commit when auto-stage fails", async () => {
+    useToastStore.setState({ items: [] });
     gitStageMock.mockRejectedValue({ type: "Git", message: "stage failed" });
     useGitStore.setState({
       commitMessage: "wip",
@@ -236,6 +239,11 @@ describe("git.store commitWith", () => {
     expect(gitCommitMock).not.toHaveBeenCalled();
     expect(useGitStore.getState().commitMessage).toBe("wip");
     expect(useGitStore.getState().error).toBe("stage failed");
+    // 编排步骤失败仍然提示，否则用户只看到"提交没反应"
+    expect(useToastStore.getState().items[0]).toMatchObject({
+      variant: "error",
+      message: "暂存失败",
+    });
   });
 });
 
@@ -389,5 +397,106 @@ describe("git.store diff tabs", () => {
       revised: "+v1\n",
       binary: false,
     });
+  });
+});
+
+describe("git.store action feedback toasts", () => {
+  const toasts = () => useToastStore.getState().items;
+
+  beforeEach(() => {
+    useToastStore.setState({ items: [] });
+  });
+
+  it("toasts success for a network op", async () => {
+    gitPullMock.mockResolvedValue(undefined);
+    gitStatusMock.mockResolvedValue({ branch: "main", files: [], ahead: 0, behind: 0 });
+    gitListBranchesMock.mockResolvedValue([]);
+    gitLogMock.mockResolvedValue([]);
+
+    const ok = await useGitStore.getState().pull("/p");
+
+    expect(ok).toBe(true);
+    expect(toasts()).toEqual([
+      expect.objectContaining({ variant: "success", message: "拉取成功" }),
+    ]);
+  });
+
+  it("toasts failure with the first stderr line as detail", async () => {
+    gitPullMock.mockRejectedValue(new Error("fatal: 认证失败\nhint: 检查凭据"));
+
+    const ok = await useGitStore.getState().pull("/p");
+
+    expect(ok).toBe(false);
+    expect(toasts()).toEqual([
+      expect.objectContaining({
+        variant: "error",
+        message: "拉取失败",
+        detail: "fatal: 认证失败",
+      }),
+    ]);
+    // 失败仍自动展开操作日志，提示与日志互补而不重复完整输出
+    expect(useGitStore.getState().opLogOpen).toBe(true);
+  });
+
+  it("toasts the push guard instead of failing silently", async () => {
+    const ok = await useGitStore.getState().push("/p");
+    expect(ok).toBe(false);
+    expect(toasts()[0]).toMatchObject({ variant: "error", message: "推送失败" });
+  });
+
+  it("toasts stage failures but stays quiet on success", async () => {
+    gitStageMock.mockResolvedValue(undefined);
+    await useGitStore.getState().stage("/p", ["a.ts"]);
+    expect(toasts()).toHaveLength(0);
+
+    gitStageMock.mockRejectedValue(new Error("index.lock 已存在"));
+    await useGitStore.getState().stage("/p", ["a.ts"]);
+    expect(toasts()[0]).toMatchObject({
+      variant: "error",
+      message: "暂存失败",
+      detail: "index.lock 已存在",
+    });
+  });
+
+  it("stays quiet when a plain refresh fails (it is driven by the file watcher)", async () => {
+    gitStatusMock.mockRejectedValue(new Error("boom"));
+    await useGitStore.getState().refresh("/p");
+    expect(toasts()).toHaveLength(0);
+  });
+
+  it("does not toast when the project simply has no git repo", async () => {
+    gitStatusMock.mockResolvedValue(null);
+    await useGitStore.getState().refresh("/p");
+    expect(useGitStore.getState().hasRepo).toBe(false);
+    expect(toasts()).toHaveLength(0);
+  });
+});
+
+describe("git.store commit toast noise", () => {
+  const toasts = () => useToastStore.getState().items;
+  const UNSTAGED_STATUS: GitStatus = {
+    branch: "main",
+    ahead: 0,
+    behind: 0,
+    files: [{ path: "a.ts", status: "modified", staged: false }],
+  };
+
+  beforeEach(() => {
+    useToastStore.setState({ items: [] });
+  });
+
+  it("does not toast for the smart-commit auto-stage step", async () => {
+    gitStageMock.mockReset();
+    gitStageMock.mockResolvedValue(undefined);
+    gitCommitMock.mockReset();
+    gitCommitMock.mockResolvedValue("hash");
+    gitStatusMock.mockResolvedValue(UNSTAGED_STATUS);
+    useGitStore.setState({ commitMessage: "msg", status: UNSTAGED_STATUS });
+
+    await useGitStore.getState().commitWith("/p", "commit");
+
+    expect(gitStageMock).toHaveBeenCalledWith("/p", ["a.ts"]);
+    // 用户点的是「提交」，自动暂存那一步不该再弹一条
+    expect(toasts().map((t) => t.message)).toEqual(["提交成功"]);
   });
 });

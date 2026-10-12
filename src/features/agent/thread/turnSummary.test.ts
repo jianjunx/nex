@@ -91,6 +91,39 @@ describe("buildTurnSummary", () => {
     expect(summary).toEqual({ durationMs: 10 });
   });
 
+  it("falls back to the ACP turn usage when the agent sends no contextStats", () => {
+    const summary = buildTurnSummary({
+      startedAt: 0,
+      endedAt: 10,
+      model: "Claude",
+      stats: null,
+      usage: { input: 1_000, output: 200, cache: 800 },
+    });
+    expect(summary).toEqual({
+      durationMs: 10,
+      model: "Claude",
+      promptTokens: 1_000,
+      completionTokens: 200,
+      cacheHitTokens: 800,
+    });
+  });
+
+  it("prefers exact native stats over the ACP estimate", () => {
+    const summary = buildTurnSummary({
+      startedAt: 0,
+      endedAt: 10,
+      stats: stats({ turnPromptTokens: 5_000, turnCompletionTokens: 700 }),
+      usage: { input: 999, output: 99, cache: 0 },
+    });
+    expect(summary.promptTokens).toBe(5_000);
+    expect(summary.completionTokens).toBe(700);
+  });
+
+  it("omits token fields when the ACP usage is all zeros", () => {
+    const summary = buildTurnSummary({ startedAt: 0, endedAt: 10, usage: { input: 0, output: 0, cache: 0 } });
+    expect("promptTokens" in summary).toBe(false);
+  });
+
   it("keeps output-only usage and drops a zero cache hit", () => {
     const summary = buildTurnSummary({
       startedAt: 0,

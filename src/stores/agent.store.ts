@@ -49,6 +49,7 @@ import {
 import type { PlanEntry, SessionMeta, ThreadEntry } from "../features/agent/thread/types";
 import { assistantTextAfterLastUser } from "../features/agent/thread/messagesToThreadEntries";
 import { buildTurnSummary } from "../features/agent/thread/turnSummary";
+import { usageCounters, usageDelta } from "../features/agent/thread/turnUsage";
 import { useConversationStore } from "./conversation.store";
 import { useNotificationStore } from "./notification.store";
 import { resolveSessionTarget } from "../features/agent/sessionTarget";
@@ -1086,6 +1087,11 @@ export const useAgentStore = create<AgentStore>()(
         ? (turnMeta.models.find((m) => m.id === turnMeta.currentModelId)?.name ?? turnMeta.currentModelId)
         : null;
       let turnStats: ContextStatsDto | null = null;
+      // ACP 用量上报的起点：发 prompt 前拍一张快照，收尾时取差得到"本轮消耗"。
+      // 与 turnStartedAt / turnModel 同理，都在发出前定格，避免轮中变化串轮。
+      const turnUsageBaseline = usageCounters(
+        get().metaByConversation[session.conversationId]?.contextUsage,
+      );
       set((s) => {
         s.sessions[session.conversationId].status = "running";
         clearConversationError(s, session.conversationId);
@@ -1171,6 +1177,10 @@ export const useAgentStore = create<AgentStore>()(
           endedAt: Date.now(),
           model: turnModel,
           stats: turnStats,
+          usage: usageDelta(
+            usageCounters(get().metaByConversation[session.conversationId]?.contextUsage),
+            turnUsageBaseline,
+          ),
         });
         set((s) => {
           s.entriesByConversation[session.conversationId]?.push({

@@ -227,7 +227,7 @@ const COMMANDS: Command[] = [
     title: "聚焦文件树",
     category: "视图",
     defaultKey: k("keye", { primary: true, shift: true }),
-    run: () => useUiStore.getState().setSidePanelTab("files"),
+    run: () => useUiStore.getState().requestFilesFocus(),
   },
   {
     id: "files.copy",

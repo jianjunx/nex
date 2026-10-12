@@ -18,6 +18,9 @@ interface MainLayoutProps {
   sidePanel: ReactNode;
 }
 
+/** 编辑器浮层与左右两栏之间的留白。 */
+const EDITOR_GAP = 12;
+
 export function MainLayout({
   mainContent,
   editorPanel,
@@ -130,8 +133,17 @@ export function MainLayout({
           )}
         </div>
       </div>
+      {/* 编辑器是浮在工作台上方的常驻面板，不是模态框。三件事必须同时成立，
+          否则"文件目录/编辑器快捷键失效"会以另一种形式回来：
+          1. modal={false} —— 不锁焦点、不吞掉侧栏的指针事件；
+          2. data-workbench-surface —— KeybindingHost 不把它当模态对话框，
+             ⌘S / Esc / ⌘W 照常生效；
+          3. 浮层只占主列宽度 —— 它是 portal 到 body 的 fixed 定位，按原来的
+             92vw 居中会把右侧面板整个盖住，文件树在编辑器打开期间点不动也
+             聚焦不了，F2 / Enter / 删除这些树快捷键照样全灭。 */}
       <Dialog
         open={Boolean(editorPanel)}
+        modal={false}
         onOpenChange={(open) => {
           if (!open) useUiStore.getState().setEditorVisible(false);
         }}
@@ -139,7 +151,14 @@ export function MainLayout({
         <DialogContent
           aria-describedby={undefined}
           showCloseButton={false}
-          className="flex h-[85vh] w-[92vw] max-w-[1200px] flex-col gap-0 overflow-hidden p-0 sm:max-w-[1200px]"
+          data-workbench-surface=""
+          className="flex h-[85vh] min-w-[420px] flex-col gap-0 overflow-hidden p-0"
+          style={{
+            left: sidebarWidth + EDITOR_GAP,
+            right: (side.shown ? paintedWidth : 0) + EDITOR_GAP,
+            width: "auto",
+            maxWidth: 1200,
+          }}
           onInteractOutside={(e) => e.preventDefault()}
         >
           <DialogTitle className="sr-only">文件预览与编辑</DialogTitle>

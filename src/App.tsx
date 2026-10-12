@@ -17,6 +17,7 @@ import { SettingsDialog } from "./features/settings/SettingsDialog";
 import { GitCredentialModal } from "./features/git/GitCredentialModal";
 import { AppLifecycleHost } from "./features/layout/AppLifecycleHost";
 import { NotificationStack } from "./features/layout/NotificationStack";
+import { ToastStack } from "./features/layout/ToastStack";
 import { UpdateBanner } from "./features/updater/UpdateBanner";
 import { useUpdateStore } from "./stores/update.store";
 
@@ -136,6 +137,7 @@ function App() {
       <KeybindingHost />
       <AppLifecycleHost />
       <NotificationStack />
+      <ToastStack />
       <SettingsDialog />
       <GitCredentialModal />
       <UpdateBanner />

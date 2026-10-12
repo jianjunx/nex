@@ -501,6 +501,65 @@ describe("agent.store turn summary", () => {
     expect(summary).not.toHaveProperty("promptTokens");
   });
 
+  // 外部 ACP agent 不走 contextStats，只通过 session_info_update 上报 usage。
+  // 摘要必须拿"收尾 − 发 prompt 前"的差，否则整段会话历史的底数都算到本轮。
+  it("derives turn tokens from the ACP usage delta when there is no contextStats", async () => {
+    let release!: (v: unknown) => void;
+    agentSendPrompt.mockImplementationOnce(() => new Promise((r) => (release = r)));
+    seed({
+      currentModelId: "claude-x",
+      models: [],
+    });
+    useAgentStore.setState((s) => ({
+      metaByConversation: {
+        ...s.metaByConversation,
+        "conv-1": {
+          ...s.metaByConversation["conv-1"],
+          contextUsage: {
+            used: 40_000,
+            total: 200_000,
+            tokens: [
+              { type: "input", value: 38_000 },
+              { type: "output", value: 2_000 },
+              { type: "cache_read", value: 30_000 },
+            ],
+          },
+        },
+      },
+    }));
+
+    const pending = useAgentStore.getState().sendPrompt("sid-1", [{ type: "text", text: "hello" }]);
+    await vi.waitFor(() => expect(agentSendPrompt).toHaveBeenCalledTimes(1));
+    useAgentStore.setState((s) => ({
+      metaByConversation: {
+        ...s.metaByConversation,
+        "conv-1": {
+          ...s.metaByConversation["conv-1"],
+          contextUsage: {
+            used: 46_000,
+            total: 200_000,
+            tokens: [
+              { type: "input", value: 43_000 },
+              { type: "output", value: 3_000 },
+              { type: "cache_read", value: 30_000 },
+            ],
+          },
+        },
+      },
+    }));
+    release({ hadMutations: false, stopReason: "end_turn" });
+    await pending;
+
+    expect(summaryOf()[0]).toMatchObject({
+      kind: "turn_summary",
+      model: "claude-x",
+      promptTokens: 5_000,
+      completionTokens: 1_000,
+    });
+    // 缓存命中没有增长，按约定不写字段
+    expect(summaryOf()[0]).not.toHaveProperty("cacheHitTokens");
+  });
+
   it("uses the model that was active when the turn started", async () => {
     let release!: (v: unknown) => void;
     agentSendPrompt.mockImplementationOnce(() => new Promise((r) => (release = r)));

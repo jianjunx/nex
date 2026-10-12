@@ -1,4 +1,5 @@
 import type { ContextStatsDto } from "../../../bridge/tauri";
+import type { UsageCounters } from "./turnUsage";
 import type { TurnSummaryEntry } from "./types";
 
 /** 12 → "12"，1234 → "1.2K"，12345 → "12K"，1234567 → "1.2M"。 */
@@ -35,11 +36,13 @@ export interface TurnSummaryInput {
   endedAt: number;
   model?: string | null;
   stats?: ContextStatsDto | null;
+  /** 外部 ACP agent 的整轮用量（native agent 走 stats，二者不会同时有值）。 */
+  usage?: UsageCounters | null;
 }
 
 /**
  * 组装本轮摘要。token 取整轮累计值（turn*），不是最近一次请求的上下文占用；
- * 没有任何用量上报（外部 ACP agent）时不写 token 字段，界面只显示耗时与模型。
+ * native 与 ACP 两条来源都没有用量上报时不写 token 字段，界面只显示耗时与模型。
  */
 export function buildTurnSummary(
   input: TurnSummaryInput,
@@ -56,6 +59,13 @@ export function buildTurnSummary(
     out.completionTokens = completion;
     const cache = input.stats?.turnCacheHitTokens ?? 0;
     if (cache > 0) out.cacheHitTokens = cache;
+    return out;
+  }
+  const usage = input.usage;
+  if (usage && (usage.input > 0 || usage.output > 0)) {
+    out.promptTokens = usage.input;
+    out.completionTokens = usage.output;
+    if (usage.cache > 0) out.cacheHitTokens = usage.cache;
   }
   return out;
 }

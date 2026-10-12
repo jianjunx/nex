@@ -3,7 +3,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "@testing-library/react";
-import { KeybindingHost, isInputContext, isTerminalContext } from "./KeybindingHost";
+import { KeybindingHost, isCodeEditorContext, isInputContext, isTerminalContext } from "./KeybindingHost";
 
 // Module-level mutable state so individual tests can override bindings (C-1/I-1 cases).
 let bindingOverrides: Record<string, object | null> = {};
@@ -23,6 +23,7 @@ vi.mock("../stores/keybindings.store", () => ({
         if (id === "scm.commit") return { primary: true, key: "enter" };
         if (id === "terminal.toggle") return { ctrl: true, key: "`" };
         if (id === "files.delete") return { key: "delete" };
+        if (id === "editor.formatDocument") return { alt: true, shift: true, key: "keyf" };
         return null;
       },
     }),
@@ -35,6 +36,7 @@ const close = vi.fn();
 const scmCommit = vi.fn();
 const terminalToggle = vi.fn();
 const filesDelete = vi.fn();
+const formatDocument = vi.fn();
 vi.mock("../commands/registry", () => ({
   listCommands: () => [
     { id: "view.toggleSidebar", title: "t", category: "c", defaultKey: null, run: toggle },
@@ -50,6 +52,7 @@ vi.mock("../commands/registry", () => ({
     },
     { id: "terminal.toggle", title: "term", category: "c", defaultKey: null, run: terminalToggle },
     { id: "files.delete", title: "del", category: "c", defaultKey: null, run: filesDelete },
+    { id: "editor.formatDocument", title: "fmt", category: "c", defaultKey: null, run: formatDocument },
   ],
   getCommand: () => undefined,
 }));
@@ -243,5 +246,72 @@ describe("KeybindingHost", () => {
     fire(window, { key: "s", code: "KeyS", ctrlKey: true });
     expect(save).not.toHaveBeenCalled();
     dlg.remove();
+  });
+});
+
+// 1.1.19 把编辑器包进了 radix Dialog：dialogOpen() 一见 role="dialog" 就让行，
+// 于是文件一打开 ⌘S / Esc / ⌘W 全部失效；同时 modal 焦点陷阱让侧栏点不动，
+// 文件树快捷键跟着死。下面三条锁住修复后的语义。
+describe("KeybindingHost editor surface", () => {
+  /** 编辑器浮层（MainLayout 的 DialogContent）打上的标记。 */
+  function mountEditorSurface() {
+    const dlg = document.createElement("div");
+    dlg.setAttribute("role", "dialog");
+    dlg.setAttribute("data-workbench-surface", "");
+    const content = document.createElement("div");
+    content.className = "cm-content";
+    content.setAttribute("contenteditable", "true");
+    dlg.appendChild(content);
+    document.body.appendChild(dlg);
+    content.focus();
+    return { dlg, content };
+  }
+
+  it("does not treat the editor workbench surface as a modal dialog", () => {
+    mountEditorSurface();
+    fire(window, { key: "s", code: "KeyS", ctrlKey: true });
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it("still yields to a real modal dialog", () => {
+    const dlg = document.createElement("div");
+    dlg.setAttribute("role", "dialog");
+    document.body.appendChild(dlg);
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
+    fire(window, { key: "s", code: "KeyS", ctrlKey: true });
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("lets modifier-bearing workbench shortcuts through CodeMirror", () => {
+    mountEditorSurface();
+    // Alt+Shift+F 格式化、Ctrl+` 终端、Cmd+B 侧栏此前都被输入框白名单挡掉
+    fire(window, { key: "f", code: "KeyF", altKey: true, shiftKey: true });
+    expect(formatDocument).toHaveBeenCalledTimes(1);
+
+    fire(window, { key: "`", code: "Backquote", ctrlKey: true });
+    expect(terminalToggle).toHaveBeenCalledTimes(1);
+
+    fire(window, { key: "b", code: "KeyB", ctrlKey: true });
+    expect(toggle).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps bare printable keys for the editor itself", () => {
+    const { content } = mountEditorSurface();
+    // 裸 's' 必须落进 CodeMirror 变成输入，不能被 workbench 命令吃掉
+    fire(window, { key: "s", code: "KeyS" });
+    expect(save).not.toHaveBeenCalled();
+    // Esc 仍放行（关查找栏 / 收起编辑器）
+    fire(window, { key: "Escape", code: "Escape" });
+    expect(close).toHaveBeenCalledTimes(1);
+    content.remove();
+  });
+
+  it("isCodeEditorContext recognises the CodeMirror surface", () => {
+    const content = document.createElement("div");
+    content.className = "cm-content";
+    expect(isCodeEditorContext(content)).toBe(true);
+    expect(isCodeEditorContext(document.createElement("div"))).toBe(false);
   });
 });

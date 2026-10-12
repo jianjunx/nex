@@ -3,6 +3,7 @@ import { Collapse } from "@/components/ui/Collapse";
 import { ChevronRight, FilePlus, FolderPlus, RefreshCw, ChevronsDownUp } from "lucide-react";
 import { useFsStore } from "../../stores/fs.store";
 import { useProjectStore } from "../../stores/project.store";
+import { useUiStore } from "../../stores/ui.store";
 import { useDragDropStore, type TreeNodeDragSession } from "../../stores/dragDrop.store";
 import { useEffect, useState, useRef, useCallback, memo, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
@@ -200,6 +201,9 @@ function TreeNode({
 
   const rowRef = useRef<HTMLDivElement>(null);
 
+  // 单击只负责选中与展开/折叠目录，不再打开编辑器——避免在树里浏览时
+  // 编辑器被连续顶开、焦点被抢走（文件树快捷键随之失效）。打开文件统一
+  // 走双击（或 Enter），语义与 VS Code / Finder 一致。
   const handleClick = () => {
     setSelectedPath(node.path);
     // Keep keyboard focus on the row so explorer shortcuts (F2 / Enter rename) stay armed.
@@ -207,11 +211,11 @@ function TreeNode({
     if (isRoot || node.is_dir) {
       if (isExpanded) collapseDir(node.path);
       else expandDir(node.path);
-    } else {
-      openFile(node.path);
     }
   };
 
+  // 双击 = 明确要打开：固定页签，不再走预览替换（预览页签是给"顺手看一眼"
+  // 的单击准备的，而单击已不再打开文件）。
   const handleDoubleClick = () => {
     if (!node.is_dir) {
       openFile(node.path, true);
@@ -264,7 +268,8 @@ function TreeNode({
       }
       e.preventDefault();
       if (!node.is_dir) {
-        openFile(node.path);
+        // Enter 是双击打开文件的键盘等价物，同样固定页签。
+        openFile(node.path, true);
       } else if (isExpanded) {
         collapseDir(node.path);
       } else {
@@ -417,6 +422,24 @@ function FileTreeContent() {
       consumePendingRename();
     }
   }, [pendingRenamePath]);
+
+  // files.focus（Cmd/Ctrl+Shift+E）：把 DOM 焦点也搬进树里。只切 tab 的
+  // 话 activeElement 还在别处，files.rename 的 isFileTreeFocused() 门槛过
+  // 不了，F2 / Enter 依旧没反应。handledRef 保证只在计数变化时动手——
+  // 否则每次选中变动都会抢一次焦点，重命名输入框会被打断。
+  const filesFocusRequest = useUiStore((s) => s.filesFocusRequest);
+  const handledFocusRequestRef = useRef(0);
+  useEffect(() => {
+    if (filesFocusRequest === 0 || filesFocusRequest === handledFocusRequestRef.current) return;
+    handledFocusRequestRef.current = filesFocusRequest;
+    const rows = Array.from(
+      treeContainerRef.current?.querySelectorAll<HTMLElement>("[role='treeitem']") ?? [],
+    );
+    const selected = selectedPath
+      ? rows.find((el) => el.dataset.dirPath === selectedPath || el.dataset.filePath === selectedPath)
+      : undefined;
+    (selected ?? rows[0])?.focus();
+  }, [filesFocusRequest, selectedPath]);
 
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
 

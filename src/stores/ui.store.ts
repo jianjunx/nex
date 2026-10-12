@@ -57,6 +57,9 @@ interface UiState {
   settingsSection: SettingsSection | null;
   /** 自增计数触发搜索面板聚焦；不持久化（partialize 未收录即生效）。 */
   searchFocusRequest: number;
+  /** 自增计数触发文件树聚焦；不持久化。只切 tab 不够——F2 / Enter 重命名
+   *  要求 activeElement 落在树行内，否则快捷键仍然不响应。 */
+  filesFocusRequest: number;
   /** 自增计数请求关闭当前对话页签（Cmd/Ctrl+W）；不持久化。 */
   closeTabRequest: number;
 
@@ -84,6 +87,7 @@ interface UiState {
   toggleNewConversation: () => void;
   setSettingsSection: (section: SettingsSection | null) => void;
   requestSearchFocus: () => void;
+  requestFilesFocus: () => void;
   requestCloseActiveTab: () => void;
   consumeCloseTabRequest: () => void;
 }
@@ -121,6 +125,7 @@ export const useUiStore = create<UiState>()(
       newConversationOpen: false,
       settingsSection: null,
       searchFocusRequest: 0,
+      filesFocusRequest: 0,
       closeTabRequest: 0,
 
       setSidebarWidth: (w) => set((s) => { s.sidebarWidth = w; }),
@@ -202,6 +207,11 @@ export const useUiStore = create<UiState>()(
         s.sidePanelTab = "search";
         s.sidePanelVisible = true;
         s.searchFocusRequest += 1;
+      }),
+      requestFilesFocus: () => set((s) => {
+        s.sidePanelTab = "files";
+        s.sidePanelVisible = true;
+        s.filesFocusRequest += 1;
       }),
       requestCloseActiveTab: () => set((s) => { s.closeTabRequest += 1; }),
       consumeCloseTabRequest: () => set((s) => { s.closeTabRequest = 0; }),

@@ -10,8 +10,14 @@ import {
   type GitStatus, type BranchInfo, type CommitInfo, type StashEntry,
 } from "../bridge/tauri";
 import { useFsStore } from "./fs.store";
+import { toast } from "./toast.store";
 
 const OP_LOG_MAX = 100;
+
+/** git stderr / libgit2 报错常常是多行，提示里只留第一行（完整内容在操作日志）。 */
+function firstLine(msg: string): string {
+  return msg.split(/\r?\n/).find((l) => l.trim().length > 0)?.trim() ?? msg;
+}
 
 function timeStamp(): string {
   const d = new Date();
@@ -122,11 +128,23 @@ export const useGitStore = create<GitStore>()(
 
     // Shared bookkeeping for network/destructive ops: opRunning + error +
     // opLog. Returns false on failure so callers can chain conditionally.
-    const runOp = async (name: string, fn: () => Promise<void>): Promise<boolean> => {
+    // 每个走这里的操作都会弹一条轻提示：GitPanel 顶栏只有 Push / Refresh 两个
+    // 按钮，其余操作全在 ··· 菜单和行内图标里，点完列表刷新是最弱的反馈，
+    // 拉取/推送这类网络操作更不能只靠"图标不转了"来暗示成功。
+    // `successToast: false` 给编排型调用方用：智能提交会自动先暂存一次，
+    // 那一步成功了不该再弹一条，用户点的是「提交」。
+    const runOp = async (
+      name: string,
+      fn: () => Promise<void>,
+      opts: { successToast?: boolean } = {},
+    ): Promise<boolean> => {
       set((s) => { s.opRunning = name; s.error = null; });
       try {
         await fn();
         logOp(name);
+        if (opts.successToast !== false) {
+          toast({ variant: "success", message: `${name}成功` });
+        }
         return true;
       } catch (err) {
         if (isMissingGitRepo(err)) {
@@ -136,6 +154,9 @@ export const useGitStore = create<GitStore>()(
         const msg = errorMessage(err);
         set((s) => { s.error = msg; });
         logOp(name, msg);
+        // 失败始终提示：同时有 GitErrorDialog（模态，含完整输出）和操作日志，
+        // 提示只给结论。
+        toast({ variant: "error", message: `${name}失败`, detail: firstLine(msg) });
         return false;
       } finally {
         set((s) => { s.opRunning = null; });
@@ -146,7 +167,9 @@ export const useGitStore = create<GitStore>()(
     // clear error at start — runOp already does that for op flows, and an
     // unconditional refresh (e.g. after fetch) must not wipe a freshly
     // recorded op failure (see git.store.test.ts opLog failure case).
-    const loadStatus = async (fn: () => Promise<void>) => {
+    // `toastLabel` 为空表示静默：refresh 会被文件监听器反复触发，也常跟在别的
+    // 操作后面，它的失败由操作日志兜着，不该再弹一条。
+    const loadStatus = async (fn: () => Promise<void>, toastLabel?: string) => {
       set((s) => { s.statusLoading = true; });
       try {
         await fn();
@@ -155,7 +178,11 @@ export const useGitStore = create<GitStore>()(
           markMissingRepo();
           return;
         }
-        set((s) => { s.error = errorMessage(err); });
+        const msg = errorMessage(err);
+        set((s) => { s.error = msg; });
+        if (toastLabel) {
+          toast({ variant: "error", message: `${toastLabel}失败`, detail: firstLine(msg) });
+        }
       } finally {
         set((s) => { s.statusLoading = false; });
       }
@@ -207,19 +234,21 @@ export const useGitStore = create<GitStore>()(
             binary: contents.binary,
           });
         } catch (err) {
-          set((s) => { s.error = errorMessage(err); });
+          const msg = errorMessage(err);
+          set((s) => { s.error = msg; });
+          toast({ variant: "error", message: "打开差异失败", detail: firstLine(msg) });
         }
       },
 
       stage: async (projectPath, files) =>
         loadStatus(async () => {
           await gitStage(projectPath, files);
-        }),
+        }, "暂存"),
 
       unstage: async (projectPath, files) =>
         loadStatus(async () => {
           await gitUnstage(projectPath, files);
-        }),
+        }, "取消暂存"),
 
       commit: (projectPath, message) => runOp("提交", () => gitCommit(projectPath, message).then(() => undefined)),
 
@@ -236,7 +265,9 @@ export const useGitStore = create<GitStore>()(
         const hasStaged = files.some((f) => f.staged);
         const unstagedPaths = files.filter((f) => !f.staged).map((f) => f.path);
         if (!hasStaged && unstagedPaths.length > 0) {
-          const stagedOk = await runOp("暂存", () => gitStage(projectPath, unstagedPaths));
+          const stagedOk = await runOp("暂存", () => gitStage(projectPath, unstagedPaths), {
+            successToast: false,
+          });
           if (!stagedOk) return;
         }
 
@@ -316,7 +347,9 @@ export const useGitStore = create<GitStore>()(
       push: async (projectPath, remote = "origin") => {
         const branch = get().status?.branch;
         if (!branch || branch === "HEAD") {
-          set((s) => { s.error = "无法确定当前分支名，不能推送"; });
+          const msg = "无法确定当前分支名，不能推送";
+          set((s) => { s.error = msg; });
+          toast({ variant: "error", message: "推送失败", detail: msg });
           return false;
         }
         const ok = await runOp("推送", () => gitPush(projectPath, remote, branch));
@@ -430,7 +463,9 @@ export const useGitStore = create<GitStore>()(
               binary: false,
             });
           } catch (err) {
-            set((s) => { s.error = errorMessage(err); });
+            const msg = errorMessage(err);
+            set((s) => { s.error = msg; });
+            toast({ variant: "error", message: "打开提交差异失败", detail: firstLine(msg) });
           }
         })();
       },

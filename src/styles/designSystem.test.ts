@@ -35,6 +35,21 @@ it("shared theme uses neutral surfaces with no backdrop blur recipes", () => {
 function withoutComments(css: string): string {
   return css.replace(/\/\*[\s\S]*?\*\//g, "");
 }
+it("suppresses the vendored accent focus ring on file-tree rows", () => {
+  // 文件树行是 tabindex=0 的 div。vendored 快照里
+  // `.beautiful-ui :focus-visible { outline: 2px solid var(--accent) }` 是未分层
+  // 规则、(0,2,0)，而 globals.css 里 .outline-none 在 @layer utilities 内、
+  // (0,1,0)——未分层永远赢过分层，与特异性无关，所以行上那个 outline-none
+  // 从来没能生效，每按一次上下键都冒出一圈 2px 浅灰（--accent: #d4d4d4）边框。
+  // agent-ui.css 同为未分层，用 (0,3,0) 覆盖回去；焦点可见性由随箭头移动的
+  // 选中底色承担。
+  const css = withoutComments(readFileSync(resolve("src/styles/agent-ui.css"), "utf8"));
+  expect(css).toMatch(
+    /\.beautiful-ui \[role="treeitem"\]:focus-visible\s*\{\s*outline:\s*none;?\s*\}/,
+  );
+  // 侧栏按钮走的是另一条中性细描边（(0,2,1) 压过 vendored 的 (0,2,0)），不能被误伤
+  expect(css).toMatch(/\.beautiful-ui button:focus-visible\s*\{[^}]*outline:\s*1px solid/);
+});
 it("keeps the CSS spinner's gap above the .beautiful-ui border-color shorthand", () => {
   // Beautiful UI 的转圈指示器是 `border border-current border-t-transparent`
   // 画出的弧。styles.css 把颜色工具按 `.beautiful-ui .border-current

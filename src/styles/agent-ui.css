@@ -690,6 +690,16 @@ html[data-nex-resizing] .nex-workspace-sidebar {
   }
 }
 
+/* 文件树行是 tabindex=0 的 div，按上下键浏览时会 focus。vendored 快照里的
+   `.beautiful-ui :focus-visible { outline: 2px solid var(--accent) }` 是未分层
+   规则、(特异性 (0,2,0)，而 globals.css 里 .outline-none 在 @layer utilities
+   内、(0,1,0)——未分层永远赢过分层，与特异性无关，所以行上那个 outline-none
+   从来没能生效，每按一次方向键都冒出一圈 2px 浅灰（--accent: #d4d4d4）边框。
+   文件树的焦点可见性由"选中行随箭头移动"的底色承担，不需要再描一圈。
+   agent-ui.css 同为未分层，这条 (0,3,0) 覆盖回去。 */
+.beautiful-ui [role="treeitem"]:focus-visible {
+  outline: none;
+}
 /* ─── CSS 边框转圈指示器的缺口 ─────────────────────────────────────────
    Beautiful UI 的 spinner 用 `border border-current border-t-transparent`
    画出"三边有色、顶边透明"的弧。但 styles.css 把颜色工具函数按

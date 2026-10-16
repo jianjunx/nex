@@ -1,6 +1,6 @@
 import AgentUiPromptBar from "@/components/agent-ui/beautiful-ui/PromptBar";
 import { useState, useRef, useEffect, useCallback, useMemo, type CSSProperties } from "react";
-import { Send, Square, X, Plus, ImagePlus, FilePlus } from "lucide-react";
+import { Send, Square, X, Plus, ImagePlus, FilePlus, ChevronsLeft, ChevronsRight } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Button } from "@/components/ui/button";
 import {
@@ -118,6 +118,7 @@ function isImeKeyEvent(e: globalThis.KeyboardEvent): boolean {
 
 function AgentComposerContent() {
   const [text, setText] = useState("");
+  const [optionsExpanded, setOptionsExpanded] = useState(false);
   const [images, setImages] = useState<PendingImage[]>([]);
   const [slashOpen, setSlashOpen] = useState(false);
   const [atOpen, setAtOpen] = useState(false);
@@ -979,9 +980,29 @@ function AgentComposerContent() {
                 const hasConfigModel = configOpts.some(
                   (o) => o.id === "model" || o.category === "model",
                 );
+                const isPrimaryOption = (opt: (typeof configOpts)[number]) =>
+                  opt.id === "model" || opt.category === "model" ||
+                  opt.category === "thought_level" ||
+                  ["thought_level", "reasoning_effort", "reasoning", "thinking", "thinking_level"].includes(opt.id);
+                const hasExtraOptions = configOpts.some((opt) => !isPrimaryOption(opt)) ||
+                  (!hasConfigMode && meta.modes.length > 0);
                 return (
                   <>
-                    {!hasConfigMode && meta.modes.length > 0 && (
+                    {hasExtraOptions && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label={optionsExpanded ? "收起更多选项" : "展开更多选项"}
+                        aria-expanded={optionsExpanded}
+                        title={optionsExpanded ? "收起更多选项" : "展开更多选项"}
+                        onClick={() => setOptionsExpanded((expanded) => !expanded)}
+                        className="nex-interactive-chrome nex-pressable h-7 w-7 shrink-0 text-[var(--text-secondary)] hover:bg-[var(--overlay-hover)] hover:text-[var(--text-primary)]"
+                      >
+                        {optionsExpanded ? <ChevronsRight size={14} /> : <ChevronsLeft size={14} />}
+                      </Button>
+                    )}
+                    {optionsExpanded && !hasConfigMode && meta.modes.length > 0 && (
                       <ComposerOptionMenu
                         ariaLabel="Mode"
                         value={meta.currentModeId ?? ""}
@@ -1001,7 +1022,7 @@ function AgentComposerContent() {
                         onSelect={(id) => void setModel(session.sessionId, id)}
                       />
                     )}
-                    {configOpts.map((opt) => {
+                    {configOpts.filter((opt) => optionsExpanded || isPrimaryOption(opt)).map((opt) => {
                       const isModelOpt = opt.id === "model" || opt.category === "model";
                       if (isModelOpt) {
                         return (

@@ -797,6 +797,10 @@ export async function fsMoveEntry(source: string, targetDir: string): Promise<vo
   return invoke(COMMANDS.FS_MOVE_ENTRY, { source, targetDir });
 }
 
+export async function fsRevealEntry(path: string): Promise<void> {
+  return invoke(COMMANDS.FS_REVEAL_ENTRY, { path });
+}
+
 export async function fsImportFiles(sources: string[], targetDir: string): Promise<string[]> {
   return invoke(COMMANDS.FS_IMPORT_FILES, { sources, targetDir });
 }

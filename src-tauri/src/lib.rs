@@ -98,6 +98,7 @@ pub fn run() {
             commands::fs_cmds::fs_copy_entry,
             commands::fs_cmds::fs_move_entry,
             commands::fs_cmds::fs_import_files,
+            commands::fs_cmds::fs_reveal_entry,
             commands::git_cmds::git_status,
             commands::git_cmds::git_diff,
             commands::git_cmds::git_diff_contents,

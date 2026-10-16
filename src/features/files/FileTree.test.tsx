@@ -4,16 +4,29 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, act } from "@testing-library/react";
 
+import type { OsDragDropEvent } from "../../lib/osDragDrop";
+import type { PointerDragCallbacks } from "../../lib/usePointerDrag";
+import type { TreeNodeDragSession } from "../../stores/dragDrop.store";
+
+const dragHandlers = vi.hoisted(() => ({
+  os: null as unknown as (event: OsDragDropEvent) => void,
+  pointer: null as unknown as PointerDragCallbacks<TreeNodeDragSession>,
+}));
 vi.mock("../../lib/osDragDrop", () => ({
-  useOsDragDrop: () => {},
+  useOsDragDrop: (handler: (event: OsDragDropEvent) => void) => {
+    dragHandlers.os = handler;
+  },
 }));
 
 vi.mock("../../lib/usePointerDrag", () => ({
-  usePointerDrag: () => ({
-    payload: null,
-    start: () => () => {},
-    ghostRef: { current: null },
-  }),
+  usePointerDrag: (callbacks: PointerDragCallbacks<TreeNodeDragSession>) => {
+    dragHandlers.pointer = callbacks;
+    return {
+      payload: null,
+      start: () => () => {},
+      ghostRef: { current: null },
+    };
+  },
 }));
 
 vi.mock("../../lib/composerAttach", () => ({
@@ -77,6 +90,36 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+});
+
+describe("FileTree drop routing", () => {
+  function setupTarget() {
+    const view = render(<FileTree />);
+    const tree = view.container.querySelector<HTMLElement>("[data-file-tree]")!;
+    const row = tree.querySelector<HTMLElement>(`[data-dir-path="${PROJECT.path}/src"]`)!;
+    vi.spyOn(tree, "getBoundingClientRect").mockReturnValue({ left: 0, right: 300, top: 0, bottom: 300 } as DOMRect);
+    document.elementFromPoint = vi.fn(() => row);
+    return view;
+  }
+
+  it("imports OS files into the directory under the drop position", () => {
+    const importFiles = vi.fn();
+    useFsStore.setState({ importFiles });
+    setupTarget();
+    act(() => dragHandlers.os({ type: "drop", paths: ["/external/test.txt"], x: 50, y: 50 }));
+    expect(importFiles).toHaveBeenCalledWith(["/external/test.txt"], `${PROJECT.path}/src`);
+    importFiles.mockClear();
+    act(() => dragHandlers.os({ type: "drop", paths: ["/external/test.txt"], x: 400, y: 400 }));
+    expect(importFiles).not.toHaveBeenCalled();
+  });
+
+  it("resolves the final directory even before the pending hover frame runs", () => {
+    const moveEntries = vi.fn();
+    useFsStore.setState({ moveEntries });
+    setupTarget();
+    act(() => dragHandlers.pointer.onDrop!({ kind: "tree-node", path: `${PROJECT.path}/a.ts`, name: "a.ts", isDir: false }, 50, 50));
+    expect(moveEntries).toHaveBeenCalledWith([`${PROJECT.path}/a.ts`], `${PROJECT.path}/src`);
+  });
 });
 
 describe("FileTree keyboard navigation", () => {

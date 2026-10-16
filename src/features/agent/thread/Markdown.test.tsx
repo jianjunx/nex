@@ -1,9 +1,12 @@
 /**
  * @vitest-environment jsdom
  */
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Markdown } from "./Markdown";
+
+vi.mock("@/bridge/tauri", () => ({ openExternal: vi.fn().mockResolvedValue(undefined) }));
+import { openExternal } from "@/bridge/tauri";
 
 vi.mock("../../../stores/settings.store", () => ({
   useSettingsStore: (sel: (s: { theme: "light" | "dark" }) => unknown) =>
@@ -38,6 +41,12 @@ afterEach(() => {
 });
 
 describe("Markdown", () => {
+  it.each([{ metaKey: true }, { ctrlKey: true }, {}])("opens external links through the system browser: %j", (modifiers) => {
+    const { getByRole } = render(<Markdown>{"[Example](https://example.com/path?q=1)"}</Markdown>);
+    fireEvent.click(getByRole("link"), modifiers);
+    expect(openExternal).toHaveBeenCalledWith("https://example.com/path?q=1");
+  });
+
   it("renders a GFM table with proper structure (not literal pipes)", () => {
     const src = [
       "| 检查项 | 结果 | 备注 |",

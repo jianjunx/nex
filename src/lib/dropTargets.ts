@@ -29,10 +29,20 @@ export function resolveDirDropTarget(
 ): string | null {
   if (!container || !pointInRect(p, container.getBoundingClientRect())) return null;
   const el = document.elementFromPoint(p.x, p.y);
-  const dirRow = el?.closest?.("[data-dir-path]") as HTMLElement | null;
-  if (dirRow?.dataset.dirPath) return dirRow.dataset.dirPath;
-  const fileRow = el?.closest?.("[data-file-path]") as HTMLElement | null;
-  if (fileRow?.dataset.filePath) return parentDirOf(fileRow.dataset.filePath);
+  const row = el?.closest?.("[data-dir-path], [data-file-path]") as HTMLElement | null;
+  if (row && container.contains(row)) {
+    if (row.dataset.dirPath) return row.dataset.dirPath;
+    if (row.dataset.filePath) return parentDirOf(row.dataset.filePath);
+  }
+  // Native OS drags can leave WebView hit testing without a DOM target.
+  // Row bounds remain reliable, including on scaled displays.
+  for (const row of container.querySelectorAll<HTMLElement>("[data-dir-path], [data-file-path]")) {
+    if (row.closest('.nex-collapse[data-open="false"]')) continue;
+    const bounds = row.getBoundingClientRect();
+    if (bounds.height > 0 && pointInRect(p, bounds)) {
+      return row.dataset.dirPath ?? parentDirOf(row.dataset.filePath!);
+    }
+  }
   return fallbackRoot;
 }
 

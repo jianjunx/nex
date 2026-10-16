@@ -9,6 +9,7 @@ import {
 import {
   FilePlus,
   FolderPlus,
+  FolderOpen,
   Copy,
   Scissors,
   ClipboardPaste,
@@ -16,6 +17,9 @@ import {
   Pencil,
   Trash2,
 } from "lucide-react";
+import { fsRevealEntry } from "@/bridge/tauri";
+import { toast } from "@/stores/toast.store";
+import { errorMessage } from "@/lib/errors";
 import { useClipboardStore } from "@/stores/clipboard.store";
 import { useFsStore } from "@/stores/fs.store";
 import { useProjectStore } from "@/stores/project.store";
@@ -49,6 +53,16 @@ export function TreeContextMenu({
   const clipboard = useClipboardStore();
   const fs = useFsStore();
   const canPaste = clipboard.hasEntries();
+
+  const revealItem = (
+    <DropdownMenuItem onClick={() => {
+      onClose();
+      void fsRevealEntry(node.path).catch((err) => toast({ variant: "error", message: "打开文件管理器失败", detail: errorMessage(err) }));
+    }}>
+      <FolderOpen className="size-4" />
+      <span>{isMac ? "在访达中打开" : "在文件管理器中打开"}</span>
+    </DropdownMenuItem>
+  );
 
   const handleCopy = () => {
     clipboard.setEntries([{ path: node.path, isCut: false }]);
@@ -132,6 +146,7 @@ export function TreeContextMenu({
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
           <DropdownMenuGroup>
+            {revealItem}
             <DropdownMenuItem onClick={handleCopyPath}>
               <Link className="size-4" />
               <span>复制路径</span>
@@ -201,6 +216,7 @@ export function TreeContextMenu({
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
+          {revealItem}
           <DropdownMenuItem onClick={handleCopyPath}>
             <Link className="size-4" />
             <span>复制路径</span>

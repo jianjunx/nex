@@ -3,6 +3,9 @@ import CodeBlock from "@/components/agent-ui/beautiful-ui/CodeBlock";
 import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
+import { openExternal } from "@/bridge/tauri";
+import { toast } from "@/stores/toast.store";
+import { errorMessage } from "@/lib/errors";
 import { MermaidBlock } from "./MermaidBlock";
 import { looksLikeFilePath, openPathToken } from "./pathToken";
 
@@ -201,6 +204,12 @@ const components: Components = {
         rel="noopener noreferrer"
         className="nex-hover-underline text-[var(--accent)] hover:text-[var(--accent-hover)]"
         {...rest}
+        onClick={(e) => {
+          e.preventDefault();
+          if (href && /^https?:\/\//i.test(href)) {
+            void openExternal(href).catch((err) => toast({ variant: "error", message: "打开浏览器失败", detail: errorMessage(err) }));
+          }
+        }}
       >
         {children}
       </a>

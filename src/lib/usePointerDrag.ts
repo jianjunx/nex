@@ -47,6 +47,8 @@ export function usePointerDrag<P>(callbacks: PointerDragCallbacks<P>): {
 
   const start = useCallback((p: P) => (e: ReactPointerEvent) => {
     if (e.button !== 0) return;
+    // Prevent native text/image dragging from cancelling the pointer session.
+    e.preventDefault();
     const startX = e.clientX;
     const startY = e.clientY;
     const source = e.currentTarget as HTMLElement;

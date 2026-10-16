@@ -179,3 +179,48 @@ pub fn fs_import_files(sources: Vec<String>, target_dir: String) -> Result<Vec<S
     }
     Ok(results)
 }
+
+/// Open directories, or reveal files, in the system file manager.
+#[tauri::command]
+pub async fn fs_reveal_entry(path: String) -> Result<(), NexError> {
+    let path = std::path::PathBuf::from(path);
+    let path = if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let is_dir = std::fs::metadata(&path)?.is_dir();
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = std::process::Command::new("open");
+        if !is_dir {
+            command.arg("-R");
+        }
+        command.arg(&path);
+        command
+    };
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = std::process::Command::new("explorer.exe");
+        if is_dir {
+            command.arg(&path);
+        } else {
+            command.arg(format!("/select,{}", path.display()));
+        }
+        command
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = {
+        let mut command = std::process::Command::new("xdg-open");
+        command.arg(if is_dir {
+            path.as_path()
+        } else {
+            path.parent().unwrap_or(&path)
+        });
+        command
+    };
+    command
+        .spawn()
+        .map_err(|e| NexError::FileSystem(format!("打开文件管理器失败: {e}")))?;
+    Ok(())
+}

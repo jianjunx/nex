@@ -92,6 +92,7 @@ export const COMMANDS = {
   FS_RENAME_ENTRY: "fs_rename_entry",
   FS_COPY_ENTRY: "fs_copy_entry",
   FS_MOVE_ENTRY: "fs_move_entry",
+  FS_REVEAL_ENTRY: "fs_reveal_entry",
   FS_IMPORT_FILES: "fs_import_files",
   // Updater (GitHub Releases)
   UPDATE_CHECK_LATEST: "update_check_latest",

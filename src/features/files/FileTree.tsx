@@ -317,6 +317,8 @@ function TreeNode({
           }}
           // Pointer drag (move / attach to composer); 5px threshold keeps
           // plain clicks intact. Root rows are not draggable.
+          draggable={false}
+          onDragStart={(e) => e.preventDefault()}
           onPointerDown={isRoot ? undefined : (e) => onNodePointerDown(e, node)}
           className={`flex items-center gap-1.5 px-2 py-[3px] text-sm cursor-pointer rounded-[var(--radius-sm)] outline-none group ${
             isDropTarget
@@ -529,8 +531,8 @@ function FileTreeContent() {
       lastDropPosRef.current = { x: -1, y: -1 };
       useDragDropStore.getState().clearHover();
       if (e.paths && e.paths.length > 0) {
-        const dir = resolveDirDropTarget(e, treeContainerRef.current, project.path) ?? project.path;
-        void fsActions.importFiles(e.paths, dir);
+        const dir = resolveDirDropTarget(e, treeContainerRef.current, project.path);
+        if (dir) void fsActions.importFiles(e.paths, dir);
       }
       return;
     }
@@ -561,7 +563,8 @@ function FileTreeContent() {
   const { payload: dragPayload, start: startDrag, ghostRef } = usePointerDrag<TreeNodeDragSession>({
     onBegin: (p) => useDragDropStore.getState().begin(p),
     onMove: (_p, x, y) => useDragDropStore.getState().updateHover({ x, y }),
-    onDrop: (p) => {
+    onDrop: (p, x, y) => {
+      useDragDropStore.getState().updateHover({ x, y });
       const { overDir, overComposer } = useDragDropStore.getState();
       if (!p.isDir && overComposer) {
         attachToComposer([p.path]);

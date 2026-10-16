@@ -54,6 +54,7 @@ describe("resolveDirDropTarget", () => {
     const container = el({});
     vi.spyOn(container, "getBoundingClientRect").mockReturnValue(rect(0, 0, 300, 300));
     const row = el({ "data-dir-path": "/proj/src" });
+    container.appendChild(row);
     const child = document.createElement("span");
     row.appendChild(child);
     vi.spyOn(document, "elementFromPoint").mockReturnValue(child);
@@ -64,19 +65,29 @@ describe("resolveDirDropTarget", () => {
     const container = el({});
     vi.spyOn(container, "getBoundingClientRect").mockReturnValue(rect(0, 0, 300, 300));
     const row = el({ "data-file-path": "/proj/src/main.rs" });
+    container.appendChild(row);
     vi.spyOn(document, "elementFromPoint").mockReturnValue(row);
     expect(resolveDirDropTarget({ x: 5, y: 5 }, container, "/proj")).toBe("/proj/src");
   });
 
-  it("prefers directory row over nested file row", () => {
+  it("uses the closest row rather than an ancestor directory", () => {
     const container = el({});
     vi.spyOn(container, "getBoundingClientRect").mockReturnValue(rect(0, 0, 300, 300));
     const dirRow = el({ "data-dir-path": "/proj/src" });
+    container.appendChild(dirRow);
     const fileRow = el({ "data-file-path": "/proj/other.txt" });
     dirRow.appendChild(fileRow);
     vi.spyOn(document, "elementFromPoint").mockReturnValue(fileRow);
-    // fileRow is inside dirRow: closest([data-dir-path]) wins
-    expect(resolveDirDropTarget({ x: 5, y: 5 }, container, "/proj")).toBe("/proj/src");
+    expect(resolveDirDropTarget({ x: 5, y: 5 }, container, "/proj")).toBe("/proj");
+  });
+
+  it("uses row bounds when native dragging has no DOM hit target", () => {
+    const container = el({});
+    vi.spyOn(container, "getBoundingClientRect").mockReturnValue(rect(0, 0, 300, 300));
+    const row = el({ "data-dir-path": "/proj/nested" });
+    container.appendChild(row);
+    vi.spyOn(row, "getBoundingClientRect").mockReturnValue(rect(0, 40, 300, 24));
+    expect(resolveDirDropTarget({ x: 50, y: 50 }, container, "/proj")).toBe("/proj/nested");
   });
 
   it("falls back to project root on empty area", () => {

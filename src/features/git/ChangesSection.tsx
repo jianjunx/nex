@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react";
 import { Collapse } from "@/components/ui/Collapse";
-import { ChevronRight, File, Minus, Plus, Undo2 } from "lucide-react";
+import { ChevronRight, File, Loader2, Minus, Plus, Undo2 } from "lucide-react";
 import FileIcon from "../files/FileIcon";
 import { useGitStore } from "../../stores/git.store";
 import { useFsStore } from "../../stores/fs.store";
 import type { GitFileChange } from "../../bridge/tauri";
+import { usePendingOption } from "../agent/usePendingOption";
 import { CommitSection } from "./CommitSection";
 import { GitConfirmDialog } from "./GitConfirmDialog";
 
@@ -48,6 +49,10 @@ function FileRow({ projectPath, file, display, busy, onDiscard }: FileRowProps) 
   const stage = useGitStore((s) => s.stage);
   const unstage = useGitStore((s) => s.unstage);
   const openDiffInEditor = useGitStore((s) => s.openDiffInEditor);
+  const { pendingId, select } = usePendingOption(async (op) => {
+    if (op === "stage") await stage(projectPath, [file.path]);
+    else await unstage(projectPath, [file.path]);
+  }, undefined, "暂存操作失败");
 
   return (
     <div
@@ -58,11 +63,11 @@ function FileRow({ projectPath, file, display, busy, onDiscard }: FileRowProps) 
       {/* 与文件树同款类型图标 */}
       <FileIcon filename={basename(file.path)} size={14} className="shrink-0" />
       <span className="min-w-0 flex-1 truncate text-[var(--text-secondary)]">{display}</span>
-      <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+      <span className={`flex shrink-0 items-center gap-0.5 transition-opacity ${pendingId !== null ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}>
         <button
           data-testid={`open-${file.path}`}
           title="打开文件"
-          disabled={busy}
+          disabled={busy || pendingId !== null}
           className={ICON_BUTTON}
           onClick={(e) => {
             e.stopPropagation();
@@ -75,33 +80,33 @@ function FileRow({ projectPath, file, display, busy, onDiscard }: FileRowProps) 
           <button
             data-testid={`unstage-${file.path}`}
             title="取消暂存"
-            disabled={busy}
+            disabled={busy || pendingId !== null}
             className={ICON_BUTTON}
             onClick={(e) => {
               e.stopPropagation();
-              void unstage(projectPath, [file.path]);
+              void select("unstage");
             }}
           >
-            <Minus size={13} />
+            {pendingId === "unstage" ? <Loader2 size={13} className="animate-spin" aria-label="取消暂存中" /> : <Minus size={13} />}
           </button>
         ) : (
           <button
             data-testid={`stage-${file.path}`}
             title="暂存"
-            disabled={busy}
+            disabled={busy || pendingId !== null}
             className={ICON_BUTTON}
             onClick={(e) => {
               e.stopPropagation();
-              void stage(projectPath, [file.path]);
+              void select("stage");
             }}
           >
-            <Plus size={13} />
+            {pendingId === "stage" ? <Loader2 size={13} className="animate-spin" aria-label="暂存中" /> : <Plus size={13} />}
           </button>
         )}
         <button
           data-testid={`discard-${file.path}`}
           title={file.staged ? "还原暂存更改" : "丢弃更改"}
-          disabled={busy}
+          disabled={busy || pendingId !== null}
           className={`${ICON_BUTTON} hover:!text-[var(--error)]`}
           onClick={(e) => {
             e.stopPropagation();
@@ -247,6 +252,10 @@ function FileGroup({ projectPath, title, files, staged, busy, treeView, onDiscar
   const unstage = useGitStore((s) => s.unstage);
   const [collapsed, setCollapsed] = useState(false);
   const paths = files.map((f) => f.path);
+  const { pendingId, select } = usePendingOption(async (op) => {
+    if (op === "stage") await stage(projectPath, paths);
+    else await unstage(projectPath, paths);
+  }, undefined, "暂存操作失败");
 
   return (
     <div className="mb-2">
@@ -265,19 +274,19 @@ function FileGroup({ projectPath, title, files, staged, busy, treeView, onDiscar
             <button
               data-testid="unstage-all"
               title="全部取消暂存"
-              disabled={busy}
+              disabled={busy || pendingId !== null}
               className={ICON_BUTTON}
               onClick={(e) => {
                 e.stopPropagation();
-                void unstage(projectPath, paths);
+                void select("unstage");
               }}
             >
-              <Minus size={13} />
+              {pendingId === "unstage" ? <Loader2 size={13} className="animate-spin" aria-label="取消暂存中" /> : <Minus size={13} />}
             </button>
             <button
               data-testid="revert-all"
               title="还原暂存更改"
-              disabled={busy}
+              disabled={busy || pendingId !== null}
               className={`${ICON_BUTTON} hover:!text-[var(--error)]`}
               onClick={(e) => {
                 e.stopPropagation();
@@ -292,19 +301,19 @@ function FileGroup({ projectPath, title, files, staged, busy, treeView, onDiscar
             <button
               data-testid="stage-all"
               title="全部暂存"
-              disabled={busy}
+              disabled={busy || pendingId !== null}
               className={ICON_BUTTON}
               onClick={(e) => {
                 e.stopPropagation();
-                void stage(projectPath, paths);
+                void select("stage");
               }}
             >
-              <Plus size={13} />
+              {pendingId === "stage" ? <Loader2 size={13} className="animate-spin" aria-label="暂存中" /> : <Plus size={13} />}
             </button>
             <button
               data-testid="discard-all"
               title="丢弃全部更改"
-              disabled={busy}
+              disabled={busy || pendingId !== null}
               className={`${ICON_BUTTON} hover:!text-[var(--error)]`}
               onClick={(e) => {
                 e.stopPropagation();

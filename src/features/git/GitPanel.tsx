@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { FolderTree, List, Loader2, RefreshCw, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { isMissingGitRepo, useGitStore } from "../../stores/git.store";
@@ -29,10 +29,13 @@ export function GitPanel() {
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const project = projects.find((p) => p.id === activeProjectId);
   const [branchSelectorOpen, setBranchSelectorOpen] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshRunning = useRef(false);
+  const projectPath = project?.path;
 
   useEffect(() => {
-    if (project) void refresh(project.path);
-  }, [project?.path]);
+    if (projectPath) void refresh(projectPath);
+  }, [projectPath, refresh]);
 
   if (!project) return <div className="px-3 py-4 text-sm text-[var(--text-tertiary)]">还没有打开项目</div>;
 
@@ -53,7 +56,25 @@ export function GitPanel() {
   const ahead = status?.ahead ?? 0;
   const behind = status?.behind ?? 0;
   const pushing = opRunning === "推送";
-  const busy = statusLoading || !!opRunning;
+  const busy = refreshing || statusLoading || !!opRunning;
+
+  const refreshPanel = async () => {
+    if (busy || refreshRunning.current) return;
+    refreshRunning.current = true;
+    setRefreshing(true);
+    try {
+      // Each store action reports its own errors. Keep spinning until all
+      // refreshes settle, including when one request fails before the others.
+      await Promise.allSettled([
+        refresh(project.path),
+        loadBranches(project.path),
+        loadStashes(project.path),
+      ]);
+    } finally {
+      refreshRunning.current = false;
+      setRefreshing(false);
+    }
+  };
 
   return (
     <div className="flex flex-col h-full text-sm overflow-hidden">
@@ -86,8 +107,9 @@ export function GitPanel() {
             className="gap-1"
             onClick={() => void push(project.path)}
           >
-            {pushing ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+            <Upload size={13} />
             Push
+            {pushing && <Loader2 size={13} className="animate-spin" aria-label="推送中" />}
           </Button>
         )}
         <Button
@@ -95,13 +117,10 @@ export function GitPanel() {
           size="icon-xs"
           title="刷新"
           disabled={busy}
-          onClick={() => {
-            refresh(project.path);
-            loadBranches(project.path);
-            loadStashes(project.path);
-          }}
+          aria-busy={refreshing || statusLoading}
+          onClick={() => void refreshPanel()}
         >
-          <RefreshCw size={13} className={statusLoading ? "animate-spin" : ""} />
+          <RefreshCw size={13} className={refreshing || statusLoading ? "animate-spin" : ""} />
         </Button>
         <Button
           variant="ghost"

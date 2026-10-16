@@ -1007,7 +1007,7 @@ function AgentComposerContent() {
                         ariaLabel="Mode"
                         value={meta.currentModeId ?? ""}
                         options={meta.modes.map((m) => ({ id: m.id, name: m.name }))}
-                        onSelect={(id) => void setMode(session.sessionId, id)}
+                        onSelect={(id) => setMode(session.sessionId, id)}
                       />
                     )}
                     {!hasConfigModel && meta.models.length > 0 && (
@@ -1019,7 +1019,7 @@ function AgentComposerContent() {
                           name: m.name,
                           group: m.description?.trim() || "其他",
                         }))}
-                        onSelect={(id) => void setModel(session.sessionId, id)}
+                        onSelect={(id) => setModel(session.sessionId, id)}
                       />
                     )}
                     {configOpts.filter((opt) => optionsExpanded || isPrimaryOption(opt)).map((opt) => {
@@ -1037,7 +1037,7 @@ function AgentComposerContent() {
                                 ? (o.name.split("/")[0] ?? "其他")
                                 : "模型",
                             }))}
-                            onSelect={(id) => void setConfigOption(session.sessionId, opt.id, id)}
+                            onSelect={(id) => setConfigOption(session.sessionId, opt.id, id)}
                           />
                         );
                       }
@@ -1047,7 +1047,7 @@ function AgentComposerContent() {
                           ariaLabel={opt.name || opt.id}
                           value={opt.currentValueId}
                           options={opt.options.map((o) => ({ id: o.id, name: o.name }))}
-                          onSelect={(id) => void setConfigOption(session.sessionId, opt.id, id)}
+                          onSelect={(id) => setConfigOption(session.sessionId, opt.id, id)}
                         />
                       );
                     })}

@@ -107,9 +107,26 @@ describe("GitActionsMenu", () => {
     await openMenu();
     const pushItem = screen.getByText("推送").closest("[role=menuitem]")!;
     expect(pushItem.querySelector("svg.animate-spin")).toBeTruthy();
-    expect(pushItem.hasAttribute("data-disabled")).toBe(false);
+    expect(pushItem.hasAttribute("data-disabled")).toBe(true);
     const fetchItem = screen.getByText("同步").closest("[role=menuitem]")!;
     expect(fetchItem.hasAttribute("data-disabled")).toBe(true);
+  });
+
+  it.each([
+    ["拉取", "pull"], ["推送", "push"], ["同步", "fetch"],
+  ] as const)("keeps %s visible with a trailing spinner until completion", async (label, op) => {
+    let finish!: () => void;
+    gitState[op].mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
+    await openMenu();
+    const row = screen.getByRole("menuitem", { name: label });
+    fireEvent.click(row);
+    expect(row.getAttribute("aria-busy")).toBe("true");
+    expect(row.lastElementChild?.classList.contains("animate-spin")).toBe(true);
+    fireEvent.click(row);
+    expect(gitState[op]).toHaveBeenCalledTimes(1);
+    finish();
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(screen.getByTitle("更多操作").querySelector(".animate-spin")).toBeNull();
   });
 
   it("dropping a stash goes through the confirm dialog", async () => {

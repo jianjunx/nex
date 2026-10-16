@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Check, ChevronDown, GitBranch, Plus, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Check, ChevronDown, GitBranch, LoaderCircle, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -37,6 +37,8 @@ export function BranchSelector({ projectPath, open, onOpenChange }: BranchSelect
   // R1：store error 被对话框遮罩盖住 GitPanel 错误条——下拉面板内自行回显
   const error = useGitStore((s) => s.error);
 
+  const [pendingBranch, setPendingBranch] = useState<string | null>(null);
+  const checkoutRunning = useRef(false);
   const [query, setQuery] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState("");
@@ -50,7 +52,7 @@ export function BranchSelector({ projectPath, open, onOpenChange }: BranchSelect
     }
   }, [open, projectPath, loadBranches]);
 
-  const busy = !!opRunning;
+  const busy = !!opRunning || pendingBranch !== null;
   const q = query.trim().toLowerCase();
   const match = (name: string) => name.toLowerCase().includes(q);
   const byRecency = <T extends { tipTime?: number | null; name: string }>(a: T, b: T) => {
@@ -63,9 +65,16 @@ export function BranchSelector({ projectPath, open, onOpenChange }: BranchSelect
   const remotes = branches.filter((b) => b.isRemote && match(b.name)).slice().sort(byRecency);
 
   const doCheckout = async (name: string) => {
-    if (busy) return;
-    const ok = await checkout(projectPath, name);
-    if (ok) onOpenChange(false);
+    if (busy || checkoutRunning.current) return;
+    checkoutRunning.current = true;
+    setPendingBranch(name);
+    try {
+      const ok = await checkout(projectPath, name);
+      if (ok) onOpenChange(false);
+    } finally {
+      checkoutRunning.current = false;
+      setPendingBranch(null);
+    }
   };
 
   const doCreate = async () => {
@@ -91,7 +100,9 @@ export function BranchSelector({ projectPath, open, onOpenChange }: BranchSelect
           >
             <GitBranch size={13} className="shrink-0 text-[var(--accent)]" />
             <span className="truncate">{status?.branch || "—"}</span>
-            <ChevronDown size={12} className="shrink-0 text-[var(--text-tertiary)]" />
+            {pendingBranch !== null ? (
+              <LoaderCircle size={12} className="shrink-0 animate-spin" aria-label="切换中" />
+            ) : <ChevronDown size={12} className="shrink-0 text-[var(--text-tertiary)]" />}
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent
@@ -116,16 +127,21 @@ export function BranchSelector({ projectPath, open, onOpenChange }: BranchSelect
               <div
                 key={b.name}
                 data-testid={`branch-${b.name}`}
+                aria-busy={pendingBranch === b.name}
+                aria-disabled={busy}
                 className="group flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-[var(--overlay-hover)]"
                 onClick={() => void doCheckout(b.name)}
               >
                 <GitBranch size={13} className="shrink-0 text-[var(--text-tertiary)]" />
                 <span className="flex-1 truncate text-sm">{b.name}</span>
-                {b.isHead ? (
+                {pendingBranch === b.name ? (
+                  <LoaderCircle size={13} className="shrink-0 animate-spin" aria-label="切换中" />
+                ) : b.isHead ? (
                   <Check size={13} className="shrink-0 text-[var(--accent)]" />
                 ) : (
                   <button
                     data-testid={`delete-${b.name}`}
+                    disabled={busy}
                     className="shrink-0 text-[var(--text-tertiary)] opacity-0 transition-opacity hover:text-[var(--error)] group-hover:opacity-100"
                     title="删除分支"
                     onClick={(e) => {
@@ -150,11 +166,16 @@ export function BranchSelector({ projectPath, open, onOpenChange }: BranchSelect
                   <div
                     key={b.name}
                     data-testid={`branch-${b.name}`}
+                    aria-busy={pendingBranch === b.name}
+                    aria-disabled={busy}
                     className="group flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-[var(--overlay-hover)]"
                     onClick={() => void doCheckout(b.name)}
                   >
                     <GitBranch size={13} className="shrink-0 text-[var(--text-tertiary)]" />
                     <span className="flex-1 truncate text-sm">{b.name}</span>
+                    {pendingBranch === b.name && (
+                      <LoaderCircle size={13} className="shrink-0 animate-spin" aria-label="切换中" />
+                    )}
                   </div>
                 ))}
                 <div className="px-2 py-1 text-xs text-[var(--text-tertiary)]">
@@ -166,7 +187,7 @@ export function BranchSelector({ projectPath, open, onOpenChange }: BranchSelect
           </div>
           <div className="shrink-0 border-t border-[var(--border-subtle)] p-1">
             {/* 选中后菜单自动关闭，弹新建分支小窗 */}
-            <DropdownMenuItem data-testid="new-branch-item" onSelect={() => setCreateOpen(true)}>
+            <DropdownMenuItem data-testid="new-branch-item" disabled={busy} onSelect={() => setCreateOpen(true)}>
               <Plus size={13} /> 新建分支…
             </DropdownMenuItem>
           </div>
@@ -195,6 +216,9 @@ export function BranchSelector({ projectPath, open, onOpenChange }: BranchSelect
             </Button>
             <Button disabled={!newName.trim() || busy} onClick={() => void doCreate()}>
               <Plus size={13} /> 创建
+              {(opRunning === "新建分支" || opRunning === "签出") && (
+                <LoaderCircle size={13} className="animate-spin" aria-label="创建分支中" />
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

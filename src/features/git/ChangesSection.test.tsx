@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 type ChangeFile = {
   path: string;
@@ -79,6 +79,24 @@ describe("ChangesSection", () => {
     render(<ChangesSection projectPath="/p" />);
     fireEvent.click(screen.getByTestId("unstage-all"));
     expect(gitState.unstage).toHaveBeenCalledWith("/p", ["c.txt"]);
+  });
+
+  it.each([
+    ["stage-a.txt", "stage"], ["unstage-c.txt", "unstage"],
+    ["stage-all", "stage"], ["unstage-all", "unstage"],
+  ] as const)("shows progress on %s until the operation settles", async (id, op) => {
+    let finish!: () => void;
+    gitState[op].mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
+    render(<ChangesSection projectPath="/p" />);
+    const button = screen.getByTestId(id) as HTMLButtonElement;
+    fireEvent.click(button);
+    expect(button.querySelector(".animate-spin")).toBeTruthy();
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    expect(gitState[op]).toHaveBeenCalledTimes(1);
+    finish();
+    await waitFor(() => expect(button.querySelector(".animate-spin")).toBeNull());
+    expect(button.disabled).toBe(false);
   });
 
   it("discard goes through the confirm dialog before calling the store", () => {

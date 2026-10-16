@@ -50,6 +50,21 @@ describe("CommitSection", () => {
     await waitFor(() => expect(gitState.commitWith).toHaveBeenCalledWith("/p", "push"));
   });
 
+  it("shows progress throughout commit and push and blocks repeated submission", async () => {
+    let finish!: () => void;
+    gitState.commitWith.mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
+    render(<CommitSection projectPath="/p" />);
+    fireEvent.pointerDown(screen.getByTitle("更多提交方式"));
+    const row = await screen.findByRole("menuitem", { name: "提交并推送" });
+    fireEvent.click(row);
+    expect(row.getAttribute("aria-busy")).toBe("true");
+    expect(row.lastElementChild?.classList.contains("animate-spin")).toBe(true);
+    fireEvent.keyDown(document.querySelector("[data-scm-commit-input]")!, { key: "Enter" });
+    expect(gitState.commitWith).toHaveBeenCalledTimes(1);
+    finish();
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  });
+
   it("empty message disables the commit button", () => {
     gitState.commitMessage = "   ";
     render(<CommitSection projectPath="/p" />);

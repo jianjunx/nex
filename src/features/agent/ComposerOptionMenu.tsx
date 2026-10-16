@@ -1,5 +1,6 @@
+import { usePendingOption } from "./usePendingOption";
 import type { ReactNode } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, LoaderCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -39,7 +40,7 @@ interface Props {
   ariaLabel: string;
   value: string;
   options: ComposerOptionItem[];
-  onSelect: (id: string) => void;
+  onSelect: (id: string) => void | Promise<void>;
   disabled?: boolean;
   /** Optional empty placeholder when value is blank. */
   placeholder?: string;
@@ -66,11 +67,12 @@ export function ComposerOptionMenu({
   bordered = false,
   onOpenChange,
 }: Props) {
+  const { open, setOpen, pendingId, select } = usePendingOption(onSelect, onOpenChange);
   const current = options.find((o) => o.id === value);
   const label = current?.name ?? placeholder;
 
   return (
-    <DropdownMenu onOpenChange={onOpenChange}>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <Button
           type="button"
@@ -83,7 +85,9 @@ export function ComposerOptionMenu({
         >
           {current && renderIcon?.(current.id)}
           <span className="truncate">{label}</span>
-          <ChevronDown size={12} className="shrink-0 opacity-50" />
+          {pendingId !== null ? (
+            <LoaderCircle size={12} className="shrink-0 animate-spin" aria-label="切换中" />
+          ) : <ChevronDown size={12} className="shrink-0 opacity-50" />}
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
@@ -93,7 +97,12 @@ export function ComposerOptionMenu({
         {options.map((o) => (
           <DropdownMenuItem
             key={o.id}
-            onSelect={() => onSelect(o.id)}
+            disabled={disabled || pendingId !== null}
+            aria-busy={pendingId === o.id}
+            onSelect={(event) => {
+              event.preventDefault();
+              void select(o.id);
+            }}
             className={`px-3 text-xs nex-interactive-chrome ${ITEM_HIGHLIGHT} ${
               o.id === value
                 ? "bg-[color:color-mix(in_srgb,var(--material-elevated)_86%,transparent)] text-[var(--text-primary)]"
@@ -101,7 +110,8 @@ export function ComposerOptionMenu({
             }`}
           >
             {renderIcon?.(o.id)}
-            <span className="truncate">{o.name}</span>
+            <span className="flex-1 truncate">{o.name}</span>
+            {pendingId === o.id && <LoaderCircle size={13} className="ml-auto shrink-0 animate-spin" aria-label="切换中" />}
           </DropdownMenuItem>
         ))}
         {actions && actions.length > 0 && (
@@ -110,6 +120,7 @@ export function ComposerOptionMenu({
             {actions.map((a) => (
               <DropdownMenuItem
                 key={a.id}
+                disabled={disabled || pendingId !== null}
                 onSelect={a.onSelect}
                 className={`px-3 text-xs nex-interactive-chrome text-[var(--text-secondary)] ${ITEM_HIGHLIGHT}`}
               >

@@ -26,6 +26,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { useGitStore } from "../../stores/git.store";
 import type { StashEntry } from "../../bridge/tauri";
+import { usePendingOption } from "../agent/usePendingOption";
 import { GitConfirmDialog } from "./GitConfirmDialog";
 
 interface GitActionsMenuProps {
@@ -65,11 +66,20 @@ export function GitActionsMenu({ projectPath, onOpenBranchSelector }: GitActions
   const [selectedStash, setSelectedStash] = useState<string | null>(null);
   const [toDrop, setToDrop] = useState<StashEntry | null>(null);
 
-  const busy = opRunning !== null;
-  // 进行中的项显示 spinner 但不禁用自身（store runOp 有 opRunning 重入守卫）；
-  // 其余网络项在任一操作进行时禁用。
-  const isRunning = (op: string) => opRunning === op;
-  const othersDisabled = (op: string) => busy && opRunning !== op;
+  const { open: menuOpen, setOpen: setMenuOpen, pendingId, select } = usePendingOption(async (op) => {
+    if (opRunning !== null) return;
+    if (op === "拉取") await gitPullOp(projectPath);
+    else if (op === "推送") await gitPushOp(projectPath);
+    else if (op === "同步") await gitFetchOp(projectPath);
+    else if (op === "弹出存储" && selectedStash !== null) {
+      const ok = await stashPop(projectPath, selectedStash);
+      if (ok) setSelectedStash(null);
+    } else if (op === "应用存储" && selectedStash !== null) {
+      await stashApply(projectPath, selectedStash);
+    }
+  }, undefined, "Git 操作失败");
+  const busy = opRunning !== null || pendingId !== null;
+  const isRunning = (op: string) => pendingId === op || opRunning === op;
 
   // 列表刷新后自动选中首条，让弹出/应用/删除开箱即用。
   useEffect(() => {
@@ -111,6 +121,7 @@ export function GitActionsMenu({ projectPath, onOpenBranchSelector }: GitActions
   };
 
   const confirmStashSave = async () => {
+    if (busy) return;
     const ok = await stashSave(projectPath, stashMsg.trim());
     if (ok) {
       setStashDialogOpen(false);
@@ -123,38 +134,38 @@ export function GitActionsMenu({ projectPath, onOpenBranchSelector }: GitActions
     .filter((b) => !b.isRemote && b.name !== currentBranch)
     .map((b) => b.name);
 
-  const spinner = (op: string) => (isRunning(op) ? <Loader2 size={13} className="mr-2 animate-spin" /> : null);
+  const spinner = (op: string) => (isRunning(op) ? <Loader2 size={13} className="ml-auto shrink-0 animate-spin" aria-label={`${op}中`} /> : null);
 
   return (
     <>
-      <DropdownMenu>
+      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size="icon-xs" title="更多操作">
-            <MoreHorizontal size={13} />
+            {busy ? <Loader2 size={13} className="animate-spin" aria-label="Git 操作中" /> : <MoreHorizontal size={13} />}
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56">
-          <DropdownMenuItem disabled={othersDisabled("拉取")} onSelect={() => void gitPullOp(projectPath)}>
-            {spinner("拉取")}拉取
+          <DropdownMenuItem disabled={busy} aria-busy={isRunning("拉取")} onSelect={(event) => { event.preventDefault(); void select("拉取"); }}>
+            拉取{spinner("拉取")}
           </DropdownMenuItem>
-          <DropdownMenuItem disabled={othersDisabled("推送")} onSelect={() => void gitPushOp(projectPath)}>
-            {spinner("推送")}推送
+          <DropdownMenuItem disabled={busy} aria-busy={isRunning("推送")} onSelect={(event) => { event.preventDefault(); void select("推送"); }}>
+            推送{spinner("推送")}
           </DropdownMenuItem>
-          <DropdownMenuItem disabled={othersDisabled("同步")} onSelect={() => void gitFetchOp(projectPath)}>
-            {spinner("同步")}同步
+          <DropdownMenuItem disabled={busy} aria-busy={isRunning("同步")} onSelect={(event) => { event.preventDefault(); void select("同步"); }}>
+            同步{spinner("同步")}
           </DropdownMenuItem>
           <DropdownMenuItem
-            disabled={othersDisabled("克隆")}
+            disabled={busy}
             onSelect={() => setCloneOpen(true)}
           >
-            {spinner("克隆")}克隆…
+            克隆…{spinner("克隆")}
           </DropdownMenuItem>
           <DropdownMenuItem
-            disabled={othersDisabled("合并")}
+            disabled={busy}
             data-testid="merge-item"
             onSelect={openMergeDialog}
           >
-            {spinner("合并")}合并…
+            合并…{spinner("合并")}
           </DropdownMenuItem>
           <DropdownMenuItem disabled={busy} onSelect={onOpenBranchSelector}>
             检出远端分支…
@@ -171,13 +182,13 @@ export function GitActionsMenu({ projectPath, onOpenBranchSelector }: GitActions
               存储
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent className="w-64">
-              <DropdownMenuItem data-testid="stash-new" onSelect={() => setStashDialogOpen(true)}>
+              <DropdownMenuItem disabled={busy} data-testid="stash-new" onSelect={() => setStashDialogOpen(true)}>
                 新建存储…
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuLabel>存储列表（点选后下方三项作用于选中条目）</DropdownMenuLabel>
               {stashes.map((s) => (
-                <DropdownMenuItem key={s.id} data-testid={`stash-${s.index}`} onSelect={(e) => { e.preventDefault(); setSelectedStash(s.id); }}>
+                <DropdownMenuItem key={s.id} disabled={busy} data-testid={`stash-${s.index}`} onSelect={(e) => { e.preventDefault(); setSelectedStash(s.id); }}>
                   <span className="mr-1 inline-flex w-3 justify-center">
                     {selectedStash === s.id ? <Check size={12} /> : ""}
                   </span>
@@ -188,25 +199,17 @@ export function GitActionsMenu({ projectPath, onOpenBranchSelector }: GitActions
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 disabled={selectedStash === null || busy}
-                onSelect={() => {
-                  if (selectedStash !== null) {
-                    const id = selectedStash;
-                    // R2：pop 成功后 stash 索引整体前移——清选中让自动选首项接管
-                    void stashPop(projectPath, id).then((ok) => {
-                      if (ok) setSelectedStash(null);
-                    });
-                  }
-                }}
+                aria-busy={isRunning("弹出存储")}
+                onSelect={(event) => { event.preventDefault(); void select("弹出存储"); }}
               >
-                弹出存储
+                弹出存储{spinner("弹出存储")}
               </DropdownMenuItem>
               <DropdownMenuItem
                 disabled={selectedStash === null || busy}
-                onSelect={() => {
-                  if (selectedStash !== null) void stashApply(projectPath, selectedStash);
-                }}
+                aria-busy={isRunning("应用存储")}
+                onSelect={(event) => { event.preventDefault(); void select("应用存储"); }}
               >
-                应用存储
+                应用存储{spinner("应用存储")}
               </DropdownMenuItem>
               <DropdownMenuItem
                 data-testid="stash-drop"
@@ -253,8 +256,8 @@ export function GitActionsMenu({ projectPath, onOpenBranchSelector }: GitActions
               取消
             </Button>
             <Button disabled={!cloneUrl.trim() || !cloneDest || busy} onClick={() => void confirmClone()}>
-              {isRunning("克隆") && <Loader2 size={13} className="mr-2 animate-spin" />}
               克隆
+              {isRunning("克隆") && <Loader2 size={13} className="animate-spin" aria-label="克隆中" />}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -299,8 +302,8 @@ export function GitActionsMenu({ projectPath, onOpenBranchSelector }: GitActions
               取消
             </Button>
             <Button disabled={!mergeBranch.trim() || busy} onClick={() => void confirmMerge()}>
-              {isRunning("合并") && <Loader2 size={13} className="mr-2 animate-spin" />}
               合并
+              {isRunning("合并") && <Loader2 size={13} className="animate-spin" aria-label="合并中" />}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -327,8 +330,8 @@ export function GitActionsMenu({ projectPath, onOpenBranchSelector }: GitActions
               取消
             </Button>
             <Button disabled={busy} onClick={() => void confirmStashSave()}>
-              {isRunning("存储") && <Loader2 size={13} className="mr-2 animate-spin" />}
               存储
+              {isRunning("存储") && <Loader2 size={13} className="animate-spin" aria-label="存储中" />}
             </Button>
           </DialogFooter>
         </DialogContent>

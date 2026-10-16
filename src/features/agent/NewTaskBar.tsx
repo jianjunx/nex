@@ -55,7 +55,7 @@ export function NewTaskBar({
   const selectProject = (id: string) => {
     const target = projects.find((p) => p.id === id);
     if (!target || target.id === project.id) return;
-    void run(() => moveDraftToProject(conversation, target));
+    return run(() => moveDraftToProject(conversation, target));
   };
 
   const openFolder = () => {

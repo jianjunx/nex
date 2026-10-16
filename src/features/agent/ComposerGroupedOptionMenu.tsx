@@ -1,4 +1,5 @@
-import { ChevronDown } from "lucide-react";
+import { usePendingOption } from "./usePendingOption";
+import { ChevronDown, LoaderCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -24,7 +25,7 @@ interface Props {
   ariaLabel: string;
   value: string;
   options: ComposerGroupedOptionItem[];
-  onSelect: (id: string) => void;
+  onSelect: (id: string) => void | Promise<void>;
   disabled?: boolean;
   placeholder?: string;
 }
@@ -38,6 +39,7 @@ export function ComposerGroupedOptionMenu({
   disabled,
   placeholder = "—",
 }: Props) {
+  const { open, setOpen, pendingId, select } = usePendingOption(onSelect);
   const current = options.find((o) => o.id === value);
   const label = current?.name ?? placeholder;
 
@@ -50,7 +52,7 @@ export function ComposerGroupedOptionMenu({
   }
 
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <Button
           type="button"
@@ -62,7 +64,9 @@ export function ComposerGroupedOptionMenu({
           className="nex-interactive-chrome nex-pressable h-7 max-w-[12rem] shrink-0 gap-1 rounded-[var(--radius-md)] border border-transparent bg-transparent px-2.5 text-xs font-medium tracking-[-0.01em] text-[var(--text-secondary)] shadow-none hover:bg-[var(--overlay-hover)] hover:text-[var(--text-primary)] data-[state=open]:bg-[var(--overlay-hover)] data-[state=open]:text-[var(--text-primary)]"
         >
           <span className="truncate">{label}</span>
-          <ChevronDown size={12} className="shrink-0 opacity-50" />
+          {pendingId !== null ? (
+            <LoaderCircle size={12} className="shrink-0 animate-spin" aria-label="切换中" />
+          ) : <ChevronDown size={12} className="shrink-0 opacity-50" />}
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
@@ -78,14 +82,20 @@ export function ComposerGroupedOptionMenu({
             {g.items.map((o) => (
               <DropdownMenuItem
                 key={o.id}
-                onSelect={() => onSelect(o.id)}
+                disabled={disabled || pendingId !== null}
+                aria-busy={pendingId === o.id}
+                onSelect={(event) => {
+                  event.preventDefault();
+                  void select(o.id);
+                }}
                 className={`px-3 text-xs nex-interactive-chrome ${ITEM_HIGHLIGHT} ${
                   o.id === value
                     ? "bg-[color:color-mix(in_srgb,var(--material-elevated)_86%,transparent)] text-[var(--text-primary)]"
                     : "text-[var(--text-secondary)]"
                 }`}
               >
-                <span className="truncate">{o.name}</span>
+                <span className="flex-1 truncate">{o.name}</span>
+                {pendingId === o.id && <LoaderCircle size={13} className="ml-auto shrink-0 animate-spin" aria-label="切换中" />}
               </DropdownMenuItem>
             ))}
           </div>

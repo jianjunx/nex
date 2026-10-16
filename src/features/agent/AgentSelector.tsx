@@ -66,7 +66,7 @@ export function AgentSelector({
           setBusy(true);
           onBusyChange(true);
           setError(null);
-          void (async () => {
+          return (async () => {
             try {
               await conversationUpdateAgent(conversationId, target);
               await useAgentStore.getState().removeSession(conversationId);

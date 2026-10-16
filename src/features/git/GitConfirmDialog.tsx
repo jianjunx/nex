@@ -1,3 +1,4 @@
+import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -33,7 +34,7 @@ export function GitConfirmDialog({
   onCancel,
 }: GitConfirmDialogProps) {
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) onCancel(); }}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o && !busy) onCancel(); }}>
       <DialogContent className="sm:max-w-sm" showCloseButton={false}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
@@ -45,6 +46,7 @@ export function GitConfirmDialog({
           </Button>
           <Button variant="destructive" disabled={busy} onClick={onConfirm}>
             {confirmLabel}
+            {busy && <Loader2 size={13} className="animate-spin" aria-label="处理中" />}
           </Button>
         </DialogFooter>
       </DialogContent>

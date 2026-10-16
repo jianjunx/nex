@@ -58,6 +58,23 @@ describe("BranchSelector", () => {
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
   });
 
+  it.each(["feature", "origin/main"])("shows progress on %s and clears it after failure", async (name) => {
+    let finish!: (ok: boolean) => void;
+    gitState.checkout.mockImplementation(() => new Promise<boolean>((resolve) => { finish = resolve; }));
+    const onOpenChange = vi.fn();
+    render(<BranchSelector projectPath="/p" open onOpenChange={onOpenChange} />);
+    const row = screen.getByTestId(`branch-${name}`);
+    fireEvent.click(row);
+    expect(row.getAttribute("aria-busy")).toBe("true");
+    expect(row.querySelector(".animate-spin")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("branch-main"));
+    expect(gitState.checkout).toHaveBeenCalledTimes(1);
+    finish(false);
+    await waitFor(() => expect(row.getAttribute("aria-busy")).toBe("false"));
+    expect(row.querySelector(".animate-spin")).toBeNull();
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+  });
+
   it("creates a new branch via the dropdown item then the dialog", async () => {
     render(<BranchSelector projectPath="/p" open onOpenChange={() => {}} />);
     // 下拉面板中的「新建分支…」项 → 弹小窗

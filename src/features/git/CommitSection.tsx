@@ -7,6 +7,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { usePendingOption } from "../agent/usePendingOption";
 import { useGitStore } from "../../stores/git.store";
 
 /**
@@ -19,7 +20,10 @@ export function CommitSection({ projectPath }: { projectPath: string }) {
   const commitWith = useGitStore((s) => s.commitWith);
   const opRunning = useGitStore((s) => s.opRunning);
 
-  const busy = opRunning !== null;
+  const { open, setOpen, pendingId, select } = usePendingOption(async (mode) => {
+    await commitWith(projectPath, mode as "commit" | "push" | "sync");
+  }, undefined, "提交失败");
+  const busy = opRunning !== null || pendingId !== null;
   const canCommit = commitMessage.trim().length > 0 && !busy;
 
   return (
@@ -33,8 +37,8 @@ export function CommitSection({ projectPath }: { projectPath: string }) {
         onKeyDown={(e) => {
           // Ctrl/Cmd+Enter is owned by the scm.commit command (KeybindingHost);
           // the local handler only takes bare Enter, and never mid-IME.
-          if (e.key === "Enter" && !e.ctrlKey && !e.metaKey && !e.nativeEvent.isComposing) {
-            void commitWith(projectPath, "commit");
+          if (canCommit && e.key === "Enter" && !e.ctrlKey && !e.metaKey && !e.nativeEvent.isComposing) {
+            void select("commit");
           }
         }}
       />
@@ -42,16 +46,15 @@ export function CommitSection({ projectPath }: { projectPath: string }) {
         size="xs"
         className="h-7 shrink-0 gap-1 bg-[var(--accent)] px-2.5 text-xs text-white hover:bg-[var(--accent-hover)] dark:bg-[var(--accent)] dark:text-white dark:hover:bg-[var(--accent-hover)]"
         disabled={!canCommit}
-        onClick={() => void commitWith(projectPath, "commit")}
+        onClick={() => void select("commit")}
       >
-        {opRunning === "提交" ? (
-          <Loader2 size={12} className="animate-spin" />
-        ) : (
-          <Check size={12} />
-        )}
+        <Check size={12} />
         提交
+        {(opRunning === "提交" || pendingId !== null) && (
+          <Loader2 size={12} className="animate-spin" aria-label="提交中" />
+        )}
       </Button>
-      <DropdownMenu>
+      <DropdownMenu open={open} onOpenChange={setOpen}>
         <DropdownMenuTrigger asChild>
           <Button
             size="xs"
@@ -59,15 +62,17 @@ export function CommitSection({ projectPath }: { projectPath: string }) {
             className="h-7 shrink-0 bg-[var(--accent)] px-1.5 text-white hover:bg-[var(--accent-hover)] dark:bg-[var(--accent)] dark:text-white dark:hover:bg-[var(--accent-hover)]"
             disabled={!canCommit}
           >
-            <ChevronDown size={12} />
+            {pendingId !== null ? <Loader2 size={12} className="animate-spin" aria-label="提交中" /> : <ChevronDown size={12} />}
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-52">
-          <DropdownMenuItem onSelect={() => void commitWith(projectPath, "push")}>
+          <DropdownMenuItem disabled={busy} aria-busy={pendingId === "push"} onSelect={(event) => { event.preventDefault(); void select("push"); }}>
             提交并推送
+            {pendingId === "push" && <Loader2 size={13} className="ml-auto shrink-0 animate-spin" aria-label="提交中" />}
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => void commitWith(projectPath, "sync")}>
+          <DropdownMenuItem disabled={busy} aria-busy={pendingId === "sync"} onSelect={(event) => { event.preventDefault(); void select("sync"); }}>
             提交并同步（拉取后推送）
+            {pendingId === "sync" && <Loader2 size={13} className="ml-auto shrink-0 animate-spin" aria-label="提交中" />}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

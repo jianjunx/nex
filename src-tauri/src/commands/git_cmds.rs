@@ -14,22 +14,38 @@ pub async fn git_status(project_path: String) -> Result<Option<GitStatus>, NexEr
 }
 
 #[tauri::command]
-pub fn git_diff(project_path: String, file: String, staged: bool) -> Result<String, NexError> {
-    repository::get_diff(Path::new(&project_path), &file, staged)
+pub async fn git_diff(
+    project_path: String,
+    file: String,
+    staged: bool,
+) -> Result<String, NexError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        repository::get_diff(Path::new(&project_path), &file, staged)
+    })
+    .await
+    .map_err(|e| NexError::Git(format!("git_diff join: {e}")))?
 }
 
 #[tauri::command]
-pub fn git_diff_contents(
+pub async fn git_diff_contents(
     project_path: String,
     file: String,
     staged: bool,
 ) -> Result<DiffContents, NexError> {
-    repository::get_diff_contents(Path::new(&project_path), &file, staged)
+    tauri::async_runtime::spawn_blocking(move || {
+        repository::get_diff_contents(Path::new(&project_path), &file, staged)
+    })
+    .await
+    .map_err(|e| NexError::Git(format!("git_diff_contents join: {e}")))?
 }
 
 #[tauri::command]
-pub fn git_commit_patch(project_path: String, hash: String) -> Result<String, NexError> {
-    repository::get_commit_patch(Path::new(&project_path), &hash)
+pub async fn git_commit_patch(project_path: String, hash: String) -> Result<String, NexError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        repository::get_commit_patch(Path::new(&project_path), &hash)
+    })
+    .await
+    .map_err(|e| NexError::Git(format!("git_commit_patch join: {e}")))?
 }
 
 #[tauri::command]
@@ -42,18 +58,30 @@ pub async fn git_log(project_path: String, limit: usize) -> Result<Vec<CommitInf
 }
 
 #[tauri::command]
-pub fn git_stage(project_path: String, files: Vec<String>) -> Result<(), NexError> {
-    repository::stage_files(Path::new(&project_path), &files)
+pub async fn git_stage(project_path: String, files: Vec<String>) -> Result<(), NexError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        repository::stage_files(Path::new(&project_path), &files)
+    })
+    .await
+    .map_err(|e| NexError::Git(format!("git_stage join: {e}")))?
 }
 
 #[tauri::command]
-pub fn git_unstage(project_path: String, files: Vec<String>) -> Result<(), NexError> {
-    repository::unstage_files(Path::new(&project_path), &files)
+pub async fn git_unstage(project_path: String, files: Vec<String>) -> Result<(), NexError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        repository::unstage_files(Path::new(&project_path), &files)
+    })
+    .await
+    .map_err(|e| NexError::Git(format!("git_unstage join: {e}")))?
 }
 
 #[tauri::command]
-pub fn git_commit(project_path: String, message: String) -> Result<String, NexError> {
-    repository::commit(Path::new(&project_path), &message)
+pub async fn git_commit(project_path: String, message: String) -> Result<String, NexError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        repository::commit(Path::new(&project_path), &message)
+    })
+    .await
+    .map_err(|e| NexError::Git(format!("git_commit join: {e}")))?
 }
 
 #[tauri::command]
@@ -82,48 +110,82 @@ pub async fn git_checkout(project_path: String, name: String) -> Result<(), NexE
 }
 
 #[tauri::command]
-pub fn git_create_branch(project_path: String, name: String) -> Result<(), NexError> {
-    repository::create_branch(Path::new(&project_path), &name)
+pub async fn git_create_branch(project_path: String, name: String) -> Result<(), NexError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        repository::create_branch(Path::new(&project_path), &name)
+    })
+    .await
+    .map_err(|e| NexError::Git(format!("git_create_branch join: {e}")))?
 }
 
 #[tauri::command]
-pub fn git_delete_branch(project_path: String, name: String) -> Result<(), NexError> {
-    repository::delete_branch(Path::new(&project_path), &name)
+pub async fn git_delete_branch(project_path: String, name: String) -> Result<(), NexError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        repository::delete_branch(Path::new(&project_path), &name)
+    })
+    .await
+    .map_err(|e| NexError::Git(format!("git_delete_branch join: {e}")))?
 }
 
 #[tauri::command]
-pub fn git_discard(project_path: String, files: Vec<String>) -> Result<(), NexError> {
-    repository::discard_changes(Path::new(&project_path), &files)
+pub async fn git_discard(project_path: String, files: Vec<String>) -> Result<(), NexError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        repository::discard_changes(Path::new(&project_path), &files)
+    })
+    .await
+    .map_err(|e| NexError::Git(format!("git_discard join: {e}")))?
 }
 
 #[tauri::command]
-pub fn git_revert_staged(project_path: String, files: Vec<String>) -> Result<(), NexError> {
-    repository::revert_staged(Path::new(&project_path), &files)
+pub async fn git_revert_staged(project_path: String, files: Vec<String>) -> Result<(), NexError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        repository::revert_staged(Path::new(&project_path), &files)
+    })
+    .await
+    .map_err(|e| NexError::Git(format!("git_revert_staged join: {e}")))?
 }
 
 #[tauri::command]
-pub fn git_stash_save(project_path: String, message: String) -> Result<(), NexError> {
-    repository::stash_save(Path::new(&project_path), &message)
+pub async fn git_stash_save(project_path: String, message: String) -> Result<(), NexError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        repository::stash_save(Path::new(&project_path), &message)
+    })
+    .await
+    .map_err(|e| NexError::Git(format!("git_stash_save join: {e}")))?
 }
 
 #[tauri::command]
-pub fn git_stash_list(project_path: String) -> Result<Vec<StashEntry>, NexError> {
-    repository::stash_list(Path::new(&project_path))
+pub async fn git_stash_list(project_path: String) -> Result<Vec<StashEntry>, NexError> {
+    tauri::async_runtime::spawn_blocking(move || repository::stash_list(Path::new(&project_path)))
+        .await
+        .map_err(|e| NexError::Git(format!("git_stash_list join: {e}")))?
 }
 
 #[tauri::command]
-pub fn git_stash_apply(project_path: String, id: String) -> Result<(), NexError> {
-    repository::stash_apply(Path::new(&project_path), &id)
+pub async fn git_stash_apply(project_path: String, id: String) -> Result<(), NexError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        repository::stash_apply(Path::new(&project_path), &id)
+    })
+    .await
+    .map_err(|e| NexError::Git(format!("git_stash_apply join: {e}")))?
 }
 
 #[tauri::command]
-pub fn git_stash_pop(project_path: String, id: String) -> Result<(), NexError> {
-    repository::stash_pop(Path::new(&project_path), &id)
+pub async fn git_stash_pop(project_path: String, id: String) -> Result<(), NexError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        repository::stash_pop(Path::new(&project_path), &id)
+    })
+    .await
+    .map_err(|e| NexError::Git(format!("git_stash_pop join: {e}")))?
 }
 
 #[tauri::command]
-pub fn git_stash_drop(project_path: String, id: String) -> Result<(), NexError> {
-    repository::stash_drop(Path::new(&project_path), &id)
+pub async fn git_stash_drop(project_path: String, id: String) -> Result<(), NexError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        repository::stash_drop(Path::new(&project_path), &id)
+    })
+    .await
+    .map_err(|e| NexError::Git(format!("git_stash_drop join: {e}")))?
 }
 
 #[tauri::command]

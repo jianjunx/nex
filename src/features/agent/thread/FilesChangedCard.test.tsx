@@ -30,6 +30,7 @@ vi.mock("./pathToken", () => ({
   openPathToken: (...args: unknown[]) => openPathToken(...args),
 }));
 
+import { useFsStore } from "../../../stores/fs.store";
 import { FilesChangedCard } from "./FilesChangedCard";
 import { FILES_CHANGED_VISIBLE_ROWS } from "./filesChanged";
 import { useProjectStore } from "../../../stores/project.store";
@@ -86,6 +87,20 @@ describe("FilesChangedCard", () => {
 
     fireEvent.click(screen.getByText("a.ts"));
     expect(openPathToken).toHaveBeenCalledWith("/repo/src/a.ts");
+  });
+
+  it("opens the saved before/after diff even when the file has since been deleted", () => {
+    const openDiff = vi.spyOn(useFsStore.getState(), "openDiffTab").mockImplementation(() => {});
+    render(<FilesChangedCard files={[{
+      path: "/repo/deleted.ts", additions: 0, deletions: 1,
+      preview: { key: "turn-1", oldText: "deleted code", newText: "" },
+    }]} />);
+    fireEvent.click(screen.getByText("deleted.ts"));
+    expect(openDiff).toHaveBeenCalledWith("agent-diff:turn-1:/repo/deleted.ts", expect.objectContaining({
+      mode: "merge", original: "deleted code", revised: "", languageHint: "/repo/deleted.ts",
+    }));
+    expect(openPathToken).not.toHaveBeenCalled();
+    openDiff.mockRestore();
   });
 
   it("header actions are Commit & Push, Review, then 查看", () => {

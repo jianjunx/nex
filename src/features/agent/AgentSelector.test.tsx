@@ -138,3 +138,15 @@ it("locks selection for persisted messages or queued prompts", () => {
       .disabled,
   ).toBe(true);
 });
+
+it("uses the canonical agent names and order regardless of registry order", async () => {
+  useAgentStore.setState({ servers: [
+    { id: "cursor", name: "Cursor CLI", kind: "registry", version: "1", description: "", icon: null },
+    { id: "claude-acp", name: "Claude Agent", kind: "registry", version: "1", description: "", icon: null },
+    { id: "codex-acp", name: "Codex ACP", kind: "registry", version: "1", description: "", icon: null },
+  ] });
+  render(<AgentSelector conversationId="c" agentType="nex" projectPath="/proj" onBusyChange={() => {}} />);
+  fireEvent.pointerDown(screen.getByRole("button", { name: "智能体" }));
+  const items = await screen.findAllByRole("menuitem");
+  expect(items.map((item) => item.textContent)).toEqual(["Nex Agent", "Codex", "Claude Code", "Cursor"]);
+});

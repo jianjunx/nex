@@ -57,6 +57,15 @@ function slot(el: HTMLElement): Slot {
   return current;
 }
 
+/** Cancel an in-flight smooth follow before a manual disclosure changes layout. */
+export function cancelEaseScroll(el: HTMLElement): void {
+  const state = slots.get(el);
+  if (state) state.easing = false;
+  el.style.scrollBehavior = "auto";
+  const top = el.scrollTop;
+  el.scrollTop = top;
+}
+
 /** True while a programmatic smooth follow is still running. */
 export function isEaseFollow(el: HTMLElement): boolean {
   return slots.get(el)?.easing ?? false;

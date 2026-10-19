@@ -16,7 +16,7 @@ import {
   type UserStickyCandidate,
 } from "./stickyUserMessage";
 import type { ThreadEntry } from "./types";
-import { easeScrollTop, isEaseFollow } from "./easeScrollTop";
+import { cancelEaseScroll, easeScrollTop, isEaseFollow } from "./easeScrollTop";
 
 const EMPTY_ENTRIES: ThreadEntry[] = [];
 const EMPTY_EXPANDED = new Set<string>();
@@ -214,6 +214,10 @@ export function ThreadView() {
     },
   });
 
+  // A partially visible group contains the clicked header: resizing it must not move that header.
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) =>
+    item.end <= (instance.scrollOffset ?? 0);
+
   const totalSize = virtualizer.getTotalSize();
   const virtualItems = virtualizer.getVirtualItems();
 
@@ -299,6 +303,12 @@ export function ThreadView() {
       <div
         ref={scrollerRef}
         onScroll={onScroll}
+        onClickCapture={(event) => {
+          if (!(event.target instanceof Element) || !event.target.closest("button[aria-expanded]")) return;
+          stickToBottomRef.current = false;
+          cancelEaseScroll(event.currentTarget);
+        }}
+        style={{ overflowAnchor: "none" }}
         // px-2 + 1rem inset on a 900px max column mirrors the composer (.nex-ui-PromptBar px 8 + px-4).
         className="min-h-0 flex-1 overflow-y-auto px-2 py-3"
       >
@@ -328,12 +338,10 @@ export function ThreadView() {
                   className={`${isUserMessage ? "pt-[18px] pb-[30px]" : "pb-3"}${isPinnedOriginal ? " invisible" : ""}`}
                   style={{
                     position: "absolute",
-                    top: 0,
+                    // Use physical positioning so WebView hit testing follows animated disclosure heights.
+                    top: Math.round(vi.start),
                     left: 0,
                     width: "100%",
-                    // 行高实测带小数(正文 15px×1.75 不是整数像素),累加出的 start 也带小数;
-                    // 小数 translate 会让整行文字按亚像素重新光栅化而发虚,取整对齐物理像素。
-                    transform: `translateY(${Math.round(vi.start)}px)`,
                   }}
                 >
                   {item ? (

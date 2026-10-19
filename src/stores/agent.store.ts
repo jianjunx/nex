@@ -26,6 +26,7 @@ import {
   onAgentAskQuestionRequest,
   onAgentSessionTerminated,
   type PromptBlock,
+  type TurnFileChange,
   type ServerDescriptor,
   type SessionTarget,
   type CustomServer,
@@ -1087,6 +1088,7 @@ export const useAgentStore = create<AgentStore>()(
         ? (turnMeta.models.find((m) => m.id === turnMeta.currentModelId)?.name ?? turnMeta.currentModelId)
         : null;
       let turnStats: ContextStatsDto | null = null;
+      let fileChanges: TurnFileChange[] | undefined;
       // ACP 用量上报的起点：发 prompt 前拍一张快照，收尾时取差得到"本轮消耗"。
       // 与 turnStartedAt / turnModel 同理，都在发出前定格，避免轮中变化串轮。
       const turnUsageBaseline = usageCounters(
@@ -1104,6 +1106,7 @@ export const useAgentStore = create<AgentStore>()(
         if (promptGenerationByConversation.get(session.conversationId) !== promptGen) {
           return;
         }
+        fileChanges = result?.fileChanges;
         hadMutations = !!result?.hadMutations;
         if (result?.stopReason) stopReason = result.stopReason;
         if (result?.contextStats) {
@@ -1186,6 +1189,7 @@ export const useAgentStore = create<AgentStore>()(
           s.entriesByConversation[session.conversationId]?.push({
             id: crypto.randomUUID(),
             kind: "turn_summary",
+            ...(fileChanges !== undefined ? { fileChanges } : {}),
             timestamp: Date.now(),
             ...summary,
           });

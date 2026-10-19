@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { Collapse } from "@/components/ui/Collapse";
 import { ChevronRight, File, Loader2, Minus, Plus, Undo2 } from "lucide-react";
 import FileIcon from "../files/FileIcon";
@@ -10,6 +11,8 @@ import { CommitSection } from "./CommitSection";
 import { GitConfirmDialog } from "./GitConfirmDialog";
 
 /** VSCode 状态色惯例：modified 黄 / added 绿 / deleted 红 / untracked 绿。 */
+const EMPTY_FILES: GitFileChange[] = [];
+
 const STATUS_COLORS: Record<GitFileChange["status"], string> = {
   modified: "var(--warning)",
   added: "var(--success)",
@@ -57,7 +60,7 @@ function FileRow({ projectPath, file, display, busy, onDiscard }: FileRowProps) 
   return (
     <div
       data-testid={`row-${file.path}`}
-      className="nex-hoverable group flex cursor-pointer items-center gap-1.5 rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[var(--overlay-hover)]"
+      className="nex-hoverable group flex h-7 cursor-pointer items-center gap-1.5 rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[var(--overlay-hover)]"
       onClick={() => void openDiffInEditor(projectPath, file.path, file.staged)}
     >
       {/* 与文件树同款类型图标 */}
@@ -172,68 +175,85 @@ function buildTree(files: GitFileChange[]): TreeDir {
   return finalize(root);
 }
 
-interface ChangeTreeViewProps {
-  projectPath: string;
-  files: GitFileChange[];
-  busy: boolean;
-  onDiscard: (pending: PendingDiscard) => void;
+type ChangeRow =
+  | { type: "file"; file: GitFileChange; depth: number }
+  | { type: "dir"; dir: TreeDir; depth: number };
+
+function VirtualChangeRows({ rows, scrollRef, renderRow }: {
+  rows: ChangeRow[];
+  scrollRef: RefObject<HTMLDivElement | null>;
+  renderRow: (row: ChangeRow) => ReactNode;
+}) {
+  const listRef = useRef<HTMLDivElement>(null);
+  const [margin, setMargin] = useState(0);
+  useLayoutEffect(() => { setMargin(listRef.current?.offsetTop ?? 0); }, [rows]);
+  // Parent refs are attached after child layout effects; observe after the whole commit.
+  useEffect(() => {
+    const measure = () => setMargin(listRef.current?.offsetTop ?? 0);
+    const parent = scrollRef.current;
+    if (!parent || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(parent);
+    // Commit input and preceding groups can move this list without resizing its viewport.
+    for (const child of parent.children) observer.observe(child);
+    return () => observer.disconnect();
+  }, [rows, scrollRef]);
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    getItemKey: (i) => rows[i].type === "dir" ? `dir:${rows[i].dir.path}` : `file:${rows[i].file.path}`,
+    estimateSize: () => 28,
+    overscan: 8,
+    scrollMargin: margin,
+    initialRect: { width: 300, height: 600 },
+  });
+  return <div ref={listRef} data-testid="virtual-git-files" style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+    {virtualizer.getVirtualItems().map((item) => <div key={item.key} style={{
+      position: "absolute", top: 0, left: 0, width: "100%", height: 28,
+      transform: `translateY(${item.start - margin}px)`,
+    }}>{renderRow(rows[item.index])}</div>)}
+  </div>;
 }
 
-function ChangeTreeView({ projectPath, files, busy, onDiscard }: ChangeTreeViewProps) {
-  const tree = useMemo(() => buildTree(files), [files]);
+function ChangeFileList({ projectPath, files, busy, onDiscard, treeView, scrollRef }: {
+  projectPath: string; files: GitFileChange[]; busy: boolean;
+  onDiscard: (pending: PendingDiscard) => void; treeView: boolean;
+  scrollRef: RefObject<HTMLDivElement | null>;
+}) {
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
-
-  const toggle = (path: string) =>
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-
-  const renderDir = (dir: TreeDir, depth: number) => {
-    const isCollapsed = collapsed.has(dir.path);
-    return (
-      <div key={`dir-${dir.path}`}>
-        <div
-          data-testid={`dir-${dir.path}`}
-          className="nex-hoverable flex cursor-pointer items-center gap-1.5 rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[var(--overlay-hover)]"
-          style={{ paddingLeft: depth * 10 + 10 }}
-          onClick={() => toggle(dir.path)}
-        >
-          <ChevronRight
-            size={12}
-            className={`shrink-0 text-[var(--text-tertiary)] transition-transform duration-150 ${isCollapsed ? "" : "rotate-90"}`}
-          />
-          <FileIcon filename={dir.name} isFolder size={13} className="shrink-0" />
-          <span className="truncate text-[var(--text-secondary)]">{dir.name}</span>
-        </div>
-        <Collapse open={!isCollapsed}>
-          {dir.dirs.map((d) => renderDir(d, depth + 1))}
-          {dir.files.map((f) => (
-            <div key={`${f.staged ? "s" : "u"}:${f.path}`} style={{ paddingLeft: (depth + 1) * 12 }}>
-              <FileRow
-                projectPath={projectPath}
-                file={f}
-                display={basename(f.path)}
-                busy={busy}
-                onDiscard={onDiscard}
-              />
-            </div>
-          ))}
-        </Collapse>
-      </div>
-    );
-  };
-
-  return (
-    <div>
-      {tree.dirs.map((d) => renderDir(d, 0))}
-      {tree.files.map((f) => (
-        <FileRow key={`${f.staged ? "s" : "u"}:${f.path}`} projectPath={projectPath} file={f} display={f.path} busy={busy} onDiscard={onDiscard} />
-      ))}
+  const tree = useMemo(() => treeView ? buildTree(files) : null, [files, treeView]);
+  const rows = useMemo(() => {
+    if (!tree) return files.map((file): ChangeRow => ({ type: "file", file, depth: 0 }));
+    const result: ChangeRow[] = [];
+    const visit = (node: TreeDir, depth: number) => {
+      for (const dir of node.dirs) {
+        result.push({ type: "dir", dir, depth });
+        if (!collapsed.has(dir.path)) visit(dir, depth + 1);
+      }
+      for (const file of node.files) result.push({ type: "file", file, depth });
+    };
+    visit(tree, 0);
+    return result;
+  }, [tree, files, collapsed]);
+  const renderRow = (row: ChangeRow) => row.type === "file" ? (
+    <div style={{ paddingLeft: row.depth * 12 }}>
+      <FileRow projectPath={projectPath} file={row.file} display={treeView ? basename(row.file.path) : row.file.path} busy={busy} onDiscard={onDiscard} />
     </div>
+  ) : (
+    <button type="button" data-testid={`dir-${row.dir.path}`} aria-expanded={!collapsed.has(row.dir.path)}
+      className="nex-hoverable flex h-7 w-full cursor-pointer items-center gap-1.5 rounded-[var(--radius-sm)] px-2 text-left hover:bg-[var(--overlay-hover)]"
+      style={{ paddingLeft: row.depth * 12 + 10 }} onClick={() => setCollapsed((prev) => {
+        const next = new Set(prev);
+        if (next.has(row.dir.path)) next.delete(row.dir.path); else next.add(row.dir.path);
+        return next;
+      })}>
+      <ChevronRight size={12} className={`shrink-0 text-[var(--text-tertiary)] ${collapsed.has(row.dir.path) ? "" : "rotate-90"}`} />
+      <FileIcon filename={row.dir.name} isFolder size={13} className="shrink-0" />
+      <span className="truncate text-[var(--text-secondary)]">{row.dir.name}</span>
+    </button>
   );
+  if (rows.length > 100) return <VirtualChangeRows rows={rows} scrollRef={scrollRef} renderRow={renderRow} />;
+  return <div>{rows.map((row) => <div key={row.type === "dir" ? `dir:${row.dir.path}` : `file:${row.file.path}`}>{renderRow(row)}</div>)}</div>;
 }
 
 interface FileGroupProps {
@@ -244,14 +264,15 @@ interface FileGroupProps {
   busy: boolean;
   treeView: boolean;
   onDiscard: (pending: PendingDiscard) => void;
+  scrollRef: RefObject<HTMLDivElement | null>;
 }
 
 /** 折叠分组头：标题 + 计数 + 组动作（全部暂存/取消暂存 + 整组破坏性动作）。 */
-function FileGroup({ projectPath, title, files, staged, busy, treeView, onDiscard }: FileGroupProps) {
+function FileGroup({ projectPath, title, files, staged, busy, treeView, onDiscard, scrollRef }: FileGroupProps) {
   const stage = useGitStore((s) => s.stage);
   const unstage = useGitStore((s) => s.unstage);
   const [collapsed, setCollapsed] = useState(false);
-  const paths = files.map((f) => f.path);
+  const paths = useMemo(() => files.map((f) => f.path), [files]);
   const { pendingId, select } = usePendingOption(async (op) => {
     if (op === "stage") await stage(projectPath, paths);
     else await unstage(projectPath, paths);
@@ -326,13 +347,7 @@ function FileGroup({ projectPath, title, files, staged, busy, treeView, onDiscar
         )}
       </div>
       <Collapse open={!collapsed}>
-        {treeView ? (
-          <ChangeTreeView projectPath={projectPath} files={files} busy={busy} onDiscard={onDiscard} />
-        ) : (
-          files.map((f) => (
-            <FileRow key={`${f.staged ? "s" : "u"}:${f.path}`} projectPath={projectPath} file={f} display={f.path} busy={busy} onDiscard={onDiscard} />
-          ))
-        )}
+        <ChangeFileList projectPath={projectPath} files={files} busy={busy} onDiscard={onDiscard} treeView={treeView} scrollRef={scrollRef} />
       </Collapse>
     </div>
   );
@@ -349,13 +364,14 @@ export function ChangesSection({ projectPath }: { projectPath: string }) {
 
   const [pendingDiscard, setPendingDiscard] = useState<PendingDiscard | null>(null);
 
-  const files = status?.files ?? [];
-  const unstaged = files.filter((f) => !f.staged);
-  const staged = files.filter((f) => f.staged);
+  const files = status?.files ?? EMPTY_FILES;
+  const unstaged = useMemo(() => files.filter((f) => !f.staged), [files]);
+  const staged = useMemo(() => files.filter((f) => f.staged), [files]);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const busy = statusLoading || opRunning !== null;
 
   return (
-    <div className="flex-1 overflow-y-auto px-2 py-1">
+    <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-y-auto px-2 py-1">
       {/* 提交框：位于「更改」标题下方、更改文件上方；工作区干净时也常驻可见 */}
       <CommitSection projectPath={projectPath} />
       {files.length === 0 && (
@@ -370,6 +386,7 @@ export function ChangesSection({ projectPath }: { projectPath: string }) {
           busy={busy}
           treeView={treeView}
           onDiscard={setPendingDiscard}
+          scrollRef={scrollRef}
         />
       )}
       {staged.length > 0 && (
@@ -381,6 +398,7 @@ export function ChangesSection({ projectPath }: { projectPath: string }) {
           busy={busy}
           treeView={treeView}
           onDiscard={setPendingDiscard}
+          scrollRef={scrollRef}
         />
       )}
       <GitConfirmDialog

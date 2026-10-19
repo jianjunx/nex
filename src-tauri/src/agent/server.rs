@@ -32,7 +32,7 @@ use crate::error::NexError;
 use crate::graph::GraphHandle;
 
 /// Registry agent ids exposed in the New-Conversation picker this phase.
-const WHITELISTED_REGISTRY_IDS: &[&str] = &["claude-acp", "codex-acp", "cursor"];
+const WHITELISTED_REGISTRY_IDS: &[&str] = &["codex-acp", "claude-acp", "cursor"];
 
 /// File name for the user's custom servers, inside the app data dir.
 const CUSTOM_SERVERS_FILE: &str = "custom-servers.json";
@@ -300,11 +300,11 @@ impl AgentSessionManager {
     /// Conversation dropdown this phase.
     pub fn list_servers(&self) -> Vec<ServerDescriptor> {
         let mut out = vec![Self::native_descriptor()];
-        for e in self.registry.list() {
-            if !WHITELISTED_REGISTRY_IDS.contains(&e.id.as_str()) {
-                continue;
+        let entries = self.registry.list();
+        for id in WHITELISTED_REGISTRY_IDS {
+            if let Some(entry) = entries.iter().find(|entry| entry.id == *id) {
+                out.push(self.registry_entry_to_descriptor(entry));
             }
-            out.push(self.registry_entry_to_descriptor(&e));
         }
         out
     }
@@ -362,7 +362,13 @@ impl AgentSessionManager {
         };
         ServerDescriptor {
             id: e.id.clone(),
-            name: e.name.clone(),
+            name: match e.id.as_str() {
+                "codex-acp" => "Codex",
+                "claude-acp" => "Claude Code",
+                "cursor" => "Cursor",
+                _ => &e.name,
+            }
+            .to_string(),
             version: e.version.clone(),
             installed_version,
             description: e.description.clone(),

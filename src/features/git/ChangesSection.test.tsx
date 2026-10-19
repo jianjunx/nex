@@ -132,3 +132,23 @@ describe("ChangesSection", () => {
     expect(gitState.openDiffInEditor).toHaveBeenCalledWith("/p", "a.txt", false);
   });
 });
+
+describe("large change lists", () => {
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+  it.each([false, true])("keeps 10000 changes windowed (tree=%s) and stages the selected file", async (treeView) => {
+    vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(600);
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(320);
+    gitState.treeView = treeView;
+    gitState.status = { files: Array.from({ length: 10000 }, (_, i) => ({
+      path: `src/file-${String(i).padStart(5, "0")}.ts`, staged: false, status: "modified" as const,
+    })) };
+    const { container } = render(<ChangesSection projectPath="/p" />);
+    const rows = container.querySelectorAll('[data-testid^="row-"]');
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.length).toBeLessThan(60);
+    fireEvent.click(screen.getByTestId("stage-src/file-00000.ts"));
+    expect(gitState.stage).toHaveBeenCalledWith("/p", ["src/file-00000.ts"]);
+    await waitFor(() => expect(screen.getByTestId("stage-src/file-00000.ts").querySelector(".animate-spin")).toBeNull());
+  });
+});

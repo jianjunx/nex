@@ -102,6 +102,30 @@ describe("groupThreadEntries", () => {
     }
   });
 
+  it("summarizes shell-only changes using the persisted workspace baseline", () => {
+    const entries: ThreadEntry[] = [
+      { id: "u1", kind: "user_message", text: "fix", timestamp: 1 },
+      tool({ id: "shell", toolKind: "execute", title: "python write_text" }),
+      { id: "s1", kind: "turn_summary", durationMs: 1, timestamp: 2,
+        fileChanges: [{ path: "/repo/a.ts", oldText: "dirty", newText: "fixed" }] },
+    ];
+    const items = groupThreadEntries(entries);
+    expect(items.at(-2)).toMatchObject({
+      type: "files_changed",
+      files: [{ path: "/repo/a.ts", additions: 1, deletions: 1,
+        preview: { oldText: "dirty", newText: "fixed", key: "s1" } }],
+    });
+    expect(groupThreadEntries(entries, { lastTurnComplete: false }).some((i) => i.type === "files_changed")).toBe(false);
+  });
+
+  it("uses the net baseline instead of duplicating tool diffs or showing reverted edits", () => {
+    const entries: ThreadEntry[] = [
+      edit("e1", "/repo/a.ts"),
+      { id: "s1", kind: "turn_summary", durationMs: 1, timestamp: 2, fileChanges: [] },
+    ];
+    expect(groupThreadEntries(entries).some((i) => i.type === "files_changed")).toBe(false);
+  });
+
   it("does not show files_changed for the in-flight last turn", () => {
     const entries: ThreadEntry[] = [
       { id: "u1", kind: "user_message", text: "fix", timestamp: 1 },

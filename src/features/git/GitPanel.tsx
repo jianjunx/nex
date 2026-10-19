@@ -42,7 +42,9 @@ export function GitPanel() {
   // Drop stale state from the previous project while the probe is in flight.
   const forThisProject = repoPath === project.path;
   if (!forThisProject || hasRepo === null) {
-    return null;
+    return <div role="status" className="flex items-center gap-2 px-3 py-4 text-xs text-[var(--text-tertiary)]">
+      <Loader2 size={14} className="animate-spin" />正在读取 Git 状态…
+    </div>;
   }
 
   if (hasRepo === false) {

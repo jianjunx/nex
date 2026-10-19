@@ -1,6 +1,7 @@
 import { FolderTree, GitBranch, Search, Terminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useUiStore } from "@/stores/ui.store";
+import { LocalServicesMenu } from "@/features/services/LocalServicesMenu";
 import { useGitStore } from "@/stores/git.store";
 
 export function IconBar() {
@@ -16,6 +17,7 @@ export function IconBar() {
       aria-label="工作区工具"
       className="flex shrink-0 items-center gap-1"
     >
+      <LocalServicesMenu />
       <Button
         variant="ghost"
         size="icon-sm"

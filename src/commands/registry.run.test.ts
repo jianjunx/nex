@@ -54,7 +54,6 @@ vi.mock("../features/editor/format", () => ({
 }));
 
 import { getCommand } from "./registry";
-import { _resetCloseEscForTest } from "./keybindingHostState";
 
 const runClose = () => getCommand("editor.close")!.run();
 const runSave = () => getCommand("editor.save")!.run();
@@ -64,7 +63,6 @@ const runCloseActiveTab = () => getCommand("workbench.closeActiveTab")!.run();
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(10_000);
-  _resetCloseEscForTest();
   setEditorVisible = vi.fn();
   requestSearchFocus = vi.fn();
   requestCloseActiveTab = vi.fn();
@@ -82,34 +80,17 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("editor.close run — double-Esc cadence", () => {
-  it("closes only on a second Esc within 500ms, then resets", () => {
+describe("editor.close run — single Escape", () => {
+  it("closes on the first Escape, including immediately after reopening", () => {
     runClose();
-    expect(setEditorVisible).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(100);
-    runClose();
-    expect(setEditorVisible).toHaveBeenCalledTimes(1);
     expect(setEditorVisible).toHaveBeenCalledWith(false);
-    // 关闭后节奏复位：紧接着的单次 Esc 不再关
-    vi.advanceTimersByTime(100);
+    vi.advanceTimersByTime(1000);
     runClose();
-    expect(setEditorVisible).toHaveBeenCalledTimes(1);
+    expect(setEditorVisible).toHaveBeenCalledTimes(2);
   });
 
-  it("does not close when the second Esc lands outside the window", () => {
-    runClose();
-    vi.advanceTimersByTime(600);
-    runClose();
-    expect(setEditorVisible).not.toHaveBeenCalled();
-  });
-
-  it("find-bar open: yields without closing but keeps the cadence", () => {
+  it("closes the find bar and editor together on one Escape", () => {
     findBarOpen = true;
-    runClose();
-    expect(setEditorVisible).not.toHaveBeenCalled();
-    // 查找栏被 CodeMirror 关闭后的下一记 Esc 仍在窗口内 → 关面板
-    findBarOpen = false;
-    vi.advanceTimersByTime(100);
     runClose();
     expect(setEditorVisible).toHaveBeenCalledWith(false);
   });

@@ -217,7 +217,7 @@ impl Tool for RunInBackground {
         "run_in_background"
     }
     fn description(&self) -> &'static str {
-        "Start a long-running shell command in the background (dev servers, watchers). \
+        "Start a background shell job. For local development servers and services, use local_service(action=start) instead so users can manage them in Nex. \
          Returns a job id. Use `bash_output` to read its output, `wait` for it to exit, \
          and `kill_shell` to stop it."
     }

@@ -491,6 +491,17 @@ describe("agent.store turn summary", () => {
     expect(entries[entries.length - 1]).toHaveProperty("durationMs");
   });
 
+  it("persists workspace changes with the turn summary for history previews", async () => {
+    const fileChanges = [{ path: "/repo/a.ts", oldText: "dirty", newText: "fixed" }];
+    agentSendPrompt.mockResolvedValueOnce({ hadMutations: false, fileChanges });
+    seed({ currentModelId: "codex", models: [] });
+    await useAgentStore.getState().sendPrompt("sid-1", [{ type: "text", text: "fix" }]);
+    expect(summaryOf()[0]).toMatchObject({ fileChanges });
+    expect(conversationReplaceThreadEntries).toHaveBeenCalledWith("conv-1", expect.arrayContaining([
+      expect.objectContaining({ kind: "turn_summary", payload: expect.objectContaining({ fileChanges }) }),
+    ]));
+  });
+
   it("falls back to the model id and omits tokens when the agent reports no usage", async () => {
     seed({ currentModelId: "claude-x", models: [] });
 

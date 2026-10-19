@@ -14,6 +14,7 @@ pub mod jobs;
 pub mod mcp;
 pub mod mode;
 pub mod search;
+pub mod service;
 pub mod skill;
 pub mod spreadsheet;
 pub mod subagent;
@@ -190,6 +191,7 @@ impl ToolRegistry {
                 Box::new(todo::TodoWrite),
                 Box::new(ask::AskUserQuestion),
                 Box::new(history::History),
+                Box::new(service::LocalService),
                 Box::new(jobs::RunInBackground),
                 Box::new(jobs::BashOutput),
                 Box::new(jobs::KillShell),
@@ -649,6 +651,7 @@ mod tests {
         assert!(names.contains(&"bash".to_string()));
         assert!(names.contains(&"history".to_string()));
         assert!(names.contains(&"run_in_background".to_string()));
+        assert!(names.contains(&"local_service".to_string()));
         assert!(names.contains(&"read_spreadsheet".to_string()));
         assert!(names.contains(&"checkpoint".to_string()));
         assert!(names.contains(&"load_skill".to_string()));
@@ -656,7 +659,7 @@ mod tests {
         assert!(names.contains(&"task".to_string()));
         assert!(names.contains(&"apply_subagent_patch".to_string()));
         assert!(names.contains(&"code_graph".to_string()));
-        assert_eq!(names.len(), 25);
+        assert_eq!(names.len(), 26);
 
         // Subagents see everything except orchestration + mode tools.
         let sub: Vec<_> = ToolRegistry::subagents()
@@ -664,7 +667,7 @@ mod tests {
             .iter()
             .map(|s| s.function.name.clone())
             .collect();
-        assert_eq!(sub.len(), 20);
+        assert_eq!(sub.len(), 21);
         assert!(sub.contains(&"load_skill".to_string()));
         assert!(!sub.contains(&"task".to_string()));
         assert!(!sub.contains(&"fleet".to_string()));
@@ -722,7 +725,7 @@ mod tests {
         );
         let hash = hex(Sha256::digest(&bytes));
         assert_eq!(hash.len(), 64);
-        assert_eq!(ToolRegistry::builtins().specs().len(), 25);
+        assert_eq!(ToolRegistry::builtins().specs().len(), 26);
     }
 
     fn hex(digest: impl AsRef<[u8]>) -> String {

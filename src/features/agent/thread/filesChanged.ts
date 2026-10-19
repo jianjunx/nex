@@ -10,6 +10,7 @@ export type ChangedFile = {
   path: string;
   additions: number;
   deletions: number;
+  preview?: { oldText: string; newText: string; key: string };
 };
 
 /** Line-based LCS: additions / deletions relative to the longest common subsequence. */

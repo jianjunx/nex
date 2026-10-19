@@ -5,7 +5,7 @@ import type {
   TurnSummaryEntry,
 } from "./types";
 import { groupChunks } from "./groupChunks";
-import { collectChangedFiles, type ChangedFile } from "./filesChanged";
+import { collectChangedFiles, countDiffLines, type ChangedFile } from "./filesChanged";
 import { isEditTool } from "./toolCallUtils";
 
 /** One step of the agent's working process: a reasoning block or a tool call. */
@@ -103,13 +103,19 @@ export function groupThreadEntries(
 
   const flushTurnSummary = (complete: boolean) => {
     flushTools();
-    if (complete && turnEdits.length > 0) {
-      const files = collectChangedFiles(turnEdits);
+    if (complete) {
+      const files: ChangedFile[] = turnFooter?.fileChanges !== undefined
+        ? turnFooter.fileChanges.map((change) => ({
+            path: change.path,
+            ...countDiffLines(change.oldText, change.newText),
+            preview: { oldText: change.oldText, newText: change.newText, key: turnFooter!.id },
+          }))
+        : collectChangedFiles(turnEdits);
       if (files.length > 0) {
         items.push({
           type: "files_changed",
           files,
-          key: `${turn}:${turnEdits[0].id}`,
+          key: `${turn}:${turnFooter?.id ?? turnEdits[0]?.id}`,
         });
       }
     }

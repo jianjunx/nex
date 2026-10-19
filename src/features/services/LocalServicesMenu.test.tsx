@@ -8,9 +8,6 @@ import { serviceAction, serviceList, serviceLogs, type LocalService } from "@/br
 vi.mock("@/bridge/tauri", () => ({
   serviceList: vi.fn(), serviceAction: vi.fn(), serviceLogs: vi.fn(), openExternal: vi.fn(),
 }));
-vi.mock("@/stores/conversation.store", () => ({
-  useConversationStore: (select: (s: unknown) => unknown) => select({ conversationsByProject: {} }),
-}));
 const service: LocalService = {
   id: "s1", name: "Web", command: "npm run dev", cwd: "/repo/web", projectPath: "/repo",
   conversationId: "c1", status: "running", pid: 1234, port: 5173, listening: true, exitCode: null, error: null,
@@ -34,8 +31,12 @@ async function open() {
 describe("LocalServicesMenu", () => {
   it("shows running services and manages them without prompting the agent", async () => {
     await open();
-    expect(screen.getByText("运行中")).toBeTruthy();
-    expect(screen.getByText("localhost:5173 · 端口可连接")).toBeTruthy();
+    expect(screen.getByRole("img", { name: "运行中" })).toBeTruthy();
+    expect(screen.getByText("5173")).toBeTruthy();
+    expect(screen.queryByText("运行中")).toBeNull();
+    expect(screen.queryByText(service.command)).toBeNull();
+    expect(screen.queryByText(service.cwd)).toBeNull();
+    expect(screen.queryByText(/来源：|端口可连接|端口未就绪/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "停止" }));
     await waitFor(() => expect(serviceAction).toHaveBeenCalledWith("/repo", "s1", "stop"));
   });
@@ -51,7 +52,8 @@ describe("LocalServicesMenu", () => {
     vi.mocked(serviceList).mockResolvedValue([{ ...service, status: "failed", pid: null, exitCode: 1 }]);
     vi.mocked(serviceAction).mockRejectedValue(new Error("port busy"));
     await open();
-    expect(screen.getByText("退出码：1")).toBeTruthy();
+    expect(screen.getByRole("img", { name: "启动失败" })).toBeTruthy();
+    expect(screen.queryByText("退出码：1")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "启动" }));
     expect(await screen.findByRole("alert")).toHaveProperty("textContent", "port busy");
   });

@@ -4,16 +4,13 @@ import { Server, RotateCw, Square, ScrollText, ExternalLink, Trash2, Loader2 } f
 import { Button } from "@/components/ui/button";
 import { serviceList, serviceAction, serviceLogs, openExternal, type LocalService } from "@/bridge/tauri";
 import { useProjectStore } from "@/stores/project.store";
-import { useConversationStore } from "@/stores/conversation.store";
 import { errorMessage } from "@/lib/errors";
 
 const STATUS = { starting: "启动中", running: "运行中", stopped: "已停止", failed: "启动失败" };
 const ACTION_CLASS = "active:scale-100 focus-visible:outline focus-visible:outline-1 focus-visible:outline-[var(--hairline-strong)]";
 
 export function LocalServicesMenu() {
-  const projectId = useProjectStore((s) => s.activeProjectId);
   const projectPath = useProjectStore((s) => s.projects.find((p) => p.id === s.activeProjectId)?.path);
-  const conversations = useConversationStore((s) => projectId ? s.conversationsByProject[projectId] : undefined);
   const [open, setOpen] = useState(false);
   const [snapshot, setSnapshot] = useState<{ projectPath: string; services: LocalService[] }>();
   const [logId, setLogId] = useState<string | null>(null);
@@ -100,7 +97,6 @@ export function LocalServicesMenu() {
               {loading ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : <RotateCw />}
             </Button>
           </div>
-          <p className="mb-3 text-xs text-[var(--text-tertiary)]">当前项目 · 服务独立于对话运行，退出 Nex 时停止</p>
           {(actionError || loadError) && <p role="alert" className="mb-2 text-xs text-[var(--error)]">{actionError || loadError}</p>}
           {services.length === 0 && <p className="py-6 text-center text-xs text-[var(--text-tertiary)]">
             {loading ? "正在获取服务…" : "暂无托管服务。让 Agent 使用本地服务工具启动服务后，会显示在这里。"}
@@ -109,19 +105,12 @@ export function LocalServicesMenu() {
             {services.map((service) => {
               const active = service.status === "running" || service.status === "starting";
               const pending = busy === service.id;
-              const source = conversations?.find((c) => c.id === service.conversationId)?.title;
               return <div key={service.id} className="border-t border-[var(--hairline-soft)] py-3 first:border-t-0">
                 <div className="flex items-center gap-2">
-                  <span aria-hidden className={`size-1.5 shrink-0 rounded-full ${service.status === "running" ? "bg-[var(--success)]" : service.status === "failed" ? "bg-[var(--error)]" : "bg-[var(--text-tertiary)]"}`} />
+                  <span role="img" aria-label={pending ? "处理中…" : STATUS[service.status]} title={service.error || STATUS[service.status]} className={`size-1.5 shrink-0 rounded-full ${service.status === "running" ? "bg-[var(--success)]" : service.status === "failed" ? "bg-[var(--error)]" : "bg-[var(--text-tertiary)]"}`} />
                   <span className="min-w-0 flex-1 truncate text-sm font-medium">{service.name}</span>
-                  <span className="shrink-0 text-xs text-[var(--text-tertiary)]">{pending ? "处理中…" : STATUS[service.status]}</span>
+                  {service.port && <span className="shrink-0 text-xs text-[var(--text-tertiary)]">{service.port}</span>}
                 </div>
-                <p title={service.command} className="mt-1 truncate font-mono text-[11px] text-[var(--text-secondary)]">{service.command}</p>
-                <p title={service.cwd} className="mt-1 truncate text-[11px] text-[var(--text-tertiary)]">{service.cwd}</p>
-                {source && <p className="mt-1 truncate text-[11px] text-[var(--text-tertiary)]">来源：{source}</p>}
-                {service.port && <p className="mt-1 text-[11px] text-[var(--text-secondary)]">localhost:{service.port} · {service.listening ? "端口可连接" : "端口未就绪"}</p>}
-                {service.error && <p className="mt-1 break-words text-xs text-[var(--error)]">{service.error}</p>}
-                {service.status === "failed" && service.exitCode != null && <p className="mt-1 text-xs text-[var(--error)]">退出码：{service.exitCode}</p>}
                 <div className="mt-2 flex items-center gap-1">
                   <Button variant="ghost" size="xs" className={ACTION_CLASS} disabled={!!busy || service.status === "starting"} onClick={() => void act(service, "restart")}><RotateCw />{active ? "重启" : "启动"}</Button>
                   {active && <Button variant="ghost" size="xs" className={ACTION_CLASS} disabled={!!busy} onClick={() => void act(service, "stop")}><Square />停止</Button>}

@@ -113,6 +113,19 @@ describe("FileTree drop routing", () => {
     expect(importFiles).not.toHaveBeenCalled();
   });
 
+  it("highlights and imports multiple Finder files and folders into the hovered directory", () => {
+    const importFiles = vi.fn();
+    useFsStore.setState({ importFiles });
+    const { container } = setupTarget();
+    const paths = ["/external/readme.txt", "/external/assets"];
+    act(() => dragHandlers.os({ type: "enter", paths, x: 50, y: 50 }));
+    const row = container.querySelector<HTMLElement>(`[data-dir-path="${PROJECT.path}/src"]`)!;
+    expect(row.className).toContain("ring-1");
+    act(() => dragHandlers.os({ type: "drop", paths, x: 50, y: 50 }));
+    expect(importFiles).toHaveBeenCalledExactlyOnceWith(paths, `${PROJECT.path}/src`);
+    expect(row.className).not.toContain("ring-1");
+  });
+
   it("resolves the final directory even before the pending hover frame runs", () => {
     const moveEntries = vi.fn();
     useFsStore.setState({ moveEntries });

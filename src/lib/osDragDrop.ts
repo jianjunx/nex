@@ -14,15 +14,15 @@ export interface OsDragDropEvent {
   type: "enter" | "over" | "drop" | "leave";
   /** Absolute file paths; present for `enter` and `drop`. */
   paths?: string[];
-  /** Pointer position in CSS px (already divided by the window scale factor). */
+  /** Pointer position normalized to CSS px. */
   x: number;
   y: number;
 }
 
 /**
  * Subscribe to OS file drag/drop events on the current window.
- * Positions arrive as physical pixels and are converted here; the scale
- * factor is cached and refreshed on `tauri://scale-factor-changed`.
+ * Wry reports logical points on macOS/GTK, but physical pixels on Windows.
+ * Only Windows positions need the cached window scale factor applied.
  */
 export function useOsDragDrop(onEvent: (e: OsDragDropEvent) => void): void {
   const handlerRef = useRef(onEvent);
@@ -32,21 +32,24 @@ export function useOsDragDrop(onEvent: (e: OsDragDropEvent) => void): void {
     let disposed = false;
     let unlistenDrop: (() => void) | undefined;
     let unlistenScale: (() => void) | undefined;
-    // Fallback until the async scaleFactor() resolves.
-    let factor = window.devicePixelRatio || 1;
+    const physicalCoordinates = /^Win/.test(navigator.platform) || /Windows/.test(navigator.userAgent);
+    let factor = physicalCoordinates ? window.devicePixelRatio || 1 : 1;
 
-    void getCurrentWindow()
-      .scaleFactor()
-      .then((f) => {
-        if (!disposed) factor = f;
+    if (physicalCoordinates) {
+      void getCurrentWindow()
+        .scaleFactor()
+        .then((f) => {
+          if (!disposed) factor = f;
+        })
+        .catch(() => { /* Keep the devicePixelRatio fallback. */ });
+
+      void listen<{ scaleFactor: number }>("tauri://scale-factor-changed", (e) => {
+        factor = e.payload.scaleFactor;
+      }).then((u) => {
+        if (disposed) u();
+        else unlistenScale = u;
       });
-
-    void listen<{ scaleFactor: number }>("tauri://scale-factor-changed", (e) => {
-      factor = e.payload.scaleFactor;
-    }).then((u) => {
-      if (disposed) u();
-      else unlistenScale = u;
-    });
+    }
 
     void getCurrentWindow()
       .onDragDropEvent((ev) => {

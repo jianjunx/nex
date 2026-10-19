@@ -37,6 +37,11 @@ describe("LocalServicesMenu", () => {
     expect(screen.queryByText(service.command)).toBeNull();
     expect(screen.queryByText(service.cwd)).toBeNull();
     expect(screen.queryByText(/来源：|端口可连接|端口未就绪/)).toBeNull();
+    for (const name of ["重启", "停止", "日志"]) {
+      const button = screen.getByRole("button", { name });
+      expect(button.textContent).toBe("");
+      expect(button.title).toBe(name);
+    }
     fireEvent.click(screen.getByRole("button", { name: "停止" }));
     await waitFor(() => expect(serviceAction).toHaveBeenCalledWith("/repo", "s1", "stop"));
   });
@@ -49,11 +54,14 @@ describe("LocalServicesMenu", () => {
     expect(serviceLogs).toHaveBeenCalledWith("/repo", "s1");
   });
   it("keeps failed services visible for retry and displays operation failures", async () => {
-    vi.mocked(serviceList).mockResolvedValue([{ ...service, status: "failed", pid: null, exitCode: 1 }]);
+    vi.mocked(serviceList).mockResolvedValue([{ ...service, status: "failed", pid: null, exitCode: 1, error: "Process exited with code 1" }]);
     vi.mocked(serviceAction).mockRejectedValue(new Error("port busy"));
     await open();
-    expect(screen.getByRole("img", { name: "启动失败" })).toBeTruthy();
+    const status = screen.getByRole("img", { name: "启动失败" });
+    expect(status.classList.contains("bg-[var(--error)]")).toBe(true);
+    expect(status.title).toBe("Process exited with code 1");
     expect(screen.queryByText("退出码：1")).toBeNull();
+    expect(screen.getByRole("button", { name: "启动" }).querySelector(".lucide-play")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "启动" }));
     expect(await screen.findByRole("alert")).toHaveProperty("textContent", "port busy");
   });

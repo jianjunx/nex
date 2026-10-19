@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Popover } from "radix-ui";
-import { Server, RotateCw, Square, ScrollText, ExternalLink, Trash2, Loader2 } from "lucide-react";
+import { Server, Play, RotateCw, Square, ScrollText, ExternalLink, Trash2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { serviceList, serviceAction, serviceLogs, openExternal, type LocalService } from "@/bridge/tauri";
 import { useProjectStore } from "@/stores/project.store";
@@ -112,11 +112,11 @@ export function LocalServicesMenu() {
                   {service.port && <span className="shrink-0 text-xs text-[var(--text-tertiary)]">{service.port}</span>}
                 </div>
                 <div className="mt-2 flex items-center gap-1">
-                  <Button variant="ghost" size="xs" className={ACTION_CLASS} disabled={!!busy || service.status === "starting"} onClick={() => void act(service, "restart")}><RotateCw />{active ? "重启" : "启动"}</Button>
-                  {active && <Button variant="ghost" size="xs" className={ACTION_CLASS} disabled={!!busy} onClick={() => void act(service, "stop")}><Square />停止</Button>}
-                  <Button variant="ghost" size="xs" className={ACTION_CLASS} aria-expanded={logId === service.id} onClick={() => { setLogs(""); setLogId(logId === service.id ? null : service.id); }}><ScrollText />日志</Button>
-                  {service.port && <Button variant="ghost" size="icon-xs" className={ACTION_CLASS} title="打开服务地址" aria-label={`打开 ${service.name}`} disabled={!service.listening} onClick={() => void openExternal(`http://localhost:${service.port}`).catch((e) => setActionError(errorMessage(e)))}><ExternalLink /></Button>}
-                  {!active && <Button variant="ghost" size="icon-xs" className={`ml-auto ${ACTION_CLASS}`} title="移除记录" aria-label={`移除 ${service.name}`} disabled={!!busy} onClick={() => void act(service, "remove")}><Trash2 /></Button>}
+                  <Button variant="ghost" size="icon-sm" className={ACTION_CLASS} title={active ? "重启" : "启动"} aria-label={active ? "重启" : "启动"} disabled={!!busy || service.status === "starting"} onClick={() => void act(service, "restart")}>{active ? <RotateCw /> : <Play />}</Button>
+                  {active && <Button variant="ghost" size="icon-sm" className={ACTION_CLASS} title="停止" aria-label="停止" disabled={!!busy} onClick={() => void act(service, "stop")}><Square /></Button>}
+                  <Button variant="ghost" size="icon-sm" className={ACTION_CLASS} title="日志" aria-label="日志" aria-expanded={logId === service.id} onClick={() => { setLogs(""); setLogId(logId === service.id ? null : service.id); }}><ScrollText /></Button>
+                  {service.port && <Button variant="ghost" size="icon-sm" className={ACTION_CLASS} title="打开服务地址" aria-label={`打开 ${service.name}`} disabled={!service.listening} onClick={() => void openExternal(`http://localhost:${service.port}`).catch((e) => setActionError(errorMessage(e)))}><ExternalLink /></Button>}
+                  {!active && <Button variant="ghost" size="icon-sm" className={`ml-auto ${ACTION_CLASS}`} title="移除记录" aria-label={`移除 ${service.name}`} disabled={!!busy} onClick={() => void act(service, "remove")}><Trash2 /></Button>}
                 </div>
                 {logId === service.id && <pre role="log" aria-label={`${service.name} 日志`} className="mt-2 max-h-44 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-[var(--material-canvas)] p-2 font-mono text-[11px] text-[var(--text-secondary)]">{logs || "暂无日志"}</pre>}
               </div>;

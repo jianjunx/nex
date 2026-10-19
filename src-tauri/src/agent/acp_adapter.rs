@@ -1817,9 +1817,10 @@ impl AcpSessionManager {
         })
         .await;
         let file_changes = if let Some(baseline) = baseline {
-            super::workspace_changes::capture(handle.cwd.clone(), Some(&baseline))
-                .await
-                .map(|after| baseline.changes(after))
+            match super::workspace_changes::capture(handle.cwd.clone(), Some(&baseline)).await {
+                Some(after) => super::workspace_changes::changes(baseline, after).await,
+                None => None,
+            }
         } else {
             None
         };

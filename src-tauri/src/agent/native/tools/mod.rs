@@ -154,6 +154,7 @@ pub fn ensure_working_memory(
 
 /// A builtin tool.
 #[async_trait::async_trait(?Send)]
+#[allow(clippy::double_must_use)] // async_trait adds must_use to an already must-use Future.
 pub trait Tool {
     fn name(&self) -> &str;
     fn description(&self) -> &str;

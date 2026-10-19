@@ -1,5 +1,6 @@
 //! Read-only per-turn baselines; never stage files or write Git objects.
 use serde::Serialize;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -7,7 +8,26 @@ use std::path::{Path, PathBuf};
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_TOTAL_BYTES: usize = 32 * 1024 * 1024;
 
-pub struct Snapshot(BTreeMap<PathBuf, Option<String>>);
+pub struct Snapshot {
+    files: BTreeMap<PathBuf, Option<SnapshotText>>,
+    _spill: Option<tempfile::TempDir>,
+}
+
+enum SnapshotText {
+    Memory(String),
+    Disk(PathBuf),
+}
+
+impl SnapshotText {
+    fn read(&self) -> Result<Cow<'_, str>, String> {
+        match self {
+            Self::Memory(text) => Ok(Cow::Borrowed(text)),
+            Self::Disk(path) => std::fs::read_to_string(path)
+                .map(Cow::Owned)
+                .map_err(|e| e.to_string()),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,13 +75,14 @@ impl Snapshot {
         }
         let mut files = BTreeMap::new();
         let mut total = 0;
+        let mut spill = None;
         for path in paths {
             let meta = match std::fs::symlink_metadata(&path) {
                 Ok(meta) => meta,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(e) => return Err(e.to_string()),
             };
-            // shortcut: skip binary/symlink/>2 MiB previews; add disk snapshots if larger files need review.
+            // shortcut: skip binary/symlink/>2 MiB previews; stream larger files if needed.
             let content = if meta.is_file() && meta.len() <= MAX_FILE_BYTES {
                 let mut bytes = Vec::new();
                 std::fs::File::open(&path)
@@ -69,43 +90,71 @@ impl Snapshot {
                     .take(MAX_FILE_BYTES + 1)
                     .read_to_end(&mut bytes)
                     .map_err(|e| e.to_string())?;
-                total += bytes.len();
-                if total > MAX_TOTAL_BYTES {
-                    return Err("workspace baseline exceeds 32 MiB".into());
-                }
                 if bytes.len() as u64 > MAX_FILE_BYTES || bytes.contains(&0) {
                     None
                 } else {
-                    String::from_utf8(bytes).ok()
+                    match String::from_utf8(bytes) {
+                        Ok(text) if total + text.len() <= MAX_TOTAL_BYTES => {
+                            total += text.len();
+                            Some(SnapshotText::Memory(text))
+                        }
+                        Ok(text) => {
+                            // Spill only overflow text; TempDir removes these private copies on drop.
+                            if spill.is_none() {
+                                spill = Some(tempfile::tempdir().map_err(|e| e.to_string())?);
+                            }
+                            let file = spill.as_ref().unwrap().path().join(files.len().to_string());
+                            std::fs::write(&file, text).map_err(|e| e.to_string())?;
+                            Some(SnapshotText::Disk(file))
+                        }
+                        Err(_) => None,
+                    }
                 }
             } else {
                 None
             };
             files.insert(path, content);
         }
-        Ok(Self(files))
+        Ok(Self {
+            files,
+            _spill: spill,
+        })
     }
 
-    pub fn changes(self, after: Self) -> Vec<FileChange> {
-        let paths: BTreeSet<_> = self.0.keys().chain(after.0.keys()).collect();
+    fn changes(self, after: Self) -> Result<Vec<FileChange>, String> {
+        let paths: BTreeSet<_> = self.files.keys().chain(after.files.keys()).collect();
         paths
             .into_iter()
             .filter_map(|path| {
-                let old = self.0.get(path);
-                let new = after.0.get(path);
+                let old = self.files.get(path);
+                let new = after.files.get(path);
                 if matches!(old, Some(None)) || matches!(new, Some(None)) {
                     return None;
                 }
-                let old = old.and_then(|s| s.as_deref()).unwrap_or("");
-                let new = new.and_then(|s| s.as_deref()).unwrap_or("");
-                if old == new && self.0.contains_key(path) == after.0.contains_key(path) {
+                let old = match old
+                    .and_then(Option::as_ref)
+                    .map(SnapshotText::read)
+                    .transpose()
+                {
+                    Ok(text) => text.unwrap_or_default(),
+                    Err(error) => return Some(Err(error)),
+                };
+                let new = match new
+                    .and_then(Option::as_ref)
+                    .map(SnapshotText::read)
+                    .transpose()
+                {
+                    Ok(text) => text.unwrap_or_default(),
+                    Err(error) => return Some(Err(error)),
+                };
+                if old == new && self.files.contains_key(path) == after.files.contains_key(path) {
                     return None;
                 }
-                Some(FileChange {
+                Some(Ok(FileChange {
                     path: path.to_string_lossy().into_owned(),
                     old_text: old.into(),
                     new_text: new.into(),
-                })
+                }))
             })
             .collect()
     }
@@ -114,7 +163,7 @@ impl Snapshot {
 pub async fn capture(root: PathBuf, baseline: Option<&Snapshot>) -> Option<Snapshot> {
     // Re-read baseline paths even when this turn changes the ignore rules.
     let paths = baseline
-        .map(|s| s.0.keys().cloned().collect())
+        .map(|s| s.files.keys().cloned().collect())
         .unwrap_or_default();
     match tauri::async_runtime::spawn_blocking(move || Snapshot::capture_with_paths(&root, paths))
         .await
@@ -129,6 +178,16 @@ pub async fn capture(root: PathBuf, baseline: Option<&Snapshot>) -> Option<Snaps
                     _ => unreachable!(),
                 }
             );
+            None
+        }
+    }
+}
+
+pub async fn changes(before: Snapshot, after: Snapshot) -> Option<Vec<FileChange>> {
+    match tauri::async_runtime::spawn_blocking(move || before.changes(after)).await {
+        Ok(Ok(changes)) => Some(changes),
+        result => {
+            log::warn!("turn file preview comparison unavailable: {result:?}");
             None
         }
     }
@@ -151,7 +210,7 @@ mod tests {
         std::fs::write(root.join("new.txt"), "new").unwrap();
         std::fs::remove_file(root.join("deleted.txt")).unwrap();
         std::fs::rename(root.join("rename.txt"), root.join("renamed.txt")).unwrap();
-        let changes = before.changes(Snapshot::capture(root).unwrap());
+        let changes = before.changes(Snapshot::capture(root).unwrap()).unwrap();
         assert_eq!(changes.len(), 5);
         assert_eq!(changes[0].old_text, "already dirty");
         assert_eq!(changes[0].new_text, "after");
@@ -174,7 +233,7 @@ mod tests {
         std::fs::write(root.join("tracked.txt"), "after").unwrap();
         std::fs::write(root.join("ignored.txt"), "changed").unwrap();
         std::fs::write(root.join("binary"), [0, 2]).unwrap();
-        let changes = before.changes(Snapshot::capture(root).unwrap());
+        let changes = before.changes(Snapshot::capture(root).unwrap()).unwrap();
         assert_eq!(changes.len(), 1);
         assert!(changes[0].path.ends_with("tracked.txt"));
     }
@@ -187,8 +246,10 @@ mod tests {
         std::fs::write(root.join("a.txt"), "same").unwrap();
         let before = Snapshot::capture(root).unwrap();
         std::fs::write(root.join(".gitignore"), "*.txt\n").unwrap();
-        let paths = before.0.keys().cloned().collect();
-        let changes = before.changes(Snapshot::capture_with_paths(root, paths).unwrap());
+        let paths = before.files.keys().cloned().collect();
+        let changes = before
+            .changes(Snapshot::capture_with_paths(root, paths).unwrap())
+            .unwrap();
         assert_eq!(changes.len(), 1);
         assert!(changes[0].path.ends_with(".gitignore"));
     }
@@ -199,8 +260,68 @@ mod tests {
         let before = Snapshot::capture(dir.path()).unwrap();
         std::fs::write(dir.path().join("empty"), "").unwrap();
         assert_eq!(
-            before.changes(Snapshot::capture(dir.path()).unwrap()).len(),
+            before
+                .changes(Snapshot::capture(dir.path()).unwrap())
+                .unwrap()
+                .len(),
             1
         );
+    }
+
+    #[test]
+    fn binary_assets_do_not_consume_the_text_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let binary = vec![0; 1024 * 1024];
+        for n in 0..33 {
+            std::fs::write(root.join(format!("asset-{n:02}.bin")), &binary).unwrap();
+        }
+        std::fs::write(root.join("source.txt"), "before").unwrap();
+        let before = Snapshot::capture(root).unwrap();
+        assert!(before._spill.is_none());
+        std::fs::write(root.join("source.txt"), "after").unwrap();
+        let changes = before.changes(Snapshot::capture(root).unwrap()).unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].old_text, "before");
+        assert_eq!(changes[0].new_text, "after");
+    }
+
+    #[test]
+    fn spills_overflow_text_and_preserves_edits_creations_and_deletions() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let text = "x".repeat(MAX_FILE_BYTES as usize);
+        for n in 0..MAX_TOTAL_BYTES / text.len() {
+            std::fs::write(root.join(format!("a-{n:02}.txt")), &text).unwrap();
+        }
+        std::fs::write(root.join("y-deleted.txt"), "deleted").unwrap();
+        std::fs::write(root.join("z-edited.txt"), "before").unwrap();
+        let before = Snapshot::capture(root).unwrap();
+        let before_spill = before._spill.as_ref().unwrap().path().to_path_buf();
+        assert!(matches!(
+            before.files[&root.join("z-edited.txt")],
+            Some(SnapshotText::Disk(_))
+        ));
+        std::fs::remove_file(root.join("y-deleted.txt")).unwrap();
+        std::fs::write(root.join("z-edited.txt"), "after").unwrap();
+        std::fs::write(root.join("z-new.txt"), "created").unwrap();
+        let after = Snapshot::capture(root).unwrap();
+        let after_spill = after._spill.as_ref().unwrap().path().to_path_buf();
+        let changes = before.changes(after).unwrap();
+        assert_eq!(changes.len(), 3);
+        assert_eq!(
+            (changes[0].old_text.as_str(), changes[0].new_text.as_str()),
+            ("deleted", "")
+        );
+        assert_eq!(
+            (changes[1].old_text.as_str(), changes[1].new_text.as_str()),
+            ("before", "after")
+        );
+        assert_eq!(
+            (changes[2].old_text.as_str(), changes[2].new_text.as_str()),
+            ("", "created")
+        );
+        assert!(!before_spill.exists());
+        assert!(!after_spill.exists());
     }
 }

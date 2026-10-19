@@ -126,6 +126,20 @@ describe("groupThreadEntries", () => {
     expect(groupThreadEntries(entries).some((i) => i.type === "files_changed")).toBe(false);
   });
 
+  it("counts full-file snapshot changes without inflating large-file summaries", () => {
+    const before = Array.from({ length: 300 }, (_, i) => `line ${i}`);
+    const after = [...before];
+    after[150] = "changed";
+    const items = groupThreadEntries([
+      { id: "u1", kind: "user_message", text: "fix", timestamp: 1 },
+      { id: "s1", kind: "turn_summary", durationMs: 1, timestamp: 2,
+        fileChanges: [{ path: "/repo/a.ts", oldText: before.join("\n"), newText: after.join("\n") }] },
+    ]);
+    expect(items.at(-2)).toMatchObject({
+      type: "files_changed", files: [{ additions: 1, deletions: 1 }],
+    });
+  });
+
   it("does not show files_changed for the in-flight last turn", () => {
     const entries: ThreadEntry[] = [
       { id: "u1", kind: "user_message", text: "fix", timestamp: 1 },

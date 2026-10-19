@@ -1,3 +1,4 @@
+import { diff } from "@codemirror/merge";
 import type { ToolCallEntry } from "./types";
 import { entryChangeHunks, isEditTool, toolEntryFilePath } from "./toolCallUtils";
 
@@ -13,31 +14,25 @@ export type ChangedFile = {
   preview?: { oldText: string; newText: string; key: string };
 };
 
-/** Line-based LCS: additions / deletions relative to the longest common subsequence. */
+/** Encode whole lines so the editor's diff algorithm counts lines rather than characters. */
 export function countDiffLines(oldText: string, newText: string): { additions: number; deletions: number } {
-  const a = oldText.length === 0 ? [] : oldText.split("\n");
-  const b = newText.length === 0 ? [] : newText.split("\n");
-  const n = a.length;
-  const m = b.length;
-  if (n === 0) return { additions: m, deletions: 0 };
-  if (m === 0) return { additions: 0, deletions: n };
-  // Cap DP to keep summary aggregation cheap on huge dumps.
-  if (n * m > 80_000) {
-    return { additions: m, deletions: n };
-  }
-  let prev = new Uint32Array(m + 1);
-  let curr = new Uint32Array(m + 1);
-  for (let i = 1; i <= n; i++) {
-    for (let j = 1; j <= m; j++) {
-      curr[j] = a[i - 1] === b[j - 1] ? prev[j - 1] + 1 : prev[j] > curr[j - 1] ? prev[j] : curr[j - 1];
+  const lines = new Map<string, string>();
+  const encode = (text: string) => text === "" ? "" : text.split("\n").map((line) => {
+    let token = lines.get(line);
+    if (token === undefined) {
+      // Skip surrogate code points; each token remains one complete Unicode character.
+      const id = lines.size + 1;
+      token = String.fromCodePoint(id < 0xd800 ? id : id + 0x800);
+      lines.set(line, token);
     }
-    const tmp = prev;
-    prev = curr;
-    curr = tmp;
-    curr.fill(0);
-  }
-  const lcs = prev[m];
-  return { additions: m - lcs, deletions: n - lcs };
+    return token;
+  }).join("");
+  const a = encode(oldText);
+  const b = encode(newText);
+  return diff(a, b, { timeout: 50 }).reduce((counts, change) => ({
+    additions: counts.additions + Array.from(b.slice(change.fromB, change.toB)).length,
+    deletions: counts.deletions + Array.from(a.slice(change.fromA, change.toA)).length,
+  }), { additions: 0, deletions: 0 });
 }
 
 function pathKey(path: string): string {

@@ -33,6 +33,29 @@ describe("countDiffLines", () => {
     expect(countDiffLines("hello", "")).toEqual({ additions: 0, deletions: 1 });
     expect(countDiffLines("", "")).toEqual({ additions: 0, deletions: 0 });
   });
+
+  it("counts one changed line in a 300-line file without counting unchanged context", () => {
+    const before = Array.from({ length: 300 }, (_, i) => `line ${i}`);
+    const after = [...before];
+    after[150] = "changed line";
+    expect(countDiffLines(before.join("\n"), after.join("\n"))).toEqual({ additions: 1, deletions: 1 });
+  });
+
+  it("keeps distant edits separate in a large file with repeated lines", () => {
+    const before: string[] = Array.from({ length: 10_000 }, (_, i) => i % 2 ? "}" : "  run();");
+    const after = [...before];
+    after[100] = "  first();";
+    after[9900] = "  last();";
+    expect(countDiffLines(before.join("\n"), after.join("\n"))).toEqual({ additions: 2, deletions: 2 });
+  });
+
+  it("counts insertions and replacements beyond the single UTF-16 character token range", () => {
+    const before = Array.from({ length: 70_000 }, (_, i) => `line ${i}`);
+    const after = [...before];
+    after[60_000] = "changed";
+    after.splice(68_000, 0, "inserted");
+    expect(countDiffLines(before.join("\n"), after.join("\n"))).toEqual({ additions: 2, deletions: 1 });
+  });
 });
 
 describe("collectChangedFiles", () => {

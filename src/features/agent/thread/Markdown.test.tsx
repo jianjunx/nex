@@ -4,6 +4,12 @@
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Markdown } from "./Markdown";
+import { convertFileSrc, isTauri } from "@tauri-apps/api/core";
+
+vi.mock("@tauri-apps/api/core", () => ({
+  isTauri: vi.fn(() => false),
+  convertFileSrc: vi.fn((path: string) => `asset://localhost/${encodeURIComponent(path)}`),
+}));
 
 vi.mock("@/bridge/tauri", () => ({ openExternal: vi.fn().mockResolvedValue(undefined) }));
 import { openExternal } from "@/bridge/tauri";
@@ -41,6 +47,34 @@ afterEach(() => {
 });
 
 describe("Markdown", () => {
+  it.each([
+    ["/tmp/nex-ci-64-success.jpg", "/tmp/nex-ci-64-success.jpg"],
+    ["/private/tmp/nex-ci.png", "/private/tmp/nex-ci.png"],
+    ["/tmp/CI%20%E6%88%90%E5%8A%9F%23.png", "/tmp/CI 成功#.png"],
+    ["/tmp/image%FF.png", "/tmp/image%FF.png"],
+  ])("loads local images through the asset protocol: %s", (src, path) => {
+    vi.mocked(isTauri).mockReturnValue(true);
+    const { getByRole } = render(<Markdown>{`![CI 全部通过](${src})`}</Markdown>);
+    expect(convertFileSrc).toHaveBeenCalledWith(path);
+    expect(getByRole("img").getAttribute("src")).toBe(`asset://localhost/${encodeURIComponent(path)}`);
+  });
+
+  it.each(["https://example.com/image.png", "//example.com/image.png", "images/ci.png"])(
+    "preserves web image URLs: %s", (src) => {
+      vi.mocked(isTauri).mockReturnValue(true);
+      vi.mocked(convertFileSrc).mockClear();
+      const { getByRole } = render(<Markdown>{`![CI](${src})`}</Markdown>);
+      expect(getByRole("img").getAttribute("src")).toBe(src);
+      expect(convertFileSrc).not.toHaveBeenCalled();
+    },
+  );
+
+  it("renders local image paths without Tauri in browser previews", () => {
+    vi.mocked(isTauri).mockReturnValue(false);
+    const { getByRole } = render(<Markdown>{"![CI](/tmp/ci.png)"}</Markdown>);
+    expect(getByRole("img").getAttribute("src")).toBe("/tmp/ci.png");
+  });
+
   it.each([{ metaKey: true }, { ctrlKey: true }, {}])("opens external links through the system browser: %j", (modifiers) => {
     const { getByRole } = render(<Markdown>{"[Example](https://example.com/path?q=1)"}</Markdown>);
     fireEvent.click(getByRole("link"), modifiers);

@@ -420,7 +420,11 @@ export async function agentRespondAskQuestion(
 }
 
 export async function agentCloseSession(sessionId: string): Promise<void> {
-  return invoke(COMMANDS.AGENT_CLOSE_SESSION, { sessionId });
+  await invoke(COMMANDS.AGENT_CLOSE_SESSION, { sessionId });
+}
+
+export async function agentReclaimSession(sessionId: string): Promise<boolean> {
+  return invoke(COMMANDS.AGENT_CLOSE_SESSION, { sessionId, idleOnly: true });
 }
 
 export async function agentCustomUpsert(server: CustomServer): Promise<void> {

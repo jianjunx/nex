@@ -95,6 +95,11 @@ impl Drop for JobTable {
 }
 
 impl JobTable {
+    /// Even completed jobs retain output that cannot be restored from history.
+    pub fn is_empty(&self) -> bool {
+        self.jobs.is_empty()
+    }
+
     /// Spawns `command` under the platform shell in `cwd`, returning the job id.
     /// Sync on purpose: nothing here awaits (the drain/kill supervision runs on
     /// its own task), so callers can hold a `RefMut` without crossing an await.

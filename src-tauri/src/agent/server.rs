@@ -479,4 +479,8 @@ impl AgentSessionManager {
     pub fn remove_session(&self, session_id: &str) {
         self.acp.remove_session(session_id);
     }
+
+    pub async fn reclaim_session(&self, session_id: &str) -> Result<bool, NexError> {
+        self.acp.reclaim_session(session_id).await
+    }
 }

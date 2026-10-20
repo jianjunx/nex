@@ -64,6 +64,12 @@ afterEach(() => {
 });
 
 describe("FilesChangedCard", () => {
+  it("disables prompt actions while the session is being reclaimed", () => {
+    useAgentStore.setState((s) => { s.sessions.c1.reclaiming = true; });
+    render(<FilesChangedCard files={FILES} />);
+    expect(screen.getByRole("button", { name: "Commit & Push" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Review" }).hasAttribute("disabled")).toBe(true);
+  });
   it("shows three file chips, then the rest", () => {
     const many = Array.from({ length: 11 }, (_, i) => ({
       path: `/repo/src/f${i}.ts`,
@@ -122,15 +128,15 @@ describe("FilesChangedCard", () => {
     ]);
   });
 
-  it("Commit & Push sends the command without file paths on the current session", () => {
+  it("Commit & Push sends Commit & Push to Origin on the current session", () => {
     const appendUserMessage = vi.fn();
     const sendPrompt = vi.fn().mockResolvedValue(undefined);
     useAgentStore.setState({ appendUserMessage, sendPrompt });
 
     render(<FilesChangedCard files={FILES} />);
     fireEvent.click(screen.getByText("Commit & Push"));
-    expect(appendUserMessage).toHaveBeenCalledWith("c1", "Commit & Push");
-    expect(sendPrompt).toHaveBeenCalledWith("sid-1", [{ type: "text", text: "Commit & Push" }]);
+    expect(appendUserMessage).toHaveBeenCalledWith("c1", "Commit & Push to Origin");
+    expect(sendPrompt).toHaveBeenCalledWith("sid-1", [{ type: "text", text: "Commit & Push to Origin" }]);
   });
 
   it("Review sends /review with file paths on the current session", () => {

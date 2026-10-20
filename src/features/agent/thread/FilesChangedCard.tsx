@@ -29,7 +29,7 @@ function FilesChangedCardContent({ files }: { files: ChangedFile[] }) {
   const projectPath = useProjectStore((s) => s.projects.find((p) => p.id === s.activeProjectId)?.path);
   const activeTabId = useConversationStore((s) => selectProjectActiveTabId(s, activeProjectId));
   const session = useAgentStore((s) => (activeTabId ? s.sessions[activeTabId] : undefined));
-  const canPrompt = !!session?.sessionId && session.status === "idle";
+  const canPrompt = !!session?.sessionId && session.status === "idle" && !session.reclaiming;
   const [showAll, setShowAll] = useState(false);
 
   if (files.length === 0) return null;
@@ -62,7 +62,7 @@ function FilesChangedCardContent({ files }: { files: ChangedFile[] }) {
 
   const commitAndPush = () => {
     if (!canPrompt || !activeTabId || !session?.sessionId) return;
-    sendToSession(activeTabId, session.sessionId, "Commit & Push");
+    sendToSession(activeTabId, session.sessionId, "Commit & Push to Origin");
   };
 
   const reviewFiles = () => {

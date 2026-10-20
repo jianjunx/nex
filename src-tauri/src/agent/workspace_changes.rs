@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_TOTAL_BYTES: usize = 32 * 1024 * 1024;
+// Bound disk/CPU work across all conversations, including cancelled callers.
+static PREVIEW_WORKERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 
 pub struct Snapshot {
     files: BTreeMap<PathBuf, Option<SnapshotText>>,
@@ -163,12 +165,16 @@ impl Snapshot {
 }
 
 pub async fn capture(root: PathBuf, baseline: Option<&Snapshot>) -> Option<Snapshot> {
+    let permit = PREVIEW_WORKERS.acquire().await.ok()?;
     // Re-read baseline paths even when this turn changes the ignore rules.
     let paths = baseline
         .map(|s| s.files.keys().cloned().collect())
         .unwrap_or_default();
-    match tauri::async_runtime::spawn_blocking(move || Snapshot::capture_with_paths(&root, paths))
-        .await
+    match tauri::async_runtime::spawn_blocking(move || {
+        let _permit = permit;
+        Snapshot::capture_with_paths(&root, paths)
+    })
+    .await
     {
         Ok(Ok(snapshot)) => Some(snapshot),
         result => {
@@ -186,7 +192,13 @@ pub async fn capture(root: PathBuf, baseline: Option<&Snapshot>) -> Option<Snaps
 }
 
 pub async fn changes(before: Snapshot, after: Snapshot) -> Option<Vec<FileChange>> {
-    match tauri::async_runtime::spawn_blocking(move || before.changes(after)).await {
+    let permit = PREVIEW_WORKERS.acquire().await.ok()?;
+    match tauri::async_runtime::spawn_blocking(move || {
+        let _permit = permit;
+        before.changes(after)
+    })
+    .await
+    {
         Ok(Ok(changes)) => Some(changes),
         result => {
             log::warn!("turn file preview comparison unavailable: {result:?}");
@@ -198,6 +210,28 @@ pub async fn changes(before: Snapshot, after: Snapshot) -> Option<Vec<FileChange
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn capture_and_comparison_wait_for_a_shared_worker_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        let permits = PREVIEW_WORKERS.acquire_many(2).await.unwrap();
+        let root = dir.path().to_path_buf();
+        let mut pending = tokio::spawn(async move { capture(root, None).await });
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(50), &mut pending)
+            .await
+            .is_err());
+        drop(permits);
+        let before = pending.await.unwrap().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "created").unwrap();
+        let after = Snapshot::capture(dir.path()).unwrap();
+        let permits = PREVIEW_WORKERS.acquire_many(2).await.unwrap();
+        let mut pending = tokio::spawn(changes(before, after));
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(50), &mut pending)
+            .await
+            .is_err());
+        drop(permits);
+        assert_eq!(pending.await.unwrap().unwrap().len(), 1);
+    }
 
     #[test]
     fn captures_shell_edits_new_files_deletions_and_renames_without_prior_dirt() {

@@ -185,9 +185,16 @@ pub fn agent_respond_ask_question(
 }
 
 #[tauri::command]
-pub fn agent_close_session(state: State<AppState>, session_id: String) -> Result<(), NexError> {
+pub async fn agent_close_session(
+    state: State<'_, AppState>,
+    session_id: String,
+    idle_only: Option<bool>,
+) -> Result<bool, NexError> {
+    if idle_only == Some(true) {
+        return state.agent_manager.reclaim_session(&session_id).await;
+    }
     state.agent_manager.remove_session(&session_id);
-    Ok(())
+    Ok(true)
 }
 
 #[tauri::command]

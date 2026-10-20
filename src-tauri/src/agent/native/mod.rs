@@ -90,6 +90,29 @@ struct NativeSession {
     mcp: Vec<Rc<mcp::McpClient>>,
 }
 
+impl NativeSession {
+    fn checkpoint_for_suspend(
+        &self,
+        persist: impl FnOnce(&archive::SessionArchive) -> Result<(), String>,
+    ) -> Result<bool, String> {
+        if !self.jobs.borrow().is_empty() {
+            return Ok(false);
+        }
+        if self.history.is_empty() {
+            return Ok(true);
+        }
+        let mut history = archive::history_without_images(&self.history);
+        tools::ensure_working_memory(&mut history, &self.memory.borrow());
+        persist(&archive::SessionArchive {
+            cwd: self.cwd.clone(),
+            model_id: self.handles.model_id.borrow().clone(),
+            mode_id: self.handles.mode_id.borrow().clone(),
+            history,
+        })?;
+        Ok(true)
+    }
+}
+
 impl SessionHandles {
     fn new(model_id: String, reasoning: ReasoningControl) -> Self {
         Self {
@@ -1146,6 +1169,20 @@ impl acp::Agent for NexNativeAgent {
     }
 
     async fn ext_method(&self, args: acp::ExtRequest) -> acp::Result<acp::ExtResponse> {
+        if args.method.as_ref() == "session/prepare_suspend" {
+            let params: serde_json::Value = serde_json::from_str(args.params.get())
+                .map_err(|e| acp::Error::invalid_params().with_data(e.to_string()))?;
+            let session_id = params.get("sessionId").and_then(|v| v.as_str())
+                .ok_or_else(acp::Error::invalid_params)?;
+            let sessions = self.inner.sessions.borrow();
+            let safe = match sessions.get(session_id) {
+                Some(session) => session.checkpoint_for_suspend(|archive| archive::save(session_id, archive))
+                    .map_err(|e| acp::Error::internal_error().with_data(e))?,
+                None => false,
+            };
+            return Ok(Arc::from(serde_json::value::RawValue::from_string(safe.to_string())
+                .map_err(|e| acp::Error::internal_error().with_data(e.to_string()))?));
+        }
         if matches!(
             args.method.as_ref(),
             "session/set_goal" | "session/get_state"
@@ -1363,6 +1400,44 @@ mod tests {
     use super::*;
     use agent_client_protocol::Agent as _;
     use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+
+    fn suspend_test_session(cwd: PathBuf) -> NativeSession {
+        let handles = SessionHandles::new("deepseek/deepseek-chat".into(), ReasoningControl::Medium);
+        NativeSession {
+            cwd,
+            path_env: std::env::var_os("PATH").unwrap_or_default(),
+            memory: handles.memory.clone(),
+            handles,
+            history: vec![ChatMessage::system("system"), ChatMessage::user("latest turn")],
+            last_prompt_usage: None,
+            jobs: Rc::new(RefCell::new(tools::jobs::JobTable::default())),
+            mcp: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn suspension_requires_a_successful_checkpoint_of_the_latest_context() {
+        let session = suspend_test_session(std::env::temp_dir());
+        session.memory.borrow_mut().set_goal("latest goal");
+        assert!(session.checkpoint_for_suspend(|_| Err("disk full".into())).is_err());
+        assert_eq!(session.history.len(), 2);
+        assert!(session.checkpoint_for_suspend(|saved| {
+            assert_eq!(saved.history.last().unwrap().content.as_ref().unwrap().as_text(), Some("latest turn"));
+            assert_eq!(memory::recover_from_history(&saved.history).unwrap().goal, vec!["latest goal"]);
+            Ok(())
+        }).unwrap());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn suspension_preserves_background_jobs_and_their_output() {
+        tokio::task::LocalSet::new().run_until(async {
+            let dir = tempfile::tempdir().unwrap();
+            let session = suspend_test_session(dir.path().to_path_buf());
+            session.jobs.borrow_mut().spawn("echo output", &session.cwd, &session.path_env,
+                config::ShellSandboxMode::ApprovalOnly).unwrap();
+            assert!(!session.checkpoint_for_suspend(|_| panic!("must not suspend a job owner")).unwrap());
+        }).await;
+    }
 
     /// Minimal client that records streamed agent message chunks.
     struct TestClient {
@@ -1746,6 +1821,12 @@ mod tests {
                     .as_str()
                     .expect("sessionId")
                     .to_string();
+
+                // Custom methods must use the underscore prefix on the wire.
+                let safe = client_conn.request_raw(
+                    "_session/prepare_suspend", serde_json::json!({ "sessionId": session_id }),
+                ).await.expect("prepare_suspend over pipe");
+                assert_eq!(safe, serde_json::json!(true));
 
                 // Unprefixed `session/set_config_option` (the standard ACP name external
                 // agents like Claude Code register) reaches ext_method and updates the

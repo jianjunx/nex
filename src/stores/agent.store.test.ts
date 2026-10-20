@@ -13,6 +13,7 @@ const agentRespondAskQuestion = vi.fn();
 const agentSendPrompt = vi.fn().mockResolvedValue({ hadMutations: false });
 const agentCancel = vi.fn().mockResolvedValue(undefined);
 const agentCloseSession = vi.fn().mockResolvedValue(undefined);
+const agentReclaimSession = vi.fn().mockResolvedValue(true);
 const conversationReplaceThreadEntries = vi.fn().mockResolvedValue(undefined);
 const nativeAgentGetConfig = vi.fn().mockResolvedValue({
   providers: [],
@@ -35,6 +36,7 @@ vi.mock("../bridge/tauri", () => ({
   agentSendPrompt: (...args: unknown[]) => agentSendPrompt(...args),
   agentCancel: (...args: unknown[]) => agentCancel(...args),
   agentCloseSession: (...args: unknown[]) => agentCloseSession(...args),
+  agentReclaimSession: (...args: unknown[]) => agentReclaimSession(...args),
   agentRefreshRegistry: vi.fn(),
 
   agentCustomUpsert: vi.fn(),
@@ -60,11 +62,18 @@ vi.mock("../bridge/tauri", () => ({
 
 import { resetAgentPromptTrackingForTests, useAgentStore } from "./agent.store";
 import { useConversationStore } from "./conversation.store";
+import { useProjectStore } from "./project.store";
 import { emptySessionMeta } from "../features/agent/thread/applySessionUpdate";
 
 const SERVER = { id: "s1", name: "测试智能体", version: "1.0", description: "", icon: null, kind: "registry" };
 
 let listenersTeardown: (() => void) | null = null;
+
+afterEach(() => {
+  listenersTeardown?.();
+  listenersTeardown = null;
+  vi.useRealTimers();
+});
 
 beforeEach(() => {
   listenersTeardown?.();
@@ -98,9 +107,11 @@ beforeEach(() => {
     nativeAutoReview: false,
   });
   useConversationStore.setState({ conversationsByProject: {} });
+  useProjectStore.setState({ activeProjectId: null });
   agentSendPrompt.mockResolvedValue({ hadMutations: false });
   agentCancel.mockResolvedValue(undefined);
   agentCloseSession.mockResolvedValue(undefined);
+  agentReclaimSession.mockResolvedValue(true);
   agentRespondPlan.mockResolvedValue(undefined);
   agentRespondAskQuestion.mockResolvedValue(undefined);
   agentSetSessionMode.mockResolvedValue(undefined);
@@ -108,6 +119,170 @@ beforeEach(() => {
   nativeAgentGetConfig.mockResolvedValue({
     providers: [],
     agent: { maxSteps: 0, contextWindow: 0, bashTimeoutSecs: 120, maxSubagentConcurrency: 6, autoReview: false },
+  });
+});
+
+describe("agent.store multi-session performance", () => {
+  const chunk = (sessionId: string, text: string) => notificationHandler!({
+    sessionId, promptSeq: 1,
+    update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } },
+  });
+
+  it("batches both conversations into one store update without mixing their text", async () => {
+    vi.useFakeTimers();
+    listenersTeardown = useAgentStore.getState().initListeners();
+    useAgentStore.setState({ sessions: {
+      a: { conversationId: "a", sessionId: "sa", status: "running" },
+      b: { conversationId: "b", sessionId: "sb", status: "running" },
+    } });
+    const updates = vi.fn();
+    const unsub = useAgentStore.subscribe((s, prev) => {
+      if (s.entriesByConversation !== prev.entriesByConversation) updates();
+    });
+    try {
+      for (let i = 0; i < 50; i++) { chunk("sa", "A"); chunk("sb", "B"); }
+      expect(updates).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(32);
+      expect(updates).toHaveBeenCalledTimes(1);
+      for (const [id, text] of [["a", "A"], ["b", "B"]]) {
+        expect(useAgentStore.getState().entriesByConversation[id]).toMatchObject([
+          { kind: "assistant_message", chunks: [{ type: "message", text: text.repeat(50) }] },
+        ]);
+      }
+    } finally { unsub(); }
+  });
+
+  it("flushes chunks before permissions and before persisting the final answer", async () => {
+    listenersTeardown = useAgentStore.getState().initListeners();
+    useAgentStore.setState({ sessions: {
+      a: { conversationId: "a", sessionId: "sa", status: "idle" },
+    } });
+    agentSendPrompt.mockImplementationOnce(async () => {
+      chunk("sa", "before permission");
+      permissionHandler!({ sessionId: "sa", requestId: "req", toolCallId: "tool",
+        toolTitle: "Run tool", options: [{ optionId: "allow", label: "Allow", kind: "allow_once" }] });
+      expect(useAgentStore.getState().entriesByConversation.a[0]).toMatchObject({
+        kind: "assistant_message", chunks: [{ text: "before permission" }],
+      });
+      // Simulate a later tool state after the prompt has been handled.
+      chunk("sa", "final answer");
+      return { hadMutations: false };
+    });
+    await useAgentStore.getState().sendPrompt("sa", [{ type: "text", text: "start" }]);
+    const saved = conversationReplaceThreadEntries.mock.calls.at(-1)?.[1];
+    expect(JSON.stringify(saved)).toContain("final answer");
+  });
+
+  it("bounds the stream queue and flushes the remainder on teardown", () => {
+    vi.useFakeTimers();
+    listenersTeardown = useAgentStore.getState().initListeners();
+    useAgentStore.setState({ sessions: {
+      a: { conversationId: "a", sessionId: "sa", status: "running" },
+    } });
+    for (let i = 0; i < 256; i++) chunk("sa", "x");
+    expect(useAgentStore.getState().entriesByConversation.a).toMatchObject([
+      { chunks: [{ text: "x".repeat(256) }] },
+    ]);
+    chunk("sa", "tail");
+    listenersTeardown();
+    listenersTeardown = null;
+    expect(useAgentStore.getState().entriesByConversation.a).toMatchObject([
+      { chunks: [{ text: "x".repeat(256) + "tail" }] },
+    ]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("reclaims only safe background idle sessions while keeping history and preferences", async () => {
+    vi.useFakeTimers();
+    useProjectStore.setState({ activeProjectId: "p" });
+    const ids = ["idle", "active", "running", "waiting", "queued", "external", "unused"];
+    useConversationStore.setState({ activeTabByProject: { p: "active" }, conversationsByProject: {
+      p: ids.map((id) => ({ id, project_id: "p", title: id, status: "idle",
+        agent_type: id === "external" || id === "unused" ? "codex-acp" : "nex",
+        created_at: 1, updated_at: 1 })),
+    } });
+    useAgentStore.setState({
+      sessions: Object.fromEntries(ids.map((id) => [id, {
+        conversationId: id, sessionId: id,
+        status: id === "running" ? "running" : id === "waiting" ? "waiting" : "idle",
+      }])),
+      entriesByConversation: {
+        idle: [{ id: "u", kind: "user_message", text: "keep history", timestamp: 1 }],
+        external: [{ id: "e", kind: "user_message", text: "keep context", timestamp: 1 }],
+      },
+      sessionPrefsByConversation: { idle: { authMode: "allow" } },
+      pendingMessagesByConversation: { queued: [{ id: "q", blocks: [], text: "queued" }] },
+    });
+    const history = useAgentStore.getState().entriesByConversation.idle;
+    listenersTeardown = useAgentStore.getState().initListeners();
+    await vi.advanceTimersByTimeAsync(11 * 60_000);
+    expect(agentReclaimSession.mock.calls.map(([id]) => id).sort()).toEqual(["idle", "unused"]);
+    expect(Object.keys(useAgentStore.getState().sessions).sort())
+      .toEqual(["active", "external", "queued", "running", "waiting"]);
+    expect(useAgentStore.getState().entriesByConversation.idle).toBe(history);
+    expect(useAgentStore.getState().sessionPrefsByConversation.idle.authMode).toBe("allow");
+    agentCreateSession.mockResolvedValueOnce({ sessionId: "resumed" });
+    await useAgentStore.getState().createSession("idle", { type: "native" }, "/tmp");
+    expect(useAgentStore.getState().sessions.idle.sessionId).toBe("resumed");
+    expect(useAgentStore.getState().entriesByConversation.idle).toBe(history);
+  });
+
+  it("restarts the idle countdown when a background session receives activity", async () => {
+    vi.useFakeTimers();
+    useAgentStore.setState({ sessions: {
+      unused: { conversationId: "unused", sessionId: "s", status: "idle" },
+    } });
+    listenersTeardown = useAgentStore.getState().initListeners();
+    await vi.advanceTimersByTimeAsync(8 * 60_000);
+    notificationHandler!({ sessionId: "s", update: {
+      sessionUpdate: "available_commands_update", availableCommands: [],
+    } });
+    await vi.advanceTimersByTimeAsync(4 * 60_000);
+    expect(agentReclaimSession).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(7 * 60_000);
+    expect(agentReclaimSession).toHaveBeenCalledWith("s");
+  });
+
+  it("keeps a reclaiming session tracked, blocks sends, and retries after failure", async () => {
+    vi.useFakeTimers();
+    let rejectReclaim!: (error: Error) => void;
+    agentReclaimSession.mockImplementationOnce(() => new Promise((_, reject) => { rejectReclaim = reject; }));
+    useAgentStore.setState({ sessions: {
+      unused: { conversationId: "unused", sessionId: "s", status: "idle" },
+    } });
+    listenersTeardown = useAgentStore.getState().initListeners();
+    await vi.advanceTimersByTimeAsync(11 * 60_000);
+    expect(useAgentStore.getState().sessions.unused).toMatchObject({ sessionId: "s", reclaiming: true });
+    await useAgentStore.getState().sendPrompt("s", [{ type: "text", text: "blocked" }]);
+    expect(agentSendPrompt).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(agentReclaimSession).toHaveBeenCalledTimes(1);
+    rejectReclaim(new Error("IPC failed"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(useAgentStore.getState().sessions.unused).toMatchObject({ sessionId: "s", reclaiming: false });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(agentReclaimSession).toHaveBeenCalledTimes(2);
+    expect(useAgentStore.getState().sessions.unused).toBeUndefined();
+  });
+
+  it("keeps sessions the backend refuses to reclaim and does not delete replacements", async () => {
+    vi.useFakeTimers();
+    agentReclaimSession.mockResolvedValueOnce(false);
+    useAgentStore.setState({ sessions: {
+      unused: { conversationId: "unused", sessionId: "s", status: "idle" },
+    } });
+    listenersTeardown = useAgentStore.getState().initListeners();
+    await vi.advanceTimersByTimeAsync(11 * 60_000);
+    expect(useAgentStore.getState().sessions.unused).toMatchObject({ sessionId: "s", reclaiming: false });
+    let finishReclaim!: (safe: boolean) => void;
+    agentReclaimSession.mockImplementationOnce(() => new Promise((resolve) => { finishReclaim = resolve; }));
+    await vi.advanceTimersByTimeAsync(60_000);
+    useAgentStore.setState({ sessions: {
+      unused: { conversationId: "unused", sessionId: "new", status: "idle" },
+    } });
+    finishReclaim(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(useAgentStore.getState().sessions.unused).toEqual({ conversationId: "unused", sessionId: "new", status: "idle" });
   });
 });
 
@@ -372,7 +547,8 @@ describe("agent.store turn isolation", () => {
     expect(useAgentStore.getState().sessions["conv-1"]?.status).toBe("idle");
   });
 
-  it("旧回合迟到的 stream 事件不会接到新问题后面", () => {
+  it("旧回合迟到的 stream 事件不会接到新问题后面", async () => {
+    vi.useFakeTimers();
     listenersTeardown = useAgentStore.getState().initListeners();
     expect(notificationHandler).toBeTruthy();
     useAgentStore.setState({
@@ -395,6 +571,7 @@ describe("agent.store turn isolation", () => {
       promptSeq: 1,
       update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "的后续" } },
     });
+    await vi.advanceTimersByTimeAsync(32);
 
     const kinds = (useAgentStore.getState().entriesByConversation["conv-1"] ?? []).map((e) => {
       if (e.kind === "user_message") return `user:${e.text}`;

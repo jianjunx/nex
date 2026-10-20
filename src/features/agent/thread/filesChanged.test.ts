@@ -34,6 +34,13 @@ describe("countDiffLines", () => {
     expect(countDiffLines("", "")).toEqual({ additions: 0, deletions: 0 });
   });
 
+  it("counts large full-file additions and deletions including the trailing empty line", () => {
+    const text = "generated line\n".repeat(100_000);
+    expect(countDiffLines("", text)).toEqual({ additions: 100_001, deletions: 0 });
+    expect(countDiffLines(text, "")).toEqual({ additions: 0, deletions: 100_001 });
+    expect(countDiffLines(text, text)).toEqual({ additions: 0, deletions: 0 });
+  });
+
   it("counts one changed line in a 300-line file without counting unchanged context", () => {
     const before = Array.from({ length: 300 }, (_, i) => `line ${i}`);
     const after = [...before];

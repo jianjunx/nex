@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { groupThreadEntries } from "./groupThreadEntries";
-import type { ThreadEntry, ToolCallEntry } from "./types";
+import type { ThreadEntry, ToolCallEntry, TurnSummaryEntry } from "./types";
 
 function tool(partial: Partial<ToolCallEntry> & Pick<ToolCallEntry, "id" | "toolKind" | "title">): ToolCallEntry {
   return {
@@ -124,6 +124,29 @@ describe("groupThreadEntries", () => {
       { id: "s1", kind: "turn_summary", durationMs: 1, timestamp: 2, fileChanges: [] },
     ];
     expect(groupThreadEntries(entries).some((i) => i.type === "files_changed")).toBe(false);
+  });
+
+  it("reuses historical file summaries while later messages stream, but refreshes replaced snapshots", () => {
+    const summary: TurnSummaryEntry = {
+      id: "s1", kind: "turn_summary", durationMs: 1, timestamp: 2,
+      fileChanges: [{ path: "/repo/a.ts", oldText: "before", newText: "after" }],
+    };
+    const user: ThreadEntry = { id: "u2", kind: "user_message", text: "next", timestamp: 3 };
+    const files = (entries: ThreadEntry[]) => {
+      const card = groupThreadEntries(entries, { lastTurnComplete: false })
+        .find((item) => item.type === "files_changed");
+      if (card?.type !== "files_changed") throw new Error("expected files");
+      return card.files;
+    };
+    const first = files([summary, user]);
+    const streamed = files([summary, user, {
+      id: "a2", kind: "assistant_message", timestamp: 4,
+      chunks: [{ type: "message", text: "streaming" }],
+    }]);
+    expect(streamed).toBe(first);
+    expect(files([{
+      ...summary, fileChanges: [{ path: "/repo/a.ts", oldText: "before", newText: "one\ntwo" }],
+    }, user])).toMatchObject([{ additions: 2, deletions: 1 }]);
   });
 
   it("counts full-file snapshot changes without inflating large-file summaries", () => {

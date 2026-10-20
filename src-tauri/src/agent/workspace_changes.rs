@@ -60,6 +60,8 @@ impl Snapshot {
             }
         }
         for entry in ignore::WalkBuilder::new(root)
+            // New projects still need .gitignore before `git init`.
+            .require_git(false)
             .hidden(false)
             .follow_links(false)
             .filter_entry(|entry| entry.file_name() != ".git")
@@ -266,6 +268,22 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn respects_gitignore_without_a_git_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join(".gitignore"), "node_modules/\n.venv/\ndist/\n").unwrap();
+        let before = Snapshot::capture(root).unwrap();
+        for name in ["node_modules", ".venv", "dist"] {
+            std::fs::create_dir(root.join(name)).unwrap();
+            std::fs::write(root.join(name).join("generated.txt"), "dependency").unwrap();
+        }
+        std::fs::write(root.join("app.ts"), "source").unwrap();
+        let changes = before.changes(Snapshot::capture(root).unwrap()).unwrap();
+        assert_eq!(changes.len(), 1);
+        assert!(changes[0].path.ends_with("app.ts"));
     }
 
     #[test]

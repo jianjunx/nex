@@ -31,6 +31,21 @@ type AssistantSegment =
  */
 const segmentCache = new WeakMap<AssistantMessageEntry, AssistantSegment[] | null>();
 
+// Streaming updates keep completed summaries stable; never diff their files again.
+const summaryFilesCache = new WeakMap<TurnSummaryEntry, ChangedFile[]>();
+
+function summaryFiles(summary: TurnSummaryEntry): ChangedFile[] {
+  const cached = summaryFilesCache.get(summary);
+  if (cached) return cached;
+  const files = summary.fileChanges!.map((change) => ({
+    path: change.path,
+    ...countDiffLines(change.oldText, change.newText),
+    preview: { oldText: change.oldText, newText: change.newText, key: summary.id },
+  }));
+  summaryFilesCache.set(summary, files);
+  return files;
+}
+
 function segmentAssistant(entry: AssistantMessageEntry): AssistantSegment[] | null {
   const cached = segmentCache.get(entry);
   if (cached !== undefined) return cached;
@@ -105,11 +120,7 @@ export function groupThreadEntries(
     flushTools();
     if (complete) {
       const files: ChangedFile[] = turnFooter?.fileChanges !== undefined
-        ? turnFooter.fileChanges.map((change) => ({
-            path: change.path,
-            ...countDiffLines(change.oldText, change.newText),
-            preview: { oldText: change.oldText, newText: change.newText, key: turnFooter!.id },
-          }))
+        ? summaryFiles(turnFooter)
         : collectChangedFiles(turnEdits);
       if (files.length > 0) {
         items.push({

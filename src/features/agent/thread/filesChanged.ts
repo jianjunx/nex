@@ -16,6 +16,16 @@ export type ChangedFile = {
 
 /** Encode whole lines so the editor's diff algorithm counts lines rather than characters. */
 export function countDiffLines(oldText: string, newText: string): { additions: number; deletions: number } {
+  // Snapshot additions/deletions need no diff or per-line token allocations.
+  const lineCount = (text: string) => {
+    if (!text) return 0;
+    let count = 1;
+    for (let i = text.indexOf("\n"); i !== -1; i = text.indexOf("\n", i + 1)) count++;
+    return count;
+  };
+  if (oldText === newText) return { additions: 0, deletions: 0 };
+  if (!oldText) return { additions: lineCount(newText), deletions: 0 };
+  if (!newText) return { additions: 0, deletions: lineCount(oldText) };
   const lines = new Map<string, string>();
   const encode = (text: string) => text === "" ? "" : text.split("\n").map((line) => {
     let token = lines.get(line);

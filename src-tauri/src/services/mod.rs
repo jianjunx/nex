@@ -331,7 +331,10 @@ impl ServiceManager {
             if let Some(port) = info.port.filter(|_| info.status == "running") {
                 info.listening = tokio::time::timeout(
                     std::time::Duration::from_millis(150),
-                    tokio::net::TcpStream::connect(("localhost", port)),
+                    // Windows may spend the whole timeout on the first refused address.
+                    futures::future::select_ok(["127.0.0.1", "::1"].map(|host| {
+                        Box::pin(tokio::net::TcpStream::connect((host, port)))
+                    })),
                 )
                 .await
                 .is_ok_and(|r| r.is_ok());
@@ -547,6 +550,8 @@ mod tests {
             spec.port = Some(listener.local_addr().unwrap().port());
             let service = manager.start(context(dir.path()), spec).await.unwrap();
             assert!(manager.list(dir.path()).await.unwrap()[0].listening);
+            drop(listener);
+            assert!(!manager.list(dir.path()).await.unwrap()[0].listening);
             manager
                 .action(dir.path(), &service.id, "stop")
                 .await

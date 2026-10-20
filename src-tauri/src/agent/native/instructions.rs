@@ -163,7 +163,11 @@ pub fn agents_md_block(cwd: &Path) -> String {
             .strip_prefix(root)
             .ok()
             .filter(|relative| !relative.as_os_str().is_empty())
-            .map(|relative| relative.display().to_string())
+            .map(|relative| {
+                relative
+                    .to_string_lossy()
+                    .replace(std::path::MAIN_SEPARATOR, "/")
+            })
             .unwrap_or_else(|| ".".to_string());
         total += content.len();
         parts.push(format!("## {scope}/{name}\n{content}"));

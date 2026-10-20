@@ -73,7 +73,7 @@ jobs:
 
       - name: Clippy
         working-directory: src-tauri
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
 
   backend-test:
     name: Backend tests (${{ matrix.os }})
@@ -101,8 +101,4 @@ jobs:
 
       - name: Test
         working-directory: src-tauri
-        run: cargo test
-
-      - name: Harness contract tests
-        working-directory: src-tauri
-        run: cargo test agent::native
+        run: cargo test --locked

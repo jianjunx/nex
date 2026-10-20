@@ -40,15 +40,14 @@
 //!
 //! ## 跨平台
 //!
-//! 只有 macOS 有"系统绘制标题栏材质"这回事。Windows / Linux 上这个模块整体编译
-//! 成空操作（`cfg` 门控在调用方），不会因为平台不同而报错。
+//! 只有 macOS 有"系统绘制标题栏材质"这回事。Windows / Linux 不编译此模块。
 
 /// 前端 TopBar 的高度（`TITLE_BAR_HEIGHT_CLASS = "h-11"`）。红绿灯要在这个
 /// 带子里垂直居中，才能和标题、图标对齐。
 #[cfg(target_os = "macos")]
 const TITLE_BAR_HEIGHT: objc2_core_foundation::CGFloat = 44.0;
 
-/// 给主窗口挂上液态玻璃标题栏。非 macOS 上为空操作。
+/// 给主窗口挂上液态玻璃标题栏。
 #[cfg(target_os = "macos")]
 pub fn enable_liquid_glass_titlebar(ns_window: *mut std::ffi::c_void) {
     use objc2::{MainThreadMarker, MainThreadOnly};
@@ -136,7 +135,3 @@ fn center_traffic_lights(window: &objc2_app_kit::NSWindow) {
     rect.origin.y = window.frame().size.height - TITLE_BAR_HEIGHT;
     container.setFrame(rect);
 }
-
-/// 非 macOS 平台没有对应的系统材质，整体空操作。
-#[cfg(not(target_os = "macos"))]
-pub fn enable_liquid_glass_titlebar(_ns_window: *mut std::ffi::c_void) {}

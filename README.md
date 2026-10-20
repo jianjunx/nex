@@ -125,6 +125,11 @@ pnpm tauri build          # 或 pnpm build:installer；产物在 src-tauri/targe
 
 仅调前端界面（没有 Tauri API）：`pnpm dev`。
 
+CI 保留类型检查、lint 和三平台测试；Release 为 macOS、Windows 缓存 pnpm 依赖和 Rust 编译依赖。
+推送 `main` 时，Release 只编译并预热发布缓存，不生成安装包或创建发布；也可在 Actions 手动运行预热。
+推送 `release-vX.Y.Z` 标签时生成安装包及草稿发布。不同标签只能复用默认分支的缓存，
+因此需先将这些工作流修改合并到 `main` 并完成一次预热。首次构建、Rust 工具链升级或缓存被淘汰后仍可能较慢。
+
 ### 使用
 
 1. 打开本地项目文件夹。

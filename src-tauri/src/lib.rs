@@ -9,6 +9,7 @@ mod error;
 pub mod fs;
 pub mod git;
 pub mod graph;
+#[cfg(target_os = "macos")]
 mod macos_titlebar;
 pub mod services;
 mod state;

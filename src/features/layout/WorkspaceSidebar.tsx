@@ -26,6 +26,7 @@ import { AgentIcon } from "../agent/AgentIcon";
 import { useAgentStore } from "@/stores/agent.store";
 import { CloseTabConfirmDialog } from "../agent/CloseTabConfirmDialog";
 import { openProjectFolder } from "../projects/openProjectFolder";
+import { ProjectActionsMenu } from "../projects/ProjectActionsMenu";
 import { projectInitial } from "../projects/projectInitial";
 import { errorMessage } from "@/lib/errors";
 import type { Project } from "@/bridge/tauri";
@@ -317,6 +318,7 @@ function ExpandedSidebar({
                     <Icon size={15} className="shrink-0" />
                     <span className="truncate">{project.name}</span>
                   </button>
+                  <ProjectActionsMenu project={project} onError={setError} />
                   <button
                     className="nex-icon-btn"
                     aria-label={`在 ${project.name} 中新建任务`}

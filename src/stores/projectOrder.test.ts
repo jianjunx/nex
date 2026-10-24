@@ -17,6 +17,7 @@ const projects = ["first", "second"].map((id, i) => ({
 beforeEach(() => {
   useProjectStore.setState({
     projects,
+    pinnedProjectIds: [],
     projectOrder: ["first", "second"],
     activeProjectId: "first",
   });
@@ -84,4 +85,18 @@ it("re-opening a listed project promotes it instead of duplicating the row", asy
     "first",
   ]);
   expect(useProjectStore.getState().projectOrder).toEqual(["second", "first"]);
+});
+
+it("keeps pinned projects above recent projects after reload and opening a folder", async () => {
+  useProjectStore.getState().toggleProjectPin("first");
+  vi.mocked(projectList).mockResolvedValue(projects);
+  await useProjectStore.getState().loadProjects();
+  expect(useProjectStore.getState().projects.map((p) => p.id)).toEqual(["first", "second"]);
+  vi.mocked(projectOpen).mockResolvedValue({ ...projects[1], id: "new" });
+  await useProjectStore.getState().openProject("/new");
+  useProjectStore.getState().switchProject("second");
+  await Promise.resolve();
+  expect(useProjectStore.getState().projects.map((p) => p.id)).toEqual(["first", "new", "second"]);
+  useProjectStore.getState().toggleProjectPin("first");
+  expect(useProjectStore.getState().pinnedProjectIds).toEqual([]);
 });

@@ -1,3 +1,5 @@
+import { projectHasActiveConversation } from "../features/projects/projectHasActiveConversation";
+import { useConversationStore } from "./conversation.store";
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { persist } from "zustand/middleware";
@@ -13,6 +15,8 @@ import { errorMessage } from "../lib/errors";
 interface ProjectStore {
   projects: Project[];
   projectOrder: string[];
+  pinnedProjectIds: string[];
+  toggleProjectPin: (id: string) => void;
   activeProjectId: string | null;
   loading: boolean;
   error: string | null;
@@ -25,11 +29,12 @@ interface ProjectStore {
 
 // Backend errors arrive as { type, message }; fall back to String(err).
 function sortByProjectOrder(projects: Project[]): Project[] {
-  const order = useProjectStore.getState().projectOrder;
+  const { projectOrder: order, pinnedProjectIds } = useProjectStore.getState();
   return [...projects].sort((a, b) => {
     const ai = order.indexOf(a.id),
       bi = order.indexOf(b.id);
     return (
+      Number(pinnedProjectIds.includes(b.id)) - Number(pinnedProjectIds.includes(a.id)) ||
       (ai < 0 ? Number.MAX_SAFE_INTEGER : ai) -
         (bi < 0 ? Number.MAX_SAFE_INTEGER : bi) ||
       a.created_at - b.created_at ||
@@ -64,6 +69,16 @@ export const useProjectStore = create<ProjectStore>()(
     immer((set) => ({
       projects: [],
       projectOrder: [],
+      pinnedProjectIds: [],
+      toggleProjectPin: (id) => {
+        set((s) => {
+          if (!s.projects.some((p) => p.id === id)) return;
+          s.pinnedProjectIds = s.pinnedProjectIds.includes(id)
+            ? s.pinnedProjectIds.filter((p) => p !== id)
+            : [id, ...s.pinnedProjectIds];
+        });
+        set((s) => { s.projects = sortByProjectOrder(s.projects); });
+      },
       activeProjectId: null,
       loading: false,
       error: null,
@@ -79,6 +94,8 @@ export const useProjectStore = create<ProjectStore>()(
           // 播种——否则上次退出前的顺序会一直压过后端的 last_opened DESC，
           // 很久没碰的项目反而赖在最前面。
           const projects = sortByRecency(await projectList());
+          const pinned = useProjectStore.getState().pinnedProjectIds;
+          projects.sort((a, b) => Number(pinned.includes(b.id)) - Number(pinned.includes(a.id)));
           set((s) => {
             s.projects = projects;
             s.projectOrder = projects.map((p) => p.id);
@@ -109,6 +126,7 @@ export const useProjectStore = create<ProjectStore>()(
             // project_open upserts by path, so the project may already be listed
             const rest = s.projects.filter((p) => p.id !== project.id);
             s.projects = [project, ...rest];
+            s.projects.sort((a, b) => Number(s.pinnedProjectIds.includes(b.id)) - Number(s.pinnedProjectIds.includes(a.id)));
             // 新打开的项目排到最前。必须同时改 projectOrder：它是侧栏顺序的
             // 唯一来源，只重排数组的话 sortByProjectOrder 会按旧 order 把新
             // 项目（旧 order 里没有 → MAX_SAFE_INTEGER）甩到末尾。
@@ -145,15 +163,16 @@ export const useProjectStore = create<ProjectStore>()(
       },
 
       removeProject: async (id: string) => {
-        // 当前打开的项目不可删除（UI 也不显示入口；此处防御）。
-        const active = useProjectStore.getState().activeProjectId;
-        if (active === id) {
-          throw new Error("当前打开的项目不能移除");
+        if (projectHasActiveConversation(id)) {
+          throw new Error("项目下有进行中的会话，暂时不能移除");
         }
         await projectRemove(id);
+        useConversationStore.getState().removeProjectData(id);
         set((s) => {
           s.projects = s.projects.filter((p) => p.id !== id);
-          // 不触碰 activeProjectId：删除的只可能是非当前项目。
+          s.projectOrder = s.projectOrder.filter((p) => p !== id);
+          s.pinnedProjectIds = s.pinnedProjectIds.filter((p) => p !== id);
+          if (s.activeProjectId === id) s.activeProjectId = null;
         });
       },
     })),
@@ -163,6 +182,7 @@ export const useProjectStore = create<ProjectStore>()(
       partialize: (s) => ({
         activeProjectId: s.activeProjectId,
         projectOrder: s.projectOrder,
+        pinnedProjectIds: s.pinnedProjectIds,
       }),
     },
   ),

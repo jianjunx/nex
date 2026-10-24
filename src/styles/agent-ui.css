@@ -640,6 +640,7 @@ html[data-nex-resizing] .nex-workspace-sidebar {
 }
 .nex-workspace-sidebar .nex-project-row:hover > .nex-icon-btn,
 .nex-workspace-sidebar .nex-project-row:focus-within > .nex-icon-btn,
+.nex-workspace-sidebar .nex-project-row > .nex-icon-btn[data-state="open"],
 .nex-workspace-sidebar .nex-conversation-row:hover > .nex-icon-btn,
 .nex-workspace-sidebar .nex-conversation-row:focus-within > .nex-icon-btn {
   opacity: 1;

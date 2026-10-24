@@ -4,15 +4,19 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { useAgentStore } from "../../stores/agent.store";
+import { ToastStack } from "../layout/ToastStack";
+import { useToastStore } from "../../stores/toast.store";
 import { ComposerStatusNotice } from "./ComposerStatusNotice";
 
 beforeEach(() => {
   useAgentStore.setState({ errorsByConversation: {} });
+  useToastStore.setState({ items: [] });
 });
 
 afterEach(() => {
   cleanup();
   useAgentStore.setState({ errorsByConversation: {} });
+  useToastStore.setState({ items: [] });
 });
 
 describe("ComposerStatusNotice", () => {
@@ -24,18 +28,18 @@ describe("ComposerStatusNotice", () => {
       },
     });
     const { rerender } = render(
-      <ComposerStatusNotice conversationId="conversation-a" isStarting={false} />,
+      <><ComposerStatusNotice conversationId="conversation-a" isStarting={false} /><ToastStack /></>,
     );
 
-    expect(screen.getByRole("alert").textContent).toContain("会话 A 的错误");
+    expect(screen.getByRole("status").textContent).toContain("会话 A 的错误");
     expect(screen.queryByText("会话 B 的错误")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "关闭错误提示" }));
+    fireEvent.click(screen.getByRole("button", { name: "关闭提示" }));
     expect(useAgentStore.getState().errorsByConversation).toEqual({
       "conversation-b": "会话 B 的错误",
     });
 
-    rerender(<ComposerStatusNotice conversationId="conversation-b" isStarting={false} />);
-    expect(screen.getByRole("alert").textContent).toContain("会话 B 的错误");
+    rerender(<><ComposerStatusNotice conversationId="conversation-b" isStarting={false} /><ToastStack /></>);
+    expect(screen.getByRole("status").textContent).toContain("会话 B 的错误");
   });
 });

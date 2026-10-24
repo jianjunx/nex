@@ -1,3 +1,4 @@
+import { errorMessage } from "../lib/errors";
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 
@@ -51,4 +52,9 @@ export const useToastStore = create<ToastStore>()(
 /** 非 React 代码（store 内部）推提示的便捷入口。 */
 export function toast(t: Omit<AppToast, "id">): void {
   useToastStore.getState().push(t);
+}
+
+/** 统一展示操作失败，并保留后端返回的具体原因。 */
+export function toastError(message: string, error: unknown): void {
+  toast({ variant: "error", message, detail: errorMessage(error) });
 }

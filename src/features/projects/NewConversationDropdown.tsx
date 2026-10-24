@@ -3,7 +3,7 @@ import { Plus } from "lucide-react";
 import { useUiStore } from "@/stores/ui.store";
 import { useProjectStore } from "@/stores/project.store";
 import { startNewTask } from "./startTask";
-import { errorMessage } from "@/lib/errors";
+import { toast, toastError } from "@/stores/toast.store";
 
 /** Kept under its former export name for command consumers; no agent picker here. */
 export function NewConversationDropdown({
@@ -17,24 +17,22 @@ export function NewConversationDropdown({
   const requested = useUiStore((s) => s.newConversationOpen);
   const lock = useRef(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const create = async () => {
     if (lock.current) return;
     const { projects, activeProjectId } = useProjectStore.getState();
     const project = projects.find((p) => p.id === activeProjectId) ?? projects[0];
     if (!project) {
-      setError("请先添加项目");
+      toast({ variant: "error", message: "请先添加项目" });
       useUiStore.getState().closeNewConversation();
       return;
     }
     lock.current = true;
     setBusy(true);
-    setError(null);
     useUiStore.getState().closeNewConversation();
     try {
       await startNewTask(project);
     } catch (err) {
-      setError(errorMessage(err));
+      toastError("新建任务失败", err);
     } finally {
       lock.current = false;
       setBusy(false);
@@ -55,11 +53,6 @@ export function NewConversationDropdown({
         <Plus size={16} />
         {!compact && (busy ? "正在创建…" : "新建任务")}
       </button>
-      {error && (
-        <p role="alert" className="text-xs">
-          {error}
-        </p>
-      )}
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { serviceList, serviceAction, serviceLogs, openExternal, type LocalService } from "@/bridge/tauri";
 import { useProjectStore } from "@/stores/project.store";
 import { errorMessage } from "@/lib/errors";
+import { toastError } from "@/stores/toast.store";
 
 const STATUS = { starting: "启动中", running: "运行中", stopped: "已停止", failed: "启动失败" };
 const ACTION_CLASS = "active:scale-100 focus-visible:outline focus-visible:outline-1 focus-visible:outline-[var(--hairline-strong)]";
@@ -17,7 +18,6 @@ export function LocalServicesMenu() {
   const [logs, setLogs] = useState("");
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
   const services = snapshot && snapshot.projectPath === projectPath ? snapshot.services : [];
@@ -26,7 +26,6 @@ export function LocalServicesMenu() {
   useEffect(() => {
     setLogId(null);
     setLogs("");
-    setActionError(null);
   }, [projectPath]);
 
   useEffect(() => {
@@ -61,11 +60,16 @@ export function LocalServicesMenu() {
     return () => { cancelled = true; clearTimeout(timer); };
   }, [projectPath, open, logId, refresh]);
 
+  // Repeated polling failures keep the same value, so they do not continually
+  // reset the popup timer. Report background failures only when the menu opens.
+  useEffect(() => {
+    if (open && loadError) toastError("加载本地服务失败", loadError);
+  }, [open, loadError]);
+
   const act = async (service: LocalService, action: "stop" | "restart" | "remove") => {
     if (!projectPath || busy) return;
     const path = projectPath;
     setBusy(service.id);
-    setActionError(null);
     try {
       await serviceAction(path, service.id, action);
       if (useProjectStore.getState().projects.find((p) => p.id === useProjectStore.getState().activeProjectId)?.path !== path) return;
@@ -73,7 +77,7 @@ export function LocalServicesMenu() {
       setRefresh((r) => r + 1);
     } catch (error) {
       if (useProjectStore.getState().projects.find((p) => p.id === useProjectStore.getState().activeProjectId)?.path === path) {
-        setActionError(errorMessage(error));
+        toastError("服务操作失败", error);
       }
     } finally { setBusy(null); }
   };
@@ -97,7 +101,6 @@ export function LocalServicesMenu() {
               {loading ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : <RotateCw />}
             </Button>
           </div>
-          {(actionError || loadError) && <p role="alert" className="mb-2 text-xs text-[var(--error)]">{actionError || loadError}</p>}
           {services.length === 0 && <p className="py-6 text-center text-xs text-[var(--text-tertiary)]">
             {loading ? "正在获取服务…" : "暂无托管服务。让 Agent 使用本地服务工具启动服务后，会显示在这里。"}
           </p>}
@@ -115,7 +118,7 @@ export function LocalServicesMenu() {
                   <Button variant="ghost" size="icon-sm" className={ACTION_CLASS} title={active ? "重启" : "启动"} aria-label={active ? "重启" : "启动"} disabled={!!busy || service.status === "starting"} onClick={() => void act(service, "restart")}>{active ? <RotateCw /> : <Play />}</Button>
                   {active && <Button variant="ghost" size="icon-sm" className={ACTION_CLASS} title="停止" aria-label="停止" disabled={!!busy} onClick={() => void act(service, "stop")}><Square /></Button>}
                   <Button variant="ghost" size="icon-sm" className={ACTION_CLASS} title="日志" aria-label="日志" aria-expanded={logId === service.id} onClick={() => { setLogs(""); setLogId(logId === service.id ? null : service.id); }}><ScrollText /></Button>
-                  {service.port && <Button variant="ghost" size="icon-sm" className={ACTION_CLASS} title="打开服务地址" aria-label={`打开 ${service.name}`} disabled={!service.listening} onClick={() => void openExternal(`http://localhost:${service.port}`).catch((e) => setActionError(errorMessage(e)))}><ExternalLink /></Button>}
+                  {service.port && <Button variant="ghost" size="icon-sm" className={ACTION_CLASS} title="打开服务地址" aria-label={`打开 ${service.name}`} disabled={!service.listening} onClick={() => void openExternal(`http://localhost:${service.port}`).catch((e) => toastError("打开服务地址失败", e))}><ExternalLink /></Button>}
                   {!active && <Button variant="ghost" size="icon-sm" className={`ml-auto ${ACTION_CLASS}`} title="移除记录" aria-label={`移除 ${service.name}`} disabled={!!busy} onClick={() => void act(service, "remove")}><Trash2 /></Button>}
                 </div>
                 {logId === service.id && <pre role="log" aria-label={`${service.name} 日志`} className="mt-2 max-h-44 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-[var(--material-canvas)] p-2 font-mono text-[11px] text-[var(--text-secondary)]">{logs || "暂无日志"}</pre>}

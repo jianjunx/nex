@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { ToastStack } from "../layout/ToastStack";
+import { useToastStore } from "@/stores/toast.store";
 import { LocalServicesMenu } from "./LocalServicesMenu";
 import { useProjectStore } from "@/stores/project.store";
 import { serviceAction, serviceList, serviceLogs, type LocalService } from "@/bridge/tauri";
@@ -14,6 +16,7 @@ const service: LocalService = {
 };
 beforeEach(() => {
   vi.clearAllMocks();
+  useToastStore.setState({ items: [] });
   vi.mocked(serviceList).mockResolvedValue([service]);
   vi.mocked(serviceLogs).mockResolvedValue("Server ready");
   vi.mocked(serviceAction).mockResolvedValue(undefined);
@@ -24,7 +27,7 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 async function open() {
-  render(<LocalServicesMenu />);
+  render(<><LocalServicesMenu /><ToastStack /></>);
   fireEvent.click(screen.getByRole("button", { name: "本地服务" }));
   await screen.findByText("Web");
 }
@@ -63,7 +66,8 @@ describe("LocalServicesMenu", () => {
     expect(screen.queryByText("退出码：1")).toBeNull();
     expect(screen.getByRole("button", { name: "启动" }).querySelector(".lucide-play")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "启动" }));
-    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "port busy");
+    expect((await screen.findByRole("status")).textContent).toContain("port busy");
+    expect(screen.queryByRole("alert")).toBeNull();
   });
   it("does not expose the previous project's controls while the next project loads", async () => {
     await open();
@@ -74,7 +78,7 @@ describe("LocalServicesMenu", () => {
   });
   it("shows an empty state explaining how services appear", async () => {
     vi.mocked(serviceList).mockResolvedValue([]);
-    render(<LocalServicesMenu />);
+    render(<><LocalServicesMenu /><ToastStack /></>);
     fireEvent.click(screen.getByRole("button", { name: "本地服务" }));
     expect(await screen.findByText(/暂无托管服务/)).toBeTruthy();
   });

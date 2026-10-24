@@ -1,3 +1,4 @@
+import { useErrorToast } from "@/hooks/useErrorToast";
 import { useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -30,6 +31,7 @@ export function TerminalPanel() {
   const setActive = useTerminalStore((s) => s.setActive);
   const focusProject = useTerminalStore((s) => s.focusProject);
   const clearError = useTerminalStore((s) => s.clearError);
+  useErrorToast(error, "终端操作失败", clearError);
   const settingsVersion = useTerminalStore((s) => s.settingsVersion);
   const terminalShell = useSettingsStore((s) => s.terminalShell);
   const projects = useProjectStore((s) => s.projects);
@@ -260,12 +262,6 @@ export function TerminalPanel() {
           <Plus size={12} />
         </Button>
       </div>
-      {error && (
-        <div className="flex items-center gap-2 bg-[var(--error)]/10 px-4 py-1.5 text-xs text-[var(--error)]">
-          <span className="flex-1 truncate">{error}</span>
-          <Button size="sm" variant="ghost" onClick={clearError}><X size={12} /></Button>
-        </div>
-      )}
       {/* The xterm host stays mounted for the tray's whole lifetime —
           construction is a mount-once effect, so unmounting the host while
           no project is open would leave a dead terminal when one is opened

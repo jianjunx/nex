@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Folder, FolderPlus } from "lucide-react";
 import type { Conversation, Project } from "@/bridge/tauri";
-import { errorMessage } from "@/lib/errors";
+import { toastError } from "@/stores/toast.store";
 import { useProjectStore } from "@/stores/project.store";
 import { moveDraftToProject } from "../projects/startTask";
 import { openProjectFolder } from "../projects/openProjectFolder";
@@ -26,7 +26,6 @@ export function NewTaskBar({
   const locked = useConversationLocked(conversation.id);
   const projects = useProjectStore((s) => s.projects);
   const [moving, setMoving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const alive = useRef(true);
   const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -41,11 +40,10 @@ export function NewTaskBar({
   const run = async (task: () => Promise<void>) => {
     setMoving(true);
     onBusyChange(true);
-    setError(null);
     try {
       await task();
     } catch (err) {
-      if (alive.current) setError(errorMessage(err));
+      toastError("切换项目失败", err);
     } finally {
       if (alive.current) setMoving(false);
       onBusyChange(false);
@@ -106,11 +104,6 @@ export function NewTaskBar({
         bordered
         onBusyChange={onBusyChange}
       />
-      {error && (
-        <span role="alert" className="text-xs text-[var(--status-danger)]">
-          {error}
-        </span>
-      )}
     </div>
   );
 }

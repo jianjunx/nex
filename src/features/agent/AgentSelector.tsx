@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useAgentStore } from "@/stores/agent.store";
 import { useConversationStore } from "@/stores/conversation.store";
 import { conversationUpdateAgent } from "@/bridge/tauri";
-import { errorMessage } from "@/lib/errors";
+import { toastError } from "@/stores/toast.store";
 import { ComposerOptionMenu } from "./ComposerOptionMenu";
 import { AgentIcon } from "./AgentIcon";
 import { useConversationLocked } from "./useConversationLocked";
@@ -26,7 +26,6 @@ export function AgentSelector({
 }) {
   const servers = useAgentStore((s) => s.servers);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   // 1.1.19 重构后没有任何入口拉取 ACP registry；本机无缓存时列表只有 NexAgent，
   // 而 registry 又只在创建 registry 会话时才会刷新，形成死锁。这里在挂载和聚焦
   // 时补拉一次（30s 节流，失败也计时，避免自激重试）。
@@ -74,7 +73,6 @@ export function AgentSelector({
           if (target === agentType) return;
           setBusy(true);
           onBusyChange(true);
-          setError(null);
           return (async () => {
             try {
               await conversationUpdateAgent(conversationId, target);
@@ -91,7 +89,7 @@ export function AgentSelector({
                 .getState()
                 .prewarmSession(conversationId, target, projectPath);
             } catch (err) {
-              setError(errorMessage(err));
+              toastError("切换智能体失败", err);
             } finally {
               setBusy(false);
               onBusyChange(false);
@@ -99,11 +97,6 @@ export function AgentSelector({
           })();
         }}
       />
-      {error && (
-        <span role="alert" className="text-xs text-[var(--text-secondary)]">
-          {error}
-        </span>
-      )}
     </div>
   );
 }

@@ -28,7 +28,7 @@ import { CloseTabConfirmDialog } from "../agent/CloseTabConfirmDialog";
 import { openProjectFolder } from "../projects/openProjectFolder";
 import { ProjectActionsMenu } from "../projects/ProjectActionsMenu";
 import { projectInitial } from "../projects/projectInitial";
-import { errorMessage } from "@/lib/errors";
+import { toastError } from "@/stores/toast.store";
 import type { Project } from "@/bridge/tauri";
 
 
@@ -82,7 +82,6 @@ export function WorkspaceSidebar() {
   const activeTabs = useConversationStore((s) => s.activeTabByProject);
   const railMode = useUiStore((s) => s.sidebarCollapsed);
   const creating = useRef(false);
-  const [error, setError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const projectIds = projects
     .map((p) => p.id)
@@ -105,7 +104,6 @@ export function WorkspaceSidebar() {
   }, [projectIds]);
 
   const select = async (project: Project, conversationId?: string) => {
-    setError(null);
     try {
       await activateProject(project);
       // A later click may already have moved on; don't retarget that project.
@@ -135,7 +133,7 @@ export function WorkspaceSidebar() {
       }
     } catch (err) {
       if (useProjectStore.getState().activeProjectId === project.id) {
-        setError(errorMessage(err));
+        toastError("切换项目或会话失败", err);
       }
     }
   };
@@ -153,7 +151,7 @@ export function WorkspaceSidebar() {
       await useAgentStore.getState().removeSession(id);
       await useConversationStore.getState().removeConversation(id);
     } catch (err) {
-      setError(errorMessage(err));
+      toastError("删除会话失败", err);
     } finally {
       setDeleting(false);
       setPendingDeleteId(null);
@@ -163,12 +161,11 @@ export function WorkspaceSidebar() {
   const createTask = async (project: Project) => {
     if (creating.current) return;
     creating.current = true;
-    setError(null);
     try {
       await startNewTask(project);
     } catch (err) {
       if (useProjectStore.getState().activeProjectId === project.id) {
-        setError(errorMessage(err));
+        toastError("新建任务失败", err);
       }
     } finally {
       creating.current = false;
@@ -183,10 +180,8 @@ export function WorkspaceSidebar() {
           projectId={projectId}
           conversations={conversations}
           activeTabs={activeTabs}
-          error={error}
           collapsed={collapsed}
           setCollapsed={setCollapsed}
-          setError={setError}
           select={select}
           createTask={createTask}
           pendingDeleteId={pendingDeleteId}
@@ -212,11 +207,6 @@ export function WorkspaceSidebar() {
               </button>
             ))}
           </nav>
-          {error && (
-            <p role="alert" className="px-1 text-center text-xs text-[var(--status-danger)]">
-              {error}
-            </p>
-          )}
           <button
             className="nex-rail-settings"
             title="设置"
@@ -236,10 +226,8 @@ function ExpandedSidebar({
   projectId,
   conversations,
   activeTabs,
-  error,
   collapsed,
   setCollapsed,
-  setError,
   select,
   createTask,
   pendingDeleteId,
@@ -252,10 +240,8 @@ function ExpandedSidebar({
   projectId: string | null;
   conversations: ReturnType<typeof useConversationStore.getState>["conversationsByProject"];
   activeTabs: ReturnType<typeof useConversationStore.getState>["activeTabByProject"];
-  error: string | null;
   collapsed: Record<string, boolean>;
   setCollapsed: Dispatch<SetStateAction<Record<string, boolean>>>;
-  setError: (error: string | null) => void;
   select: (project: Project, conversationId?: string) => Promise<void>;
   createTask: (project: Project) => Promise<void>;
   pendingDeleteId: string | null;
@@ -281,9 +267,8 @@ function ExpandedSidebar({
             disabled={openingFolder}
             onClick={() => {
               setOpeningFolder(true);
-              setError(null);
               void openProjectFolder()
-                .catch((e) => setError(errorMessage(e)))
+                .catch((e) => toastError("打开项目失败", e))
                 .finally(() => setOpeningFolder(false));
             }}
           >
@@ -318,7 +303,7 @@ function ExpandedSidebar({
                     <Icon size={15} className="shrink-0" />
                     <span className="truncate">{project.name}</span>
                   </button>
-                  <ProjectActionsMenu project={project} onError={setError} />
+                  <ProjectActionsMenu project={project} onError={(error) => { if (error) toastError("项目操作失败", error); }} />
                   <button
                     className="nex-icon-btn"
                     aria-label={`在 ${project.name} 中新建任务`}
@@ -355,11 +340,6 @@ function ExpandedSidebar({
         {!projects.length && (
           <p className="px-2 text-xs text-[var(--text-tertiary)]">
             打开文件夹以添加项目
-          </p>
-        )}
-        {error && (
-          <p role="alert" className="px-2 text-xs text-[var(--status-danger)]">
-            {error}
           </p>
         )}
       </section>

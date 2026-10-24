@@ -15,8 +15,11 @@ import { activateProject } from "./activateProject";
 vi.mock("./activateProject", () => ({
   activateProject: vi.fn().mockResolvedValue(undefined),
 }));
+import { useToastStore } from "@/stores/toast.store";
+import { ToastStack } from "../layout/ToastStack";
 const create = vi.fn();
 beforeEach(() => {
+  useToastStore.setState({ items: [] });
   create.mockReset().mockResolvedValue({ id: "c" });
   useProjectStore.setState({
     projects: ["first", "second"].map((id) => ({
@@ -33,7 +36,7 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 it("creates in the currently selected project", async () => {
-  render(<NewConversationDropdown triggerSize="icon" />);
+  render(<><NewConversationDropdown triggerSize="icon" /><ToastStack /></>);
   fireEvent.click(screen.getByRole("button", { name: "新建任务" }));
   await waitFor(() => expect(create).toHaveBeenCalledWith("second", "nex"));
   expect(activateProject).toHaveBeenCalledWith(
@@ -43,28 +46,29 @@ it("creates in the currently selected project", async () => {
 });
 it("falls back to the first project when none is selected", async () => {
   useProjectStore.setState({ activeProjectId: null });
-  render(<NewConversationDropdown triggerSize="icon" />);
+  render(<><NewConversationDropdown triggerSize="icon" /><ToastStack /></>);
   fireEvent.click(screen.getByRole("button", { name: "新建任务" }));
   await waitFor(() => expect(create).toHaveBeenCalledWith("first", "nex"));
 });
 it("reports missing project without creating a conversation", () => {
   useProjectStore.setState({ projects: [] });
-  render(<NewConversationDropdown triggerSize="icon" />);
+  render(<><NewConversationDropdown triggerSize="icon" /><ToastStack /></>);
   fireEvent.click(screen.getByRole("button", { name: "新建任务" }));
-  expect(screen.getByRole("alert").textContent).toContain("请先添加项目");
+  expect(screen.getByRole("status").textContent).toContain("请先添加项目");
   expect(create).not.toHaveBeenCalled();
 });
 it("reports creation failure and allows retry", async () => {
-  create.mockRejectedValueOnce(new Error("创建失败"));
-  render(<NewConversationDropdown triggerSize="icon" />);
+  create.mockRejectedValueOnce(new Error("No such file or directory (os error 2)"));
+  render(<><NewConversationDropdown triggerSize="icon" /><ToastStack /></>);
   fireEvent.click(screen.getByRole("button", { name: "新建任务" }));
-  await screen.findByRole("alert");
+  expect((await screen.findByRole("status")).textContent).toContain("No such file or directory (os error 2)");
+  expect(screen.queryByRole("alert")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "新建任务" }));
   await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
 });
 it("prevents duplicate creates while pending", async () => {
   create.mockReturnValue(new Promise(() => {}));
-  render(<NewConversationDropdown triggerSize="icon" />);
+  render(<><NewConversationDropdown triggerSize="icon" /><ToastStack /></>);
   const button = screen.getByRole("button", { name: "新建任务" });
   fireEvent.click(button);
   fireEvent.click(button);

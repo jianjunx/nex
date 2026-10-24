@@ -1,3 +1,4 @@
+import { useErrorToast } from "@/hooks/useErrorToast";
 import { useEffect, useMemo, useRef, useCallback } from "react";
 import CodeMirror, { EditorView } from "@uiw/react-codemirror";
 import { oneDark } from "@codemirror/theme-one-dark";
@@ -119,6 +120,7 @@ export function EditorPanel() {
   const reloadEditor = useFsStore((s) => s.reloadEditor);
   const dismissStale = useFsStore((s) => s.dismissStale);
   const clearError = useFsStore((s) => s.clearError);
+  useErrorToast(error, "文件操作失败", clearError);
   const projects = useProjectStore((s) => s.projects);
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const projectPath = projects.find((p) => p.id === activeProjectId)?.path;
@@ -263,12 +265,6 @@ export function EditorPanel() {
           <X size={14} />
         </Button>
       </div>
-      {error && (
-        <div className="flex items-center gap-2 px-4 py-1.5 text-xs text-[var(--error)] bg-[var(--error)]/10 shrink-0">
-          <span className="flex-1 truncate">{error}</span>
-          <Button size="sm" variant="ghost" onClick={clearError}><X size={12} /></Button>
-        </div>
-      )}
       {editorFile?.stale && (
         <div className="flex items-center gap-2 px-4 py-1.5 text-xs text-[var(--warning)] bg-[var(--warning)]/10 shrink-0">
           <span className="flex-1 truncate">文件在磁盘上已被修改</span>

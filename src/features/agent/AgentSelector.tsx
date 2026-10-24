@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAgentStore } from "@/stores/agent.store";
 import { useConversationStore } from "@/stores/conversation.store";
 import { conversationUpdateAgent } from "@/bridge/tauri";
@@ -40,12 +40,21 @@ export function AgentSelector({
   };
   useEffect(ensureExternalServers, []);
   const locked = useConversationLocked(conversationId);
-  const options = [
-    { id: "nex", name: "NexAgent" },
-    ...servers.filter((s) => s.id !== "nex"),
-  ];
-  if (!options.some((s) => s.id === agentType))
-    options.push({ id: agentType, name: agentType });
+  const options = useMemo(() => {
+    const preferred = [
+      { id: "nex", name: "Nex Agent" },
+      { id: "codex-acp", name: "Codex" },
+      { id: "claude-acp", name: "Claude Code" },
+      { id: "cursor", name: "Cursor" },
+    ];
+    const available = [preferred[0], ...servers.filter((s) => s.id !== "nex")];
+    if (!available.some((s) => s.id === agentType)) available.push({ id: agentType, name: agentType });
+    return available.map((s) => ({ ...s, name: preferred.find((p) => p.id === s.id)?.name ?? s.name }))
+      .sort((a, b) => {
+        const rank = (id: string) => { const i = preferred.findIndex((p) => p.id === id); return i < 0 ? preferred.length : i; };
+        return rank(a.id) - rank(b.id);
+      });
+  }, [servers, agentType]);
   return (
     <div className="flex min-w-0 items-center gap-1">
       <ComposerOptionMenu

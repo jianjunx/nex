@@ -191,6 +191,8 @@ pub struct AvailableCommandDto {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptResultDto {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_changes: Option<Vec<super::workspace_changes::FileChange>>,
     /// True when the native agent successfully wrote/edited a workspace file
     /// this turn (`write_file` / `edit_file` / `multi_edit`). Used to gate
     /// auto-`/review`; bash-only turns stay false.

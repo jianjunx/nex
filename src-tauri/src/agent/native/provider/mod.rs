@@ -493,6 +493,7 @@ pub type ChunkStream = tokio::sync::mpsc::UnboundedReceiver<Chunk>;
 
 /// A model provider that streams chat completions.
 #[async_trait::async_trait]
+#[allow(clippy::double_must_use)] // async_trait adds must_use to an already must-use Future.
 pub trait Provider: Send + Sync {
     /// Human-readable provider id (e.g. `deepseek`).
     fn name(&self) -> &str;

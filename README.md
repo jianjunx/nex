@@ -45,6 +45,12 @@ Nex 是跨平台桌面 **Agent 工作台**（[Tauri 2](https://tauri.app/)）。
 
 状态、ahead/behind、Push、暂存/提交、文件 diff（可在编辑器里看）、分支切换、fetch / pull / push、clone、merge、stash、操作日志与错误详情弹窗。
 
+### 本地服务（1.1.23）
+
+右上角终端按钮前的「本地服务」列出当前项目的托管服务，可查看状态与最近日志、打开本地地址、停止或重启。让 Agent 使用 `local_service` 的 `start` 操作启动服务；原生 Nex Agent 内置此工具，外部 ACP Agent 通过会话自动注入的 `nex-local-services` MCP 使用。升级后需重新创建外部 Agent 会话以加载工具。
+
+服务关闭对话后继续运行，退出 Nex 时停止；重启沿用启动时的命令、目录和环境。普通 shell、`nohup`、Docker 或升级前已启动的进程不会自动接管。端口可连接只表示本地 TCP 可达，不代表应用健康。日志仅保留最近 128 KiB，服务记录不跨应用重启保存。
+
 ### 搜索与终端
 
 - 项目内文本搜索 + 替换；点结果跳到编辑器并高亮该行。
@@ -118,6 +124,11 @@ pnpm tauri build          # 或 pnpm build:installer；产物在 src-tauri/targe
 ```
 
 仅调前端界面（没有 Tauri API）：`pnpm dev`。
+
+CI 保留类型检查、lint 和三平台测试；Release 为 macOS、Windows 缓存 pnpm 依赖和 Rust 编译依赖。
+推送 `main` 时，Release 只编译并预热发布缓存，不生成安装包或创建发布；也可在 Actions 手动运行预热。
+推送 `release-vX.Y.Z` 标签时生成安装包及草稿发布。不同标签只能复用默认分支的缓存，
+因此需先将这些工作流修改合并到 `main` 并完成一次预热。首次构建、Rust 工具链升级或缓存被淘汰后仍可能较慢。
 
 ### 使用
 

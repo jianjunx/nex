@@ -5,3 +5,5 @@ pub mod git_cmds;
 pub mod project_cmds;
 pub mod terminal_cmds;
 pub mod update_cmds;
+
+pub mod service_cmds;

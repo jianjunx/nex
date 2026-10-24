@@ -1,6 +1,5 @@
 import type { Command, KeyCombo } from "./types";
 import { isFindBarOpen, closeFindBar, viewForFindBar } from "./editorKeybindings";
-import { noteCloseEsc } from "./keybindingHostState";
 import { useUiStore } from "../stores/ui.store";
 import { useFsStore } from "../stores/fs.store";
 import { useProjectStore } from "../stores/project.store";
@@ -135,18 +134,9 @@ const COMMANDS: Command[] = [
       if (isInComposerInput() && isComposerSuggestOpen()) return false;
       return true;
     },
-    // The find-bar case is handled inside run (record the cadence, then yield to
-    // CodeMirror's own keymap which closes the bar).
     run: () => {
-      if (isFindBarOpen()) {
-        // KeybindingHost 在 window 捕获阶段已拦截该 Esc，CodeMirror 自身
-        // 的 keymap 收不到事件——无论焦点在搜索输入框还是编辑器内容，
-        // 都必须在这里显式关掉搜索栏（拍子照记，双击节奏不中断）。
-        noteCloseEsc();
-        closeFindBar();
-        return;
-      }
-      if (noteCloseEsc()) useUiStore.getState().setEditorVisible(false);
+      if (isFindBarOpen()) closeFindBar();
+      useUiStore.getState().setEditorVisible(false);
     },
   },
   {

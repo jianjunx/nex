@@ -1583,7 +1583,11 @@ data: \"result\":{\"ok\":true}}\n\
     #[test]
     fn resolve_command_uses_base_env_path() {
         let dir = tempfile::tempdir().unwrap();
-        let script = dir.path().join("fake-mcp");
+        let script = dir.path().join(if cfg!(windows) {
+            "fake-mcp.exe"
+        } else {
+            "fake-mcp"
+        });
         std::fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
         #[cfg(unix)]
         {

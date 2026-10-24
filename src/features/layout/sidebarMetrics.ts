@@ -1,5 +1,5 @@
 /** Expanded workspace sidebar: default (and minimum) width in px. */
-export const SIDEBAR_WIDTH = 208;
+export const SIDEBAR_WIDTH = 228;
 /** The sidebar can be dragged up to 100px wider than its default. */
 export const SIDEBAR_MAX_WIDTH = SIDEBAR_WIDTH + 100;
 /** Collapsed rail width (px). */

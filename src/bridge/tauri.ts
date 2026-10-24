@@ -247,7 +247,14 @@ export interface ContextStatsDto {
   overBudget: boolean;
 }
 
+export interface TurnFileChange {
+  path: string;
+  oldText: string;
+  newText: string;
+}
+
 export interface PromptResultDto {
+  fileChanges?: TurnFileChange[];
   hadMutations: boolean;
   stopReason?: string;
   contextStats?: ContextStatsDto | null;
@@ -413,7 +420,11 @@ export async function agentRespondAskQuestion(
 }
 
 export async function agentCloseSession(sessionId: string): Promise<void> {
-  return invoke(COMMANDS.AGENT_CLOSE_SESSION, { sessionId });
+  await invoke(COMMANDS.AGENT_CLOSE_SESSION, { sessionId });
+}
+
+export async function agentReclaimSession(sessionId: string): Promise<boolean> {
+  return invoke(COMMANDS.AGENT_CLOSE_SESSION, { sessionId, idleOnly: true });
 }
 
 export async function agentCustomUpsert(server: CustomServer): Promise<void> {
@@ -888,4 +899,29 @@ export function onGitStatusChanged(cb: (payload: GitStatusChangedPayload) => voi
 
 export function onGitCredentialRequest(cb: (payload: GitCredentialRequestPayload) => void): Promise<UnlistenFn> {
   return listen(EVENTS.GIT_CREDENTIAL_REQUEST, (e) => cb(e.payload as GitCredentialRequestPayload));
+}
+
+// --- Local services ---
+export interface LocalService {
+  id: string;
+  name: string;
+  command: string;
+  cwd: string;
+  projectPath: string;
+  conversationId: string;
+  status: "starting" | "running" | "stopped" | "failed";
+  pid: number | null;
+  port: number | null;
+  listening: boolean;
+  exitCode: number | null;
+  error: string | null;
+}
+export function serviceList(projectPath: string): Promise<LocalService[]> {
+  return invoke(COMMANDS.SERVICE_LIST, { projectPath });
+}
+export function serviceAction(projectPath: string, id: string, action: "stop" | "restart" | "remove"): Promise<void> {
+  return invoke(COMMANDS.SERVICE_ACTION, { projectPath, id, action });
+}
+export function serviceLogs(projectPath: string, id: string): Promise<string> {
+  return invoke(COMMANDS.SERVICE_LOGS, { projectPath, id });
 }

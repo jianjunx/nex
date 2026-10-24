@@ -8,6 +8,7 @@ import { openPathToken } from "./pathToken";
 import { FILES_CHANGED_VISIBLE_ROWS, type ChangedFile } from "./filesChanged";
 import { useProjectStore } from "../../../stores/project.store";
 import { selectProjectActiveTabId, useConversationStore } from "../../../stores/conversation.store";
+import { useFsStore } from "../../../stores/fs.store";
 import { useAgentStore } from "../../../stores/agent.store";
 
 const ACTION =
@@ -28,7 +29,7 @@ function FilesChangedCardContent({ files }: { files: ChangedFile[] }) {
   const projectPath = useProjectStore((s) => s.projects.find((p) => p.id === s.activeProjectId)?.path);
   const activeTabId = useConversationStore((s) => selectProjectActiveTabId(s, activeProjectId));
   const session = useAgentStore((s) => (activeTabId ? s.sessions[activeTabId] : undefined));
-  const canPrompt = !!session?.sessionId && session.status === "idle";
+  const canPrompt = !!session?.sessionId && session.status === "idle" && !session.reclaiming;
   const [showAll, setShowAll] = useState(false);
 
   if (files.length === 0) return null;
@@ -37,16 +38,31 @@ function FilesChangedCardContent({ files }: { files: ChangedFile[] }) {
   const hidden = Math.max(0, files.length - FILES_CHANGED_VISIBLE_ROWS);
   const shown = showAll || hidden === 0 ? files : files.slice(0, FILES_CHANGED_VISIBLE_ROWS);
 
+  const openChange = async (file: ChangedFile) => {
+    if (!file.preview) {
+      await openPathToken(file.path);
+      return;
+    }
+    useFsStore.getState().openDiffTab(`agent-diff:${file.preview.key}:${file.path}`, {
+      mode: "merge",
+      title: `${fileBasename(file.path)}（本轮修改）`,
+      languageHint: file.path,
+      original: file.preview.oldText,
+      revised: file.preview.newText,
+      binary: false,
+    });
+  };
+
   const reviewAll = () => {
     void (async () => {
-      for (const f of files) await openPathToken(f.path);
-      if (files[0]) await openPathToken(files[0].path);
+      for (const f of files) await openChange(f);
+      if (files[0]) await openChange(files[0]);
     })();
   };
 
   const commitAndPush = () => {
     if (!canPrompt || !activeTabId || !session?.sessionId) return;
-    sendToSession(activeTabId, session.sessionId, "Commit & Push");
+    sendToSession(activeTabId, session.sessionId, "Commit & Push to Origin");
   };
 
   const reviewFiles = () => {
@@ -82,7 +98,7 @@ function FilesChangedCardContent({ files }: { files: ChangedFile[] }) {
             add={f.additions}
             del={f.deletions}
             title={f.path}
-            onClick={() => void openPathToken(f.path)}
+            onClick={() => void openChange(f)}
           />
         ))}
         {!showAll && hidden > 0 && (

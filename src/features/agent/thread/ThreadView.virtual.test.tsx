@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 
 vi.mock("../../../bridge/tauri", () => ({
   agentCreateSession: vi.fn(),
@@ -61,6 +61,28 @@ afterEach(() => {
 });
 
 describe("ThreadView 虚拟化", () => {
+  it("manual tool toggles suspend bottom follow until the user scrolls or sends a message", async () => {
+    setupThreadStores("A", { A: [
+      { id: "tool-manual", toolCallId: "tool-manual", kind: "tool_call", toolKind: "execute",
+        title: "command", status: "completed", content: [{ type: "text", text: "output" }], timestamp: 1 },
+      { id: "answer-manual", kind: "assistant_message", chunks: [{ type: "message", text: "done" }], timestamp: 2 },
+    ] });
+    const { container } = render(<ThreadView />);
+    await act(async () => {});
+    const scroller = getScroller(container);
+    setMockScrollHeight(scroller, 600);
+    const toggle = container.querySelector<HTMLButtonElement>("button[aria-expanded]")!;
+    expect(toggle).toBeTruthy();
+    fireEvent.click(toggle);
+    setMockScrollHeight(scroller, 1200);
+    act(() => useAgentStore.setState((s) => {
+      s.entriesByConversation.A.push({ id: "after-toggle", kind: "assistant_message",
+        chunks: [{ type: "message", text: "more output" }], timestamp: 3 });
+    }));
+    await act(async () => {});
+    expect(scroller.scrollTop).toBe(0);
+  });
+
   it("1000 条 entries 只渲染视口附近的行(DOM 行数 < 60)", () => {
     setupThreadStores("A", { A: makeEntries(1000) });
     const { container } = render(<ThreadView />);
@@ -239,9 +261,8 @@ describe("ThreadView 虚拟化", () => {
     const rows = [...scroller.querySelectorAll<HTMLElement>("[data-index]")];
     expect(rows.length).toBeGreaterThan(3);
     for (const row of rows) {
-      const y = /translateY\(([-\d.]+)px\)/.exec(row.style.transform)?.[1];
-      expect(y).toBeDefined();
-      expect(Number.isInteger(Number(y))).toBe(true);
+      expect(row.style.transform).toBe("");
+      expect(Number.isInteger(parseFloat(row.style.top))).toBe(true);
     }
     // 确认测试前提成立：行确实被测成了小数高度。
     expect(rows[0]!.getBoundingClientRect().height).toBeCloseTo(22.4);
@@ -275,7 +296,7 @@ describe("ThreadView 虚拟化", () => {
     expect(h).toBeLessThan(600);
     const rows = [...scroller.querySelectorAll<HTMLElement>("[data-index]")];
     expect(rows.length).toBeGreaterThan(0);
-    const y = Number(/translateY\(([-\d.]+)px\)/.exec(rows[0]!.style.transform)?.[1] ?? 0);
+    const y = parseFloat(rows[0]!.style.top || "0");
     expect(y).toBeLessThan(8);
   });
 
@@ -301,7 +322,7 @@ describe("ThreadView 虚拟化", () => {
     expect(h).toBeGreaterThan(0);
     expect(h).toBeLessThan(600);
     const rows = [...scroller.querySelectorAll<HTMLElement>("[data-index]")];
-    const y = Number(/translateY\(([-\d.]+)px\)/.exec(rows[0]!.style.transform)?.[1] ?? 0);
+    const y = parseFloat(rows[0]!.style.top || "0");
     expect(y).toBeLessThan(8);
   });
 

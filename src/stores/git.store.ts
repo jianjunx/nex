@@ -169,11 +169,12 @@ export const useGitStore = create<GitStore>()(
     // recorded op failure (see git.store.test.ts opLog failure case).
     // `toastLabel` 为空表示静默：refresh 会被文件监听器反复触发，也常跟在别的
     // 操作后面，它的失败由操作日志兜着，不该再弹一条。
-    const loadStatus = async (fn: () => Promise<void>, toastLabel?: string) => {
+    const loadStatus = async (fn: () => Promise<void>, toastLabel?: string, scope?: string) => {
       set((s) => { s.statusLoading = true; });
       try {
         await fn();
       } catch (err) {
+        if (scope && get().repoPath !== scope) return;
         if (isMissingGitRepo(err)) {
           markMissingRepo();
           return;
@@ -184,9 +185,12 @@ export const useGitStore = create<GitStore>()(
           toast({ variant: "error", message: `${toastLabel}失败`, detail: firstLine(msg) });
         }
       } finally {
-        set((s) => { s.statusLoading = false; });
+        if (!scope || get().repoPath === scope) set((s) => { s.statusLoading = false; });
       }
     };
+
+    const statusRequests = new Map<string, Promise<void>>();
+    const refreshRequested = new Set<string>();
 
     return {
       status: null,
@@ -207,19 +211,30 @@ export const useGitStore = create<GitStore>()(
       historyOpen: false,
       opLogOpen: false,
 
-      refresh: async (projectPath) => {
+      refresh: (projectPath) => {
         adoptPath(projectPath);
-        return loadStatus(async () => {
-          const status = await gitStatus(projectPath);
-          if (!status) {
-            markMissingRepo();
-            return;
+        const pending = statusRequests.get(projectPath);
+        if (pending) {
+          refreshRequested.add(projectPath);
+          return pending;
+        }
+        const request = loadStatus(async () => {
+          try {
+            const status = await gitStatus(projectPath);
+            if (get().repoPath !== projectPath) return;
+            if (!status) { markMissingRepo(); return; }
+            set((s) => { s.status = status; s.hasRepo = true; });
+          } catch (error) {
+            if (get().repoPath === projectPath) throw error;
           }
-          set((s) => {
-            s.status = status;
-            s.hasRepo = true;
-          });
+        }, undefined, projectPath).finally(() => {
+          statusRequests.delete(projectPath);
+          if (refreshRequested.delete(projectPath) && get().repoPath === projectPath) {
+            void get().refresh(projectPath);
+          }
         });
+        statusRequests.set(projectPath, request);
+        return request;
       },
 
       openDiffInEditor: async (projectPath, file, staged) => {

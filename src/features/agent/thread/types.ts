@@ -115,6 +115,7 @@ export interface AskQuestionEntry extends ThreadEntryBase {
  * token 仅在 agent 上报整轮用量时才有（NexAgent）；外部 ACP agent 缺省。
  */
 export interface TurnSummaryEntry extends ThreadEntryBase {
+  fileChanges?: import("../../../bridge/tauri").TurnFileChange[];
   kind: "turn_summary";
   /** 从发出 prompt 到结束的墙钟耗时（含等待用户确认的时间）。 */
   durationMs: number;

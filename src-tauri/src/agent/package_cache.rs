@@ -83,6 +83,7 @@ pub struct ResolvedNpx {
 /// Indirection so `launch.rs` can take a `&dyn PackageResolver` and tests
 /// can pass a fake.
 #[async_trait]
+#[allow(clippy::double_must_use)] // async_trait adds must_use to an already must-use Future.
 pub trait PackageResolver: Send + Sync {
     async fn resolve_npx(
         &self,

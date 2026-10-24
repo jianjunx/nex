@@ -18,6 +18,7 @@ pub mod registry;
 pub mod server;
 pub mod shell_env;
 pub mod types;
+pub mod workspace_changes;
 
 pub use native::config::NativeAgentConfig;
 pub use server::{AgentSessionManager, CustomServer, ServerDescriptor, ServerKind, SessionTarget};

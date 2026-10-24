@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { groupThreadEntries } from "./groupThreadEntries";
-import type { ThreadEntry, ToolCallEntry } from "./types";
+import type { ThreadEntry, ToolCallEntry, TurnSummaryEntry } from "./types";
 
 function tool(partial: Partial<ToolCallEntry> & Pick<ToolCallEntry, "id" | "toolKind" | "title">): ToolCallEntry {
   return {
@@ -100,6 +100,67 @@ describe("groupThreadEntries", () => {
         "src/SettingsDialog.tsx",
       ]);
     }
+  });
+
+  it("summarizes shell-only changes using the persisted workspace baseline", () => {
+    const entries: ThreadEntry[] = [
+      { id: "u1", kind: "user_message", text: "fix", timestamp: 1 },
+      tool({ id: "shell", toolKind: "execute", title: "python write_text" }),
+      { id: "s1", kind: "turn_summary", durationMs: 1, timestamp: 2,
+        fileChanges: [{ path: "/repo/a.ts", oldText: "dirty", newText: "fixed" }] },
+    ];
+    const items = groupThreadEntries(entries);
+    expect(items.at(-2)).toMatchObject({
+      type: "files_changed",
+      files: [{ path: "/repo/a.ts", additions: 1, deletions: 1,
+        preview: { oldText: "dirty", newText: "fixed", key: "s1" } }],
+    });
+    expect(groupThreadEntries(entries, { lastTurnComplete: false }).some((i) => i.type === "files_changed")).toBe(false);
+  });
+
+  it("uses the net baseline instead of duplicating tool diffs or showing reverted edits", () => {
+    const entries: ThreadEntry[] = [
+      edit("e1", "/repo/a.ts"),
+      { id: "s1", kind: "turn_summary", durationMs: 1, timestamp: 2, fileChanges: [] },
+    ];
+    expect(groupThreadEntries(entries).some((i) => i.type === "files_changed")).toBe(false);
+  });
+
+  it("reuses historical file summaries while later messages stream, but refreshes replaced snapshots", () => {
+    const summary: TurnSummaryEntry = {
+      id: "s1", kind: "turn_summary", durationMs: 1, timestamp: 2,
+      fileChanges: [{ path: "/repo/a.ts", oldText: "before", newText: "after" }],
+    };
+    const user: ThreadEntry = { id: "u2", kind: "user_message", text: "next", timestamp: 3 };
+    const files = (entries: ThreadEntry[]) => {
+      const card = groupThreadEntries(entries, { lastTurnComplete: false })
+        .find((item) => item.type === "files_changed");
+      if (card?.type !== "files_changed") throw new Error("expected files");
+      return card.files;
+    };
+    const first = files([summary, user]);
+    const streamed = files([summary, user, {
+      id: "a2", kind: "assistant_message", timestamp: 4,
+      chunks: [{ type: "message", text: "streaming" }],
+    }]);
+    expect(streamed).toBe(first);
+    expect(files([{
+      ...summary, fileChanges: [{ path: "/repo/a.ts", oldText: "before", newText: "one\ntwo" }],
+    }, user])).toMatchObject([{ additions: 2, deletions: 1 }]);
+  });
+
+  it("counts full-file snapshot changes without inflating large-file summaries", () => {
+    const before = Array.from({ length: 300 }, (_, i) => `line ${i}`);
+    const after = [...before];
+    after[150] = "changed";
+    const items = groupThreadEntries([
+      { id: "u1", kind: "user_message", text: "fix", timestamp: 1 },
+      { id: "s1", kind: "turn_summary", durationMs: 1, timestamp: 2,
+        fileChanges: [{ path: "/repo/a.ts", oldText: before.join("\n"), newText: after.join("\n") }] },
+    ]);
+    expect(items.at(-2)).toMatchObject({
+      type: "files_changed", files: [{ additions: 1, deletions: 1 }],
+    });
   });
 
   it("does not show files_changed for the in-flight last turn", () => {

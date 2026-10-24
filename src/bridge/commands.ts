@@ -1,5 +1,8 @@
 // Command names - must match Rust #[tauri::command] function names
 export const COMMANDS = {
+  SERVICE_LIST: "service_list",
+  SERVICE_ACTION: "service_action",
+  SERVICE_LOGS: "service_logs",
   // Projects
   PROJECT_OPEN: "project_open",
   PROJECT_LIST: "project_list",

@@ -95,6 +95,11 @@ impl Drop for JobTable {
 }
 
 impl JobTable {
+    /// Even completed jobs retain output that cannot be restored from history.
+    pub fn is_empty(&self) -> bool {
+        self.jobs.is_empty()
+    }
+
     /// Spawns `command` under the platform shell in `cwd`, returning the job id.
     /// Sync on purpose: nothing here awaits (the drain/kill supervision runs on
     /// its own task), so callers can hold a `RefMut` without crossing an await.
@@ -217,7 +222,7 @@ impl Tool for RunInBackground {
         "run_in_background"
     }
     fn description(&self) -> &'static str {
-        "Start a long-running shell command in the background (dev servers, watchers). \
+        "Start a background shell job. For local development servers and services, use local_service(action=start) instead so users can manage them in Nex. \
          Returns a job id. Use `bash_output` to read its output, `wait` for it to exit, \
          and `kill_shell` to stop it."
     }

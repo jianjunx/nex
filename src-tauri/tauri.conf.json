@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "productName": "Nex",
-  "version": "1.1.22",
+  "version": "1.1.24",
   "identifier": "com.nex.app",
   "build": {
     "frontendDist": "../dist",
@@ -26,7 +26,11 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http://asset.localhost; font-src 'self' data:; connect-src ipc: http://ipc.localhost"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: http://asset.localhost; font-src 'self' data:; connect-src ipc: http://ipc.localhost",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["/tmp/**/*", "/private/tmp/**/*", "$TEMP/**/*"]
+      }
     }
   },
   "bundle": {

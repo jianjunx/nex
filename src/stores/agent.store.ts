@@ -10,6 +10,7 @@ import {
   agentRespondPlan,
   agentRespondAskQuestion,
   agentCloseSession,
+  agentReclaimSession,
   agentListServers,
   agentListAllServers,
   agentRefreshRegistry,
@@ -26,6 +27,7 @@ import {
   onAgentAskQuestionRequest,
   onAgentSessionTerminated,
   type PromptBlock,
+  type TurnFileChange,
   type ServerDescriptor,
   type SessionTarget,
   type CustomServer,
@@ -51,6 +53,7 @@ import { assistantTextAfterLastUser } from "../features/agent/thread/messagesToT
 import { buildTurnSummary } from "../features/agent/thread/turnSummary";
 import { usageCounters, usageDelta } from "../features/agent/thread/turnUsage";
 import { useConversationStore } from "./conversation.store";
+import { useProjectStore } from "./project.store";
 import { useNotificationStore } from "./notification.store";
 import { resolveSessionTarget } from "../features/agent/sessionTarget";
 
@@ -70,11 +73,19 @@ class SessionSupersededError extends Error {
 const sessionEpochs = new Map<string, number>();
 const prewarmTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const PREWARM_DEBOUNCE_MS = 400;
+const STREAM_BATCH_MS = 32;
+const MAX_STREAM_BATCH_UPDATES = 256;
+const IDLE_SESSION_TIMEOUT_MS = 10 * 60 * 1000;
+let flushPendingStreamUpdates: (() => void) | null = null;
+
+type QueuedAgentUpdate = { sessionId: string; update: unknown; promptSeq?: number };
 
 export interface AgentSession {
   sessionId: string;
   conversationId: string;
   status: "starting" | "idle" | "running" | "waiting";
+  /** Keep the session tracked but block sends until safe reclamation finishes. */
+  reclaiming?: boolean;
 }
 
 /** A user message that was queued because the session is starting or busy. */
@@ -648,37 +659,48 @@ function applyNotificationUpdate(
   update: unknown,
   promptSeq?: number,
 ): void {
-  const session = Object.values(get().sessions).find((ss) => ss.sessionId === sessionId);
-  if (!session) return;
-  let modeFromAgent: string | null = null;
+  applyNotificationUpdates(set, get, [{ sessionId, update, promptSeq }]);
+}
+
+function applyNotificationUpdates(
+  set: (fn: (s: AgentStore) => void) => void,
+  get: () => AgentStore,
+  updates: QueuedAgentUpdate[],
+): void {
+  const sessions = new Map(Object.values(get().sessions).map((ss) => [ss.sessionId, ss]));
+  const modes = new Map<string, string>();
   set((s) => {
-    if (!s.entriesByConversation[session.conversationId]) {
-      s.entriesByConversation[session.conversationId] = [];
-    }
-    if (!s.metaByConversation[session.conversationId]) {
-      s.metaByConversation[session.conversationId] = emptySessionMeta();
-    }
-    const entries = s.entriesByConversation[session.conversationId];
-    const meta = s.metaByConversation[session.conversationId];
-    const prevMode = meta.currentModeId;
-    const streamUserMessageId = rememberTurnAnchor(sessionId, promptSeq, entries);
-    const applied = applySessionUpdate(entries, meta, update, { streamUserMessageId });
-    if (applied.completedPlanSnapshot) {
-      const insertAt = streamInsertIndex(entries, streamUserMessageId);
-      entries.splice(insertAt, 0, {
-        id: crypto.randomUUID(),
-        kind: "completed_plan",
-        timestamp: Date.now(),
-        entries: applied.completedPlanSnapshot,
-        allCompleted: true,
-      });
-    }
-    if (applied.metaChanged && meta.currentModeId && meta.currentModeId !== prevMode) {
-      modeFromAgent = meta.currentModeId;
+    for (const { sessionId, update, promptSeq } of updates) {
+      const session = sessions.get(sessionId);
+      if (!session) continue;
+      if (!s.entriesByConversation[session.conversationId]) {
+        s.entriesByConversation[session.conversationId] = [];
+      }
+      if (!s.metaByConversation[session.conversationId]) {
+        s.metaByConversation[session.conversationId] = emptySessionMeta();
+      }
+      const entries = s.entriesByConversation[session.conversationId];
+      const meta = s.metaByConversation[session.conversationId];
+      const prevMode = meta.currentModeId;
+      const streamUserMessageId = rememberTurnAnchor(sessionId, promptSeq, entries);
+      const applied = applySessionUpdate(entries, meta, update, { streamUserMessageId });
+      if (applied.completedPlanSnapshot) {
+        const insertAt = streamInsertIndex(entries, streamUserMessageId);
+        entries.splice(insertAt, 0, {
+          id: crypto.randomUUID(),
+          kind: "completed_plan",
+          timestamp: Date.now(),
+          entries: applied.completedPlanSnapshot,
+          allCompleted: true,
+        });
+      }
+      if (applied.metaChanged && meta.currentModeId && meta.currentModeId !== prevMode) {
+        modes.set(session.conversationId, meta.currentModeId);
+      }
     }
   });
-  if (modeFromAgent) {
-    patchPrefs(set, session.conversationId, { modeId: modeFromAgent });
+  for (const [conversationId, modeId] of modes) {
+    patchPrefs(set, conversationId, { modeId });
   }
 }
 
@@ -903,6 +925,7 @@ export const useAgentStore = create<AgentStore>()(
     },
 
     removeSession: async (conversationId) => {
+      flushPendingStreamUpdates?.();
       sessionEpochs.set(conversationId, (sessionEpochs.get(conversationId) ?? 0) + 1);
       get().cancelPrewarm(conversationId);
       const session = get().sessions[conversationId];
@@ -994,6 +1017,7 @@ export const useAgentStore = create<AgentStore>()(
     },
 
     flushThreadSnapshots: async () => {
+      flushPendingStreamUpdates?.();
       // Closing mid-turn loses everything since the last completed turn
       // (sendPrompt persists only in its finally). Flush whatever is in
       // memory now; empty threads are skipped so we never wipe DB rows.
@@ -1048,6 +1072,9 @@ export const useAgentStore = create<AgentStore>()(
     },
 
     appendUserMessage: (conversationId, text, images) => {
+      if (get().sessions[conversationId]?.reclaiming) return;
+      // Anchor buffered chunks to the user message that actually produced them.
+      flushPendingStreamUpdates?.();
       set((s) => {
         if (!s.entriesByConversation[conversationId]) s.entriesByConversation[conversationId] = [];
         s.entriesByConversation[conversationId].push({
@@ -1071,6 +1098,7 @@ export const useAgentStore = create<AgentStore>()(
     },
 
     sendPrompt: async (sessionId, blocks) => {
+      flushPendingStreamUpdates?.();
       const session = Object.values(get().sessions).find((ss) => ss.sessionId === sessionId);
       if (!session) {
         set((s) => {
@@ -1078,6 +1106,7 @@ export const useAgentStore = create<AgentStore>()(
         });
         return;
       }
+      if (session.reclaiming) return;
       const promptGen = bumpPromptGeneration(session.conversationId);
       // 本轮用量摘要的起点：计时与模型都在发出 prompt 前确定，
       // 避免轮中切换模型/排队消息让摘要对不上这一轮。
@@ -1087,6 +1116,7 @@ export const useAgentStore = create<AgentStore>()(
         ? (turnMeta.models.find((m) => m.id === turnMeta.currentModelId)?.name ?? turnMeta.currentModelId)
         : null;
       let turnStats: ContextStatsDto | null = null;
+      let fileChanges: TurnFileChange[] | undefined;
       // ACP 用量上报的起点：发 prompt 前拍一张快照，收尾时取差得到"本轮消耗"。
       // 与 turnStartedAt / turnModel 同理，都在发出前定格，避免轮中变化串轮。
       const turnUsageBaseline = usageCounters(
@@ -1101,9 +1131,11 @@ export const useAgentStore = create<AgentStore>()(
       let stopReason = "end_turn";
       try {
         const result = await withInFlightPrompt(sessionId, () => agentSendPrompt(sessionId, blocks));
+        flushPendingStreamUpdates?.();
         if (promptGenerationByConversation.get(session.conversationId) !== promptGen) {
           return;
         }
+        fileChanges = result?.fileChanges;
         hadMutations = !!result?.hadMutations;
         if (result?.stopReason) stopReason = result.stopReason;
         if (result?.contextStats) {
@@ -1122,6 +1154,7 @@ export const useAgentStore = create<AgentStore>()(
           });
         }
       } catch (err) {
+        flushPendingStreamUpdates?.();
         if (promptGenerationByConversation.get(session.conversationId) !== promptGen) {
           return;
         }
@@ -1186,6 +1219,7 @@ export const useAgentStore = create<AgentStore>()(
           s.entriesByConversation[session.conversationId]?.push({
             id: crypto.randomUUID(),
             kind: "turn_summary",
+            ...(fileChanges !== undefined ? { fileChanges } : {}),
             timestamp: Date.now(),
             ...summary,
           });
@@ -1257,6 +1291,7 @@ export const useAgentStore = create<AgentStore>()(
     },
 
     cancel: async (sessionId) => {
+      flushPendingStreamUpdates?.();
       const conversationId = conversationIdForSession(get(), sessionId);
       set((s) => {
         if (conversationId) clearConversationError(s, conversationId);
@@ -1269,6 +1304,7 @@ export const useAgentStore = create<AgentStore>()(
           else s.error = errorMessage(err);
         });
       } finally {
+        flushPendingStreamUpdates?.();
         set((s) => {
           const session = Object.values(s.sessions).find((ss) => ss.sessionId === sessionId);
           if (session) {
@@ -1882,10 +1918,81 @@ export const useAgentStore = create<AgentStore>()(
       let unlistenPlanApproval: UnlistenFn | null = null;
       let unlistenAskQuestion: UnlistenFn | null = null;
       let unlistenTerminated: UnlistenFn | null = null;
+      let streamQueue: QueuedAgentUpdate[] = [];
+      let streamTimer: ReturnType<typeof setTimeout> | undefined;
+      const flushStream = () => {
+        clearTimeout(streamTimer);
+        streamTimer = undefined;
+        if (streamQueue.length === 0) return;
+        const batch = streamQueue;
+        streamQueue = [];
+        applyNotificationUpdates(set, get, batch);
+      };
+      flushPendingStreamUpdates = flushStream;
+
+      const idleSince = new Map<string, { session: AgentSession; since: number }>();
+      const idleTimer = setInterval(() => {
+        flushStream();
+        const state = get();
+        const conv = useConversationStore.getState();
+        const projectId = useProjectStore.getState().activeProjectId;
+        const activeId = projectId ? conv.activeTabByProject[projectId] : null;
+        const now = Date.now();
+        const liveIds = new Set(Object.values(state.sessions).map((s) => s.sessionId));
+        for (const id of idleSince.keys()) if (!liveIds.has(id)) idleSince.delete(id);
+        for (const session of Object.values(state.sessions)) {
+          const { conversationId, sessionId } = session;
+          const agentType = Object.values(conv.conversationsByProject).flat()
+            .find((c) => c.id === conversationId)?.agent_type;
+          // External agents currently restart with session/new: only untouched
+          // prewarms can be reclaimed without losing their live model context.
+          const resumable = agentType === "nex" || agentType === "native";
+          const unused = !state.entriesByConversation[conversationId]?.length &&
+            !conv.messagesByConversation[conversationId]?.length;
+          if (session.reclaiming) continue;
+          if (session.status !== "idle" || !sessionId || conversationId === activeId ||
+              (!resumable && !unused) || inFlightPromptBySessionId.has(sessionId) ||
+              state.pendingMessagesByConversation[conversationId]?.length ||
+              sessionStillWaiting(state, sessionId)) {
+            idleSince.delete(sessionId);
+            continue;
+          }
+          const idle = idleSince.get(sessionId);
+          if (!idle || idle.session !== session) {
+            idleSince.set(sessionId, { session, since: now });
+            continue;
+          }
+          if (now - idle.since < IDLE_SESSION_TIMEOUT_MS) continue;
+          idleSince.delete(sessionId);
+          set((s) => { s.sessions[conversationId].reclaiming = true; });
+          void (async () => {
+            try {
+              const reclaimed = await agentReclaimSession(sessionId);
+              if (get().sessions[conversationId]?.sessionId !== sessionId) return;
+              if (reclaimed) {
+                // Keep history/preferences and remove tracking only after acknowledgement.
+                set((s) => { delete s.sessions[conversationId]; });
+                clearPromptTracking(conversationId, sessionId);
+              }
+            } catch (err) {
+              console.warn("[agent] idle session cleanup failed:", err);
+            } finally {
+              if (get().sessions[conversationId]?.sessionId === sessionId) {
+                set((s) => { s.sessions[conversationId].reclaiming = false; });
+                idleSince.set(sessionId, {
+                  session: get().sessions[conversationId], since: Date.now() - IDLE_SESSION_TIMEOUT_MS,
+                });
+              }
+            }
+          })();
+        }
+      }, 60_000);
 
       void get().refreshNativeAutoReview();
 
       onAgentNotification(({ sessionId, update, promptSeq }) => {
+        if (disposed) return;
+        idleSince.delete(sessionId);
         const session = Object.values(get().sessions).find((ss) => ss.sessionId === sessionId);
         if (!session) {
           // SessionId not registered yet (createSession still in flight) — buffer
@@ -1893,13 +2000,23 @@ export const useAgentStore = create<AgentStore>()(
           enqueuePendingNotification(sessionId, update, get);
           return;
         }
-        applyNotificationUpdate(set, get, sessionId, update, promptSeq);
+        const kind = (update as { sessionUpdate?: unknown } | null)?.sessionUpdate;
+        const content = (update as { content?: { type?: unknown } } | null)?.content;
+        if ((kind === "agent_message_chunk" || kind === "agent_thought_chunk") && content?.type === "text") {
+          streamQueue.push({ sessionId, update, promptSeq });
+          if (streamQueue.length >= MAX_STREAM_BATCH_UPDATES) flushStream();
+          else streamTimer ??= setTimeout(flushStream, STREAM_BATCH_MS);
+        } else {
+          flushStream();
+          applyNotificationUpdate(set, get, sessionId, update, promptSeq);
+        }
       }).then((fn) => {
         if (disposed) fn();
         else unlistenNotification = fn;
       });
 
       onAgentPermissionRequest((payload) => {
+        flushStream();
         const session = Object.values(get().sessions).find((ss) => ss.sessionId === payload.sessionId);
         const authMode = session
           ? get().sessionPrefsByConversation[session.conversationId]?.authMode
@@ -1963,6 +2080,7 @@ export const useAgentStore = create<AgentStore>()(
       });
 
       onAgentPlanApprovalRequest((payload) => {
+        flushStream();
         const session = Object.values(get().sessions).find((ss) => ss.sessionId === payload.sessionId);
         set((s) => {
           if (!s.planApprovalQueues[payload.sessionId]) s.planApprovalQueues[payload.sessionId] = [];
@@ -2021,6 +2139,7 @@ export const useAgentStore = create<AgentStore>()(
       });
 
       onAgentAskQuestionRequest((payload) => {
+        flushStream();
         const session = Object.values(get().sessions).find((ss) => ss.sessionId === payload.sessionId);
         set((s) => {
           if (!s.askQuestionQueues[payload.sessionId]) s.askQuestionQueues[payload.sessionId] = [];
@@ -2077,6 +2196,7 @@ export const useAgentStore = create<AgentStore>()(
       });
 
       onAgentSessionTerminated(({ sessionId }) => {
+        flushStream();
         set((s) => {
           const session = Object.values(s.sessions).find((ss) => ss.sessionId === sessionId);
           if (session) {
@@ -2091,6 +2211,9 @@ export const useAgentStore = create<AgentStore>()(
       });
 
       listenerTeardown = () => {
+        flushStream();
+        flushPendingStreamUpdates = null;
+        clearInterval(idleTimer);
         disposed = true;
         unlistenNotification?.();
         unlistenPermission?.();

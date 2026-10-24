@@ -170,14 +170,21 @@ pub fn fs_move_entry(source: String, target_dir: String) -> Result<(), NexError>
 /// target directory.  Handles name conflicts by appending a numeric suffix.
 /// Returns the list of destination paths.
 #[tauri::command]
-pub fn fs_import_files(sources: Vec<String>, target_dir: String) -> Result<Vec<String>, NexError> {
-    let target = Path::new(&target_dir);
-    let mut results = Vec::with_capacity(sources.len());
-    for src in &sources {
-        let dest = import_file(Path::new(src), target)?;
-        results.push(dest.to_string_lossy().into_owned());
-    }
-    Ok(results)
+pub async fn fs_import_files(
+    sources: Vec<String>,
+    target_dir: String,
+) -> Result<Vec<String>, NexError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = Path::new(&target_dir);
+        let mut results = Vec::with_capacity(sources.len());
+        for src in &sources {
+            let dest = import_file(Path::new(src), target)?;
+            results.push(dest.to_string_lossy().into_owned());
+        }
+        Ok(results)
+    })
+    .await
+    .map_err(|e| NexError::FileSystem(format!("fs_import_files join: {e}")))?
 }
 
 /// Open directories, or reveal files, in the system file manager.
@@ -223,4 +230,54 @@ pub async fn fs_reveal_entry(path: String) -> Result<(), NexError> {
         .spawn()
         .map_err(|e| NexError::FileSystem(format!("打开文件管理器失败: {e}")))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn native_drop_imports_files_and_nested_folders_without_overwriting() {
+        let external = tempdir().unwrap();
+        let project = tempdir().unwrap();
+        let target = project.path().join("selected-directory");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("readme.txt"), "existing").unwrap();
+        fs::write(external.path().join("readme.txt"), "imported").unwrap();
+        fs::create_dir_all(external.path().join("assets/nested")).unwrap();
+        fs::write(external.path().join("assets/nested/file.txt"), "nested").unwrap();
+        let imported = super::fs_import_files(
+            vec![
+                external
+                    .path()
+                    .join("readme.txt")
+                    .to_string_lossy()
+                    .into_owned(),
+                external
+                    .path()
+                    .join("assets")
+                    .to_string_lossy()
+                    .into_owned(),
+            ],
+            target.to_string_lossy().into_owned(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(imported.len(), 2);
+        assert_eq!(
+            fs::read_to_string(target.join("readme.txt")).unwrap(),
+            "existing"
+        );
+        assert_eq!(
+            fs::read_to_string(target.join("readme (1).txt")).unwrap(),
+            "imported"
+        );
+        assert_eq!(
+            fs::read_to_string(target.join("assets/nested/file.txt")).unwrap(),
+            "nested"
+        );
+        assert!(external.path().join("readme.txt").exists());
+        assert!(external.path().join("assets/nested/file.txt").exists());
+    }
 }

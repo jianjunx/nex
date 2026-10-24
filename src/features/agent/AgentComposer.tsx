@@ -194,7 +194,7 @@ function AgentComposerContent() {
     selectProjectConversations(s, activeProjectId),
   );
   const activeConversation = conversations.find((c) => c.id === activeTabId) ?? null;
-  const canSend = !agentChanging && (!!text.trim() || images.length > 0) && !!activeTabId;
+  const canSend = !agentChanging && !session?.reclaiming && (!!text.trim() || images.length > 0) && !!activeTabId;
   // Allow/Menu is Cursor-only: other ACP agents use session/request_permission
   // without this composer toggle. Native NexAgent has its own auto mode.
   const showAuthMode = activeConversation?.agent_type === "cursor";
@@ -455,6 +455,7 @@ function AgentComposerContent() {
 
   const handleSend = async () => {
     if (agentChanging || (!text.trim() && images.length === 0) || !activeTabId) return;
+    if (useAgentStore.getState().sessions[activeTabId]?.reclaiming) return;
     // Raw document text (with `@[path]` tokens) is what the bubble shows and
     // the agent receives; attachments are parsed from the same tokens.
     const content = text;

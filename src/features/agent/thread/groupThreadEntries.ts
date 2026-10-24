@@ -5,7 +5,7 @@ import type {
   TurnSummaryEntry,
 } from "./types";
 import { groupChunks } from "./groupChunks";
-import { collectChangedFiles, type ChangedFile } from "./filesChanged";
+import { collectChangedFiles, countDiffLines, type ChangedFile } from "./filesChanged";
 import { isEditTool } from "./toolCallUtils";
 
 /** One step of the agent's working process: a reasoning block or a tool call. */
@@ -30,6 +30,21 @@ type AssistantSegment =
  * streaming tail is recomputed and the memoized EntryView rows stay valid.
  */
 const segmentCache = new WeakMap<AssistantMessageEntry, AssistantSegment[] | null>();
+
+// Streaming updates keep completed summaries stable; never diff their files again.
+const summaryFilesCache = new WeakMap<TurnSummaryEntry, ChangedFile[]>();
+
+function summaryFiles(summary: TurnSummaryEntry): ChangedFile[] {
+  const cached = summaryFilesCache.get(summary);
+  if (cached) return cached;
+  const files = summary.fileChanges!.map((change) => ({
+    path: change.path,
+    ...countDiffLines(change.oldText, change.newText),
+    preview: { oldText: change.oldText, newText: change.newText, key: summary.id },
+  }));
+  summaryFilesCache.set(summary, files);
+  return files;
+}
 
 function segmentAssistant(entry: AssistantMessageEntry): AssistantSegment[] | null {
   const cached = segmentCache.get(entry);
@@ -103,13 +118,15 @@ export function groupThreadEntries(
 
   const flushTurnSummary = (complete: boolean) => {
     flushTools();
-    if (complete && turnEdits.length > 0) {
-      const files = collectChangedFiles(turnEdits);
+    if (complete) {
+      const files: ChangedFile[] = turnFooter?.fileChanges !== undefined
+        ? summaryFiles(turnFooter)
+        : collectChangedFiles(turnEdits);
       if (files.length > 0) {
         items.push({
           type: "files_changed",
           files,
-          key: `${turn}:${turnEdits[0].id}`,
+          key: `${turn}:${turnFooter?.id ?? turnEdits[0]?.id}`,
         });
       }
     }

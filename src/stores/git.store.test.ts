@@ -500,3 +500,29 @@ describe("git.store commit toast noise", () => {
     expect(toasts().map((t) => t.message)).toEqual(["提交成功"]);
   });
 });
+
+describe("large repository refresh scheduling", () => {
+  it("coalesces watcher bursts into one active request and one follow-up", async () => {
+    let finish!: (status: GitStatus) => void;
+    gitStatusMock.mockImplementationOnce(() => new Promise<GitStatus>((resolve) => { finish = resolve; }));
+    gitStatusMock.mockResolvedValue(STATUS);
+    const first = useGitStore.getState().refresh("/p");
+    for (let i = 0; i < 50; i++) void useGitStore.getState().refresh("/p");
+    expect(gitStatusMock).toHaveBeenCalledTimes(1);
+    finish(STATUS);
+    await first;
+    await vi.waitFor(() => expect(useGitStore.getState().statusLoading).toBe(false));
+    expect(gitStatusMock).toHaveBeenCalledTimes(2);
+  });
+  it("does not let an older project's status overwrite the active project", async () => {
+    let finish!: (status: GitStatus) => void;
+    gitStatusMock.mockImplementationOnce(() => new Promise<GitStatus>((resolve) => { finish = resolve; }));
+    gitStatusMock.mockResolvedValue({ ...STATUS, branch: "new-project" });
+    const old = useGitStore.getState().refresh("/old");
+    await useGitStore.getState().refresh("/new");
+    finish({ ...STATUS, branch: "old-project" });
+    await old;
+    expect(useGitStore.getState().status?.branch).toBe("new-project");
+    expect(useGitStore.getState().repoPath).toBe("/new");
+  });
+});

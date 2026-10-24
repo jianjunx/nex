@@ -9,7 +9,9 @@ mod error;
 pub mod fs;
 pub mod git;
 pub mod graph;
+#[cfg(target_os = "macos")]
 mod macos_titlebar;
+pub mod services;
 mod state;
 pub mod terminal;
 mod watcher;
@@ -69,6 +71,9 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            commands::service_cmds::service_list,
+            commands::service_cmds::service_action,
+            commands::service_cmds::service_logs,
             commands::project_cmds::project_open,
             commands::project_cmds::project_list,
             commands::project_cmds::project_touch,
@@ -231,15 +236,25 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
-            #[cfg(target_os = "macos")]
-            if let tauri::RunEvent::ExitRequested {
-                code: None, api, ..
-            } = event
-            {
-                api.prevent_exit();
-                let _ = app.emit("app-exit-requested", ());
+            if let tauri::RunEvent::ExitRequested { code, api, .. } = &event {
+                #[cfg(target_os = "macos")]
+                if code.is_none() {
+                    api.prevent_exit();
+                    let _ = app.emit("app-exit-requested", ());
+                    return;
+                }
+                if services::manager().needs_shutdown() {
+                    api.prevent_exit();
+                    let app = app.clone();
+                    let code = code.unwrap_or(0);
+                    tauri::async_runtime::spawn(async move {
+                        services::manager().shutdown().await;
+                        app.exit(code);
+                    });
+                }
             }
-            #[cfg(not(target_os = "macos"))]
-            let _ = (app, event);
+            if matches!(event, tauri::RunEvent::Exit) {
+                services::manager().stop_all();
+            }
         });
 }

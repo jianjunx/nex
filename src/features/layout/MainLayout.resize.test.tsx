@@ -44,7 +44,7 @@ describe("MainLayout side-panel resize", () => {
     );
 
     const pane = screen.getByTestId("side-pane");
-    const painted = 900 - 208 - 280;
+    const painted = 900 - 228 - 280;
     expect(pane.style.width).toBe(`${painted}px`);
     expect(painted).toBeLessThan(500);
 
@@ -72,19 +72,19 @@ describe("MainLayout side-panel resize", () => {
   });
 
   it("drags the sidebar wider by up to 100px and persists it", () => {
-    useUiStore.setState({ sidebarCollapsed: false, sidebarWidth: 208, sidePanelVisible: false });
+    useUiStore.setState({ sidebarCollapsed: false, sidebarWidth: 228, sidePanelVisible: false });
     const { container } = render(
       <MainLayout mainContent={<div>chat</div>} editorPanel={null} sidePanel={<div>files</div>} />,
     );
     const root = container.firstElementChild as HTMLElement;
-    expect(root.style.getPropertyValue("--nex-sidebar-w")).toBe("208px");
+    expect(root.style.getPropertyValue("--nex-sidebar-w")).toBe("228px");
 
-    fireEvent.pointerDown(screen.getByTestId("sidebar-resize-handle"), { pointerId: 2, clientX: 208 });
-    window.dispatchEvent(new PointerEvent("pointermove", { pointerId: 2, clientX: 268, bubbles: true }));
-    expect(root.style.getPropertyValue("--nex-sidebar-w")).toBe("268px");
+    fireEvent.pointerDown(screen.getByTestId("sidebar-resize-handle"), { pointerId: 2, clientX: 228 });
+    window.dispatchEvent(new PointerEvent("pointermove", { pointerId: 2, clientX: 288, bubbles: true }));
+    expect(root.style.getPropertyValue("--nex-sidebar-w")).toBe("288px");
     // Past +100px the width stops growing.
     window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 2, clientX: 600, bubbles: true }));
-    expect(useUiStore.getState().sidebarWidth).toBe(308);
+    expect(useUiStore.getState().sidebarWidth).toBe(328);
   });
 
   it("has no sidebar handle while the sidebar is folded", () => {

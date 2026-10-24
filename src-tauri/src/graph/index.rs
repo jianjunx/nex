@@ -464,6 +464,7 @@ mod tests {
         // skipping it would silently stop all incremental indexing.
         let plain_cwd = PathBuf::from(cwd.to_string_lossy().trim_start_matches(r"\\?\"));
         let watcher_path = plain_cwd.join("src/lib.rs");
+        #[cfg(windows)]
         assert_ne!(watcher_path, cwd.join("src/lib.rs"));
         let stats = update_paths(cwd, std::slice::from_ref(&watcher_path)).unwrap();
         assert_eq!(stats.parsed, 1, "watcher-form path must be indexed: {stats:?}");

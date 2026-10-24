@@ -200,12 +200,48 @@ struct PendingAskQuestion {
 }
 
 struct SessionHandle {
+    cwd: PathBuf,
     conn: acp::ClientSideConnection,
     agent_session_id: acp::SessionId,
     #[allow(dead_code)]
     conversation_id: String,
     prompt_in_flight: AtomicBool,
+    is_native: bool,
+    has_prompted: AtomicBool,
+    prompt_dispatched: AtomicBool,
+    turn_cancel: Mutex<tokio::sync::watch::Sender<bool>>,
     _shutdown: oneshot::Sender<()>,
+}
+
+struct PromptGuard<'a>(&'a AtomicBool);
+
+impl Drop for PromptGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+async fn unless_cancelled<T>(
+    cancel: &mut tokio::sync::watch::Receiver<bool>,
+    work: impl Future<Output = T>,
+) -> Option<T> {
+    if *cancel.borrow() {
+        return None;
+    }
+    tokio::select! {
+        biased;
+        _ = cancel.changed() => None,
+        result = work => Some(result),
+    }
+}
+
+fn cancelled_prompt_result() -> super::types::PromptResultDto {
+    super::types::PromptResultDto {
+        file_changes: None,
+        had_mutations: false,
+        stop_reason: "cancelled".to_string(),
+        context_stats: None,
+    }
 }
 
 pub struct AcpSessionManager {
@@ -1604,6 +1640,8 @@ impl AcpSessionManager {
         let (init_tx, init_rx) = oneshot::channel::<SessionInitResult>();
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
+        let session_cwd = PathBuf::from(&spec.cwd);
+        let thread_conversation_id = conversation_id.to_string();
         let thread_app = app.clone();
         let thread_key = session_key.clone();
         let thread_sessions = Arc::clone(&self.sessions);
@@ -1635,6 +1673,7 @@ impl AcpSessionManager {
                         thread_app,
                         thread_key,
                         spec,
+                        thread_conversation_id,
                         thread_pending,
                         thread_plans,
                         thread_questions,
@@ -1653,10 +1692,15 @@ impl AcpSessionManager {
             })??;
 
         let handle = Arc::new(SessionHandle {
+            cwd: session_cwd,
             conn,
             agent_session_id,
             conversation_id: conversation_id.to_string(),
             prompt_in_flight: AtomicBool::new(false),
+            is_native: false,
+            has_prompted: AtomicBool::new(false),
+            prompt_dispatched: AtomicBool::new(false),
+            turn_cancel: Mutex::new(tokio::sync::watch::channel(false).0),
             _shutdown: shutdown_tx,
         });
         self.sessions
@@ -1744,10 +1788,15 @@ impl AcpSessionManager {
             })??;
 
         let handle = Arc::new(SessionHandle {
+            cwd: PathBuf::from(cwd),
             conn,
             agent_session_id,
             conversation_id: conversation_id.to_string(),
             prompt_in_flight: AtomicBool::new(false),
+            is_native: true,
+            has_prompted: AtomicBool::new(false),
+            prompt_dispatched: AtomicBool::new(false),
+            turn_cancel: Mutex::new(tokio::sync::watch::channel(false).0),
             _shutdown: shutdown_tx,
         });
         self.sessions
@@ -1769,21 +1818,53 @@ impl AcpSessionManager {
         blocks: Vec<PromptBlock>,
     ) -> Result<super::types::PromptResultDto, NexError> {
         let handle = self.session(session_id)?;
-        if handle
-            .prompt_in_flight
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_err()
         {
-            return Err(NexError::Agent(
-                "a prompt is already in flight for this session".to_string(),
-            ));
+            let mut turn_cancel = handle.turn_cancel.lock().unwrap();
+            if handle.prompt_in_flight
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_err()
+            {
+                return Err(NexError::Agent(
+                    "a prompt is already in flight for this session".to_string(),
+                ));
+            }
+            handle.prompt_dispatched.store(false, Ordering::SeqCst);
+            *turn_cancel = tokio::sync::watch::channel(false).0;
         }
+        let _guard = PromptGuard(&handle.prompt_in_flight);
+        let mut cancel = handle.turn_cancel.lock().unwrap().subscribe();
         bump_prompt_seq(session_id);
-        let prompt = prompt_blocks_to_acp(blocks);
+        let Some(baseline) = unless_cancelled(
+            &mut cancel,
+            super::workspace_changes::capture(handle.cwd.clone(), None),
+        ).await else {
+            return Ok(cancelled_prompt_result());
+        };
+        let mut prompt = prompt_blocks_to_acp(blocks);
+        prompt.insert(0, acp::ContentBlock::from(
+            "[Nex local services] When starting local development servers or long-running services, use the available Nex local_service tool with action=start so the user can monitor, stop and restart them from the toolbar. Run the server command in the foreground; avoid shell backgrounding/nohup for managed services.".to_string()
+        ));
+        if let Ok(services) = crate::services::manager().list(&handle.cwd).await {
+            if !services.is_empty() {
+                let states: Vec<_> = services.iter().map(|s| serde_json::json!({
+                    "id":s.id,"name":s.name,"status":s.status,"port":s.port,"portReachable":s.listening,
+                })).collect();
+                prompt.insert(0, acp::ContentBlock::from(format!(
+                    "[Nex local service status — the user may stop/restart services from the UI. Use local_service to manage them.] {}",
+                    serde_json::to_string(&states).unwrap_or_default()
+                )));
+            }
+        }
         let agent_session_id = handle.agent_session_id.clone();
         let result = run_acp({
             let handle = Arc::clone(&handle);
+            let cancel = cancel.clone();
             move || async move {
+                if *cancel.borrow() {
+                    return Ok(None);
+                }
+                handle.prompt_dispatched.store(true, Ordering::SeqCst);
+                handle.has_prompted.store(true, Ordering::SeqCst);
                 handle
                     .conn
                     .prompt(acp::PromptRequest {
@@ -1792,11 +1873,25 @@ impl AcpSessionManager {
                         meta: None,
                     })
                     .await
+                    .map(Some)
             }
         })
         .await;
-        handle.prompt_in_flight.store(false, Ordering::SeqCst);
-        let resp = result?;
+        let Some(resp) = result? else {
+            return Ok(cancelled_prompt_result());
+        };
+        let Some(file_changes) = unless_cancelled(&mut cancel, async {
+            if let Some(baseline) = baseline {
+                match super::workspace_changes::capture(handle.cwd.clone(), Some(&baseline)).await {
+                    Some(after) => super::workspace_changes::changes(baseline, after).await,
+                    None => None,
+                }
+            } else {
+                None
+            }
+        }).await else {
+            return Ok(cancelled_prompt_result());
+        };
         let had_mutations = resp
             .meta
             .as_ref()
@@ -1809,6 +1904,7 @@ impl AcpSessionManager {
             .and_then(|m| m.get("contextStats"))
             .cloned();
         Ok(super::types::PromptResultDto {
+            file_changes,
             had_mutations,
             stop_reason: stop_reason_name(resp.stop_reason).to_string(),
             context_stats,
@@ -1963,12 +2059,17 @@ impl AcpSessionManager {
 
     pub async fn cancel(&self, session_id: &str) -> Result<(), NexError> {
         let handle = self.session(session_id)?;
+        handle.turn_cancel.lock().unwrap().send_replace(true);
         self.resolve_session_permissions(
             session_id,
             Some(acp::RequestPermissionOutcome::Cancelled),
         );
         self.resolve_session_plan_approvals(session_id, PlanApprovalOutcome::Cancelled);
         self.resolve_session_ask_questions(session_id, AskQuestionOutcome::Cancelled);
+        // A queued scan/dispatch has no Agent prompt to cancel yet.
+        if !handle.prompt_dispatched.load(Ordering::SeqCst) {
+            return Ok(());
+        }
         let agent_session_id = handle.agent_session_id.clone();
         run_acp({
             let handle = Arc::clone(&handle);
@@ -2089,6 +2190,34 @@ impl AcpSessionManager {
         self.sessions.lock().unwrap().remove(session_id);
     }
 
+    pub async fn reclaim_session(&self, session_id: &str) -> Result<bool, NexError> {
+        let handle = match self.sessions.lock().unwrap().get(session_id).cloned() {
+            Some(handle) => handle,
+            None => return Ok(true),
+        };
+        // Reserve the same gate as send_prompt so no turn can start between
+        // the checkpoint and removing the session.
+        if handle.prompt_in_flight
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Ok(false);
+        }
+        let _guard = PromptGuard(&handle.prompt_in_flight);
+        if handle.is_native {
+            let safe = self.session_ext(
+                session_id, "_session/prepare_suspend", serde_json::json!({}),
+            ).await?;
+            if safe.as_bool() != Some(true) {
+                return Ok(false);
+            }
+        } else if handle.has_prompted.load(Ordering::SeqCst) {
+            return Ok(false);
+        }
+        self.remove_session(session_id);
+        Ok(true)
+    }
+
     fn session(&self, session_id: &str) -> Result<Arc<SessionHandle>, NexError> {
         self.sessions
             .lock()
@@ -2162,6 +2291,7 @@ async fn run_session(
     app: AppHandle,
     session_key: String,
     spec: LaunchSpec,
+    conversation_id: String,
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
     pending_plan_approvals: Arc<Mutex<HashMap<String, PendingPlanApproval>>>,
     pending_ask_questions: Arc<Mutex<HashMap<String, PendingAskQuestion>>>,
@@ -2207,6 +2337,30 @@ async fn run_session(
         stderr_tail,
     };
 
+    let sandbox = app
+        .path()
+        .app_data_dir()
+        .ok()
+        .map(|dir| {
+            super::native::config::NativeAgentConfig::load(&dir)
+                .agent
+                .shell_sandbox
+        })
+        .unwrap_or_default();
+    let service_context = crate::services::ServiceContext {
+        project: PathBuf::from(&cwd),
+        conversation_id,
+        env: spec.env.clone(),
+        sandbox,
+    };
+    let service_server = crate::services::mcp::server(service_context).await;
+    let (service_mcp, _service_scope) = match service_server {
+        Ok((config, scope)) => (Some(config), Some(scope)),
+        Err(error) => {
+            log::warn!("local service MCP unavailable: {error}");
+            (None, None)
+        }
+    };
     let api_key_available = launch_has_openai_api_key(&spec.env);
     run_acp_session(
         app,
@@ -2223,6 +2377,7 @@ async fn run_session(
         diag,
         None,
         api_key_available,
+        service_mcp,
     )
     .await;
 }
@@ -2298,6 +2453,7 @@ async fn run_session_native(
         diag,
         Some(conversation_id),
         false,
+        None,
     )
     .await;
 }
@@ -2328,6 +2484,7 @@ async fn run_acp_session<W, R>(
     // Codex advertises `api-key` first; we only send that method when a key is
     // actually present so stored `~/.codex/auth.json` credentials still work.
     api_key_available: bool,
+    service_mcp: Option<serde_json::Value>,
 ) where
     W: futures::io::AsyncWrite + Unpin + 'static,
     R: futures::io::AsyncRead + Unpin + 'static,
@@ -2389,7 +2546,7 @@ async fn run_acp_session<W, R>(
             authenticate_with(&conn, method).await?;
         }
 
-        let mcp_servers = match app.path().app_data_dir() {
+        let mut mcp_servers = match app.path().app_data_dir() {
             Ok(dir) => {
                 let cfg = super::native::config::NativeAgentConfig::load(&dir);
                 acp_mcp_servers_from_nex(std::path::Path::new(&cwd), &cfg)
@@ -2401,6 +2558,12 @@ async fn run_acp_session<W, R>(
                 Vec::new()
             }
         };
+        if let Some(config) = service_mcp {
+            mcp_servers.retain(|server| {
+                server.get("name").and_then(serde_json::Value::as_str) != Some("nex-local-services")
+            });
+            mcp_servers.push(config);
+        }
         let (session_id, response) = if let Some(id) = resume_conversation_id.as_deref() {
             // Native resume: try archived history first; on miss fall back to a
             // fresh session with a stable conversation-scoped id.
@@ -2780,6 +2943,39 @@ fn drain_stderr(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn cancelling_a_queued_preview_never_starts_its_work() {
+        let slots = Arc::new(tokio::sync::Semaphore::new(0));
+        let ran = Arc::new(AtomicBool::new(false));
+        let (tx, mut rx) = tokio::sync::watch::channel(false);
+        let worker_slots = Arc::clone(&slots);
+        let worker_ran = Arc::clone(&ran);
+        let pending = tokio::spawn(async move {
+            unless_cancelled(&mut rx, async {
+                let _permit = worker_slots.acquire().await.unwrap();
+                worker_ran.store(true, Ordering::SeqCst);
+            }).await
+        });
+        tokio::task::yield_now().await;
+        tx.send_replace(true);
+        assert!(pending.await.unwrap().is_none());
+        slots.add_permits(1);
+        assert!(!ran.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn cancellation_before_subscribing_is_preserved_and_releases_the_turn() {
+        let busy = AtomicBool::new(true);
+        let (tx, _) = tokio::sync::watch::channel(false);
+        tx.send_replace(true);
+        {
+            let _guard = PromptGuard(&busy);
+            let mut rx = tx.subscribe();
+            assert!(unless_cancelled(&mut rx, std::future::pending::<()>()).await.is_none());
+        }
+        assert!(!busy.load(Ordering::SeqCst));
+    }
 
     #[test]
     fn available_commands_from_json_skips_bad_items() {

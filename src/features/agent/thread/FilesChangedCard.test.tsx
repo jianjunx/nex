@@ -30,6 +30,7 @@ vi.mock("./pathToken", () => ({
   openPathToken: (...args: unknown[]) => openPathToken(...args),
 }));
 
+import { useFsStore } from "../../../stores/fs.store";
 import { FilesChangedCard } from "./FilesChangedCard";
 import { FILES_CHANGED_VISIBLE_ROWS } from "./filesChanged";
 import { useProjectStore } from "../../../stores/project.store";
@@ -63,6 +64,12 @@ afterEach(() => {
 });
 
 describe("FilesChangedCard", () => {
+  it("disables prompt actions while the session is being reclaimed", () => {
+    useAgentStore.setState((s) => { s.sessions.c1.reclaiming = true; });
+    render(<FilesChangedCard files={FILES} />);
+    expect(screen.getByRole("button", { name: "Commit & Push" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Review" }).hasAttribute("disabled")).toBe(true);
+  });
   it("shows three file chips, then the rest", () => {
     const many = Array.from({ length: 11 }, (_, i) => ({
       path: `/repo/src/f${i}.ts`,
@@ -88,6 +95,20 @@ describe("FilesChangedCard", () => {
     expect(openPathToken).toHaveBeenCalledWith("/repo/src/a.ts");
   });
 
+  it("opens the saved before/after diff even when the file has since been deleted", () => {
+    const openDiff = vi.spyOn(useFsStore.getState(), "openDiffTab").mockImplementation(() => {});
+    render(<FilesChangedCard files={[{
+      path: "/repo/deleted.ts", additions: 0, deletions: 1,
+      preview: { key: "turn-1", oldText: "deleted code", newText: "" },
+    }]} />);
+    fireEvent.click(screen.getByText("deleted.ts"));
+    expect(openDiff).toHaveBeenCalledWith("agent-diff:turn-1:/repo/deleted.ts", expect.objectContaining({
+      mode: "merge", original: "deleted code", revised: "", languageHint: "/repo/deleted.ts",
+    }));
+    expect(openPathToken).not.toHaveBeenCalled();
+    openDiff.mockRestore();
+  });
+
   it("header actions are Commit & Push, Review, then 查看", () => {
     render(<FilesChangedCard files={FILES} />);
     const actions = screen.getAllByRole("button", { name: /Commit & Push|Review|查看/ });
@@ -107,15 +128,15 @@ describe("FilesChangedCard", () => {
     ]);
   });
 
-  it("Commit & Push sends the command without file paths on the current session", () => {
+  it("Commit & Push sends Commit & Push to Origin on the current session", () => {
     const appendUserMessage = vi.fn();
     const sendPrompt = vi.fn().mockResolvedValue(undefined);
     useAgentStore.setState({ appendUserMessage, sendPrompt });
 
     render(<FilesChangedCard files={FILES} />);
     fireEvent.click(screen.getByText("Commit & Push"));
-    expect(appendUserMessage).toHaveBeenCalledWith("c1", "Commit & Push");
-    expect(sendPrompt).toHaveBeenCalledWith("sid-1", [{ type: "text", text: "Commit & Push" }]);
+    expect(appendUserMessage).toHaveBeenCalledWith("c1", "Commit & Push to Origin");
+    expect(sendPrompt).toHaveBeenCalledWith("sid-1", [{ type: "text", text: "Commit & Push to Origin" }]);
   });
 
   it("Review sends /review with file paths on the current session", () => {

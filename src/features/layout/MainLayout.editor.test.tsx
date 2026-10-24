@@ -27,7 +27,7 @@ describe("MainLayout editor surface", () => {
     useUiStore.setState({
       sidePanelVisible: true,
       sidePanelWidth: 320,
-      sidebarWidth: 208,
+      sidebarWidth: 228,
       sidebarCollapsed: false,
     });
     useFsStore.setState({ openFiles: [], activePath: null });

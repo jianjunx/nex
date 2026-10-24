@@ -89,6 +89,7 @@ impl Default for NodeBinaryOptions {
 
 /// The single, ergonomic Node runtime that downstream code interacts with.
 #[async_trait]
+#[allow(clippy::double_must_use)] // async_trait adds must_use to an already must-use Future.
 pub trait NodeRuntime: Send + Sync {
     /// Absolute path to the `node` binary. Cheap synchronous read.
     fn binary_path(&self) -> &Path;

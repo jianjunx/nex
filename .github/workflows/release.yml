@@ -1,13 +1,20 @@
 name: Release
 
-# 仅在推送 release-vX.Y.Z 格式标签时触发构建（如 release-v1.0.0）
+# main 预热默认分支缓存；标签构建安装包并创建草稿发布。
 on:
   push:
+    branches:
+      - main
     tags:
       - "release-v*.*.*"
+  workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 jobs:
   build:
@@ -30,6 +37,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Resolve version from tag
+        if: github.ref_type == 'tag'
         id: version
         shell: bash
         run: |
@@ -52,8 +60,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
+          cache: pnpm
 
       - name: Sync version into project files
+        if: github.ref_type == 'tag'
         shell: bash
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -89,7 +99,24 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: release-${{ matrix.target }}
+
+      # Different tags can restore main's cache, but not each other's caches.
+      - name: Warm release cache (no bundles or publishing)
+        if: github.ref_type != 'tag'
+        run: pnpm tauri build --target ${{ matrix.target }} --no-bundle
+
       - name: Build and publish (unsigned)
+        if: github.ref_type == 'tag'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -149,7 +176,7 @@ jobs:
           args: "--target ${{ matrix.target }}"
 
       - name: Sign Windows binaries (self-signed)
-        if: matrix.platform == 'windows-latest'
+        if: github.ref_type == 'tag' && matrix.platform == 'windows-latest'
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

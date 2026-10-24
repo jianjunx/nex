@@ -3,6 +3,7 @@ import CodeBlock from "@/components/agent-ui/beautiful-ui/CodeBlock";
 import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
+import { convertFileSrc, isTauri } from "@tauri-apps/api/core";
 import { openExternal } from "@/bridge/tauri";
 import { toast } from "@/stores/toast.store";
 import { errorMessage } from "@/lib/errors";
@@ -354,11 +355,21 @@ const components: Components = {
     );
   },
 
-  // Images — cap height, rounded corners.
+  // Local absolute paths need Tauri's scoped asset protocol, not the web origin.
   img({ src, alt, ...rest }) {
+    let imageSrc = src;
+    if (typeof src === "string" && /^\/(?!\/)/.test(src) && isTauri()) {
+      let path = src;
+      try {
+        path = decodeURIComponent(src);
+      } catch {
+        // A literal percent sign can be part of a local filename.
+      }
+      imageSrc = convertFileSrc(path);
+    }
     return (
       <img
-        src={src}
+        src={imageSrc}
         alt={alt ?? ""}
         className="my-2 max-h-72 max-w-full rounded-[var(--radius-sm)] object-contain border border-[color:var(--border-subtle)]"
         loading="lazy"
